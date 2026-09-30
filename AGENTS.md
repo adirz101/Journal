@@ -2,10 +2,8 @@
 
 The product and GitHub repository are named **Journal** (formerly Blackbox).
 Repository: `https://github.com/adirz101/Journal`.
-The existing local folder remains `/Users/azechary/Documents/GitHub/Blackbox`
-to preserve the current Codex project and chat association. Treat that folder
-name as a historical path, not the product name. Continue the existing project
-and conversation; a new chat or repository is not required for this rename.
+The local repository is `/Users/azechary/Documents/GitHub/Journal`.
+For continuation in a new conversation, read `HANDOFF.md` first.
 
 ## User-selected UI skills
 
