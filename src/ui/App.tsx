@@ -113,9 +113,13 @@ export default function App() {
   });
   async function start(provider: Provider, resumeFrom?: Session) {
     const projectId = resumeFrom?.projectId ?? state?.project.id; if (!projectId) return;
+    // Take the task now so text typed while this start finishes is never cleared.
+    const submitted = resumeFrom ? '' : task; if (!resumeFrom) setTask('');
     await run(async () => {
-      const result = await api<{ session: Session; receipt: Receipt }>('start', { projectId, provider, task: resumeFrom ? '' : task, resumeId: resumeFrom?.id });
-      merge([result.session]); setSelectedId(result.session.id); setReceipt(result.receipt); if (!resumeFrom) setTask(''); setPanel('context'); await refresh(projectId);
+      try {
+        const result = await api<{ session: Session; receipt: Receipt }>('start', { projectId, provider, task: submitted, resumeId: resumeFrom?.id });
+        merge([result.session]); setSelectedId(result.session.id); setReceipt(result.receipt); setPanel('context'); await refresh(projectId);
+      } catch (error) { if (submitted) setTask(current => current || submitted); throw error; }
     });
   }
   const sessionAction = (action: string, extra: object = {}) => session && run(async () => { await api(action, { id: session.id, ...extra }); });
@@ -177,7 +181,7 @@ export default function App() {
       <button role="tab" aria-selected={panel === 'changes'} disabled={!session} onClick={() => setPanel('changes')}><span className="panel-tab-label">Changes</span></button>
       <button role="tab" aria-selected={panel === 'activity'} disabled={!session} onClick={() => setPanel('activity')}><span className="panel-tab-label">Activity</span></button></div>
       {panel === 'knowledge' && <KnowledgePanel project={state.project} version={knowledgeVersion} busy={busy} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />}
-      {panel === 'changes' && session && <ChangesPanel session={session} />}
+      {panel === 'changes' && session && <ChangesPanel session={session} fileEvents={liveEvents.filter(e => e.sessionId === session.id && e.kind === 'file').length} />}
       {panel === 'activity' && session && <ActivityPanel session={session} live={liveEvents} />}
       {(panel === 'context' || (!session && (panel === 'changes' || panel === 'activity'))) && <div className="panel-content context-content"><div className="section-heading"><div><span className="eyebrow">WHAT THE AGENT RECEIVES</span><h2>Context receipt</h2></div></div><p className="muted panel-intro">{receipt?.launchPrompt !== undefined ? 'Exact launch text, including reviewed knowledge and the initial task.' : 'Reviewed knowledge selected for this task.'} Native instructions and conversation history remain separate.</p>
         {receipt ? <><div className="receipt-meta"><span>{receipt.items.length} claims</span><span>≈{receipt.estimatedTokens} knowledge tokens</span><span className="receipt-state">{receipt.state}</span></div><pre className="context-packet" data-testid="context-packet" dir="auto">{(receipt.launchPrompt ?? receipt.packet) || 'No Journal text supplied at launch.'}</pre>{receipt.excluded.length > 0 && <details><summary>{receipt.excluded.length} matching claims excluded</summary>{receipt.excluded.map(x => <p key={x.id + x.reason} className="muted">{x.id.slice(0, 8)} · {x.reason}</p>)}</details>}<p className="receipt-note">{receipt.state === 'prepared' ? 'Preview only. Sources are checked again when you start.' : receipt.state === 'submitted' ? 'Submitted means the CLI process started with this text. It does not prove the model read or used it.' : receipt.state === 'failed' ? 'Launch failed. Delivery to the native CLI was not confirmed.' : 'Delivery is uncertain after interruption. No input will be replayed automatically.'}</p><small className="receipt-id">{receipt.id}</small></> : <div className="knowledge-empty"><h3>Inspect before you start.</h3><p>Enter an initial task and preview its context.</p></div>}

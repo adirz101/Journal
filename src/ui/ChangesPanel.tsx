@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type Changes, type Session } from './types';
 
-export function ChangesPanel({ session }: { session: Session }) {
+// fileEvents: count of observed file edits; a change refreshes the list.
+export function ChangesPanel({ session, fileEvents = 0 }: { session: Session; fileEvents?: number }) {
   const [changes, setChanges] = useState<Changes | null>(null); const [error, setError] = useState(''); const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState<string | null>(null); const [diff, setDiff] = useState<{ path: string; text: string; hidden: boolean; truncated?: boolean } | null>(null);
   const refresh = useCallback(async () => {
@@ -9,6 +10,7 @@ export function ChangesPanel({ session }: { session: Session }) {
     try { setChanges(await api<Changes>('sessionChanges', { id: session.id })); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setLoading(false); }
   }, [session.id]);
   useEffect(() => { setChanges(null); setOpen(null); setDiff(null); void refresh(); }, [refresh]);
+  useEffect(() => { if (!fileEvents) return; const timer = setTimeout(() => void refresh(), 500); return () => clearTimeout(timer); }, [fileEvents, refresh]);
   async function toggle(path: string) {
     if (open === path) { setOpen(null); setDiff(null); return; }
     setOpen(path); setDiff(null);
