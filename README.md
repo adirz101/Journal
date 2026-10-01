@@ -17,7 +17,7 @@ npm run dev
 
 For the production renderer, run `npm run build` followed by `npm start`. If node-pty has been rebuilt for system Node, restore Electron compatibility with `npm run rebuild`.
 
-On macOS, `npm run dev` and `npm start` use a cached local `Journal.app` runtime so the Dock and application menu display Journal. The installed Electron dependency stays unchanged. Existing data remains in the `journal-desktop` user-data directory; `JOURNAL_DATA_DIR` still overrides it. This is a local development runtime, not a packaged or signed release.
+On macOS, `npm run dev` and `npm start` use a cached local `Journal.app` runtime so the Dock and application menu display Journal. The local bundle also opens this checkout directly when launched without CLI arguments, instead of Electron's welcome page. The installed Electron dependency stays unchanged. Existing data remains in the `journal-desktop` user-data directory; `JOURNAL_DATA_DIR` still overrides it. This runtime depends on this checkout and is not a distributable or signed release.
 
 1. Open an existing Git checkout.
 2. Click **Add project brief** to describe what the repo is, its structure and stable constraints once. Use checkout scope for the repo overview and branch scope for current progress/next steps. Attach an explicit source note or 1–30 lines from a tracked file, review and **Approve**. Current briefs orient every session, including empty tasks.
@@ -28,6 +28,8 @@ On macOS, `npm run dev` and `npm start` use a cached local `Journal.app` runtime
 Keyboard: Cmd/Ctrl+O opens a project, Cmd/Ctrl+N focuses the task, Cmd/Ctrl+Shift+K adds knowledge. Ctrl+C in the terminal or **Interrupt** reaches the native process.
 
 Appearance: use **Light mode** / **Dark mode** at the bottom of the sidebar. Both share the royal blue accent; light mode uses the dark logo. Your choice is saved locally and changes terminal colors without restarting the active session.
+
+Layout: drag the inner edge of either sidebar to resize it. Focus a divider and use Left/Right arrows (Shift for larger steps), Home/End for the allowed limits, or Enter to reset. Double-click also resets the width. Widths are saved locally; narrow windows keep space for the terminal without overwriting your larger-window preference.
 
 Knowledge, source excerpts, initial tasks, session metadata and context receipts persist in Electron's user-data directory. `JOURNAL_DATA_DIR` selects a different directory. Terminal output and keystrokes are volatile. Window reload reconnects; quitting stops the terminal, and reopening offers explicit native resume.
 
@@ -43,7 +45,7 @@ npm run test:desktop
 npm run smoke:agents
 ```
 
-Verified locally on macOS: 48 core tests, typecheck, production build and four desktop scenarios. Real Electron/node-pty fixtures cover knowledge handoff, exact resume, separate resume-ID drafts, output flood, reload/replay suppression, running-child interrupt/stop/app exit and empty-task repo overview/current-branch delivery. Appearance switching also retains the live terminal, session and receipt, with the selected theme surviving renderer and app restarts. The local Journal runtime is checked for its macOS identity, explicit user-data path and renderer loading.
+Verified locally on macOS: 48 core tests, typecheck, production build and five desktop scenarios. Real Electron/node-pty fixtures cover knowledge handoff, exact resume, separate resume-ID drafts, output flood, reload/replay suppression, running-child interrupt/stop/app exit and empty-task repo overview/current-branch delivery. Appearance switching and panel resizing retain the live terminal, session and receipt. Theme and sidebar widths persist, with pointer/keyboard resizing, reset and narrow-window bounds checked locally. The local Journal runtime is checked for its macOS identity, explicit user-data path and renderer loading.
 
 The [local native trial](docs/NATIVE-VALIDATION.md) completed authenticated Codex/Claude tasks, reviewed knowledge handoff, exact native resume, Claude manual refusal/approval and Codex inference interruption. The [follow-up](docs/LIFECYCLE-AND-MEMORY-VALIDATION.md) stopped a running native background command with CLI exit and observed fresh Codex UUID-hint capture. Codex used the user-selected `gpt-5.6-luna` for trials only. Interactive Codex approval, broader process/crash cases and native Windows remain unverified. No packaged or signed release.
 

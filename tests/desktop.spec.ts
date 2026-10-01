@@ -58,7 +58,7 @@ process.stdin.on('data',data=>{
     await page.locator('.xterm-helper-textarea').pressSequentially('device-query');
     await page.locator('.xterm-helper-textarea').press('Enter');
     await expect(page.locator('.terminal-surface')).toContainText('DEVICE_RESPONSE');
-    // Theme changes must retain the live terminal, native session and receipt.
+    // Appearance and panel resizing must retain the live terminal, native session and receipt.
     const terminalElement = await page.locator('.xterm').elementHandle();
     const beforeTheme = await page.evaluate(async () => (await (window as any).journal.request('bootstrap')).activeSession);
     await page.getByRole('button', { name: 'Switch to light mode', exact: true }).focus();
@@ -67,6 +67,8 @@ process.stdin.on('data',data=>{
     await expect.poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe('light');
     await expect(page.locator('.brand-icon')).toHaveAttribute('src', /\/journal-mark-(?!white-)[^.]+\.png$/);
     await expect(page.locator('.xterm-scrollable-element')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    await page.getByRole('separator', { name: 'Resize project sidebar', exact: true }).press('ArrowRight');
+    await page.getByRole('separator', { name: 'Resize knowledge sidebar', exact: true }).press('ArrowLeft');
     expect(await terminalElement!.evaluate(element => element.isConnected)).toBe(true);
     expect(await page.evaluate(async () => (await (window as any).journal.request('bootstrap')).activeSession)).toEqual(beforeTheme);
     await page.locator('.xterm-helper-textarea').pressSequentially('after-theme');

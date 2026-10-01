@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { TerminalPane } from './TerminalPane';
 import { KnowledgeForm } from './KnowledgeForm';
+import { ResizableWorkspace } from './ResizableWorkspace';
 import journalMarkWhite from '../../assets/branding/journal-mark-white.png';
 import journalMarkDark from '../../assets/branding/journal-mark.png';
 import journalWordmark from '../../assets/branding/journal-wordmark.png';
@@ -81,12 +82,12 @@ export default function App() {
   const candidates = state?.memories.filter(m => m.status === 'candidate').length ?? 0;
   const available = (provider: Provider) => bootstrap?.agents.some(a => a.provider === provider && a.available);
 
-  return <div className="app-shell">
-    <aside className="sidebar">
+  return <ResizableWorkspace hasKnowledge={!!state}>
+    <aside className="sidebar" id="project-sidebar">
       <div className="brand"><img className="brand-icon" src={journalMark} alt="" width={32} height={32} /><div>Journal<small>PROJECT MEMORY</small></div><span className="local-tag">LOCAL</span></div>
       <button className="open-project" onClick={() => void openProject()} disabled={busy}><span>＋</span> Open project <kbd>{bootstrap?.platform === 'darwin' ? '⌘' : 'Ctrl'} O</kbd></button>
       <div className="nav-caption">PROJECTS <span>{projects.length}</span></div>
-      <nav aria-label="Projects">{projects.map(project => <button key={project.id} className={`project-link ${state?.project.id === project.id ? 'selected' : ''}`} onClick={() => void chooseProject(project)}><span className="folder-mark">◇</span><span>{project.name}</span></button>)}</nav>
+      <nav aria-label="Projects">{projects.map(project => <button key={project.id} className={`project-link ${state?.project.id === project.id ? 'selected' : ''}`} onClick={() => void chooseProject(project)}><svg className="folder-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 11h18" /></svg><span>{project.name}</span></button>)}</nav>
       {state && <><div className="nav-caption sessions-caption">SESSIONS <span>{state.sessions.length}</span></div><nav aria-label="Sessions" className="session-nav">{state.sessions.map(next => <div key={next.id} className={`session-row ${next.id === session?.id ? 'selected' : ''}`}>
         <button className="session-select" onClick={() => void selectSession(next)}><span className={`status-dot ${next.status}`} /><span><strong>{next.provider === 'claude' ? 'Claude Code' : 'Codex'}</strong><small>{next.title}</small></span><span className="session-status">{next.status}</span></button>
         {!isLive(next) && next.nativeIdConfirmed && <button className="resume-button" disabled={!!active || busy} onClick={() => void start(next.provider, next.id)}>Resume</button>}
@@ -111,7 +112,7 @@ export default function App() {
         </>}
     </main>
 
-    {state && <aside className="knowledge-panel"><div className="panel-tabs" role="tablist" aria-label="Project information"><button role="tab" aria-selected={panel === 'knowledge'} onClick={() => setPanel('knowledge')}>Knowledge <span>{state.memories.filter(m => m.status === 'active').length}</span></button><button role="tab" aria-selected={panel === 'context'} onClick={() => setPanel('context')}>Context</button></div>
+    {state && <aside className="knowledge-panel" id="knowledge-sidebar"><div className="panel-tabs" role="tablist" aria-label="Project information"><button role="tab" aria-selected={panel === 'knowledge'} onClick={() => setPanel('knowledge')}><span className="panel-tab-label">Knowledge <span className="panel-tab-count">{state.memories.filter(m => m.status === 'active').length}</span></span></button><button role="tab" aria-selected={panel === 'context'} onClick={() => setPanel('context')}><span className="panel-tab-label">Context</span></button></div>
       {panel === 'knowledge' ? <div className="panel-content"><div className="section-heading"><div><span className="eyebrow">A SHARED FOUNDATION</span><h2>Project knowledge</h2></div><button className="icon-button" aria-label="Add knowledge" onClick={() => setForm({})}>＋</button></div><p className="muted panel-intro">A repo overview and current branch update orient every session. Relevant decisions and lessons add task context.</p><button onClick={() => setForm({ initialCategory: 'brief' })}>Add project brief</button>
         <input className="knowledge-search" aria-label="Search knowledge" placeholder="Search knowledge…" value={search} onChange={e => setSearch(e.target.value)} />
         <div className="filter-tabs"><button aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>Current</button><button aria-pressed={filter === 'review'} onClick={() => setFilter('review')}>Needs review <span>{candidates}</span></button><button aria-pressed={filter === 'active'} onClick={() => setFilter('active')}>Approved</button><button aria-pressed={filter === 'history'} onClick={() => setFilter('history')}>History</button></div>
@@ -127,5 +128,5 @@ export default function App() {
       </div>}
     </aside>}
     {state && form && <KnowledgeForm project={state.project} memory={form.memory} initialCategory={form.initialCategory} onClose={() => setForm(null)} onSaved={() => { setForm(null); setPanel('knowledge'); void refresh().catch(failed); }} />}
-  </div>;
+  </ResizableWorkspace>;
 }
