@@ -13,7 +13,7 @@ test('a Git-drafted branch update is saved only after review and approved before
   };
   git('init', '-b', 'main'); commit('README.md', 'Fixture ledger for refunds');
   git('switch', '-c', 'feature/refunds'); commit('model.txt', 'REFUND_MODEL_DONE');
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), JOURNAL_DATA_DIR: resolve(root, 'data') }; delete env.ELECTRON_RUN_AS_NODE;
+  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' }; delete env.ELECTRON_RUN_AS_NODE;
   const app = await electron.launch({ args: ['.'], env });
   try {
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);

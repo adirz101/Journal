@@ -1,7 +1,24 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { buildAgentLaunch, captureCodexId, CODEX_RESUME_MARKER, UUID } from './agents.mjs';
-import { text } from './validation.mjs';
+import { descendants, processIdentity, processTable, sameIdentity, signalVerified, survivors } from './process.mjs';
+import { redact, text } from './validation.mjs';
+
+export const MAX_SESSIONS = 4;
+export const LIVE_STATES = ['starting', 'running', 'waiting', 'stopping'];
+const isLive = status => LIVE_STATES.includes(status);
+const TEST_COMMAND = /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|node\s+--test|npx\s+(?:jest|vitest|playwright\s+test|mocha)|pytest|jest|vitest|go\s+test|cargo\s+test|playwright\s+test|mocha|rspec|dotnet\s+test|gradle\w*\s+test|mvn\s+test)\b/;
+// Resolve the nearest existing ancestor so deleted or not-yet-created files
+// still compare correctly against the canonical checkout root.
+function canonical(path) {
+  const rest = [];
+  for (let current = path; ; current = dirname(current)) {
+    try { return join(realpathSync(current), ...rest.reverse()); } catch { if (dirname(current) === current) return path; rest.push(basename(current)); }
+  }
+}
+export const isTestCommand = command => TEST_COMMAND.test(command ?? '');
 
 export class OutputBuffer {
   constructor(limit = 256 * 1024) { this.limit = limit; this.bytes = 0; this.chunks = []; this.sequence = 0; }
@@ -28,16 +45,25 @@ export class OutputBuffer {
   }
 }
 
+// Owns up to four native terminals. Every operation names a session ID, and
+// only entries this manager spawned (and that have not exited) accept input or
+// signals. Output stays in bounded memory; nothing raw is persisted.
 export class TerminalManager extends EventEmitter {
-  constructor({ store, spawn, makeSettings = () => null }) {
-    super(); this.store = store; this.spawn = spawn; this.makeSettings = makeSettings;
-    this.active = null; this.last = null; this.flushPending = false; this.starting = false; this.disposed = false;
+  constructor({ store, spawn, makeSettings = () => null, runtimeId = randomUUID(), platform = process.platform,
+    identify = processIdentity, table = processTable, verifiedSignal = signalVerified, stopGraceMs = 3000, trackMs = 5000 }) {
+    super(); this.store = store; this.spawn = spawn; this.makeSettings = makeSettings; this.runtimeId = runtimeId; this.platform = platform;
+    this.identify = identify; this.table = table; this.verifiedSignal = verifiedSignal; this.stopGraceMs = stopGraceMs;
+    this.entries = new Map(); this.pending = 0; this.flushPending = false; this.disposed = false;
+    this.tracker = trackMs ? setInterval(() => this.trackDescendants(), trackMs) : null; this.tracker?.unref?.();
   }
+  entry(id) { return this.entries.get(id) ?? null; }
+  liveEntries() { return [...this.entries.values()].filter(entry => !entry.exited); }
+  list() { return [...this.entries.values()].map(entry => ({ ...entry.session })); }
   async start(request) {
-    if (this.active || this.starting) throw new Error('Stop the active terminal before starting another session');
     if (this.disposed) throw new Error('Journal is shutting down');
-    this.starting = true;
-    try { return await this.launch(request); } finally { this.starting = false; }
+    if (this.liveEntries().length + this.pending >= MAX_SESSIONS) throw new Error(`Journal runs up to ${MAX_SESSIONS} sessions at once. Stop one before starting another.`);
+    this.pending++;
+    try { return await this.launch(request); } finally { this.pending--; }
   }
   async launch({ projectId, provider, task = '', resumeId }) {
     const project = await this.store.project(projectId);
@@ -47,13 +73,17 @@ export class TerminalManager extends EventEmitter {
       prior = await this.store.getSession(resumeId);
       if (prior.projectId !== projectId || prior.provider !== provider) throw new Error('Session belongs to another project or provider');
       if (!prior.nativeIdConfirmed || !UUID.test(prior.nativeId ?? '')) throw new Error('Confirm the exact native session ID before resuming');
+      if (this.liveEntries().some(entry => entry.session.provider === provider && entry.session.nativeId === prior.nativeId)) throw new Error('This native conversation is already open in another session');
     }
     // Always reselect and revalidate here; a stale preview never authorizes delivery.
     const oldReceipt = prior ? await this.store.latestNativeReceipt(projectId, provider, prior.nativeId) : null;
     const receipt = await this.store.prepareContext(projectId, task || oldReceipt?.query || '');
+    const baseline = await this.store.checkoutBaseline?.(projectId) ?? null;
+    const now = new Date().toISOString();
     const session = { id: randomUUID(), projectId, provider, nativeId: prior?.nativeId ?? (provider === 'claude' ? randomUUID() : null),
       nativeIdConfirmed: provider === 'claude' || !!prior, title: task.slice(0, 80) || (prior ? 'Resume session' : 'Interactive session'),
-      status: 'starting', receiptId: receipt.id, resumedFrom: prior?.id ?? null, createdAt: new Date().toISOString() };
+      status: 'starting', receiptId: receipt.id, resumedFrom: prior?.id ?? null, createdAt: now, lastActivityAt: now,
+      branch: project.branch, head: project.head, cwd: project.root, baseline, runtimeId: this.runtimeId, activity: null, archived: false };
     let prompt = task;
     if (receipt.packet || (prior && (oldReceipt?.hadKnowledge || oldReceipt?.items.length))) {
       const withdrawn = oldReceipt?.items.filter(item => !receipt.items.some(current => current.revisionId === item.revisionId)) ?? [];
@@ -61,6 +91,8 @@ export class TerminalManager extends EventEmitter {
       prompt = `${update}${receipt.packet}${task ? `\nTask:\n${task}` : ''}`;
     }
     await this.store.saveSession(session);
+    this.record(session.id, prior ? 'resume' : 'start', { provider, resumedFrom: prior?.id ?? null, branch: project.branch, head: project.head });
+    let entry = null;
     try {
       if (this.disposed) throw new Error('Journal is shutting down');
       const settingsFile = provider === 'claude' ? this.makeSettings(session, project) : null;
@@ -68,45 +100,63 @@ export class TerminalManager extends EventEmitter {
       const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', JOURNAL_SESSION_ID: session.id };
       delete env.ELECTRON_RUN_AS_NODE;
       const proc = this.spawn(launch.executable, launch.argv, { cwd: project.root, env, name: 'xterm-256color', cols: 100, rows: 30 });
-      const buffer = new OutputBuffer();
-      session.status = 'running';
-      const active = { session, proc, buffer, attached: false, sent: 0, acknowledged: 0, inflight: [], tail: '' };
-      this.active = active; this.last = active;
-      proc.onData(data => {
-        if (this.disposed) return;
-        buffer.append(data); active.tail = (active.tail + data).slice(-8192);
-        if (provider === 'codex' && !session.nativeIdConfirmed) {
-          const captured = captureCodexId(active.tail);
-          // A newly printed incomplete/invalid banner revokes an earlier hint.
-          // Do not clear hints merely because unrelated output evicted the banner.
-          if (active.tail.includes(CODEX_RESUME_MARKER) && session.nativeId !== captured) {
-            session.nativeId = captured;
-            this.persistSession(session); this.emit('event', { type: 'status', session: { ...session } });
-          }
-        }
-        this.scheduleFlush();
-      });
-      proc.onExit(({ exitCode, signal }) => {
-        if (this.disposed) return;
-        session.status = 'exited'; session.exitCode = exitCode; session.signal = signal; session.endedAt = new Date().toISOString();
-        this.persistSession(session); if (this.active === active) this.active = null;
-        this.emit('event', { type: 'status', session: { ...session } }); this.scheduleFlush();
-      });
+      entry = { session, proc, buffer: new OutputBuffer(), attached: false, sent: 0, acknowledged: 0, inflight: [], tail: '', exited: false,
+        stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), lastPersist: 0 };
+      this.entries.set(session.id, entry);
+      session.status = 'running'; session.pid = Number.isInteger(proc.pid) ? proc.pid : null;
+      session.identity = session.pid ? this.identify(session.pid) : null;
+      proc.onData(data => this.output(entry, data));
+      proc.onExit(({ exitCode, signal }) => this.exited(entry, exitCode, signal));
       await this.store.saveSession(session);
       await this.store.updateReceiptState(receipt.id, 'submitted', session.id, prompt);
-      this.emit('event', { type: 'status', session: { ...session } });
-      return { session, receipt: await this.store.getReceipt(receipt.id) };
+      this.record(session.id, 'context', { receiptId: receipt.id, claims: receipt.items.length, state: 'submitted' });
+      this.emitStatus(session);
+      return { session: { ...session }, receipt: await this.store.getReceipt(receipt.id) };
     } catch (error) {
-      if (this.active?.session.id === session.id) { try { this.active.proc.kill(); } catch {} this.active = null; }
-      session.status = 'failed'; await this.store.saveSession(session);
+      if (entry && !entry.exited) { try { entry.proc.kill(); } catch {} }
+      this.entries.delete(session.id);
+      session.status = 'failed'; session.endedAt = new Date().toISOString(); await this.store.saveSession(session);
       const current = await this.store.getReceipt(receipt.id);
       await this.store.updateReceiptState(receipt.id, current.state === 'prepared' ? 'failed' : 'uncertain', session.id, prompt);
+      this.record(session.id, 'error', { message: redact(error.message, 300) });
+      this.emitStatus(session);
       throw new Error(`Could not start ${provider}. Check that its CLI is installed and available on PATH. ${error.message}`);
     }
   }
+  output(entry, data) {
+    if (this.disposed) return;
+    const { session } = entry;
+    entry.buffer.append(data); entry.tail = (entry.tail + data).slice(-8192);
+    session.lastActivityAt = new Date().toISOString();
+    if (session.provider === 'codex' && !session.nativeIdConfirmed) {
+      const captured = captureCodexId(entry.tail);
+      // A newly printed incomplete/invalid banner revokes an earlier hint.
+      // Do not clear hints merely because unrelated output evicted the banner.
+      if (entry.tail.includes(CODEX_RESUME_MARKER) && session.nativeId !== captured) {
+        session.nativeId = captured; this.persist(session, true); this.emitStatus(session);
+      }
+    }
+    // Activity timestamps are metadata; persist them at most every five seconds.
+    if (Date.now() - entry.lastPersist > 5000) this.persist(session);
+    this.scheduleFlush();
+  }
+  exited(entry, exitCode, signal) {
+    if (this.disposed || entry.exited) return;
+    entry.exited = true; clearTimeout(entry.forceTimer); for (const resolve of entry.waiters.splice(0)) resolve();
+    const { session } = entry;
+    session.status = entry.stopping ? 'stopped' : 'exited'; session.exitCode = exitCode; session.signal = signal ?? null;
+    session.endedAt = new Date().toISOString(); session.activity = null;
+    const recorded = [...entry.descendants.values()];
+    const remaining = recorded.length ? survivors(recorded, this.table()) : [];
+    session.survivors = remaining === null ? null : remaining.map(row => ({ pid: row.pid, started: row.started, commandHash: row.commandHash, command: redact(row.command, 120) }));
+    this.persist(session, true);
+    this.record(session.id, entry.stopping ? 'stop' : 'exit', { exitCode, signal: signal ?? null, survivors: session.survivors?.length ?? null });
+    this.emitStatus(session); this.scheduleFlush();
+  }
   owned(id) {
-    if (!this.active || this.active.session.id !== id) throw new Error('Terminal is not active or owned by this session');
-    return this.active;
+    const entry = this.entries.get(id);
+    if (!entry || entry.exited) throw new Error('Terminal is not active or owned by this session');
+    return entry;
   }
   write(id, data) {
     if (typeof data !== 'string' || Buffer.byteLength(data) > 64 * 1024) throw new Error('Terminal input is too large');
@@ -114,70 +164,205 @@ export class TerminalManager extends EventEmitter {
   }
   resize(id, cols, rows) {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 2 || cols > 500 || rows > 300) throw new Error('Invalid terminal size');
-    this.owned(id).proc.resize(cols, rows);
+    const entry = this.owned(id); entry.proc.resize(cols, rows); entry.session.terminal = { cols, rows };
   }
-  interrupt(id) { this.owned(id).proc.write('\x03'); }
-  stop(id) { this.owned(id).proc.kill(); }
+  interrupt(id) { this.owned(id).proc.write('\x03'); this.record(id, 'interrupt', {}); }
+  // Graceful first: SIGTERM to the PTY's process group (or ConPTY close on
+  // Windows), then a forced kill only if it is still running after the grace
+  // period. Signals stop once the exit callback fires, so a reused PID is
+  // never targeted through this path.
+  stop(id) {
+    const entry = this.owned(id); if (entry.stopping) return { ...entry.session };
+    this.trackDescendants(entry);
+    entry.stopping = true; entry.session.status = 'stopping'; this.emitStatus(entry.session); this.persist(entry.session, true);
+    const { pid } = entry.proc;
+    const signal = name => {
+      if (entry.exited) return;
+      try {
+        if (this.platform !== 'win32' && Number.isInteger(pid)) process.kill(-pid, name);
+        else if (name === 'SIGKILL' && Number.isInteger(pid)) this.verifiedSignal(pid, entry.session.identity, 'SIGKILL', this.platform);
+        else entry.proc.kill();
+      } catch { try { entry.proc.kill(name); } catch { /* already gone */ } }
+    };
+    signal('SIGTERM');
+    entry.forceTimer = setTimeout(() => signal('SIGKILL'), this.stopGraceMs); entry.forceTimer.unref?.();
+    return { ...entry.session };
+  }
+  // Explicit user action after a stop reported surviving descendants.
+  async terminateSurvivors(id) {
+    const session = this.entries.get(id)?.session ?? await this.store.getSession(id);
+    const results = [];
+    for (const row of session.survivors ?? []) results.push({ pid: row.pid, ...this.verifiedSignal(row.pid, { started: row.started, commandHash: row.commandHash }, 'SIGTERM', this.platform) });
+    session.survivors = []; this.persist(session, true); this.record(id, 'cleanup', { results: results.map(r => ({ pid: r.pid, signalled: r.signalled })) });
+    this.emitStatus(session);
+    return results;
+  }
+  trackDescendants(only) {
+    const targets = only ? [only] : this.liveEntries();
+    if (!targets.length || this.platform === 'win32') return;
+    const table = this.table(); if (!table) return;
+    for (const entry of targets) {
+      if (entry.exited || !Number.isInteger(entry.proc.pid)) continue;
+      for (const row of descendants(table, entry.proc.pid) ?? []) {
+        if (entry.descendants.size >= 200) break;
+        entry.descendants.set(`${row.pid}:${row.started}`, row);
+      }
+    }
+  }
   async confirmNativeId(id, nativeId) {
     if (!UUID.test(nativeId ?? '')) throw new Error('Enter the exact native session ID (UUID)');
     const session = await this.store.getSession(id);
-    if (['starting', 'running', 'waiting'].includes(session.status)) throw new Error('Stop this session before confirming its resume ID');
+    if (isLive(session.status)) throw new Error('Stop this session before confirming its resume ID');
     session.nativeId = nativeId; session.nativeIdConfirmed = true;
-    await this.store.saveSession(session); return session;
+    await this.store.saveSession(session); this.emitStatus(session); return session;
   }
-  observe(id, nativeId, status) {
-    if (!this.active || this.active.session.id !== id || !UUID.test(nativeId)) return;
-    const session = this.active.session;
+  observe(id, nativeId, status, activity) {
+    const entry = this.entries.get(id);
+    if (!entry || entry.exited || !UUID.test(nativeId ?? '')) return;
+    const { session } = entry;
     // Child sessions and native /clear can report another ID. Never graft it
     // onto a confirmed parent or silently restore confidence on a later hook.
-    if (nativeId !== session.nativeId && !this.active.identityAmbiguous) {
-      this.active.identityAmbiguous = true;
-      this.emit('event', { type: 'error', message: 'Native session identity changed. Stop the terminal and confirm its exact resume ID before resuming.' });
+    if (nativeId !== session.nativeId && !entry.identityAmbiguous) {
+      entry.identityAmbiguous = true;
+      this.emit('event', { type: 'error', sessionId: id, message: 'Native session identity changed. Stop the terminal and confirm its exact resume ID before resuming.' });
     }
-    session.nativeIdConfirmed = !this.active.identityAmbiguous; session.status = status;
-    this.persistSession(session); this.emit('event', { type: 'status', session: { ...session } });
+    session.nativeIdConfirmed = !entry.identityAmbiguous;
+    if (!entry.stopping && status) session.status = status;
+    if (activity !== undefined) session.activity = activity;
+    this.persist(session, true); this.emitStatus(session);
+  }
+  // Claude hook observations: lifecycle, Bash commands with exit status when
+  // the CLI reports it, and file edits. Command text is redacted and bounded;
+  // no tool output or prompt text is kept.
+  ingest(id, event) {
+    const entry = this.entries.get(id); if (!entry || entry.exited) return;
+    const { session } = entry;
+    session.lastActivityAt = new Date().toISOString();
+    switch (event.event) {
+      case 'SessionStart': this.observe(id, event.nativeId, 'running', 'idle'); break;
+      case 'UserPromptSubmit': this.observe(id, event.nativeId, 'running', 'working'); this.record(id, 'prompt', {}); break;
+      case 'PermissionRequest': this.observe(id, event.nativeId, 'waiting', 'permission'); this.record(id, 'permission', { tool: event.tool ?? null }); break;
+      case 'Stop': this.observe(id, event.nativeId, 'running', 'idle'); this.record(id, 'turn-end', {}); break;
+      case 'PreToolUse':
+        if (session.status === 'waiting') this.observe(id, event.nativeId, 'running', 'working');
+        if (event.tool === 'Bash' && event.toolUseId && entry.commands.size < 500) {
+          const command = redact(event.command ?? '', 300);
+          entry.commands.set(event.toolUseId, true);
+          this.record(id, 'command-start', { toolUseId: event.toolUseId, command, test: isTestCommand(command) });
+        }
+        break;
+      case 'PostToolUse': case 'PostToolUseFailure': {
+        if (event.tool === 'Bash' && entry.commands.delete(event.toolUseId)) {
+          // Exit 0 only when Claude reported completion of a foreground command.
+          const status = event.interrupted ? 'interrupted' : event.background ? 'unknown' : event.event === 'PostToolUse' ? 'succeeded' : Number.isInteger(event.exit) ? 'failed' : 'unknown';
+          this.record(id, 'command-end', { toolUseId: event.toolUseId, status, exitCode: status === 'succeeded' ? 0 : Number.isInteger(event.exit) ? event.exit : null, durationMs: Number.isFinite(event.durationMs) ? event.durationMs : null });
+        } else if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(event.tool) && event.filePath && event.event === 'PostToolUse') {
+          let absolute = isAbsolute(event.filePath) ? event.filePath : join(session.cwd, event.filePath);
+          // Compare canonical paths (for example /var vs /private/var on macOS).
+          absolute = canonical(absolute);
+          const path = relative(session.cwd, absolute);
+          if (path && !path.startsWith(`..${sep}`) && path !== '..') this.record(id, 'file', { path: path.split(sep).join('/').slice(0, 300), tool: event.tool });
+        }
+        break;
+      }
+      default: break;
+    }
+  }
+  record(sessionId, kind, body) {
+    const event = { sessionId, kind, at: new Date().toISOString(), body };
+    try { Promise.resolve(this.store.appendEvent?.(sessionId, kind, body)).catch(() => {}); } catch { /* timeline is best effort */ }
+    if (!this.disposed) this.emit('event', { type: 'timeline', event });
   }
   attach(id) {
-    const active = this.active?.session.id === id ? this.active : this.last?.session.id === id ? this.last : null;
-    if (!active) return { chunks: [], gap: true, lastSequence: 0 };
-    const snapshot = active.buffer.since(0);
-    active.attached = true; active.sent = snapshot.lastSequence; active.acknowledged = snapshot.lastSequence; active.inflight = [];
+    const entry = this.entries.get(id);
+    if (!entry) return { chunks: [], gap: true, lastSequence: 0 };
+    const snapshot = entry.buffer.since(0);
+    entry.attached = true; entry.sent = snapshot.lastSequence; entry.acknowledged = snapshot.lastSequence; entry.inflight = [];
     return snapshot;
   }
-  detach() { if (this.last) this.last.attached = false; }
+  detach(id) { for (const entry of this.entries.values()) if (!id || entry.session.id === id) entry.attached = false; }
   acknowledge(id, sequence) {
-    const active = this.last;
-    if (!active || active.session.id !== id || !Number.isInteger(sequence) || sequence <= active.acknowledged || sequence > active.sent) return;
-    active.acknowledged = sequence; active.inflight = active.inflight.filter(item => item.sequence > sequence); this.scheduleFlush();
+    const entry = this.entries.get(id);
+    if (!entry || !Number.isInteger(sequence) || sequence <= entry.acknowledged || sequence > entry.sent) return;
+    entry.acknowledged = sequence; entry.inflight = entry.inflight.filter(item => item.sequence > sequence); this.scheduleFlush();
   }
   scheduleFlush() {
     if (this.flushPending) return; this.flushPending = true;
     setImmediate(() => { this.flushPending = false; this.flush(); });
   }
   flush() {
-    const active = this.last; if (!active?.attached) return;
-    let inflightBytes = active.inflight.reduce((sum, item) => sum + item.bytes, 0);
-    if (inflightBytes >= 64 * 1024) return;
-    const snapshot = active.buffer.since(active.sent);
-    if (snapshot.gap) this.emit('event', { type: 'gap', sessionId: active.session.id });
-    for (const chunk of snapshot.chunks) {
-      if (inflightBytes + chunk.bytes > 64 * 1024) break;
-      active.sent = chunk.sequence; active.inflight.push({ sequence: chunk.sequence, bytes: chunk.bytes }); inflightBytes += chunk.bytes;
-      this.emit('event', { type: 'output', sessionId: active.session.id, sequence: chunk.sequence, data: chunk.data });
+    // Per-session display credit: a flooding session cannot starve another.
+    for (const entry of this.entries.values()) {
+      if (!entry.attached) continue;
+      let inflightBytes = entry.inflight.reduce((sum, item) => sum + item.bytes, 0);
+      if (inflightBytes >= 64 * 1024) continue;
+      const snapshot = entry.buffer.since(entry.sent);
+      if (snapshot.gap) this.emit('event', { type: 'gap', sessionId: entry.session.id });
+      for (const chunk of snapshot.chunks) {
+        if (inflightBytes + chunk.bytes > 64 * 1024) break;
+        entry.sent = chunk.sequence; entry.inflight.push({ sequence: chunk.sequence, bytes: chunk.bytes }); inflightBytes += chunk.bytes;
+        this.emit('event', { type: 'output', sessionId: entry.session.id, sequence: chunk.sequence, data: chunk.data });
+      }
     }
   }
-  persistSession(session) {
+  // Exited entries keep their bounded output for review until closed.
+  release(id) {
+    const entry = this.entries.get(id);
+    if (entry && !entry.exited) throw new Error('Stop the session before closing it');
+    this.entries.delete(id);
+  }
+  emitStatus(session) { if (!this.disposed) this.emit('event', { type: 'status', session: { ...session } }); }
+  persist(session, force = false) {
+    const entry = this.entries.get(session.id); if (entry) entry.lastPersist = Date.now();
+    void force;
     try { Promise.resolve(this.store.saveSession({ ...session })).catch(error => { if (!this.disposed) this.emit('event', { type: 'error', message: `Session persistence failed: ${error.message}` }); }); }
     catch (error) { if (!this.disposed) this.emit('event', { type: 'error', message: `Session persistence failed: ${error.message}` }); }
   }
-  async dispose() {
-    if (this.disposed) return; this.disposed = true; this.detach();
-    const active = this.active; this.active = null;
-    if (!active) return;
-    try {
-      await this.store.saveSession({ ...active.session, status: 'interrupted', endedAt: new Date().toISOString() });
-      const receipt = await this.store.getReceipt(active.session.receiptId);
-      if (['prepared', 'submitted'].includes(receipt.state)) await this.store.updateReceiptState(receipt.id, 'uncertain', active.session.id);
-    } finally { try { active.proc.kill(); } catch {} }
+  // Called once when a runtime starts: sessions owned by a runtime that is no
+  // longer running are interrupted, or orphaned when their verified process
+  // is still alive. Prompts are never resent; delivery becomes uncertain.
+  async recover() {
+    const recovered = [];
+    for (const session of await this.store.liveSessions()) {
+      if (session.runtimeId === this.runtimeId) continue;
+      const alive = session.pid && session.identity && sameIdentity(this.identify(session.pid), session.identity);
+      const next = { ...session, status: alive ? 'orphaned' : 'interrupted', activity: null, endedAt: alive ? null : new Date().toISOString(), recoveredAt: new Date().toISOString() };
+      await this.store.saveSession(next);
+      const receipt = await Promise.resolve().then(() => this.store.getReceipt(session.receiptId)).catch(() => null);
+      if (receipt && ['prepared', 'submitted'].includes(receipt.state)) await this.store.updateReceiptState(receipt.id, 'uncertain', session.id);
+      this.record(session.id, 'recovered', { status: next.status, previousStatus: session.status });
+      recovered.push(next);
+    }
+    return recovered;
+  }
+  // An orphan keeps running without a terminal. Ending it is explicit and
+  // requires the recorded process identity to match.
+  async terminateOrphan(id) {
+    const session = await this.store.getSession(id);
+    if (session.status !== 'orphaned') throw new Error('Only an orphaned session can be terminated this way');
+    const result = this.verifiedSignal(session.pid, session.identity, 'SIGTERM', this.platform);
+    const next = { ...session, status: result.signalled ? 'stopped' : 'interrupted', endedAt: new Date().toISOString() };
+    await this.store.saveSession(next); this.record(id, 'cleanup', { signalled: result.signalled, reason: result.reason ?? null });
+    this.emitStatus(next); return result;
+  }
+  async dispose({ stopSessions = true, timeoutMs = 5000 } = {}) {
+    if (this.disposed) return; clearInterval(this.tracker);
+    const live = this.liveEntries();
+    if (stopSessions && live.length) {
+      const exits = live.map(entry => new Promise(resolve => {
+        if (entry.exited) return resolve();
+        entry.waiters.push(resolve); setTimeout(resolve, timeoutMs).unref?.();
+      }));
+      for (const entry of live) { try { this.stop(entry.session.id); } catch { /* already gone */ } }
+      await Promise.all(exits);
+    }
+    this.disposed = true; this.detach();
+    for (const entry of this.liveEntries()) {
+      try {
+        await this.store.saveSession({ ...entry.session, status: 'interrupted', endedAt: new Date().toISOString() });
+        const receipt = await this.store.getReceipt(entry.session.receiptId);
+        if (['prepared', 'submitted'].includes(receipt.state)) await this.store.updateReceiptState(receipt.id, 'uncertain', entry.session.id);
+      } finally { try { entry.proc.kill(); } catch {} }
+    }
   }
 }

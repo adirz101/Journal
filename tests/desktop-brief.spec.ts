@@ -16,7 +16,7 @@ if(process.argv.includes('--version')){console.log('fixture 1.0');process.exit(0
 console.log('PTY_READY '+process.stdout.isTTY);console.log(JSON.stringify(process.argv.slice(2)));
 process.stdin.setRawMode(true);process.stdin.resume();`;
   for (const provider of ['claude', 'codex']) { writeFileSync(resolve(bin, provider), fixture); chmodSync(resolve(bin, provider), 0o755); }
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data') }; delete env.ELECTRON_RUN_AS_NODE;
+  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' }; delete env.ELECTRON_RUN_AS_NODE;
   const app = await electron.launch({ args: ['.'], env });
   try {
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);

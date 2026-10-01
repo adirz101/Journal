@@ -28,7 +28,7 @@ process.stdin.on('data',data=>{
   }
 });`;
   for (const provider of ['claude', 'codex']) { writeFileSync(resolve(bin, provider), fixture); chmodSync(resolve(bin, provider), 0o755); }
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data') }; delete env.ELECTRON_RUN_AS_NODE;
+  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' }; delete env.ELECTRON_RUN_AS_NODE;
   let app = await electron.launch({ args: ['.'], env });
   app.process().stderr?.on('data', chunk => process.stderr.write(chunk));
   try {
@@ -60,7 +60,7 @@ process.stdin.on('data',data=>{
     await expect(page.locator('.terminal-surface')).toContainText('DEVICE_RESPONSE');
     // Appearance and panel resizing must retain the live terminal, native session and receipt.
     const terminalElement = await page.locator('.xterm').elementHandle();
-    const beforeTheme = await page.evaluate(async () => (await (window as any).journal.request('bootstrap')).activeSession);
+    const beforeTheme = await page.evaluate(async () => (await (window as any).journal.request('bootstrap')).live.map((x: any) => x.id));
     await page.getByRole('button', { name: 'Switch to light mode', exact: true }).focus();
     await page.keyboard.press('Enter');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
@@ -70,7 +70,7 @@ process.stdin.on('data',data=>{
     await page.getByRole('separator', { name: 'Resize project sidebar', exact: true }).press('ArrowRight');
     await page.getByRole('separator', { name: 'Resize knowledge sidebar', exact: true }).press('ArrowLeft');
     expect(await terminalElement!.evaluate(element => element.isConnected)).toBe(true);
-    expect(await page.evaluate(async () => (await (window as any).journal.request('bootstrap')).activeSession)).toEqual(beforeTheme);
+    expect(await page.evaluate(async () => (await (window as any).journal.request('bootstrap')).live.map((x: any) => x.id))).toEqual(beforeTheme);
     await page.locator('.xterm-helper-textarea').pressSequentially('after-theme');
     await page.locator('.xterm-helper-textarea').press('Enter');
     await expect(page.locator('.terminal-surface')).toContainText('ECHO after-theme');
@@ -97,11 +97,11 @@ process.stdin.on('data',data=>{
     await page.getByRole('button', { name: /^Interrupt/ }).click();
     await expect(page.locator('.terminal-surface')).toContainText('INTERRUPTED');
     await page.getByRole('button', { name: 'Stop terminal' }).click();
-    await expect(page.getByText('exited', { exact: true }).first()).toBeVisible();
+    await expect(page.locator('.terminal-label')).toContainText('stopped');
     await page.getByRole('button', { name: 'Resume', exact: true }).first().click();
     await expect(page.locator('.terminal-surface')).toContainText('--resume');
     await page.getByRole('button', { name: 'Stop terminal' }).click();
-    await expect(page.getByText('exited', { exact: true }).first()).toBeVisible();
+    await expect(page.locator('.terminal-label')).toContainText('stopped');
     // Reviewed knowledge is provider-neutral; Codex needs an explicitly confirmed UUID.
     await page.getByLabel('Initial task').fill('Docker tests');
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
@@ -110,13 +110,13 @@ process.stdin.on('data',data=>{
     await expect(page.getByLabel('Native session ID')).toBeVisible();
     await page.getByLabel('Native session ID').fill('bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb');
     await page.getByRole('button', { name: 'Confirm resume ID' }).click();
-    await page.locator('.session-row').filter({ has: page.getByText('Codex', { exact: true }) }).first().getByRole('button', { name: 'Resume', exact: true }).click();
+    await page.locator('.terminal-actions').getByRole('button', { name: 'Resume', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb');
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
     await page.getByRole('button', { name: 'Stop terminal' }).click();
-    await expect(page.getByText('exited', { exact: true }).first()).toBeVisible();
+    await expect(page.locator('.terminal-label')).toContainText('stopped');
     // Selecting a confirmed older session must not prefill a new conversation's ID.
-    await page.locator('.session-row').filter({ has: page.getByText('Codex', { exact: true }) }).first().getByRole('button').first().click();
+    await page.getByRole('button', { name: /^Codex:/ }).first().click();
     await page.getByLabel('Initial task').fill('Docker tests NEW_CODEX_SESSION_MARKER');
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('NEW_CODEX_SESSION_MARKER');

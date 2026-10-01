@@ -71,7 +71,7 @@ test('project briefs retain source freshness, branch boundaries and explicit rev
 });
 test('project orientation is prioritized and bounded without hiding dropped briefs', t => {
   const f = fixture(t);
-  for (let i = 0; i < 5; i++) { const m = f.propose({ category: 'brief', statement: `Purpose and current status ${i}`, source: { kind: 'user', note: 'Reviewed fixture summary' } }); f.store.setMemoryStatus(m.id, 'active'); }
+  for (let i = 0; i < 5; i++) { const m = f.propose({ category: 'brief', statement: `Area ${['billing', 'search', 'onboarding', 'exports', 'alerts'][i]}: status ${i}; owner team ${String.fromCharCode(65 + i)}`, source: { kind: 'user', note: 'Reviewed fixture summary' } }); f.store.setMemoryStatus(m.id, 'active'); }
   const receipt = f.store.prepareContext(f.project.id, '');
   assert.equal(receipt.items.length, 4); assert.ok(receipt.excluded.some(x => x.reason === 'brief-limit'));
   assert.ok(receipt.warnings.some(x => /project brief/i.test(x))); assert.ok(Buffer.byteLength(receipt.packet) <= 6000);

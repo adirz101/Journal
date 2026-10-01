@@ -35,7 +35,7 @@ if(command==='run'){child=spawn(process.execPath,['-e',${JSON.stringify(childCod
 else console.log('ECHO '+command);
 }});`;
   for (const name of ['claude', 'codex']) { writeFileSync(resolve(bin, name), fixture); chmodSync(resolve(bin, name), 0o755); }
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data') };
+  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' };
   delete env.ELECTRON_RUN_AS_NODE;
   const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false; throw error; } };
   const launches = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
@@ -88,16 +88,18 @@ else console.log('ECHO '+command);
     await page.getByRole('button', { name: /fixture project/ }).click();
     const after = await page.evaluate(async () => {
       const boot = await (window as any).journal.request('bootstrap');
-      return { active: boot.activeSession, project: await (window as any).journal.request('project', { projectId: boot.projects[0].id }) };
+      return { active: boot.live.filter((x: any) => ['starting', 'running', 'waiting', 'stopping'].includes(x.status)), project: await (window as any).journal.request('project', { projectId: boot.projects[0].id }) };
     });
-    expect(after.active).toBeNull(); expect(launches()).toHaveLength(count);
-    expect(after.project.sessions.some((s: any) => s.status === 'interrupted' && s.nativeId === nativeId)).toBe(true);
+    expect(after.active).toEqual([]); expect(launches()).toHaveLength(count);
+    // Quitting with the stop policy ends sessions gracefully: stopped, not interrupted.
+    expect(after.project.sessions.some((s: any) => s.status === 'stopped' && s.nativeId === nativeId)).toBe(true);
     for (const receipt of before.receipts) {
       const retained = after.project.receipts.find((r: any) => r.id === receipt.id);
       expect(retained.launchPrompt).toBe(receipt.launchPrompt);
       expect(retained.items).toEqual(receipt.items);
     }
-    expect(after.project.receipts[0].state).toBe('uncertain');
+    expect(after.project.receipts[0].state).toBe('submitted');
+    await page.getByRole('button', { name: /^Claude Code:/ }).first().click();
     await page.getByRole('button', { name: 'Resume', exact: true }).first().click();
     await expect.poll(() => launches().length).toBe(count + 1);
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');

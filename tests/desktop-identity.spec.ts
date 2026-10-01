@@ -9,7 +9,7 @@ test('the branded macOS runtime opens Journal without an app argument and keeps 
   const directory = mkdtempSync(resolve('.cache/tmp', 'identity-'));
   const data = resolve(directory, 'data');
   const executablePath = execFileSync(process.execPath, ['--input-type=module', '-e', "import { journalElectron } from './scripts/electron-runtime.mjs'; process.stdout.write(journalElectron());"], { encoding: 'utf8' });
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), JOURNAL_DATA_DIR: data }; delete env.ELECTRON_RUN_AS_NODE;
+  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), JOURNAL_DATA_DIR: data, JOURNAL_QUIT_POLICY: 'stop' }; delete env.ELECTRON_RUN_AS_NODE;
   const app = await electron.launch({ executablePath, args: [], env });
   try {
     const identity = await app.evaluate(({ app }) => ({ name: app.getName(), data: app.getPath('userData'), executable: app.getPath('exe') }));

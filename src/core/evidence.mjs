@@ -5,9 +5,11 @@ import { git } from './project.mjs';
 import { commitsSince, isAncestor, isCommit } from './status.mjs';
 import { relativePath, refuseCredentials, text } from './validation.mjs';
 
+export const isSensitivePath = path => path.split('/').some(p => p === '.git' || /^\.env(?:\.|$)/i.test(p) || /^(?:auth|credentials|secrets?)(?:\.|$)/i.test(p) || /\.(?:pem|p12|pfx|key)$/i.test(p) || /^(?:id_rsa|id_ed25519|\.npmrc|\.netrc|\.pypirc)$/i.test(p));
+
 function sourceFile(root, path) {
   path = relativePath(path);
-  if (path.split('/').some(p => p === '.git' || /^\.env(?:\.|$)/i.test(p) || /^(?:auth|credentials|secrets?)(?:\.|$)/i.test(p) || /\.(?:pem|p12|pfx|key)$/i.test(p))) {
+  if (isSensitivePath(path)) {
     throw new Error('Sensitive files cannot be used as evidence');
   }
   const full = resolve(root, path);

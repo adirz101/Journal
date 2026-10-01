@@ -1,15 +1,24 @@
 export type Provider = 'claude' | 'codex';
 export interface Project { id: string; name: string; root: string; branch: string | null; head: string | null; }
 export interface Source { kind: 'user' | 'file' | 'git'; note?: string; path?: string; startLine?: number; endLine?: number; excerpt?: string; contentHash?: string; base?: string | null; head?: string; commitCount?: number | null; }
-export interface Memory { id: string; projectId: string; revisionId: string; revision: number; statement: string; category: string; scope: 'checkout' | 'branch'; area: string; branch: string | null; source: Source; status: 'candidate' | 'active' | 'rejected' | 'archived'; validation: 'current' | 'stale' | 'wrong-branch'; drift?: number | null; }
+export interface Conflict { id: string; revision: number; statement: string; }
+export interface Memory { id: string; projectId: string; revisionId: string; revision: number; statement: string; category: string; scope: 'checkout' | 'branch'; area: string; branch: string | null; source: Source; status: 'candidate' | 'active' | 'rejected' | 'archived'; validation: 'current' | 'stale' | 'wrong-branch'; drift?: number | null; conflicts?: Conflict[]; }
+export interface MemoryPage { items: Memory[]; total: number; offset: number; limit: number; counts: Record<string, number>; }
 export interface Receipt { id: string; packet: string; launchPrompt?: string; query: string; items: Memory[]; excluded: { id: string; reason: string }[]; warnings?: string[]; state: string; estimatedTokens: number; createdAt: string; }
-export interface Session { id: string; projectId: string; provider: Provider; nativeId: string | null; nativeIdConfirmed: boolean; title: string; status: string; receiptId: string; createdAt: string; }
-export type TerminalEvent = { type: 'output'; sessionId: string; sequence: number; data: string } | { type: 'gap'; sessionId: string } | { type: 'status'; session: Session } | { type: 'error'; message: string };
+export type SessionStatus = 'starting' | 'running' | 'waiting' | 'stopping' | 'stopped' | 'exited' | 'failed' | 'interrupted' | 'orphaned';
+export interface Survivor { pid: number; started: string; command: string; }
+export interface Session { id: string; projectId: string; provider: Provider; nativeId: string | null; nativeIdConfirmed: boolean; title: string; status: SessionStatus; receiptId: string; createdAt: string;
+  lastActivityAt?: string; endedAt?: string | null; exitCode?: number | null; branch?: string | null; head?: string | null; activity?: 'idle' | 'working' | 'permission' | null; archived?: boolean; survivors?: Survivor[] | null; resumedFrom?: string | null; }
+export interface TimelineEvent { id?: number; sessionId?: string; at: string; kind: string; body: Record<string, unknown>; }
+export type TerminalEvent = { type: 'output'; sessionId: string; sequence: number; data: string } | { type: 'gap'; sessionId: string } | { type: 'status'; session: Session } | { type: 'error'; message: string; sessionId?: string }
+  | { type: 'timeline'; event: TimelineEvent } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; recovered?: boolean };
 export interface OutputSnapshot { gap: boolean; chunks: { sequence: number; data: string }[]; lastSequence: number; }
+export interface ProjectState { project: Project; sessions: Session[]; receipts: Receipt[]; }
+export interface ChangedFile { path: string; from: string | null; additions: number | null; deletions: number | null; binary: boolean; untracked: boolean; preexisting: boolean; sensitive: boolean; }
+export interface Changes { base: string; available: boolean; reason?: string; head?: string; branch?: string; headMoved?: boolean; commitsSince?: number; files: ChangedFile[]; truncated?: boolean; additions?: number; deletions?: number; preexistingCount?: number; }
+export interface Bootstrap { projects: Project[]; agents: { provider: Provider; available: boolean; version: string | null }[]; platform: string; runtime: { state: 'connected' | 'disconnected' | 'connecting'; warning: string | null }; live: Session[]; active: Session[]; }
 export interface StatusDraft { scope: 'checkout' | 'branch'; memoryId: string | null; previousRevision: number | null; previousStatement: string | null; statement: string; source: { kind: 'git'; base: string | null };
   basis: { label: string; base: string | null; head: string; commitCount?: number; changedFiles?: number; uncommitted?: number; carried?: string[]; structureChanges?: string[]; unchanged?: boolean; notes: string[] }; }
-export interface ProjectState { project: Project; memories: Memory[]; sessions: Session[]; receipts: Receipt[]; }
-export interface Bootstrap { projects: Project[]; agents: { provider: Provider; available: boolean; version: string | null }[]; activeSession: Session | null; platform: string; }
 declare global {
   interface Window { journal?: { request: (action: string, input?: object) => Promise<unknown>; onEvent: (callback: (event: TerminalEvent) => void) => () => void }; }
 }
@@ -17,3 +26,5 @@ export async function api<T>(action: string, input: object = {}): Promise<T> {
   if (!window.journal) throw new Error('Open Journal as a desktop app with npm run dev');
   return await window.journal.request(action, input) as T;
 }
+export const LIVE_STATUSES: SessionStatus[] = ['starting', 'running', 'waiting', 'stopping'];
+export const isLive = (session: Session | null | undefined) => !!session && LIVE_STATUSES.includes(session.status);

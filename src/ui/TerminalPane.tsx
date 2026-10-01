@@ -13,6 +13,7 @@ export function TerminalPane({ sessionId, live, appearance, onError }: { session
   useEffect(() => {
     if (!host.current) return;
     let disposed = false; let attached = false; let acceptInput = false; let last = 0; const queued: TerminalEvent[] = [];
+    // Bounded scrollback per visible terminal; the runtime keeps 256 KiB per session.
     const terminal = new Terminal({ cursorBlink: false, fontSize: 13, lineHeight: 1.35, scrollback: 4000,
       fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
       theme: terminalThemes[appearanceRef.current] });
@@ -22,7 +23,10 @@ export function TerminalPane({ sessionId, live, appearance, onError }: { session
     terminal.parser.registerOscHandler(8, () => true); // No automatic links to external applications.
     const failed = (error: unknown) => { if (!disposed) errorRef.current(String(error instanceof Error ? error.message : error)); };
     function handle(event: TerminalEvent) {
-      if (disposed || event.type === 'status' || event.type === 'error' || event.sessionId !== sessionId) return;
+      if (disposed) return;
+      // A restarted runtime keeps its own buffer: attach again and repaint.
+      if (event.type === 'runtime') { if (event.state === 'connected') { attached = false; acceptInput = false; queued.length = 0; terminal.reset(); attach(); } return; }
+      if ((event.type !== 'output' && event.type !== 'gap') || event.sessionId !== sessionId) return;
       if (!attached) { queued.push(event); return; }
       if (event.type === 'gap') { terminal.write('\r\n\x1b[33m[Output skipped while display was behind]\x1b[0m\r\n'); return; }
       if (event.sequence <= last) return;
@@ -30,7 +34,7 @@ export function TerminalPane({ sessionId, live, appearance, onError }: { session
       terminal.write(event.data, () => { if (!disposed) void api('acknowledge', { id: sessionId, sequence: event.sequence }).catch(failed); });
     }
     const removeListener = window.journal?.onEvent(handle);
-    void api<OutputSnapshot>('attach', { id: sessionId }).then(snapshot => {
+    const attach = () => void api<OutputSnapshot>('attach', { id: sessionId }).then(snapshot => {
       if (disposed) return;
       last = snapshot.lastSequence;
       const prefix = snapshot.gap ? '\x1b[33m[Earlier terminal output is unavailable; input has not been replayed]\x1b[0m\r\n' : '';
@@ -42,6 +46,7 @@ export function TerminalPane({ sessionId, live, appearance, onError }: { session
         terminal.focus();
       });
     }).catch(failed);
+    attach();
     const input = terminal.onData(data => { if (acceptInput && liveRef.current) void api('write', { id: sessionId, data }).catch(failed); });
     let resizeFrame = 0;
     const resize = () => {
