@@ -27,6 +27,7 @@ export class RuntimeClient extends EventEmitter {
         const mine = nonce(); let challenged = false;
         const reader = lineReader(message => {
           if (settled) return this.receive(message);
+          if (message.error === 'Protocol mismatch') { settled = true; socket.destroy(); resolve({ mismatch: message.protocol }); return; }
           if (message.error) { fail(); return; }
           if (!challenged) {
             // The server must prove the token before we prove ours.
@@ -56,6 +57,12 @@ export class RuntimeClient extends EventEmitter {
       let launched = false; const deadline = Date.now() + this.connectTimeoutMs;
       while (Date.now() < deadline && !this.closing) {
         const connection = await this.attempt();
+        if (connection?.mismatch !== undefined) {
+          // A runtime from another Journal version still holds this data directory.
+          // Never launch over it; its sessions stay running until it is stopped.
+          const message = `A Journal runtime from another version (protocol ${connection.mismatch}) is running and keeps its sessions. Quit that version of Journal, or end its runtime, to connect.`;
+          this.emit('warning', message); throw new Error(message);
+        }
         if (connection) {
           if (connection.hello.build !== buildId() && !connection.hello.live && !launched) {
             // An idle runtime from another build: replace it.

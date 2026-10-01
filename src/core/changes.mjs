@@ -80,8 +80,9 @@ export function openableFile(project, session, path) {
   if (!sessionChanges(project, session).files.some(file => file.path === path)) throw new Error('File is not in this session\'s changes');
   const full = safeFile(project.root, path); if (!full) throw new Error('File is not a regular file inside the project');
   const stat = lstatSync(full);
-  const launchable = /\.(?:app|command|terminal|tool|workflow|scpt|applescript|webloc|inetloc|url|lnk|exe|bat|cmd|com|ps1|vbs|vbe|js|jse|wsf|wsh|msi|msc|jar|pkg|dmg|sh|bash|zsh|desktop|appimage|reg|scr|hta|cpl)$/i.test(path);
-  return { path: full, open: stat.isFile() && !(stat.mode & 0o111) && !launchable };
+  // Allowlist of passive document types; everything else is only revealed.
+  const passive = /\.(?:md|markdown|txt|text|log|json|jsonc|ya?ml|toml|ini|cfg|conf|csv|tsv|diff|patch|png|jpe?g|gif|webp|bmp|pdf)$/i.test(path);
+  return { path: full, open: stat.isFile() && !(stat.mode & 0o111) && passive };
 }
 
 export function fileDiff(project, session, path) {

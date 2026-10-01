@@ -57,7 +57,7 @@ export function TerminalPane({ sessionId, live, appearance, onError }: { session
       });
     };
     const observer = new ResizeObserver(resize); observer.observe(host.current); resize();
-    return () => { disposed = true; cancelAnimationFrame(resizeFrame); observer.disconnect(); removeListener?.(); input.dispose(); terminalRef.current = null; terminal.dispose(); };
+    return () => { disposed = true; void api('detach', { id: sessionId }).catch(() => {}); cancelAnimationFrame(resizeFrame); observer.disconnect(); removeListener?.(); input.dispose(); terminalRef.current = null; terminal.dispose(); };
   }, [sessionId]);
   useEffect(() => { if (terminalRef.current) terminalRef.current.options.theme = terminalThemes[appearance]; }, [appearance]);
   return <div ref={host} className="terminal-surface" aria-label="Agent terminal" />;

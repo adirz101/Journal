@@ -1,6 +1,8 @@
 # Usefulness trial, round 1
 
-1–2 October 2026. A manual, local comparison of the same project knowledge delivered four ways. It was run on the user's Mac with the installed Claude Code CLI. Harness: `scripts/usefulness-trial.mjs`; fixtures, knowledge, tasks and graders: `fixtures/usefulness/`. These were committed before any trial run (`c555bd0`). Raw transcripts and results stay in ignored `.cache/usefulness/`.
+1–2 October 2026. A manual, local comparison of the same project knowledge delivered four ways. It was run on the user's Mac with the installed Claude Code CLI. Harness: `scripts/usefulness-trial.mjs`; fixtures, knowledge, tasks and graders: `fixtures/usefulness/`. The fixtures, knowledge, tasks and graders were committed before any trial run (`c555bd0`) and did not change afterwards. Raw transcripts and results stay in ignored `.cache/usefulness/`.
+
+**Post-run change to metrics (disclosed):** after the pilot run, the transcript parser was changed to count file writes made from Bash (heredoc redirects, `tee`, `sed -i`) as edits, and `report` re-derives all saved runs with it. Only the "tool calls before first edit" and "generated-file edits" rows depend on this. The regex also counts denied write attempts and can match unrelated `>` characters in commands, so treat those two rows as approximate. Pass/fail grades and the other metrics are unaffected.
 
 **Result: inconclusive by design ceiling.** All four conditions passed all 48 graded runs, including the condition with no injected context. On this small synthetic repository, the model rediscovered every rule from the code or from common practice. The trial does not show that Journal reduces mistakes compared with no context, AGENTS.md or native memory. It shows modest efficiency differences and one avoided mistake: editing a generated file.
 
@@ -11,9 +13,9 @@
   - **none:** no AGENTS.md, no memory, no packet.
   - **agents:** `AGENTS.md` committed on `main`, with the branch status and SQLite decision committed only on their branches. Claude Code loaded it through its built-in AGENTS.md support. It was not updated after the refactor.
   - **memory:** native Claude auto memory, seeded by 3 "please remember this" sessions on the matching branches. Claude stored 8 memory files and kept the branch qualifiers; the stale storage rule went into its overview file. The memory was not updated after the refactor, and each run restored the seeded snapshot.
-  - **journal:** reviewed Journal claims. The overview and branch update were drafted by the new status helper. The storage claim used a file excerpt, so Journal marked it stale after the refactor and excluded it. The SQLite decision was branch scoped. Each run's prompt is the real Journal packet followed by the task, the same composition as the desktop launcher.
+  - **journal:** reviewed Journal claims. The overview and branch update were drafted by the new status helper. The storage claim used a file excerpt, so Journal marked it stale after the refactor and excluded it. The SQLite decision was branch scoped. Each run's prompt is the real Journal packet followed by the task, composed as the desktop launcher composes it, but delivered to headless `claude -p` on stdin rather than to the interactive CLI as an argument.
 - **Model:** Claude Code 2.1.286, `--model sonnet --effort medium`, user/global settings and plugins excluded (`--setting-sources project,local`), edits accepted inside the fixture and a fixed Bash allowlist. Anything else was denied, never prompted. Budget $3 per run; 2 repetitions per task; runs were independent.
-- **Graders:** hidden deterministic graders. Before any run, each was checked to pass a reference solution and fail the targeted mistake.
+- **Graders:** hidden deterministic graders. Before any run, each was checked by the operator against a reference solution and the targeted mistake. The same check is now committed as `node scripts/usefulness-grader-check.mjs` (added after the trial; offline, no provider requests).
 
 | Task | Designed to expose | none | agents | memory | journal |
 | --- | --- | --- | --- | --- | --- |

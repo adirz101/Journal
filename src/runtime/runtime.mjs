@@ -107,6 +107,7 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
           challenge = { client: params.nonce, server: nonce() };
           connection.send({ id, value: { challenge: challenge.server, proof: proof(token, 'server', challenge.client, challenge.server) } }); return;
         }
+        if (method === 'hello' && params?.protocol !== PROTOCOL) { connection.send({ id, error: 'Protocol mismatch', protocol: PROTOCOL, build }); socket.destroy(); return; }
         if (method !== 'auth' || !challenge || !proofMatches(proof(token, 'client', challenge.server, challenge.client), params?.proof)) { connection.send({ id, error: 'Unauthorized runtime client' }); socket.destroy(); return; }
         authenticated = true;
         // One desktop client at a time; a restarted app replaces a stale one.

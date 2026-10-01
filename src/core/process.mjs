@@ -1,15 +1,19 @@
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { delimiter, isAbsolute, join, win32 } from 'node:path';
 
 // Process ownership. A PID alone is never authority to signal: after a runtime
 // restart a PID may belong to an unrelated program. Journal signals a process
-// only through a live PTY handle it still holds, or after its recorded start
-// time and command match the current process exactly.
+// only through a live PTY handle it still holds, or after the PID's recorded
+// start time (to the second, in UTC) still matches. The command line is not
+// part of identity: Node CLIs rewrite their process title after start.
+//
+// Lookups are asynchronous so they never block terminal streaming.
 
-// The C locale keeps ps start times in one parseable English format.
-const run = (file, args, timeout = 3000) => execFileSync(file, args, { encoding: 'utf8', timeout, maxBuffer: 8 * 1024 * 1024, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, LC_ALL: 'C', LANG: 'C' } });
+// C locale and UTC keep ps start times in one parseable, DST-stable format.
+const options = timeout => ({ encoding: 'utf8', timeout, maxBuffer: 8 * 1024 * 1024, windowsHide: true, env: { ...process.env, LC_ALL: 'C', LANG: 'C', TZ: 'UTC' } });
+const run = (file, args, timeout = 3000) => new Promise((resolve, reject) => execFile(file, args, options(timeout), (error, stdout) => error ? reject(error) : resolve(stdout)));
 // Identities persist a hash of the command line: agent command lines carry
 // prompt text, which belongs in receipts, not in process metadata.
 const digest = command => createHash('sha256').update(command).digest('hex').slice(0, 32);
@@ -21,22 +25,22 @@ export function isAlive(pid) {
 }
 
 // { started, commandHash } or null when the platform cannot report it.
-export function processIdentity(pid, platform = process.platform) {
+export async function processIdentity(pid, platform = process.platform) {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   try {
     if (platform === 'win32') {
-      const value = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$p=Get-Process -Id ${pid} -ErrorAction Stop; "$($p.StartTime.ToFileTimeUtc())|$($p.Path)"`], 6000).trim();
+      const value = (await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$p=Get-Process -Id ${pid} -ErrorAction Stop; "$($p.StartTime.ToFileTimeUtc())|$($p.Path)"`], 6000)).trim();
       const [started, command] = value.split('|');
       return started ? { started, commandHash: digest(command ?? '') } : null;
     }
-    const line = run('ps', ['-ww', '-o', 'lstart=', '-o', 'command=', '-p', String(pid)]).trim();
+    const line = (await run('ps', ['-ww', '-o', 'lstart=', '-o', 'command=', '-p', String(pid)])).trim();
     const match = line.match(/^(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s(.*)$/);
     return match ? { started: match[1].replace(/\s+/g, ' '), commandHash: digest(match[2]) } : null;
   } catch { return null; }
 }
 
 export function sameIdentity(a, b) {
-  return !!a && !!b && !!a.started && a.started === b.started && a.commandHash === b.commandHash;
+  return !!a && !!b && !!a.started && a.started === b.started;
 }
 
 // Parse `ps -A -o pid= -o ppid= -o pgid= -o lstart= -o command=` output.
@@ -49,10 +53,10 @@ export function parseProcessTable(text) {
   return rows;
 }
 
-export function processTable(platform = process.platform) {
+export async function processTable(platform = process.platform) {
   if (platform === 'win32') return null; // Unknown: no portable cheap process table without extra tooling.
   try {
-    const output = run('ps', ['-A', '-ww', '-o', 'pid=', '-o', 'ppid=', '-o', 'pgid=', '-o', 'lstart=', '-o', 'command=']);
+    const output = await run('ps', ['-A', '-ww', '-o', 'pid=', '-o', 'ppid=', '-o', 'pgid=', '-o', 'lstart=', '-o', 'command=']);
     const rows = parseProcessTable(output);
     // Unparseable output means unknown, never "no processes".
     return rows.length || !output.trim() ? rows : null;
@@ -74,17 +78,17 @@ export function descendants(table, rootPid) {
 }
 
 // Signal only if the process still has the identity Journal recorded.
-export function signalVerified(pid, identity, signal, platform = process.platform) {
-  if (!identity || !sameIdentity(processIdentity(pid, platform), identity)) return { signalled: false, reason: 'identity-mismatch' };
+export async function signalVerified(pid, identity, signal, platform = process.platform) {
+  if (!identity || !sameIdentity(await processIdentity(pid, platform), identity)) return { signalled: false, reason: 'identity-mismatch' };
   try {
-    if (platform === 'win32') run('taskkill', ['/PID', String(pid), '/T', ...(signal === 'SIGKILL' ? ['/F'] : [])]);
+    if (platform === 'win32') await run('taskkill', ['/PID', String(pid), '/T', ...(signal === 'SIGKILL' ? ['/F'] : [])]);
     else process.kill(pid, signal);
     return { signalled: true };
   } catch (error) { return { signalled: false, reason: error.code ?? 'failed' }; }
 }
 
 // Survivors among recorded descendants: alive with an unchanged identity.
-export function survivors(recorded, table = processTable()) {
+export function survivors(recorded, table) {
   if (!table) return null;
   const current = new Map(table.map(row => [row.pid, row]));
   return recorded.filter(row => sameIdentity(current.get(row.pid), row));

@@ -54,7 +54,7 @@ export class TerminalManager extends EventEmitter {
     super(); this.store = store; this.spawn = spawn; this.makeSettings = makeSettings; this.runtimeId = runtimeId; this.platform = platform;
     this.identify = identify; this.table = table; this.verifiedSignal = verifiedSignal; this.alive = alive; this.stopGraceMs = stopGraceMs;
     this.entries = new Map(); this.pending = 0; this.flushPending = false; this.disposed = false;
-    this.tracker = trackMs ? setInterval(() => { this.trackDescendants(); void this.recheckOrphans().catch(() => {}); }, trackMs) : null; this.tracker?.unref?.();
+    this.tracker = trackMs ? setInterval(() => { void this.trackDescendants().catch(() => {}); void this.recheckOrphans().catch(() => {}); }, trackMs) : null; this.tracker?.unref?.();
   }
   entry(id) { return this.entries.get(id) ?? null; }
   liveEntries() { return [...this.entries.values()].filter(entry => !entry.exited); }
@@ -66,6 +66,7 @@ export class TerminalManager extends EventEmitter {
     try { return await this.launch(request); } finally { this.pending--; }
   }
   async launch({ projectId, provider, task = '', resumeId }) {
+    if (provider !== 'claude' && provider !== 'codex') throw new Error('Unknown agent provider');
     const project = await this.store.project(projectId);
     task = text(task, 'task', 4000, true);
     let prior = null;
@@ -107,7 +108,8 @@ export class TerminalManager extends EventEmitter {
         stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), lastPersist: 0 };
       this.entries.set(session.id, entry);
       session.status = 'running'; session.pid = Number.isInteger(proc.pid) ? proc.pid : null;
-      session.identity = session.pid ? this.identify(session.pid) : null;
+      // Identity is read asynchronously, and again on first output once the CLI is running.
+      session.identity = null; void this.refreshIdentity(entry);
       proc.onData(data => this.output(entry, data));
       proc.onExit(({ exitCode, signal }) => this.exited(entry, exitCode, signal));
       await this.store.saveSession(session);
@@ -116,19 +118,27 @@ export class TerminalManager extends EventEmitter {
       this.emitStatus(session);
       return { session: { ...session }, receipt: await this.store.getReceipt(receipt.id) };
     } catch (error) {
+      const spawned = !!entry;
       if (entry && !entry.exited) { try { entry.proc.kill(); } catch {} }
       this.entries.delete(session.id);
       session.status = 'failed'; session.endedAt = new Date().toISOString(); await this.store.saveSession(session);
       const current = await this.store.getReceipt(receipt.id);
-      await this.store.updateReceiptState(receipt.id, current.state === 'prepared' ? 'failed' : 'uncertain', session.id, prompt);
+      // Once the process started with the prompt, delivery may have happened.
+      await this.store.updateReceiptState(receipt.id, current.state === 'prepared' && !spawned ? 'failed' : 'uncertain', session.id, prompt);
       this.record(session.id, 'error', { message: redact(error.message, 300) });
       this.emitStatus(session);
       throw new Error(`Could not start ${provider}. Check that its CLI is installed and available on PATH. ${error.message}`);
     }
   }
+  async refreshIdentity(entry) {
+    if (!entry.session.pid) return;
+    const identity = await Promise.resolve(this.identify(entry.session.pid)).catch(() => null);
+    if (identity && !entry.exited) { entry.session.identity = identity; this.persist(entry.session, true); }
+  }
   output(entry, data) {
     if (this.disposed) return;
     const { session } = entry;
+    if (!entry.sawOutput) { entry.sawOutput = true; void this.refreshIdentity(entry); }
     entry.buffer.append(data); entry.tail = (entry.tail + data).slice(-8192);
     session.lastActivityAt = new Date().toISOString();
     if (session.provider === 'codex' && !session.nativeIdConfirmed) {
@@ -150,11 +160,14 @@ export class TerminalManager extends EventEmitter {
     session.status = entry.stopping ? 'stopped' : 'exited'; session.exitCode = exitCode; session.signal = signal ?? null;
     session.endedAt = new Date().toISOString(); session.activity = null;
     const recorded = [...entry.descendants.values()];
-    const remaining = recorded.length ? survivors(recorded, this.table()) : [];
-    session.survivors = remaining === null ? null : remaining.map(row => ({ pid: row.pid, started: row.started, commandHash: row.commandHash, command: redact(row.command, 120) }));
-    this.persist(session, true);
-    this.record(session.id, entry.stopping ? 'stop' : 'exit', { exitCode, signal: signal ?? null, survivors: session.survivors?.length ?? null });
-    this.emitStatus(session); this.scheduleFlush();
+    session.survivors = recorded.length ? null : [];
+    this.persist(session, true); this.emitStatus(session); this.scheduleFlush();
+    void (async () => {
+      const remaining = recorded.length ? survivors(recorded, await Promise.resolve(this.table()).catch(() => null)) : [];
+      session.survivors = remaining === null ? null : remaining.map(row => ({ pid: row.pid, started: row.started, command: redact(row.command, 120) }));
+      this.record(session.id, entry.stopping ? 'stop' : 'exit', { exitCode, signal: signal ?? null, survivors: session.survivors?.length ?? null });
+      if (!this.disposed) this.emitStatus(session);
+    })();
   }
   owned(id) {
     const entry = this.entries.get(id);
@@ -174,16 +187,19 @@ export class TerminalManager extends EventEmitter {
   // Windows), then a forced kill only if it is still running after the grace
   // period. Signals stop once the exit callback fires, so a reused PID is
   // never targeted through this path.
-  stop(id) {
+  async stop(id) {
     const entry = this.owned(id); if (entry.stopping) return { ...entry.session };
-    this.trackDescendants(entry);
-    entry.stopping = true; entry.session.status = 'stopping'; this.emitStatus(entry.session); this.persist(entry.session, true);
+    entry.stopping = true;
+    // Last descendant sample before signals, bounded so stop stays prompt.
+    await Promise.race([this.trackDescendants(entry).catch(() => {}), new Promise(r => setTimeout(r, 1000))]);
+    if (entry.exited) return { ...entry.session };
+    entry.session.status = 'stopping'; this.emitStatus(entry.session); this.persist(entry.session, true);
     const { pid } = entry.proc;
     const signal = name => {
       if (entry.exited) return;
       try {
         if (this.platform !== 'win32' && Number.isInteger(pid)) process.kill(-pid, name);
-        else if (name === 'SIGKILL' && Number.isInteger(pid)) this.verifiedSignal(pid, entry.session.identity, 'SIGKILL', this.platform);
+        else if (name === 'SIGKILL' && Number.isInteger(pid)) void Promise.resolve(this.verifiedSignal(pid, entry.session.identity, 'SIGKILL', this.platform)).catch(() => {});
         else entry.proc.kill();
       } catch { try { entry.proc.kill(name); } catch { /* already gone */ } }
     };
@@ -195,15 +211,15 @@ export class TerminalManager extends EventEmitter {
   async terminateSurvivors(id) {
     const session = this.entries.get(id)?.session ?? await this.store.getSession(id);
     const results = [];
-    for (const row of session.survivors ?? []) results.push({ pid: row.pid, ...this.verifiedSignal(row.pid, { started: row.started, commandHash: row.commandHash }, 'SIGTERM', this.platform) });
+    for (const row of session.survivors ?? []) results.push({ pid: row.pid, ...await this.verifiedSignal(row.pid, { started: row.started }, 'SIGTERM', this.platform) });
     session.survivors = []; this.persist(session, true); this.record(id, 'cleanup', { results: results.map(r => ({ pid: r.pid, signalled: r.signalled })) });
     this.emitStatus(session);
     return results;
   }
-  trackDescendants(only) {
+  async trackDescendants(only) {
     const targets = only ? [only] : this.liveEntries();
     if (!targets.length || this.platform === 'win32') return;
-    const table = this.table(); if (!table) return;
+    const table = await this.table(); if (!table) return;
     for (const entry of targets) {
       if (entry.exited || !Number.isInteger(entry.proc.pid)) continue;
       for (const row of descendants(table, entry.proc.pid) ?? []) {
@@ -336,7 +352,7 @@ export class TerminalManager extends EventEmitter {
       if (session.runtimeId === this.runtimeId) continue;
       // Verified: same PID, start time and command. A live PID whose identity
       // cannot be read stays orphaned but unverified: never reported as ended.
-      const current = session.pid ? this.identify(session.pid) : null;
+      const current = session.pid ? await this.identify(session.pid) : null;
       const verified = !!session.identity && sameIdentity(current, session.identity);
       const unverified = !verified && !!session.pid && this.alive(session.pid) && (!current || !session.identity);
       const orphaned = verified || unverified;
@@ -355,7 +371,7 @@ export class TerminalManager extends EventEmitter {
   async recheckOrphans() {
     for (const session of await this.store.activeSessions?.() ?? []) {
       if (session.status !== 'orphaned') continue;
-      const running = session.identityVerified === false ? this.alive(session.pid) : sameIdentity(this.identify(session.pid), session.identity);
+      const running = session.identityVerified === false ? this.alive(session.pid) : sameIdentity(await this.identify(session.pid), session.identity);
       if (running) continue;
       const next = { ...session, status: 'interrupted', endedAt: new Date().toISOString() };
       await this.store.saveSession(next); this.record(session.id, 'recovered', { status: 'interrupted', previousStatus: 'orphaned' }); this.emitStatus(next);
@@ -368,14 +384,14 @@ export class TerminalManager extends EventEmitter {
     if (session.status !== 'orphaned') throw new Error('Only an orphaned session can be terminated this way');
     if (session.identityVerified === false || !session.identity) throw new Error('Journal cannot verify that this process is the original agent, so it will not signal it. End it outside Journal if needed.');
     let result;
-    if (this.platform !== 'win32' && sameIdentity(this.identify(session.pid), session.identity)) {
+    if (this.platform !== 'win32' && sameIdentity(await this.identify(session.pid), session.identity)) {
       // The PTY child led its own session and process group; end the group.
       try { process.kill(-session.pid, 'SIGTERM'); result = { signalled: true }; }
-      catch { result = this.verifiedSignal(session.pid, session.identity, 'SIGTERM', this.platform); }
-    } else result = this.verifiedSignal(session.pid, session.identity, 'SIGTERM', this.platform);
+      catch { result = await this.verifiedSignal(session.pid, session.identity, 'SIGTERM', this.platform); }
+    } else result = await this.verifiedSignal(session.pid, session.identity, 'SIGTERM', this.platform);
     // Record an end only after confirming the process is gone.
     const deadline = Date.now() + waitMs; let gone = false;
-    while (result.signalled && Date.now() < deadline) { if (!sameIdentity(this.identify(session.pid), session.identity)) { gone = true; break; } await new Promise(r => setTimeout(r, 100)); }
+    while (result.signalled && Date.now() < deadline) { if (!sameIdentity(await this.identify(session.pid), session.identity)) { gone = true; break; } await new Promise(r => setTimeout(r, 100)); }
     const next = gone ? { ...session, status: 'stopped', endedAt: new Date().toISOString() } : session;
     if (gone) await this.store.saveSession(next);
     this.record(id, 'cleanup', { signalled: result.signalled, exited: gone, reason: result.reason ?? null });

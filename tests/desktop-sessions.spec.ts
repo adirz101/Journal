@@ -124,7 +124,8 @@ test('a runtime crash is reported, recovered as interrupted, and never resends t
     process.kill(before.pid, 'SIGKILL');
     await expect.poll(() => { try { return f.runtimeInfo().runtimeId !== before.runtimeId; } catch { return false; } }, { timeout: 20000 }).toBe(true);
     await expect(page.getByText('Runtime connected')).toBeVisible({ timeout: 20000 });
-    await expect(page.locator('.terminal-label')).toContainText(/interrupted|orphaned/);
+    // The fixture dies with its PTY, so it must be interrupted, not orphaned.
+    await expect(page.locator('.terminal-label')).toContainText('interrupted');
     expect(f.launches()).toHaveLength(1);
     await page.getByRole('tab', { name: 'Activity' }).click();
     await expect(page.getByText(/Recovered after the runtime stopped/)).toBeVisible();

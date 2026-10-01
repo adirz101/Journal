@@ -73,13 +73,17 @@ export function captureEvidence(project, input) {
   return { kind: 'file', path: file.path, contentHash: file.contentHash, excerpt, startLine, endLine, commit: project.head, capturedAt: new Date().toISOString() };
 }
 
-export function validateEvidence(project, source, cache) {
+export function validateEvidence(project, source, cache, scope = 'branch') {
   if (source.kind === 'user') return true;
   if (source.kind === 'git') {
-    // Rewritten or reset history no longer contains the described commits.
-    const key = `git:${source.head}`;
-    if (!cache?.has(key)) cache?.set(key, isCommit(project.root, source.head) && isAncestor(project.root, source.head));
-    return cache ? cache.get(key) : isCommit(project.root, source.head) && isAncestor(project.root, source.head);
+    // A branch update describes this branch's history: it goes stale when that
+    // history is rewritten or reset. A repo overview stays valid on every
+    // branch of the checkout while its commit still exists in the repository.
+    const key = `git:${scope}:${source.head}`;
+    const check = () => isCommit(project.root, source.head) && (scope === 'checkout' || isAncestor(project.root, source.head));
+    if (!cache) return check();
+    if (!cache.has(key)) cache.set(key, check());
+    return cache.get(key);
   }
   if (cache?.has(source.path)) return cache.get(source.path) === source.contentHash;
   try {

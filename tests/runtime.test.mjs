@@ -70,7 +70,7 @@ test('the runtime refuses clients that cannot prove the token, and never receive
     socket.on('data', d => { text += d; }); socket.on('close', () => resolvePromise(text));
     socket.on('connect', () => socket.write(frame({ id: 1, method: 'hello', params: { token: runtime.token, protocol: 1 } })));
   });
-  assert.match(legacy, /Unauthorized/);
+  assert.match(legacy, /Protocol mismatch/, 'An older client is told the protocol differs instead of being treated as an attacker');
   const info = JSON.parse(readFileSync(join(f.dataDir, 'runtime.json'), 'utf8'));
   assert.equal(info.runtimeId, runtime.runtimeId);
   if (process.platform !== 'win32') assert.equal((await import('node:fs')).statSync(join(f.dataDir, 'runtime.json')).mode & 0o777, 0o600);
@@ -163,8 +163,7 @@ test('an orphaned process is terminated only when its recorded identity still ma
   const f = fixture(t);
   const child = spawnChild(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
   t.after(() => { try { child.kill('SIGKILL'); } catch {} });
-  await until(() => processIdentity(child.pid));
-  const identity = processIdentity(child.pid);
+  let identity = null; await until(async () => (identity = await processIdentity(child.pid)));
   const base = { projectId: f.project.id, provider: 'claude', nativeId: '11111111-1111-4111-8111-111111111111', nativeIdConfirmed: true, title: 'x', receiptId: f.store.prepareContext(f.project.id, '').id, runtimeId: 'dead-runtime', createdAt: new Date().toISOString() };
   f.store.saveSession({ ...base, id: 'reused', status: 'running', pid: child.pid, identity: { ...identity, started: 'Mon Jan 1 00:00:00 2001' } });
   f.store.saveSession({ ...base, id: 'orphan', status: 'running', pid: child.pid, identity });
@@ -301,4 +300,66 @@ test('recovery tolerates partial session metadata without inventing state', asyn
     const session = f.store.getSession(id);
     assert.equal(session.status, 'interrupted'); assert.equal(session.nativeId, undefined, 'No native ID is invented');
   }
+});
+
+// A real child process behind the PTY interface: real PID, group and signals.
+function childSpawner(script) {
+  const procs = [];
+  const spawn = () => {
+    const child = spawnChild(process.execPath, ['-e', script], { detached: true, stdio: 'ignore' });
+    const proc = { pid: child.pid, child, inputs: [], exit: null, onData() {}, onExit(f) { child.on('exit', (code, signal) => f({ exitCode: code, signal })); }, write(d) { this.inputs.push(d); }, resize() {}, kill(signal) { try { child.kill(signal); } catch {} } };
+    procs.push(proc); return proc;
+  };
+  return { spawn, procs };
+}
+
+test('a real process gets a start-time identity, and stop escalates from SIGTERM to SIGKILL', { skip: process.platform === 'win32' }, async t => {
+  const f = fixture(t);
+  const fake = childSpawner("process.on('SIGTERM', () => {}); process.title = 'renamed'; setInterval(() => {}, 1000)");
+  t.after(() => { for (const p of fake.procs) try { process.kill(p.pid, 'SIGKILL'); } catch {} });
+  const { runtime } = await f.boot(fake, { identify: processIdentity, stopGraceMs: 300 });
+  const c = client(f, t); await c.connect();
+  const { session } = await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'real' });
+  const pid = fake.procs[0].pid;
+  await until(() => f.store.getSession(session.id).identity?.started);
+  assert.deepEqual(f.store.getSession(session.id).identity.started, (await processIdentity(pid)).started);
+  await wait(400); // let the child install its SIGTERM handler
+  await c.call('stop', { id: session.id });
+  await until(() => f.store.getSession(session.id).status === 'stopped', 5000);
+  assert.equal(f.store.getSession(session.id).signal, 'SIGKILL', 'SIGTERM was ignored, so the grace period ended with SIGKILL');
+  assert.ok(!isAlive(pid)); void runtime;
+});
+
+test('observer files rotate after consumption and report lost observation at the size cap', async t => {
+  const { Observers } = await import('../src/runtime/observers.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'obs-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const repo = join(dir, 'repo'); mkdirSync(repo);
+  writeFileSync(join(dir, 'stale.events.jsonl'), 'old'); mkdirSync(join(dir, 'observers'), { recursive: true }); writeFileSync(join(dir, 'observers', 'old.events.jsonl'), 'x');
+  const seen = []; const lost = [];
+  const observers = new Observers({ dataDir: dir, hookScript: 'hook.mjs', execPath: 'node', ingest: (id, e) => seen.push(e.n), lost: id => lost.push(id) });
+  assert.deepEqual((await import('node:fs')).readdirSync(join(dir, 'observers')), [], 'Files from a previous runtime are swept');
+  const settings = observers.settings({ id: 's1' }, { root: repo });
+  const token = JSON.parse(readFileSync(settings, 'utf8')).hooks.Stop[0].hooks[0].command.match(/'([0-9a-f]{48})'/)[1];
+  const target = join(dir, 'observers', 's1.events.jsonl');
+  const line = n => JSON.stringify({ token, id: 's1', cwd: repo, event: 'Stop', n, pad: 'p'.repeat(900) }) + '\n';
+  let text = ''; for (let n = 0; n < 400; n++) text += line(n); writeFileSync(target, text);
+  observers.poll(); observers.poll();
+  assert.equal(seen.length, 400); assert.ok(!(await import('node:fs')).existsSync(target), 'Consumed events are removed');
+  appendFileSync(target, line(400)); observers.poll(); assert.equal(seen.at(-1), 400);
+  text = ''; for (let n = 0; n < 1200; n++) text += line(1000 + n); appendFileSync(target, text);
+  for (let i = 0; i < 6; i++) observers.poll();
+  assert.deepEqual(lost, ['s1']);
+});
+
+test('a runtime from another protocol version is reported and never launched over', async t => {
+  const f = fixture(t);
+  const path = (await import('../src/runtime/protocol.mjs')).socketPath(f.dataDir);
+  const old = net.createServer(socket => { socket.setEncoding('utf8'); socket.on('data', () => socket.end(frame({ id: 0, error: 'Protocol mismatch', protocol: 1 }))); });
+  await new Promise(r => old.listen(path, r)); t.after(() => old.close());
+  writeFileSync(join(f.dataDir, 'runtime.json'), JSON.stringify({ socket: path, token: 't', protocol: 1 }));
+  let launches = 0; const warnings = [];
+  const c = new RuntimeClient({ dataDir: f.dataDir, launch: () => { launches++; return null; }, connectTimeoutMs: 1000 }); t.after(() => c.close());
+  c.on('warning', w => warnings.push(w));
+  await assert.rejects(c.connect(), /another version/);
+  assert.equal(launches, 0); assert.equal(warnings.length, 1);
 });

@@ -11,7 +11,7 @@
 | npm `.cmd` shims | `launchTarget` reads the shim and launches its Node script directly, so multi-line prompts never pass through `cmd.exe`. A shim without a recognizable script is refused with an explanation. | Unit tested with a sample shim; unverified against current Claude and Codex installers. Native `.exe` installs need no shim handling. |
 | PTY | node-pty with ConPTY | Unverified for resize, Unicode and IME, Ctrl+C, and flood |
 | Stop | `pty.kill()` (ConPTY close), then `taskkill /T /F` only through identity verification | Unverified |
-| Process identity | PowerShell `Get-Process` start time and path hash | Unverified, and slow (about 300 ms per call). It is used only during recovery and orphan termination. |
+| Process identity | PowerShell `Get-Process` start time (UTC file time) | Unverified, and slow (about 300 ms per call). Called asynchronously at every launch (and again on first output), during recovery, every 5 s per orphan, and before verified signals, so it does not block terminals, but it adds PowerShell processes. |
 | Descendant tracking | Not implemented: there is no cheap process table. Leftovers are reported as unknown. | Known gap |
 | Hooks | `set ELECTRON_RUN_AS_NODE=1&& "<electron>" "<hook.mjs>" ...` | Unverified. If Claude Code runs hook commands through Git Bash instead of cmd.exe, this syntax would not set the variable and would launch the Electron app instead of the hook script. Must be checked on a real machine. |
 | Path comparison | Hook `cwd` and file paths compared after `realpath`; Git paths use `/` | Expected to work; case-insensitive drive letters unverified |

@@ -31,7 +31,7 @@ export function ChangesPanel({ session, fileEvents = 0 }: { session: Session; fi
           <span className="change-badges">{file.untracked && <span className="badge">new</span>}{file.preexisting && <span className="badge">before</span>}{file.binary ? <span className="badge">binary</span> : <><span className="additions">+{file.additions ?? 0}</span><span className="deletions">−{file.deletions ?? 0}</span></>}</span>
         </button>
         {open === file.path && <div className="file-diff">
-          <button className="text-button" onClick={() => void api('openPath', { id: session.id, path: file.path }).catch(e => setError(e.message))}>Open in default editor ↗</button>
+          <button className="text-button" onClick={() => void api('openPath', { id: session.id, path: file.path }).catch(e => setError(e.message))}>Open or reveal ↗</button>
           {!diff ? <p className="muted">Loading diff…</p> : diff.hidden ? <p className="hint">Content hidden for a sensitive filename.</p> : <pre aria-label={`Diff for ${file.path}`}>{diff.text || 'No textual difference.'}{diff.truncated ? '\n… diff truncated' : ''}</pre>}
         </div>}
       </li>)}</ul>

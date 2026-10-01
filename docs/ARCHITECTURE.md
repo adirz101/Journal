@@ -26,7 +26,7 @@ Renderer (React, sandboxed)  ──IPC──>  Electron main (app)  ──local 
 | App crash | The runtime notices the client disconnect and keeps sessions. The next launch connects to the same runtime and lists live sessions. |
 | Runtime crash | PTY masters close and native CLIs normally exit. The app reconnects, starting a new runtime if needed. The new runtime recovers sessions owned by any previous runtime: `interrupted`; `orphaned` when the recorded process still exists with the same identity; or `orphaned` and *unverified* when the PID is alive but its identity cannot be read (never signalled). Orphans block resume and ID confirmation for the same conversation and are rechecked every 5 s; once gone they become `interrupted`. Prompt delivery becomes `uncertain`, and nothing is resent. |
 | Idle runtime | It exits after 60 s with no client and no live sessions. |
-| Build mismatch | An idle runtime from another build is replaced. A busy one is kept, and the app shows a warning. |
+| Build mismatch | An idle runtime from another build is replaced. A busy one is kept, and the app shows a warning. A runtime speaking another protocol version is reported and never launched over. |
 
 Session states: `starting`, `running` (activity `working` or `idle` when Claude hooks report it), `waiting` (permission request), `stopping`, `stopped`, `exited` (with exit code), `failed`, `interrupted`, `orphaned`. The UI shows `disconnected` for live sessions while the runtime connection is down, and marks ended sessions with a confirmed native ID as resumable.
 
@@ -34,8 +34,8 @@ Session states: `starting`, `running` (activity `working` or `idle` when Claude 
 
 - Signals go through the live PTY handle Journal holds. Once the exit callback fires, Journal sends no further signals through that handle, so a reused PID is never targeted.
 - **Stop:** SIGTERM to the PTY's process group (on Windows, ConPTY close through node-pty), then SIGKILL after a 3 s grace period only if the process has not exited.
-- **Identity:** at launch, Journal records the PID, the process start time (read with `ps` under the C locale) and a SHA-256 prefix of the command line. The prefix keeps prompt text out of process metadata. After a runtime restart, Journal signals a process only when all three still match (`signalVerified`); ending an orphan signals its process group and records an end only after the process is gone.
-- **Descendants:** the process table is sampled every 5 s and right before stop. Children that survive the agent are listed as leftovers, and ending them is an explicit, identity-verified action. A process that called `setsid` and was reparented between samples cannot be attributed.
+- **Identity:** Journal records the PID and its start time (to the second, read asynchronously with `ps` under the C locale and UTC), once at launch and again on first output. The command line is not part of identity, because Node CLIs rewrite their process title; nothing about the prompt is stored. After a runtime restart, Journal signals a process only when its PID and start time still match (`signalVerified`). Ending an orphan signals its process group and records an end only after the process is gone.
+- **Descendants:** the process table is sampled asynchronously every 5 s and right before stop (bounded to 1 s). Children that survive the agent are listed as leftovers, and ending them is an explicit, identity-verified action. A process that called `setsid` and was reparented between samples cannot be attributed.
 
 ## Data
 

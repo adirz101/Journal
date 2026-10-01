@@ -143,7 +143,8 @@ app.on('before-quit', event => {
   if (closed) return; event.preventDefault(); if (closing) return; closing = true;
   (async () => {
     let live = [];
-    try { live = (await runtime.call('list')).filter(session => LIVE.includes(session.status)); } catch { /* runtime unavailable */ }
+    // Never start a runtime while quitting: only ask a connected one.
+    if (runtime.socket) { try { live = (await runtime.call('list')).filter(session => LIVE.includes(session.status)); } catch { /* runtime unavailable */ } }
     let policy = process.env.JOURNAL_QUIT_POLICY;
     if (live.length && policy !== 'stop' && policy !== 'keep') {
       const { response } = await dialog.showMessageBox({ type: 'question', buttons: ['Stop sessions and quit', 'Keep running in background', 'Cancel'], defaultId: 0, cancelId: 2,
@@ -152,7 +153,7 @@ app.on('before-quit', event => {
       if (response === 2) { closing = false; if (!window) createWindow(); return; }
       policy = response === 0 ? 'stop' : 'keep';
     }
-    await runtime.close({ shutdown: policy !== 'keep', stopSessions: true });
+    await runtime.close({ shutdown: policy !== 'keep' && !!runtime.socket, stopSessions: true });
     await store.close().catch(() => {});
     closed = true; app.quit();
   })().catch(() => { closed = true; app.quit(); });

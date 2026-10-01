@@ -33,18 +33,27 @@ test('survivors only include recorded processes whose identity still matches', (
 });
 
 test('a verified signal refuses a reused PID and reaches the recorded process', { skip: !posix }, async t => {
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  const child = spawn(process.execPath, ['-e', 'process.title = "renamed-by-cli"; setInterval(() => {}, 1000)'], { stdio: 'ignore' });
   t.after(() => { try { child.kill('SIGKILL'); } catch {} });
-  let identity = null; for (let i = 0; i < 50 && !identity; i++) { identity = processIdentity(child.pid); await wait(20); }
-  assert.ok(identity?.started && identity.commandHash); assert.ok(!('command' in identity), 'Identity stores a hash, not prompt text');
-  assert.ok(sameIdentity(identity, processIdentity(child.pid)));
-  assert.deepEqual(signalVerified(child.pid, { ...identity, started: 'Mon Jan 1 00:00:00 2001' }, 'SIGTERM'), { signalled: false, reason: 'identity-mismatch' });
-  assert.deepEqual(signalVerified(child.pid, { ...identity, commandHash: 'other' }, 'SIGTERM'), { signalled: false, reason: 'identity-mismatch' });
+  let identity = null; for (let i = 0; i < 50 && !identity; i++) { identity = await processIdentity(child.pid); await wait(20); }
+  assert.ok(identity?.started); assert.ok(!('command' in identity), 'Identity stores no command text');
+  await wait(200);
+  // A CLI that rewrites its process title keeps the same identity.
+  assert.ok(sameIdentity(identity, await processIdentity(child.pid)));
+  assert.deepEqual(await signalVerified(child.pid, { ...identity, started: 'Mon Jan 1 00:00:00 2001' }, 'SIGTERM'), { signalled: false, reason: 'identity-mismatch' });
+  assert.deepEqual(await signalVerified(child.pid, null, 'SIGTERM'), { signalled: false, reason: 'identity-mismatch' });
   assert.ok(isAlive(child.pid));
-  assert.deepEqual(signalVerified(child.pid, identity, 'SIGTERM'), { signalled: true });
+  assert.deepEqual(await signalVerified(child.pid, identity, 'SIGTERM'), { signalled: true });
   await new Promise(r => child.once('exit', r));
-  assert.equal(signalVerified(child.pid, identity, 'SIGTERM').signalled, false);
-  assert.equal(processIdentity(-1), null);
+  assert.equal((await signalVerified(child.pid, identity, 'SIGTERM')).signalled, false);
+  assert.equal(await processIdentity(-1), null);
+});
+
+test('identity start times are reported in UTC regardless of the caller time zone', { skip: !posix }, async () => {
+  const { execFileSync } = await import('node:child_process');
+  const script = `import('${new URL('../src/core/process.mjs', import.meta.url).href}').then(async m => console.log((await m.processIdentity(process.pid)).started))`;
+  const zones = ['UTC', 'America/Los_Angeles', 'Asia/Tokyo'].map(TZ => execFileSync(process.execPath, ['-e', script], { encoding: 'utf8', env: { ...process.env, TZ } }).trim());
+  assert.ok(zones.every(Boolean)); assert.match(zones[1], /^\w{3} \w{3} \d+ [\d:]+ \d{4}$/);
 });
 
 test('executables resolve from PATH, including Windows PATHEXT shims', t => {

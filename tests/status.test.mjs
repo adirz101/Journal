@@ -130,3 +130,16 @@ test('uncommitted tracked edits keep their full paths in the draft', t => {
   assert.match(draft.statement, /Uncommitted: 1 file \(src\/invoices\/create\.mjs\)/);
   assert.match(draft.statement, /^Recent commits \(latest 2;/);
 });
+
+test('a git-backed repo overview stays current on older branches; branch updates do not travel', t => {
+  const f = fixture(t); f.git('switch', '-c', 'older'); f.git('switch', 'main');
+  f.commit('src/invoices/total.mjs', 'export const total = 1;\n', 'Add totals');
+  const overview = f.save(f.store.proposeStatusUpdate(f.project.id, 'checkout')); f.store.setMemoryStatus(overview.id, 'active');
+  f.git('switch', 'older');
+  assert.equal(f.store.listMemories(f.project.id)[0].validation, 'current');
+  assert.deepEqual(f.store.prepareContext(f.project.id, '').items.map(i => i.id), [overview.id]);
+  f.git('switch', 'main'); f.git('switch', '-c', 'feature/x'); f.commit('a.txt', 'a\n', 'Feature work');
+  const update = f.save(f.store.proposeStatusUpdate(f.project.id, 'branch')); f.store.setMemoryStatus(update.id, 'active');
+  f.git('switch', 'older');
+  assert.ok(!f.store.prepareContext(f.project.id, '').items.some(i => i.id === update.id));
+});

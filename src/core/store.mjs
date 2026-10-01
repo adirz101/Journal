@@ -115,7 +115,7 @@ export class JournalStore {
   }
   validation(project, memory, cache) {
     if (memory.scope === 'branch' && project.branch !== memory.branch) return 'wrong-branch';
-    if (!validateEvidence(project, memory.source, cache)) return 'stale';
+    if (!validateEvidence(project, memory.source, cache, memory.scope)) return 'stale';
     return 'current';
   }
   // Commits made after a current-branch update was recorded. Unknown for
@@ -303,8 +303,9 @@ export class JournalStore {
   appendEvent(sessionId, kind, body) {
     const text = JSON.stringify(body ?? {});
     if (text.length > 4000) throw new Error('Timeline event is too large');
-    const { lastInsertRowid } = this.db.prepare('INSERT INTO events(session_id,at,kind,body) VALUES(?,?,?,?)').run(sessionId, now(), choice(kind, ['start', 'resume', 'context', 'prompt', 'permission', 'turn-end', 'command-start', 'command-end', 'file', 'interrupt', 'stop', 'exit', 'error', 'recovered', 'cleanup', 'disconnected'], 'event kind'), text);
-    if (Number(lastInsertRowid) % 50 === 0) this.db.prepare(`DELETE FROM events WHERE session_id=? AND id <= (SELECT id FROM events WHERE session_id=? ORDER BY id DESC LIMIT 1 OFFSET ${EVENT_LIMIT})`).run(sessionId, sessionId);
+    this.db.prepare('INSERT INTO events(session_id,at,kind,body) VALUES(?,?,?,?)').run(sessionId, now(), choice(kind, ['start', 'resume', 'context', 'prompt', 'permission', 'turn-end', 'command-start', 'command-end', 'file', 'interrupt', 'stop', 'exit', 'error', 'recovered', 'cleanup', 'disconnected'], 'event kind'), text);
+    this.eventCounts ??= new Map(); const count = (this.eventCounts.get(sessionId) ?? 0) + 1; this.eventCounts.set(sessionId, count);
+    if (count % 50 === 0) this.db.prepare(`DELETE FROM events WHERE session_id=? AND id <= (SELECT id FROM events WHERE session_id=? ORDER BY id DESC LIMIT 1 OFFSET ${EVENT_LIMIT})`).run(sessionId, sessionId);
   }
   listEvents(sessionId, limit = 500) {
     this.getSession(sessionId);
