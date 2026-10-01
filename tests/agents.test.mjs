@@ -36,6 +36,12 @@ test('Codex rejects an invalid latest banner instead of suggesting an older nati
   assert.equal(module.captureCodexId(`To continue this session, run codex resume ${id}\nTo continue this session, run:\n  codex resume not-a-uuid\n`), null);
   assert.equal(module.captureCodexId(`Example command: codex resume ${id}`), null);
 });
+test('an incomplete latest Codex banner cannot suggest an older native ID', () => {
+  const earlier = `To continue this session, run codex resume ${id}\n`;
+  for (const latest of ['To continue this session, run codex resume ', 'To continue this session, run:\r\n  codex resume ', 'To continue this session, run:', 'To continue this session, run:\n  codex res']) {
+    assert.equal(module.captureCodexId(earlier + latest), null, latest);
+  }
+});
 test('unknown native session IDs cannot be used to construct a Claude launch', () => {
   assert.throws(() => module.buildAgentLaunch({ provider: 'claude', nativeId: 'not-a-uuid' }), /session ID/);
 });

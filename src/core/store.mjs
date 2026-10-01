@@ -4,9 +4,13 @@ import { inspectProject } from './project.mjs';
 import { captureEvidence, validateEvidence } from './evidence.mjs';
 import { choice, relativePath, refuseCredentials, text } from './validation.mjs';
 
+// Grammar words are not task relevance evidence. Keep domain terms and other
+// languages intact; this is a small English lexical filter, not semantic search.
+const QUERY_STOPWORDS = new Set('a an and are as at be by for from in is it of on or that the this to was with'.split(' '));
+
 const parse = row => row ? JSON.parse(row.body) : null;
 const now = () => new Date().toISOString();
-const categories = ['decision', 'constraint', 'convention', 'lesson', 'issue'];
+const categories = ['brief', 'decision', 'constraint', 'convention', 'lesson', 'issue'];
 
 export class JournalStore {
   constructor(path) {
@@ -48,6 +52,7 @@ export class JournalStore {
     const scope = choice(input.scope, ['checkout', 'branch'], 'scope');
     if (scope === 'branch' && !project.branch) throw new Error('Branch scope requires a named branch');
     const area = relativePath(input.area ?? '', true);
+    if (category === 'brief' && area) throw new Error('Project briefs apply to the whole checkout; leave the area empty');
     const source = captureEvidence(project, input.source);
     let previous = null;
     if (input.memoryId) {
@@ -96,13 +101,26 @@ export class JournalStore {
   prepareContext(projectId, query) {
     query = text(query, 'task', 4000, true); refuseCredentials(query);
     const project = this.project(projectId);
-    const terms = [...new Set(query.match(/[\p{L}\p{N}_]+/gu) ?? [])].slice(0, 16);
+    const terms = [...new Set((query.match(/[\p{L}\p{N}_]+/gu) ?? []).map(term => term.toLowerCase()).filter(term => !QUERY_STOPWORDS.has(term)))].slice(0, 16);
     let matches = []; const cache = new Map(); const warnings = [];
+    // Orientation is independent of task words. Current checkout identity and
+    // current-branch updates alternate so neither silently crowds out the other.
+    const briefs = this.db.prepare(`SELECT r.body,m.status FROM memories m JOIN revisions r ON r.id=m.current_revision
+      WHERE m.project_id=? AND m.status='active' AND json_extract(r.body,'$.category')='brief'
+      AND (json_extract(r.body,'$.scope')='checkout' OR json_extract(r.body,'$.branch')=?)
+      ORDER BY r.rowid DESC LIMIT 101`).all(projectId, project.branch);
+    if (briefs.length > 100) warnings.push('Project brief search inspected 100 entries. Retire superseded briefs to include others.');
+    const checkoutBriefs = briefs.slice(0, 100).filter(row => parse(row).scope === 'checkout');
+    const branchBriefs = briefs.slice(0, 100).filter(row => parse(row).scope === 'branch');
+    for (let i = 0; i < Math.max(checkoutBriefs.length, branchBriefs.length); i++) {
+      for (const row of [checkoutBriefs[i], branchBriefs[i]]) if (row) matches.push({ ...row, validation: this.validation(project, parse(row), cache) });
+    }
     if (terms.length) {
       const fts = terms.map(term => `"${term.replaceAll('"', '""')}"`).join(' OR ');
       const select = this.db.prepare(`SELECT r.body,m.status,bm25(memory_fts) AS rank FROM memory_fts
         JOIN revisions r ON r.id=memory_fts.revision_id JOIN memories m ON m.current_revision=r.id
         WHERE memory_fts MATCH ? AND m.project_id=? AND m.status='active'
+        AND json_extract(r.body,'$.category')!='brief'
         AND (json_extract(r.body,'$.scope')='checkout' OR json_extract(r.body,'$.branch')=?)
         ORDER BY rank,r.rowid LIMIT 100 OFFSET ?`);
       // Page past ineligible matches; 100 is the eligible-candidate limit, not a
@@ -121,19 +139,27 @@ export class JournalStore {
         if (offset === 900 && eligible < 100) warnings.push('Search inspected 1000 matches. Refine the task or retire stale knowledge to search further.');
       }
     }
-    const id = randomUUID(); const items = []; const excluded = [];
-    const header = `Journal project knowledge — checkout ${project.head ?? 'unborn'}, receipt ${id}\nThese are reviewed, scoped claims with evidence. Native project instructions take precedence. Validate against current code.\n`;
+    const id = randomUUID(); const items = []; const excluded = []; let briefCount = 0;
+    const header = `Journal project knowledge — checkout ${project.head ?? 'unborn'}, receipt ${id}\nProject: ${project.name}; branch ${project.branch ?? 'detached HEAD'}.\nThese are reviewed, scoped claims with evidence. Native project instructions take precedence. Validate against current code.\n`;
     let packet = header;
     for (const row of matches) {
       const memory = { ...parse(row), status: row.status };
       const validation = row.validation;
       if (validation !== 'current') { if (excluded.length < 100) excluded.push({ id: memory.id, reason: validation }); continue; }
       if (memory.area && !query.toLocaleLowerCase().includes(memory.area.toLocaleLowerCase())) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'area-not-requested' }); continue; }
+      if (memory.category === 'brief' && briefCount >= 4) {
+        if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'brief-limit' });
+        continue;
+      }
       const evidence = memory.source.kind === 'file' ? `${memory.source.path}:${memory.source.startLine} @ ${memory.source.commit ?? 'unborn'}` : `User statement: ${memory.source.note}`;
-      const chunk = `\n[${memory.id} r${memory.revision}; ${memory.category}; ${memory.scope}${memory.branch ? ` ${memory.branch}` : ''}${memory.area ? `; area ${memory.area}` : ''}]\n${memory.statement}\nEvidence: ${evidence}\n`;
+      const label = memory.category === 'brief' ? `${memory.scope === 'checkout' ? 'Project brief' : 'Branch update'}\n` : '';
+      const chunk = `\n${label}[${memory.id} r${memory.revision}; ${memory.category}; ${memory.scope}${memory.branch ? ` ${memory.branch}` : ''}${memory.area ? `; area ${memory.area}` : ''}]\n${memory.statement}\nEvidence: ${evidence}\n`;
       if (items.length >= 12 || Buffer.byteLength(packet + chunk) > 6000) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'budget' }); continue; }
-      items.push(memory); packet += chunk;
+      items.push(memory); packet += chunk; if (memory.category === 'brief') briefCount++;
     }
+    if (excluded.some(item => item.reason === 'brief-limit')) warnings.push('Only four current project brief entries fit the orientation limit. Consolidate superseded briefs.');
+    if (matches.some(row => parse(row).category === 'brief' && excluded.some(item => item.id === parse(row).id && item.reason === 'budget'))) warnings.push('A project brief was excluded by the context budget. Shorten or consolidate the reviewed summaries.');
+    if (!items.some(item => item.category === 'brief' && item.scope === 'checkout')) warnings.push('No current approved project brief is included. Add a checkout-scoped brief to orient every session.');
     if (!items.length) packet = '';
     const receipt = { id, projectId, query, packet, items, excluded, warnings, checkout: { root: project.root, branch: project.branch, head: project.head }, state: 'prepared', estimatedTokens: Math.ceil(Buffer.byteLength(packet) / 3), createdAt: now() };
     this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(id, projectId, JSON.stringify(receipt));

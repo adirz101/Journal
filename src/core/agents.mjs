@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 // https://code.claude.com/docs/en/cli-reference
 // https://developers.openai.com/codex/cli/reference/
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const CODEX_RESUME_MARKER = 'To continue this session, run';
 
 export function buildAgentLaunch(request) {
   const { provider, nativeId, resume, prompt, settingsFile } = request;
@@ -22,8 +23,10 @@ export function captureCodexId(output) {
   const clean = output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
   // Current Codex prints a colon/newline before the command; retain the older
   // inline form too. Validate the latest banner, even if its ID is malformed.
-  const banners = [...clean.matchAll(/To continue this session, run:?\s+codex resume\s+(\S+)/g)];
-  const candidate = banners.at(-1)?.[1];
+  const marker = CODEX_RESUME_MARKER;
+  const offset = clean.lastIndexOf(marker);
+  if (offset < 0) return null;
+  const candidate = clean.slice(offset + marker.length).match(/^:?\s+codex resume\s+(\S+)/)?.[1];
   return UUID.test(candidate) ? candidate : null;
 }
 
