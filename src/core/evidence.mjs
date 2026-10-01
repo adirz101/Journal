@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, realpathSync, openSync, closeSync, fstatSync, readSync, constants } from 'node:fs';
 import { resolve, relative, sep } from 'node:path';
 import { git } from './project.mjs';
+import { commitsSince, isAncestor, isCommit } from './status.mjs';
 import { relativePath, refuseCredentials, text } from './validation.mjs';
 
 function sourceFile(root, path) {
@@ -49,6 +50,14 @@ export function captureEvidence(project, input) {
     const note = text(input.note, 'user source'); refuseCredentials(note);
     return { kind: 'user', note, capturedAt: new Date().toISOString() };
   }
+  if (input.kind === 'git') {
+    // A Git range is evidence that the described commits exist in this history.
+    // Base is optional for an overview of the current checkout.
+    if (!project.head) throw new Error('Git evidence requires a commit');
+    const base = input.base ?? null;
+    if (base !== null && (!isCommit(project.root, base) || !isAncestor(project.root, base))) throw new Error('Git evidence base must be a commit in the current history');
+    return { kind: 'git', base, head: project.head, commitCount: base ? commitsSince(project.root, base) : null, capturedAt: new Date().toISOString() };
+  }
   if (input.kind !== 'file') throw new Error('Invalid source kind');
   const file = sourceFile(project.root, input.path);
   const lines = file.content.split(/\r?\n/);
@@ -64,6 +73,12 @@ export function captureEvidence(project, input) {
 
 export function validateEvidence(project, source, cache) {
   if (source.kind === 'user') return true;
+  if (source.kind === 'git') {
+    // Rewritten or reset history no longer contains the described commits.
+    const key = `git:${source.head}`;
+    if (!cache?.has(key)) cache?.set(key, isCommit(project.root, source.head) && isAncestor(project.root, source.head));
+    return cache ? cache.get(key) : isCommit(project.root, source.head) && isAncestor(project.root, source.head);
+  }
   if (cache?.has(source.path)) return cache.get(source.path) === source.contentHash;
   try {
     const hash = sourceFile(project.root, source.path).contentHash; cache?.set(source.path, hash);

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { inspectProject } from './project.mjs';
 import { captureEvidence, validateEvidence } from './evidence.mjs';
 import { choice, relativePath, refuseCredentials, text } from './validation.mjs';
+import { branchDraft, commitsSince, overviewDraft, PLACEHOLDER } from './status.mjs';
 
 // Grammar words are not task relevance evidence. Keep domain terms and other
 // languages intact; this is a small English lexical filter, not semantic search.
@@ -53,6 +54,7 @@ export class JournalStore {
     if (scope === 'branch' && !project.branch) throw new Error('Branch scope requires a named branch');
     const area = relativePath(input.area ?? '', true);
     if (category === 'brief' && area) throw new Error('Project briefs apply to the whole checkout; leave the area empty');
+    if (input.source?.kind === 'git' && PLACEHOLDER.test(statement)) throw new Error('Replace the bracketed placeholders before saving the update');
     const source = captureEvidence(project, input.source);
     let previous = null;
     if (input.memoryId) {
@@ -84,11 +86,36 @@ export class JournalStore {
     if (!validateEvidence(project, memory.source, cache)) return 'stale';
     return 'current';
   }
+  // Commits made after a current-branch update was recorded. Unknown for
+  // statement-only sources; drift prompts review, it never excludes the update.
+  drift(project, memory, cache) {
+    const commit = memory.source.kind === 'git' ? memory.source.head : memory.source.commit;
+    if (memory.category !== 'brief' || memory.scope !== 'branch' || !commit || !project.head) return null;
+    const key = `drift:${commit}`;
+    if (!cache.has(key)) { const count = commitsSince(project.root, commit); cache.set(key, Number.isFinite(count) ? count : null); }
+    return cache.get(key);
+  }
   listMemories(projectId) {
     const project = this.project(projectId);
     const cache = new Map();
     return this.db.prepare('SELECT r.body,m.status FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.project_id=? ORDER BY r.rowid DESC LIMIT 500').all(projectId)
-      .map(row => { const item = { ...parse(row), status: row.status }; return { ...item, validation: this.validation(project, item, cache) }; });
+      .map(row => {
+        const item = { ...parse(row), status: row.status }; const validation = this.validation(project, item, cache);
+        return { ...item, validation, drift: validation === 'current' ? this.drift(project, item, cache) : null };
+      });
+  }
+  // Read-only draft for a reviewed repo overview or current-branch update.
+  proposeStatusUpdate(projectId, scope) {
+    const project = this.project(projectId);
+    choice(scope, ['checkout', 'branch'], 'scope');
+    if (scope === 'branch' && !project.branch) throw new Error('Branch updates require a named branch');
+    const row = this.db.prepare(`SELECT r.body,m.status FROM memories m JOIN revisions r ON r.id=m.current_revision
+      WHERE m.project_id=? AND m.status IN ('active','candidate') AND json_extract(r.body,'$.category')='brief'
+      AND json_extract(r.body,'$.scope')=? AND (? = 'checkout' OR json_extract(r.body,'$.branch')=?)
+      ORDER BY m.status='active' DESC, r.rowid DESC LIMIT 1`).get(projectId, scope, scope, project.branch);
+    const previous = row ? { ...parse(row), status: row.status } : null;
+    const draft = scope === 'branch' ? branchDraft(project, previous) : overviewDraft(project, previous);
+    return { scope, memoryId: previous?.id ?? null, previousRevision: previous?.revision ?? null, previousStatement: previous?.statement ?? null, ...draft };
   }
   setMemoryStatus(id, status) {
     choice(status, ['active', 'rejected', 'archived'], 'status');
@@ -151,11 +178,16 @@ export class JournalStore {
         if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'brief-limit' });
         continue;
       }
-      const evidence = memory.source.kind === 'file' ? `${memory.source.path}:${memory.source.startLine} @ ${memory.source.commit ?? 'unborn'}` : `User statement: ${memory.source.note}`;
+      const evidence = memory.source.kind === 'file' ? `${memory.source.path}:${memory.source.startLine} @ ${memory.source.commit ?? 'unborn'}`
+        : memory.source.kind === 'git' ? `Git history ${memory.source.base ? `${memory.source.base.slice(0, 7)}..` : ''}${memory.source.head.slice(0, 7)}`
+        : `User statement: ${memory.source.note}`;
+      const drift = this.drift(project, memory, cache);
+      const age = drift ? `; ${drift} commit${drift === 1 ? '' : 's'} since this update` : '';
       const label = memory.category === 'brief' ? `${memory.scope === 'checkout' ? 'Project brief' : 'Branch update'}\n` : '';
-      const chunk = `\n${label}[${memory.id} r${memory.revision}; ${memory.category}; ${memory.scope}${memory.branch ? ` ${memory.branch}` : ''}${memory.area ? `; area ${memory.area}` : ''}]\n${memory.statement}\nEvidence: ${evidence}\n`;
+      const chunk = `\n${label}[${memory.id} r${memory.revision}; ${memory.category}; ${memory.scope}${memory.branch ? ` ${memory.branch}` : ''}${memory.area ? `; area ${memory.area}` : ''}]\n${memory.statement}\nEvidence: ${evidence}${age}\n`;
       if (items.length >= 12 || Buffer.byteLength(packet + chunk) > 6000) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'budget' }); continue; }
       items.push(memory); packet += chunk; if (memory.category === 'brief') briefCount++;
+      if (drift) warnings.push(`The current branch update is ${drift} commit${drift === 1 ? '' : 's'} behind HEAD. Propose a status update to review recent progress.`);
     }
     if (excluded.some(item => item.reason === 'brief-limit')) warnings.push('Only four current project brief entries fit the orientation limit. Consolidate superseded briefs.');
     if (matches.some(row => parse(row).category === 'brief' && excluded.some(item => item.id === parse(row).id && item.reason === 'budget'))) warnings.push('A project brief was excluded by the context budget. Shorten or consolidate the reviewed summaries.');

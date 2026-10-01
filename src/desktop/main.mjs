@@ -103,6 +103,7 @@ const actions = {
   project: async ({ projectId }) => ({ project: await store.project(projectId), memories: await store.listMemories(projectId), sessions: await store.listSessions(projectId), receipts: await store.listReceipts(projectId) }),
   proposeMemory: ({ projectId, input }) => store.proposeMemory(projectId, input),
   setMemoryStatus: ({ id, status }) => store.setMemoryStatus(id, status),
+  proposeStatusUpdate: ({ projectId, scope }) => store.proposeStatusUpdate(projectId, scope),
   memoryHistory: ({ id }) => store.memoryHistory(id),
   prepareContext: ({ projectId, task }) => store.prepareContext(projectId, task),
   getReceipt: ({ id }) => store.getReceipt(id),
