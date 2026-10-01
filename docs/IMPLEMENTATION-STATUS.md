@@ -4,7 +4,7 @@
 
 All current verification is manual and local on the user's computer. GitHub Actions was disabled before these fixes, and its workflow file removed. No CI, hosted runners, nightly tests or scheduled verification.
 
-The current UI work on `codex/operator-interface` retains the main-branch layout with a royal blue accent, light/dark appearance, owner-supplied branding and a local macOS runtime named Journal. Both sidebar widths can be changed by pointer or keyboard and persist locally, with bounds preserving workspace space. Project rows use folder icons and tab hover is confined to the label. This branch has not been merged into main.
+The desktop UI retains the original layout with a royal blue accent, light/dark appearance, owner-supplied branding and a local macOS runtime named Journal. Both sidebar widths can be changed by pointer or keyboard and persist locally, with bounds preserving workspace space. Project rows use folder icons and tab hover is confined to the label. The public-facing README describes the implemented alpha workflow, setup, validation and current limits.
 
 ## Implemented
 
