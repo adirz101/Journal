@@ -7,6 +7,7 @@ import { choice, relativePath, refuseCredentials, text } from './validation.mjs'
 import { branchDraft, commitsSince, overviewDraft, PLACEHOLDER } from './status.mjs';
 import { aliasesFor, areaMatches, isDuplicate, possibleConflict, queryTerms } from './retrieval.mjs';
 import { checkoutBaseline, fileDiff, openableFile, sessionChanges } from './changes.mjs';
+import { applyRetention, backupTo, checkpoint, exportBrain, importBrain, purgeSession, storageInfo } from './maintenance.mjs';
 import { ruleProposals, statusProposal, testCommandProposals } from './proposals.mjs';
 import { addWorktree, creationNotices, listGitWorktrees, plannedPath, registered, removalBlockers, removeWorktree, resolveBase, validateBranchName, workspaceView } from './workspaces.mjs';
 import { redact } from './validation.mjs';
@@ -20,6 +21,7 @@ const categories = ['brief', 'decision', 'constraint', 'convention', 'lesson', '
 
 export class JournalStore {
   constructor(path) {
+    this.path = path;
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;
       CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, root TEXT UNIQUE NOT NULL, body TEXT NOT NULL);
@@ -58,11 +60,19 @@ export class JournalStore {
       });
     }
   }
-  close() { if (this.db?.isOpen) this.db.close(); }
+  close() { if (this.db?.isOpen) { try { checkpoint(this.db); } catch { /* read-only or busy */ } this.db.close(); } }
+  backup(destination) { return backupTo(this.db, destination).then(result => { this.audit('backup', { bytes: result.bytes }); return result; }); }
+  checkpoint() { return checkpoint(this.db); }
+  storageInfo() { return storageInfo(this.db, this.path); }
+  exportBrain(projectId) { const result = exportBrain(this, projectId); this.audit('brain-exported', { projectId, memories: result.json.memories.length }); return result; }
+  importBrain(projectId, raw) { return importBrain(this, projectId, raw); }
+  purgeSession(sessionId) { return purgeSession(this, sessionId); }
+  applyRetention(options) { return applyRetention(this, options); }
   transaction(action) {
     this.db.exec('BEGIN IMMEDIATE');
     try { const result = action(); this.db.exec('COMMIT'); return result; }
-    catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    // SQLite may already have rolled back (for example on a full disk); keep the original error.
+    catch (error) { if (this.db.isTransaction !== false) { try { this.db.exec('ROLLBACK'); } catch { /* already rolled back */ } } throw error; }
   }
   openProject(root) {
     const info = inspectProject(root);
@@ -280,6 +290,7 @@ export class JournalStore {
       if (memory.category !== 'brief' && !row.pinned && (perCategory.get(memory.category) ?? 0) >= 4) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'category-limit' }); continue; }
       const evidence = memory.source.kind === 'file' ? `${memory.source.path}:${memory.source.startLine} @ ${memory.source.commit ?? 'unborn'}`
         : memory.source.kind === 'git' ? `Git history ${memory.source.base ? `${memory.source.base.slice(0, 7)}..` : ''}${memory.source.head.slice(0, 7)}`
+        : memory.source.kind === 'import' ? `Imported (reviewed here): ${memory.source.note}`
         : `User statement: ${memory.source.note}`;
       const drift = this.drift(project, memory, cache);
       const age = drift ? `; ${drift} commit${drift === 1 ? '' : 's'} since this update` : '';

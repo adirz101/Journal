@@ -48,9 +48,9 @@ function sourceFile(root, path) {
 
 export function captureEvidence(project, input) {
   if (!input || typeof input !== 'object') throw new Error('Knowledge requires a source');
-  if (input.kind === 'user') {
-    const note = text(input.note, 'user source'); refuseCredentials(note);
-    return { kind: 'user', note, capturedAt: new Date().toISOString() };
+  if (input.kind === 'user' || input.kind === 'import') {
+    const note = text(input.note, `${input.kind} source`); refuseCredentials(note);
+    return { kind: input.kind, note, capturedAt: new Date().toISOString() };
   }
   if (input.kind === 'git') {
     // A Git range is evidence that the described commits exist in this history.
@@ -74,7 +74,7 @@ export function captureEvidence(project, input) {
 }
 
 export function validateEvidence(project, source, cache, scope = 'branch') {
-  if (source.kind === 'user') return true;
+  if (source.kind === 'user' || source.kind === 'import') return true;
   if (source.kind === 'git') {
     // A branch update describes this branch's history: it goes stale when that
     // history is rewritten or reset. A repo overview stays valid on every

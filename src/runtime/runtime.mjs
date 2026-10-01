@@ -69,6 +69,8 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
   manager = new TerminalManager({ store, spawn, runtimeId, platform, makeSettings: (session, project) => observers.settings(session, project),
     ...(identify ? { identify } : {}), ...(table ? { table } : {}), ...(stopGraceMs ? { stopGraceMs } : {}) });
   const recovered = await manager.recover();
+  // Trace retention (timelines of long-ended sessions); knowledge is never pruned.
+  try { await store.applyRetention?.({ eventDays: 90 }); } catch (error) { log(`retention skipped: ${error.message}`); }
   if (recovered.length) log(`recovered ${recovered.length} session(s) from a previous runtime`);
   let client = null; let lastClientAt = Date.now(); let closing = null; const ended = new Set();
   manager.on('event', event => {

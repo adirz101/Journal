@@ -1,4 +1,5 @@
 import { Worker } from 'node:worker_threads';
+import { STORE_METHODS } from '../core/store-methods.mjs';
 
 // Filesystem validation and synchronous SQLite/Git run off the PTY/UI thread.
 // No renderer can select worker methods; this proxy is private to main.
@@ -20,7 +21,7 @@ export class StoreClient {
     };
     this.worker.on('error', failed);
     this.worker.on('exit', code => { if (code !== 0 || this.pending.size) failed(new Error('Storage worker stopped unexpectedly')); });
-    for (const method of ['openProject', 'listProjects', 'project', 'proposeMemory', 'getMemory', 'memoryHistory', 'listMemories', 'generateProposals', 'listProposals', 'getProposal', 'acceptProposal', 'dismissProposal', 'listWorkspaces', 'reconcileWorkspaces', 'planWorkspace', 'createWorkspace', 'importWorkspace', 'workspaceRemovalBlockers', 'removeWorkspace', 'forgetWorkspace', 'getWorkspace', 'view', 'audit', 'listAudit', 'listMemoryPage', 'liveSessions', 'activeSessions', 'archiveSession', 'appendEvent', 'listEvents', 'checkoutBaseline', 'sessionChanges', 'sessionFileDiff', 'openableFile', 'proposeStatusUpdate', 'setMemoryStatus', 'setPinned', 'proposePromotion', 'prepareContext', 'getReceipt', 'latestNativeReceipt', 'listReceipts', 'updateReceiptState', 'saveSession', 'getSession', 'listSessions', 'recoverSessions', 'close']) {
+    for (const method of STORE_METHODS) {
       this[method] = (...args) => this.call(method, args);
     }
   }

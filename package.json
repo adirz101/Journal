@@ -21,7 +21,8 @@
     "postinstall": "node node_modules/electron/install.js && electron-rebuild -f -w node-pty",
     "trial:usefulness": "node scripts/usefulness-trial.mjs",
     "dist": "npm run build && electron-builder --publish never",
-    "dist:dir": "npm run build && electron-builder --dir --publish never"
+    "dist:dir": "npm run build && electron-builder --dir --publish never",
+    "data:restore": "node scripts/data-restore.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",

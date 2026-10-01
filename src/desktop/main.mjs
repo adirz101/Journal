@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, shell } 
 import { spawn } from 'node:child_process';
 import { resolve, dirname, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { mkdirSync, openSync } from 'node:fs';
+import { mkdirSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { StoreClient } from './store-client.mjs';
 import { RuntimeClient } from './runtime-client.mjs';
 import { detectAgents } from '../core/agents.mjs';
@@ -107,6 +107,31 @@ const actions = {
   prepareContext: ({ projectId, task, workspaceId, disabled }) => store.prepareContext(projectId, task, { workspaceId: workspaceId ?? null, disabled: disabled ?? [] }),
   setPinned: ({ id, pinned }) => store.setPinned(id, pinned),
   proposals: ({ projectId }) => store.listProposals(projectId, 'open'),
+  storageInfo: () => store.storageInfo(),
+  backupData: async () => {
+    const result = await dialog.showSaveDialog(window, { title: 'Back up Journal data', defaultPath: `journal-backup-${new Date().toISOString().slice(0, 10)}.sqlite` });
+    return result.canceled ? null : store.backup(result.filePath);
+  },
+  exportBrain: async ({ projectId }) => {
+    const result = await dialog.showSaveDialog(window, { title: 'Export project knowledge', defaultPath: 'journal-knowledge.json', filters: [{ name: 'Journal knowledge', extensions: ['json'] }] });
+    if (result.canceled) return null;
+    const { json, markdown } = await store.exportBrain(projectId);
+    writeFileSync(result.filePath, JSON.stringify(json, null, 2)); writeFileSync(result.filePath.replace(/\.json$/i, '') + '.md', markdown);
+    return { path: result.filePath, memories: json.memories.length };
+  },
+  importBrain: async ({ projectId }) => {
+    const result = await dialog.showOpenDialog(window, { title: 'Import project knowledge', properties: ['openFile'], filters: [{ name: 'Journal knowledge', extensions: ['json'] }] });
+    if (result.canceled) return null;
+    if (statSync(result.filePaths[0]).size > 5 * 1024 * 1024) throw new Error('Import file is larger than 5 MiB');
+    return store.importBrain(projectId, readFileSync(result.filePaths[0], 'utf8'));
+  },
+  purgeSession: async ({ id }) => {
+    const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Delete history', 'Cancel'], defaultId: 1, cancelId: 1, message: 'Delete this session\'s history?',
+      detail: 'Removes its timeline, context receipts and metadata from Journal. Project knowledge, your files and the native CLI conversation are not affected.' });
+    if (response !== 0) return null;
+    await runtime.call('release', { id }).catch(() => {});
+    return store.purgeSession(id);
+  },
   acceptProposal: ({ id }) => store.acceptProposal(id),
   dismissProposal: ({ id }) => store.dismissProposal(id),
   markIncorrect: ({ id }) => store.setMemoryStatus(id, 'archived', { reason: 'incorrect' }),
