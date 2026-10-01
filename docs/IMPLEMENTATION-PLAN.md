@@ -1,6 +1,6 @@
 # Journal: phased implementation plan
 
-Date: 1 October 2026. **Planning only. Nothing below has been implemented or empirically validated.** Read the [design](JOURNAL-DESIGN.md) and [source ledger](RESEARCH.md) first. This plan is intentionally gated: provider policy, real capabilities and memory usefulness can change the architecture.
+Date: 1 October 2026. **Historical full-product roadmap.** The user approved a narrower terminal-only first slice and rejected all dev3 code reuse. The current [specification](TERMINAL-FIRST-SPEC.md), [plan](superpowers/plans/2026-10-01-terminal-first.md), [foundation decision](adr/002-terminal-first-foundation.md) and [verified status](IMPLEMENTATION-STATUS.md) supersede the initial stack, chat and reuse assumptions below. Later phases remain proposals.
 
 ## Execution principles
 

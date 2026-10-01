@@ -1,0 +1,24 @@
+# Journal — first terminal-only slice
+
+Approved conversation scope, 1 October 2026: a working initial implementation from the larger docs, not the full roadmap. Investigation may choose the stack and continue to implementation without additional planning approvals. See ADR 002 for the reuse decision.
+
+## Outcome
+
+Open an existing Git checkout, launch Claude Code or Codex in a real interactive terminal, stop and explicitly resume the exact native session. Manually propose project knowledge with evidence, approve/reject/withdraw it, retrieve only relevant approved/current knowledge for a task, and inspect the exact packet sent at launch. Transfer that knowledge between providers working sequentially in the same checkout.
+
+## Contracts and bounds
+
+- Desktop, local-only; no chat, SDK, agent loop, cloud, telemetry or automatic extraction. Node >=24 for development. Only one active terminal at a time; native permissions/login remain authoritative.
+- Project identity is canonical checkout root; record Git common-directory identity, branch and HEAD. Opening a project runs only bounded read-only Git queries; never executes repository scripts.
+- Knowledge: candidate/active/rejected/archived; edits create immutable revisions and return to candidate. Categories: decision, constraint, convention, lesson, issue. Scope: checkout or exact branch; area: whole checkout or relative path. Repo-wide/cross-worktree promotion comes later.
+- Evidence: explicit user statement, or a bounded tracked-file excerpt plus SHA-256 of the file. Only regular tracked files under the canonical root, no symlink escapes, sensitive filenames, binary files or files over 1 MiB. Any changed file invalidates eligibility conservatively. Source views revalidate paths. Manual review is needed to admit all candidates.
+- FTS5 queries are escaped as data. SQL filters project/admission/branch before ranking; pages validate evidence and area. Max 100 eligible candidates after inspecting at most 1000 lexical matches, with a scan-limit warning. Max 12 whole claims, 6000 UTF-8 bytes per knowledge packet (2000-token estimate, not a measured ceiling), and 100 excluded records disclosed. Never trim qualifiers. SQLite/Git/evidence run in a worker; hashes are cached only within one operation. Visible lists cap memories at 500, sessions at 100 and receipts at 50.
+- Receipts preserve immutable snapshots of statements/sources/scope/revisions, checkout and knowledge packet. The first delivery update also records the exact literal launch prompt, including any task or resume notice; later uncertainty cannot change it. Prepared, submitted, failed, uncertain delivery; no acknowledgment claim. Empty knowledge is allowed. Initial tasks are separate from the knowledge byte budget.
+- Metadata and reviewed content persist in SQLite WAL. No credential-file reads, raw PTY logs or keystroke storage. Obvious credential strings are rejected at knowledge entry; finite patterns are not a universal privacy guarantee.
+- PTY output uses 256 KiB in-memory history, 8 KiB chunks and 64 KiB display credit. Reload reconnects, suppresses replies to historical device queries and discloses history gaps. No live-terminal crash-survival promise or automatic input replay. Empty-task resume reuses only the previous retrieval query, supplies refreshed knowledge and never repeats the original task. A mismatched Claude hook UUID suspends automatic resume pending manual confirmation.
+- Electron contextIsolation + sandbox; narrow validated IPC, sender-frame checks, CSP, no remote renderer content/navigation, terminal clipboard/link escape actions disabled. Only selected project IDs and owned session IDs can address operations.
+- Keyboard focus, labeled controls, instant terminal/session actions, pointer-gated hover; no motion library or decorative transitions. Dark readable terminal cockpit, responsive knowledge panel.
+
+## Acceptance
+
+Real SQLite restart/retrieval/receipt tests, traversal/symlink/credential/branch/stale exclusion tests, exact argv tests with shell metacharacters and spaces, owned PTY/resize/interrupt/reload tests, desktop flow adding and approving file-backed knowledge and starting a safe fixture terminal with the exact context. Native CLI startup smoke must report trust/auth failures honestly. Paid inference is not needed for deterministic acceptance; authenticated provider handoff is separately reported if unavailable.
