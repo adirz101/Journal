@@ -1,6 +1,6 @@
 # Journal implementation status
 
-1 October 2026. First terminal-only slice merged in [PR #1](https://github.com/adirz101/Journal/pull/1), commit `eebb9e3`. Native validation is in [PR #2](https://github.com/adirz101/Journal/pull/2). Repo overview/branch updates and local validation follow-up are on separate branch `codex/terminal-lifecycle-validation`, based on PR #2. A working foundation for the larger roadmap; no public release.
+1 October 2026. First terminal-only slice merged in [PR #1](https://github.com/adirz101/Journal/pull/1), commit `eebb9e3`. Native validation merged in [PR #2](https://github.com/adirz101/Journal/pull/2). Repo overview/branch updates, local validation follow-up and Apache-2.0 licensing are implemented in [PR #3](https://github.com/adirz101/Journal/pull/3), developed on separate branch `codex/terminal-lifecycle-validation` from PR #2. A working foundation for the larger roadmap; no public release.
 
 All current verification is manual and local on the user's computer. GitHub Actions was disabled before these fixes, and its workflow file removed. No CI, hosted runners, nightly tests or scheduled verification.
 
