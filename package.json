@@ -1,5 +1,6 @@
 {
   "name": "journal-desktop",
+  "productName": "Journal",
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
@@ -9,7 +10,7 @@
   "engines": { "node": ">=24" },
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "start": "electron .",
+    "start": "node scripts/start.mjs",
     "build": "vite build",
     "test": "node --test tests/*.test.mjs",
     "test:desktop": "playwright test",

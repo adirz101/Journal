@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme } from 'electron';
 import { spawn } from 'node-pty';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -11,10 +11,18 @@ import { text } from '../core/validation.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../..');
-if (process.env.JOURNAL_DATA_DIR) {
-  mkdirSync(process.env.JOURNAL_DATA_DIR, { recursive: true, mode: 0o700 });
-  app.setPath('userData', resolve(process.env.JOURNAL_DATA_DIR));
-}
+const appIcon = nativeImage.createFromPath(resolve(root, 'assets/branding/journal-app-icon.png'));
+// Trim a small part of the supplied transparent padding for a fuller Dock icon.
+// Preserve the rounded artwork and its remaining safety margin at every scale.
+const iconSize = appIcon.getSize(); const iconInset = Math.round(Math.min(iconSize.width, iconSize.height) * 0.05);
+const displayIcon = appIcon.crop({ x: iconInset, y: iconInset, width: iconSize.width - 2 * iconInset, height: iconSize.height - 2 * iconInset });
+app.setName('Journal');
+// Keep the existing store when the displayed product name changes.
+const userData = process.env.JOURNAL_DATA_DIR
+  ? resolve(process.env.JOURNAL_DATA_DIR)
+  : resolve(app.getPath('appData'), 'journal-desktop');
+mkdirSync(userData, { recursive: true, mode: 0o700 });
+app.setPath('userData', userData);
 if (!app.requestSingleInstanceLock()) app.quit();
 let window; let store; let terminals; let observers; let observerTimer;
 const devUrl = process.env.JOURNAL_DEV_URL;
@@ -60,7 +68,7 @@ function validSender(event) {
 }
 
 function createWindow() {
-  window = new BrowserWindow({ title: 'Journal', width: 1440, height: 920, minWidth: 900, minHeight: 640, backgroundColor: '#101216',
+  window = new BrowserWindow({ title: 'Journal', icon: displayIcon, width: 1440, height: 920, minWidth: 900, minHeight: 640, backgroundColor: '#101216',
     webPreferences: { preload: resolve(here, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
@@ -74,6 +82,7 @@ function createWindow() {
 // Do not top-level-await readiness: Electron waits for its entry module to finish
 // evaluating before emitting ready (and automation loaders also defer that event).
 app.whenReady().then(async () => {
+if (process.platform === 'darwin') app.dock.setIcon(displayIcon);
 const dataDir = app.getPath('userData'); mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 store = new StoreClient(resolve(dataDir, 'journal.sqlite'));
 await store.ready; await store.recoverSessions(); observers = new Map();
@@ -81,6 +90,11 @@ terminals = new TerminalManager({ store, spawn, makeSettings }); terminals.on('e
 observerTimer = setInterval(pollObserver, 400); observerTimer.unref();
 const agents = detectAgents();
 const actions = {
+  setAppearance: ({ appearance }) => {
+    if (appearance !== 'light' && appearance !== 'dark') throw new Error('Invalid appearance');
+    nativeTheme.themeSource = appearance;
+    window?.setBackgroundColor(appearance === 'light' ? '#fafbfe' : '#101216');
+  },
   bootstrap: async () => ({ projects: await store.listProjects(), agents, activeSession: terminals.active?.session ?? null, platform: process.platform }),
   openProject: async () => {
     const result = await dialog.showOpenDialog(window, { title: 'Open a Git project', properties: ['openDirectory'] });

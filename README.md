@@ -1,3 +1,5 @@
+![Journal](assets/branding/journal-banner.png)
+
 # Journal
 
 Local desktop workspace for Claude Code and Codex, with manually reviewed project knowledge and visible context receipts.
@@ -15,6 +17,8 @@ npm run dev
 
 For the production renderer, run `npm run build` followed by `npm start`. If node-pty has been rebuilt for system Node, restore Electron compatibility with `npm run rebuild`.
 
+On macOS, `npm run dev` and `npm start` use a cached local `Journal.app` runtime so the Dock and application menu display Journal. The installed Electron dependency stays unchanged. Existing data remains in the `journal-desktop` user-data directory; `JOURNAL_DATA_DIR` still overrides it. This is a local development runtime, not a packaged or signed release.
+
 1. Open an existing Git checkout.
 2. Click **Add project brief** to describe what the repo is, its structure and stable constraints once. Use checkout scope for the repo overview and branch scope for current progress/next steps. Attach an explicit source note or 1–30 lines from a tracked file, review and **Approve**. Current briefs orient every session, including empty tasks.
 3. Enter an initial task and **Preview context**. Start Claude or Codex; interaction and tool approvals stay in the native terminal.
@@ -22,6 +26,8 @@ For the production renderer, run `npm run build` followed by `npm start`. If nod
 5. **Resume** targets a confirmed exact session. Codex needs confirmation of the UUID from its native CLI after stopping; Journal never selects the latest session automatically.
 
 Keyboard: Cmd/Ctrl+O opens a project, Cmd/Ctrl+N focuses the task, Cmd/Ctrl+Shift+K adds knowledge. Ctrl+C in the terminal or **Interrupt** reaches the native process.
+
+Appearance: use **Light mode** / **Dark mode** at the bottom of the sidebar. Both share the royal blue accent; light mode uses the dark logo. Your choice is saved locally and changes terminal colors without restarting the active session.
 
 Knowledge, source excerpts, initial tasks, session metadata and context receipts persist in Electron's user-data directory. `JOURNAL_DATA_DIR` selects a different directory. Terminal output and keystrokes are volatile. Window reload reconnects; quitting stops the terminal, and reopening offers explicit native resume.
 
@@ -37,7 +43,7 @@ npm run test:desktop
 npm run smoke:agents
 ```
 
-Verified locally on macOS: 47 core tests, typecheck, production build and three desktop scenarios. Real Electron/node-pty fixtures cover knowledge handoff, exact resume, separate resume-ID drafts, output flood, reload/replay suppression, running-child interrupt/stop/app exit and empty-task repo overview/current-branch delivery.
+Verified locally on macOS: 48 core tests, typecheck, production build and four desktop scenarios. Real Electron/node-pty fixtures cover knowledge handoff, exact resume, separate resume-ID drafts, output flood, reload/replay suppression, running-child interrupt/stop/app exit and empty-task repo overview/current-branch delivery. Appearance switching also retains the live terminal, session and receipt, with the selected theme surviving renderer and app restarts. The local Journal runtime is checked for its macOS identity, explicit user-data path and renderer loading.
 
 The [local native trial](docs/NATIVE-VALIDATION.md) completed authenticated Codex/Claude tasks, reviewed knowledge handoff, exact native resume, Claude manual refusal/approval and Codex inference interruption. The [follow-up](docs/LIFECYCLE-AND-MEMORY-VALIDATION.md) stopped a running native background command with CLI exit and observed fresh Codex UUID-hint capture. Codex used the user-selected `gpt-5.6-luna` for trials only. Interactive Codex approval, broader process/crash cases and native Windows remain unverified. No packaged or signed release.
 

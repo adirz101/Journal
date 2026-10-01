@@ -58,8 +58,23 @@ process.stdin.on('data',data=>{
     await page.locator('.xterm-helper-textarea').pressSequentially('device-query');
     await page.locator('.xterm-helper-textarea').press('Enter');
     await expect(page.locator('.terminal-surface')).toContainText('DEVICE_RESPONSE');
+    // Theme changes must retain the live terminal, native session and receipt.
+    const terminalElement = await page.locator('.xterm').elementHandle();
+    const beforeTheme = await page.evaluate(async () => (await (window as any).journal.request('bootstrap')).activeSession);
+    await page.getByRole('button', { name: 'Switch to light mode', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await expect.poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe('light');
+    await expect(page.locator('.brand-icon')).toHaveAttribute('src', /\/journal-mark-(?!white-)[^.]+\.png$/);
+    await expect(page.locator('.xterm-scrollable-element')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    expect(await terminalElement!.evaluate(element => element.isConnected)).toBe(true);
+    expect(await page.evaluate(async () => (await (window as any).journal.request('bootstrap')).activeSession)).toEqual(beforeTheme);
+    await page.locator('.xterm-helper-textarea').pressSequentially('after-theme');
+    await page.locator('.xterm-helper-textarea').press('Enter');
+    await expect(page.locator('.terminal-surface')).toContainText('ECHO after-theme');
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(900, 640));
     await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     await expect(page.locator('.terminal-surface')).toContainText('ECHO hello-terminal');
     // A small viewport shows only recent rows. Verify earlier output by scrolling
     // through retained history, rather than requiring it to remain on screen.
@@ -117,7 +132,19 @@ process.stdin.on('data',data=>{
     await expect(page.getByText('Fixture tests require Docker', { exact: true })).toBeVisible();
     await page.getByRole('tab', { name: 'Context', exact: true }).click();
     await expect(page.getByTestId('context-packet')).toContainText('Fixture tests require Docker');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     mkdirSync(resolve('.cache/screenshots'), { recursive: true });
+    await page.screenshot({ path: resolve('.cache/screenshots/journal-light.png') });
+    await page.getByRole('tab', { name: /Knowledge/ }).click();
+    await page.screenshot({ path: resolve('.cache/screenshots/journal-light-knowledge.png') });
+    await page.getByRole('button', { name: 'Add knowledge' }).first().click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.screenshot({ path: resolve('.cache/screenshots/journal-light-dialog.png') });
+    await page.keyboard.press('Escape');
+    await page.getByRole('tab', { name: 'Context', exact: true }).click();
+    await page.getByRole('button', { name: 'Switch to dark mode', exact: true }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await expect(page.locator('.brand-icon')).toHaveAttribute('src', /journal-mark-white-/);
     await page.screenshot({ path: resolve('.cache/screenshots/journal-desktop.png') });
   } finally { await app.close(); rmSync(root, { recursive: true, force: true }); }
 });
