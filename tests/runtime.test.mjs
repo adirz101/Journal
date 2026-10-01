@@ -208,3 +208,31 @@ test('the client relaunches and reconnects when the runtime goes away', async t 
   assert.equal(launches, 1); assert.notEqual(hello.runtimeId, undefined);
   assert.deepEqual(await c.call('list'), []);
 });
+
+test('concurrent sessions in different projects receive only their own project and branch knowledge', async t => {
+  const f = fixture(t); const { fake } = await f.boot(); const c = client(f, t); await c.connect();
+  const other = join(f.root, 'other'); mkdirSync(other); execFileSync('git', ['init', '-q', '-b', 'main', other]);
+  const second = f.store.openProject(other);
+  const add = (projectId, statement, scope = 'checkout') => { const m = f.store.proposeMemory(projectId, { statement, category: 'constraint', scope, area: '', source: { kind: 'user', note: 'x' } }); f.store.setMemoryStatus(m.id, 'active'); };
+  add(f.project.id, 'ALPHA_ONLY deployment rule'); add(second.id, 'BETA_ONLY deployment rule');
+  execFileSync('git', ['-C', f.repo, 'switch', '-q', '-c', 'feature']); add(f.project.id, 'FEATURE_BRANCH deployment rule', 'branch');
+  const a = await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'deployment' });
+  const b = await c.call('start', { projectId: second.id, provider: 'codex', task: 'deployment' });
+  const promptA = fake.procs[0].argv.at(-1); const promptB = fake.procs[1].argv.at(-1);
+  assert.match(promptA, /ALPHA_ONLY/); assert.match(promptA, /FEATURE_BRANCH/); assert.doesNotMatch(promptA, /BETA_ONLY/);
+  assert.match(promptB, /BETA_ONLY/); assert.doesNotMatch(promptB, /ALPHA_ONLY|FEATURE_BRANCH/);
+  assert.equal(fake.procs[1].options.cwd, f.store.project(second.id).root);
+  assert.equal(a.session.branch, 'feature'); assert.equal(b.session.projectId, second.id);
+  assert.equal(f.store.getReceipt(a.receipt.id).launchPrompt, promptA, 'Each session keeps its own immutable receipt');
+});
+
+test('recovery tolerates partial session metadata without inventing state', async t => {
+  const f = fixture(t);
+  f.store.saveSession({ id: 'partial', projectId: f.project.id, provider: 'codex', status: 'running', receiptId: 'missing-receipt', runtimeId: 'gone', createdAt: new Date().toISOString() });
+  f.store.saveSession({ id: 'no-runtime', projectId: f.project.id, provider: 'claude', status: 'stopping', receiptId: 'missing', createdAt: new Date().toISOString() });
+  await f.boot();
+  for (const id of ['partial', 'no-runtime']) {
+    const session = f.store.getSession(id);
+    assert.equal(session.status, 'interrupted'); assert.equal(session.nativeId, undefined, 'No native ID is invented');
+  }
+});
