@@ -3,7 +3,8 @@
 The product and GitHub repository are named **Journal** (formerly Blackbox).
 Repository: `https://github.com/adirz101/Journal`.
 The local repository is `/Users/azechary/Documents/GitHub/Journal`.
-For continuation in a new conversation, read `HANDOFF.md` first.
+For continuation, read `docs/TERMINAL-FIRST-SPEC.md` and
+`docs/IMPLEMENTATION-STATUS.md`. The user deleted HANDOFF.md; do not recreate it.
 
 ## User-selected UI skills
 
@@ -25,7 +26,7 @@ Read additional skills when the task calls for them:
 - `animation-vocabulary/SKILL.md`: discussing or specifying motion precisely.
 
 Read each selected skill before applying it. Expo and Swift skills are conditional
-on a future stack decision; the current design proposes React inside Tauri.
+on a future stack decision; the implemented first slice uses React inside Electron.
 If the collection becomes unavailable, report the missing source instead of
 claiming to have applied it.
 
@@ -37,6 +38,19 @@ CSS transitions where sufficient; add a motion library only for a concrete need.
 Adapt platform guidance to both macOS and Windows rather than prescribing an
 Apple-only visual style.
 
-The current approved project phase is research and design. The UI-skills request
-sets the workflow for UI work; it does not change the original instruction to
-defer product implementation until separately requested.
+The user separately approved the first terminal-only implementation and continuous
+execution after investigation. See `docs/TERMINAL-FIRST-SPEC.md` and
+`docs/IMPLEMENTATION-STATUS.md`. This does not authorize the full roadmap, chat or
+public release. The user rejected all dev3 vendoring and code reuse: use original
+Journal code or another appropriate source.
+
+Use Node >=24. Run `npm test`, `npm run check` and `npm run build`; desktop changes
+also need `npm run test:desktop` with Electron-native node-pty. Distinguish fixture
+acceptance from authenticated native provider behavior. Preserve native settings,
+permissions, exact-ID resume, reviewed evidence and immutable receipts.
+
+All verification at this stage is manual and local on the user's computer.
+Do not add or run CI, GitHub Actions, hosted macOS/Windows runners, nightly tests
+or scheduled test jobs. The former GitHub workflow is disabled and removed.
+Keep local test commands available. Repository documents and authored text use
+English; Unicode fixture data may use escapes to retain multilingual coverage.

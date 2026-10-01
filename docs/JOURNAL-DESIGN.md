@@ -1,8 +1,10 @@
 # Journal: research and proposed design
 
+**Current testing policy:** all checks are manual and local on the user's computer. No CI, hosted runners, nightly tests or scheduled verification. This policy supersedes historical testing proposals below.
+
 Research date: **1 October 2026**. Status: **proposal; no product implementation**.
 
-The founder's brief asks for an open-source, local-first Mac/Windows workspace for individual developers, initially using Codex and Claude, whose project knowledge survives a change of agent. This document challenges that premise before recommending an implementation. The technical document is in English for future contributors; the accompanying executive brief is in Hebrew.
+The founder's brief asks for an open-source, local-first Mac/Windows workspace for individual developers, initially using Codex and Claude, whose project knowledge survives a change of agent. This document challenges that premise before recommending an implementation. The technical document is in English for future contributors; the accompanying executive brief is also in English.
 
 Evidence labels: **Verified** means inspected primary documentation or source; **Inference** means our interpretation of that evidence; **Proposal** means a Journal design choice; **Unproven** means a spike or user study is required. Documentation verification does not mean the product was run. No authenticated model sessions, Windows tests, performance measurements, or trademark clearance were performed in this planning phase.
 
@@ -624,7 +626,7 @@ Unix: runtime creates owned process groups and sends graceful turn/CLI interrupt
 
 ## 25. macOS and Windows support contract
 
-Public MVP targets macOS Apple Silicon and Windows 11 x64, local repos on local filesystems. Intel Mac should be a preview/release target if both providers and the runtime are available and CI hardware validates it; do not let an untested Intel build delay core proof. Windows ARM is Later after CLI/native dependency support tests. Linux/WSL are separate later targets.
+Public MVP targets macOS Apple Silicon and Windows 11 x64, local repos on local filesystems. Intel Mac should be a preview/release target if both providers and the runtime are available and local hardware validates it; do not let an untested Intel build delay core proof. Windows ARM is Later after CLI/native dependency support tests. Linux/WSL are separate later targets.
 
 Native Windows golden path: installed Codex, installed Claude, Git for Windows, PowerShell 7 for the user terminal, WebView2 runtime. Agent-internal shells follow their documented configuration; Claude may use Git Bash or PowerShell depending on installation. Its current native Windows docs do **not** promise the Unix sandbox; WSL2 does. Journal must display this difference, preserve approvals, and never label a worktree “sandboxed.” Codex has its own native Windows sandbox. [Claude setup](https://code.claude.com/docs/en/setup), [Codex sandbox](https://learn.chatgpt.com/docs/sandboxing).
 
@@ -640,7 +642,7 @@ Cross-platform engineering requirements:
 - File watching is advisory; missed/coalesced events lead to Git rescan. Hash contents for evidence, not timestamps alone.
 - macOS signed/notarized DMG and Windows signed installer are public-release work. Preview binaries may be unsigned with clear install status. WebView2 installation/runtime discovery is tested. Update verification/key ownership is explicit; no automatic code updates in the first cut.
 
-A Windows build on macOS is not proof of Windows functionality. Run real native CI and interactive smoke/soak tests. Publish the exact supported version matrix after spikes, not a universal compatibility claim in advance.
+A Windows build on macOS is not proof of Windows functionality. Run manual native checks and interactive smoke/soak tests on a local machine. Publish the exact supported version matrix after spikes, not a universal compatibility claim in advance.
 
 ## 26. Security and privacy boundaries
 
@@ -784,7 +786,7 @@ Local MCP V1 exposes `search_memory`, `get_project_context`, `record_decision`, 
 
 ## 32. Testing strategy and release evidence
 
-Use unit/contract/property tests for policy and fixtures; real process/Git/PTY integration tests for lifecycle; native end-to-end/soak tests for the cross-provider user loop. Stub providers for ordinary CI; authenticated smoke tests are explicit, quota-bounded and never use real private projects. Test fixtures must be sanitized before checking into Git.
+Use unit/contract/property tests for policy and fixtures; real process/Git/PTY integration tests for lifecycle; native end-to-end/soak tests for the cross-provider user loop. Use stub providers for ordinary local verification; authenticated smoke tests are explicit, quota-bounded and never use real private projects. Test fixtures must be sanitized before checking into Git.
 
 | Area | Unit/contract | Integration / E2E |
 |---|---|---|
@@ -831,7 +833,7 @@ Probability/impact are qualitative planning judgments for the first year, not me
 | CLI/SDK/protocol drift | High | High | Supported version window, capability negotiation, sanitized fixtures and unknown-event handling |
 | Incomplete observability | Certain | High | Coverage by capability/event; no hidden reasoning/full context claims |
 | Agent config/hooks execute before trust | Medium–high | Critical | Prelaunch trust/config digest, native approvals, bare mode only as disclosed supported route |
-| PTY, Windows shutdown/paths and packaging | High | High | Earliest native ConPTY/process spike; direct executable launch; native CI/soak |
+| PTY, Windows shutdown/paths and packaging | High | High | Earliest native ConPTY/process spike; direct executable launch; manual local native checks/soak |
 | Tauri webview/Node bridge complexity | Medium | Medium–high | Compare actual shell/PTY packaging with Electron before committing |
 | Memory garbage/review fatigue | High | High | Five-candidate bounds, strict admission, expiration and measured review time |
 | False causal claim poisons future tasks | High | Critical | Confirmation/E-grade rules, evidence checks, withdrawal notices |
