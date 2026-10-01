@@ -78,6 +78,23 @@ function approvedRule(f, statement = 'Docker tests require an engine') {
   f.store.setMemoryStatus(memory.id, 'active'); return memory;
 }
 
+test('a chunked native Codex banner supplies only a hint until exact-ID confirmation', async t => {
+  const f = runtime(t); const nativeId = '01a0f661-908b-7193-8520-6ac6f3b44aeb';
+  const first = await f.manager.start({ projectId: f.project.id, provider: 'codex', task: 'Fixture task' });
+  f.callbacks.data('To continue this session, run:\r\n  \x1b[32mcodex res');
+  f.callbacks.data(`ume ${nativeId.slice(0, 20)}`);
+  assert.equal(f.store.getSession(first.session.id).nativeId, null);
+  f.callbacks.data(`${nativeId.slice(20)}\x1b[0m\r\n`);
+  assert.equal(f.store.getSession(first.session.id).nativeId, nativeId);
+  assert.equal(f.store.getSession(first.session.id).nativeIdConfirmed, false);
+  f.callbacks.exit({ exitCode: 0 });
+  await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'codex', resumeId: first.session.id }), /Confirm the exact/);
+  await f.manager.confirmNativeId(first.session.id, nativeId);
+  const resumed = await f.manager.start({ projectId: f.project.id, provider: 'codex', resumeId: first.session.id });
+  assert.equal(resumed.session.nativeId, nativeId);
+  assert.deepEqual(f.launches[1].argv, ['resume', nativeId]);
+});
+
 test('withdrawal names the claim and revision that the native agent actually received', async t => {
   const f = runtime(t); const memory = approvedRule(f);
   const first = await f.manager.start({ projectId: f.project.id, provider: 'claude', task: 'Docker tests' });

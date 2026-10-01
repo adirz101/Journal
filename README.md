@@ -37,9 +37,9 @@ npm run test:desktop
 npm run smoke:agents
 ```
 
-Verified locally on macOS: 37 core tests, typecheck, production build and desktop acceptance. The desktop scenario uses real Electron/node-pty with safe stand-in CLIs: Claude→Codex knowledge handoff, exact resume, separate resume-ID drafts, 2.2 MB output flood, input/interrupt, renderer reload, device-query replay suppression and app restart.
+Verified locally on macOS: 40 core tests, typecheck, production build and desktop acceptance. The desktop scenario uses real Electron/node-pty with safe stand-in CLIs: Claude→Codex knowledge handoff, exact resume, separate resume-ID drafts, 2.2 MB output flood, input/interrupt, renderer reload, device-query replay suppression and app restart.
 
-Native startup smoke produced output from Claude Code 2.1.284 and Codex 0.154.0 without task submission. Claude reached a checkout trust prompt; Codex displayed its native header. An authenticated model turn, permission allow/deny and real-provider native resume are **not** verified end to end. Native Windows behavior remains unverified on a local Windows machine. No packaged or signed release.
+The subsequent [local native trial](docs/NATIVE-VALIDATION.md) completed authenticated Codex and Claude tasks, reviewed knowledge handoff, exact native resume for both, Claude manual permission refusal/approval and Codex inference interruption. Codex used the user-selected `gpt-5.6-luna` for the trial only. Interactive Codex approval under its current profile, running-tool cancellation and native Windows behavior remain unverified. No packaged or signed release.
 
 One active terminal, manual knowledge entry, exact branch/checkout scope and lexical search. Automatic extraction, structured chat, cloud sync, background jobs, runtime sidecar and cross-worktree promotion remain roadmap work. Source fingerprints detect changes; they do not prove a claim is true. Receipts record launch text, not model acknowledgment.
 

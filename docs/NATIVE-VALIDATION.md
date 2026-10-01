@@ -1,0 +1,74 @@
+# Local native provider validation
+
+1 October 2026, manual run on the user's Mac, after merging [PR #1](https://github.com/adirz101/Journal/pull/1). This is a bounded authenticated trial of the terminal-only slice, not full-roadmap acceptance or a release. No CI, hosted runners or scheduled tests were used.
+
+## Environment and boundaries
+
+- Host Node 25.6.1; Electron 44.5.1 / Node 24.21.0; Electron-native node-pty 1.1.0.
+- Installed Claude Code 2.1.284, authenticated with Claude.ai; Codex CLI 0.154.0, authenticated with ChatGPT. Authentication checks reported status only, without account identity or credentials.
+- Actual Electron app, real native CLIs and model turns, isolated Journal data and a disposable Git project under ignored `.cache/native-validation/run-2/`. The fixture has no dependencies or private data. Native terminal output was observed locally; no native transcript storage or hidden reasoning was read for validation.
+- Inherited Codex model `gpt-6.1-sol` was rejected by the CLI with HTTP 400 for this ChatGPT account. The user selected `gpt-5.6-luna` for the short trial. A temporary PATH wrapper in this app's process supplied `--model gpt-5.6-luna` on fresh launch and exact resume. Production launcher arguments and permanent model settings were not changed.
+- Native workspace trust was accepted for the disposable fixture. Codex's newly detected hooks were left untrusted through its native prompt; existing hook configuration was not edited. Its configured local MCP server failed to connect. Claude's inherited integrations included an ancestor AGENTS.md loader. Tasks prohibited agent spawning and network tools, but provider startup integrations were still inherited.
+- Codex retained its native custom `workspace` permissions profile. Claude's review started in inherited auto mode; its native Shift+Tab control switched this trial to stricter manual mode for permission tests. Each allowed write used **Yes once**, without switching to automatic edit approval. No permission bypass flags or manual global configuration edits were used. Native trust decisions may persist in provider-managed settings.
+
+## Observed outcomes
+
+| Trial | Observed evidence | Result and limit |
+| --- | --- | --- |
+| Codex task with reviewed knowledge | Approved branch rule required prefix `JOURNAL_NATIVE_41C7:`. Codex edited `fixture.mjs`, created `result.txt`, corrected an initially malformed Node check and produced `CODEX_INITIAL_DONE` with `JOURNAL_NATIVE_41C7:hello`. Host file inspection corroborated the result. | Authenticated task completed. Receipts alone were not used as success evidence. |
+| Codex exact resume | Graceful native exit printed UUID `01a0f661-908b-7193-8520-6ac6f3b44aeb`. After manually confirming it in Journal, Resume targeted that UUID. With no tools or file reads, Codex recalled `CODEX_INITIAL_DONE` and the result, then produced `CODEX_RESUME_DONE`. Journal supplied a refreshed packet and the new task. | Same native conversation retained; no latest-session selection or replay of the original task. |
+| Codex interrupt | Journal's Interrupt button reached a turn at native “Working”; the CLI displayed “Conversation interrupted.” Journal Stop then ended the terminal. | Active inference interruption observed. The proposed timer command had not started, so running-tool cancellation and child-process cleanup are not proven. A separate earlier timer finished normally and is not counted as interruption. |
+| Codex manual permissions | Explicit approval requests were refused by the existing native profile; `deny-me.txt` and `allow-me.txt` were absent. `/permissions` showed custom `workspace` as current. | No interactive allow/deny prompt appeared. Automatic refusal is not counted as operator denial or approval. Native manual approval remains a gap under this profile. |
+| Codex → Claude knowledge handoff | Codex result committed in the fixture; a source-backed result lesson was explicitly approved in Journal. Claude received both reviewed claims, read fixture/source files, ran a Node check and returned `CLAUDE_HANDOFF_DONE` with `JOURNAL_NATIVE_41C7:hello`. | Authenticated cross-provider knowledge use observed. The lesson was manually reviewed; no automatic extraction. |
+| Claude manual refusal | Visible native Write prompt for `claude-deny.txt`; selected **No**. Native tool reported rejection. Host inspection confirmed the file was absent. | Denial respected, no retry or alternative write observed. Native denial ended that turn; the allowed write used a separate follow-up. |
+| Claude one-time approval | Visible native Write prompt for `claude-allow.txt`; selected **Yes**. Native tool reported creation, then returned `CLAUDE_PERMISSION_DONE`. Host inspection found exactly `CLAUDE_ALLOWED` (14 bytes, no newline). | Approval respected without broadening the session's edit permissions. |
+| Claude exact resume | Journal Stop ended the original terminal. Resume used native UUID `813286ae-f24d-4f60-8ec8-03849197a664`. With no tools or reads, Claude recalled the review marker, checked result and both permission outcomes, then produced `CLAUDE_RESUME_DONE`. | Same conversation retained with two revalidated claims and a new task, without repeating the original review. |
+
+Both native providers and the isolated application were stopped after the trial. Journal metadata records all five launch rows as exited. Claude Stop produced native exit code 129; this was an intentional terminal stop after completed responses, not a failed model turn.
+
+## Reconciliation with Journal records
+
+Fixture project ID: `8bc43826-2404-4c9f-adbf-52f025dd086a`, branch `main`.
+
+- Initial fixture commit: `b05987a44a99a3694e6a3115181657743ce092c1`.
+- Recorded Codex result commit: `ff9833d8947f61dd15f57ddc9d2e2fb6ff6bd42c`.
+- Approved prefix rule: `12e0defc-06e0-4bb4-8b6b-8c281bb8e687`, revision 1, `POLICY.md:1` at the initial commit.
+- Approved result lesson: `e9cebf34-4c33-4764-a7ca-4e5b21ce0edc`, revision 1, `result.txt:1` at the result commit.
+
+| Launch | Journal session | Receipt | Claims |
+| --- | --- | --- | --- |
+| Unsupported initial Codex model | `abf7a002-2656-4585-b570-33e7f2da12ac` | `2dd311ba-a0f5-467f-bb7c-5e2d50a2b391` | 1 |
+| Successful Codex task | `c01a0551-3b50-4446-a845-4a41a94487e8` | `b2189f6d-6c82-433a-9674-f1dd2f872b03` | 1 |
+| Exact Codex resume | `96175814-23d4-4578-8c95-8379ceccd037` | `0b8245d4-20c0-4975-bdf6-5ab67728a11c` | 1 |
+| Claude review and permission tests | `5bec64d9-aa97-4131-bd6d-7d5937fe06c5` | `d7694f1e-1ef1-47e0-8c9d-76bcc496eafa` | 2 |
+| Exact Claude resume | `c1d6e76c-dbfe-4947-85cc-c3b36d42423d` | `ca55ba6a-9a09-415a-afb8-a9f8a38c9467` | 2 |
+
+All five receipts are `submitted`: they record process launch with the captured prompt, not model acceptance. The unsupported-model launch demonstrates that distinction. Both resume receipts contain the current-knowledge replacement notice and no repetition of the previous task. They link to the original Journal rows and keep the same confirmed native UUIDs.
+
+Final fixture SHA-256 fingerprints:
+
+| File | Bytes | SHA-256 |
+| --- | --- | --- |
+| `POLICY.md` | 93 | `ec08af3bee6cde84c51cd8a4b92c5a7230e31ee67cd0bd8c0ad128d5f4b670d0` |
+| `fixture.mjs` | 87 | `183e19f95d48c8bb901bebf4e8429d59c18ecc50da0c354af61bdb92e227eaa4` |
+| `result.txt` | 26 | `0d1e3dcd1b14549d69fa5566b1ee59c2bdaa7fa20d006821c13bcf3a93b135c2` |
+| `claude-allow.txt` | 14 | `85f6784a44b0318d0b0bae4402aaeda366c94bf257940417dd04f0cfd4461fce` |
+
+`fixture.mjs` contains ``export function label(value) { return `JOURNAL_NATIVE_41C7:${String(value).trim()}`; }`` followed by a newline. `result.txt` contains the checked result followed by one newline. Permission files were outside the source-backed claims; the allowed file remained untracked. The disposable checkout and raw native output are excluded from the product's Git history.
+
+## Discovered defect and local regression
+
+Codex 0.154.0 prints its resume instruction as:
+
+```text
+To continue this session, run:
+  codex resume <UUID>
+```
+
+Journal previously recognized only the older inline banner. The live trial therefore required manually entering the visible UUID. `captureCodexId` now recognizes either explicit native banner, including CRLF and ANSI styling; the latest malformed banner is refused. This stays an **unconfirmed hint** and cannot authorize Resume.
+
+Two parser regressions failed before the fix and passed afterward. A runtime regression feeds the multiline banner over three PTY chunks, checks stored unconfirmed identity, rejects premature resume and verifies exact argv after confirmation. This runtime test uses a controlled PTY callback, not a second paid native turn. The fixed automatic hint was not rerun in a fresh real-provider app; native resume itself was verified through manual confirmation.
+
+A fresh read-only reviewer found no actionable issues in the source, regressions and evidence claims, and independently passed all 24 agent/runtime tests. The reviewer did not observe the native trials or rerun desktop acceptance. Parent verification passed all 40 core tests, typecheck, production build and the local Electron/native-PTY fixture scenario. The production build retains its existing roughly 545 KiB chunk warning.
+
+Final required local checks are reported in [implementation status](IMPLEMENTATION-STATUS.md). Outstanding native coverage: Codex interactive approval under an approval-capable profile, interruption of an already running tool and child cleanup, Windows, and broader combinations of inherited plugins/settings. No installer, signing, public release or full-roadmap implementation is established by this trial.
