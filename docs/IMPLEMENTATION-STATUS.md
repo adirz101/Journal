@@ -4,6 +4,8 @@
 
 All current verification is manual and local on the user's computer. GitHub Actions was disabled before these fixes, and its workflow file removed. No CI, hosted runners, nightly tests or scheduled verification.
 
+The desktop UI retains the original layout with a royal blue accent, light/dark appearance, owner-supplied branding and a local macOS runtime named Journal. Both sidebar widths can be changed by pointer or keyboard and persist locally, with bounds preserving workspace space. Project rows use folder icons and tab hover is confined to the label. The public-facing README describes the implemented alpha workflow, setup, validation and current limits.
+
 ## Implemented
 
 - [Project orientation](PROJECT-ORIENTATION.md): current approved repo overview plus exact-branch progress/next-step updates precede task-specific knowledge for every Journal-launched session, including empty tasks and resume. Source freshness, explicit admission, immutable revisions, checkout/branch boundaries and shared packet budgets remain enforced. Status is reviewed content; there is no automatic extraction from terminal output.
@@ -24,10 +26,10 @@ Local macOS, Node 25.6.1; Electron 44.5.1 with Node 24.21.0; node-pty 1.1.0 rebu
 | Check | Observed result | Coverage |
 | --- | --- | --- |
 | `npm ci` | Passed | Clean install, Electron download and native node-pty postinstall rebuild |
-| `npm test` | 47 passed, 0 failed | Prior evidence/resume/bounds coverage plus latest incomplete banner revocation, grammar-only relevance exclusion, always-supplied project overview/current-branch update, freshness/admission/limits and history |
+| `npm test` | 48 passed, 0 failed | Prior evidence/resume/bounds coverage plus latest incomplete banner revocation, grammar-only relevance exclusion, always-supplied project overview/current-branch update, freshness/admission/limits, history and local macOS runtime identity |
 | `npm run check` | Passed | Renderer and desktop acceptance TypeScript |
 | `npm run build` | Passed | Production renderer; roughly 545 KiB minified chunk warning, no build failure |
-| `npm run test:desktop` | Three scenarios passed | Real Electron/native PTY with controlled fixture CLIs: original handoff/reload/flood/security coverage; OS-verified running-child interrupt/stop/app-exit and exact restart/resume; UI admission of repo overview/branch updates and empty-task delivery to both providers |
+| `npm run test:desktop` | Five scenarios passed | Real Electron/native PTY with controlled fixture CLIs: handoff/reload/flood/security; running-child interrupt/stop/app-exit and exact restart/resume; repo overview/branch updates and empty-task delivery; branded runtime; theme/panel changes retaining a live terminal plus pointer/keyboard resizing, persistence, reset and viewport bounds |
 | `npm run smoke:agents` | Both native CLIs launched and produced output | Startup only; no input, trust acceptance, login or task submission |
 
 Native versions: Claude Code 2.1.284, Codex CLI 0.154.0. The earlier startup smoke involved no model requests. The subsequent [authenticated native trial](NATIVE-VALIDATION.md) completed a real Codex fixture task, manually reviewed knowledge handoff to Claude, exact native resume for both providers, Claude one-time permission refusal/approval, and Codex inference interruption. Provider replies and host file inspection corroborated outcomes separately from submitted transport receipts.

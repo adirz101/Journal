@@ -3,17 +3,20 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { api, type OutputSnapshot, type TerminalEvent } from './types';
+import { terminalThemes, type Appearance } from './theme';
 
-export function TerminalPane({ sessionId, live, onError }: { sessionId: string; live: boolean; onError: (message: string) => void }) {
+export function TerminalPane({ sessionId, live, appearance, onError }: { sessionId: string; live: boolean; appearance: Appearance; onError: (message: string) => void }) {
   const host = useRef<HTMLDivElement>(null); const liveRef = useRef(live); const errorRef = useRef(onError);
+  const terminalRef = useRef<Terminal | null>(null); const appearanceRef = useRef(appearance);
+  appearanceRef.current = appearance;
   liveRef.current = live; errorRef.current = onError;
   useEffect(() => {
     if (!host.current) return;
     let disposed = false; let attached = false; let acceptInput = false; let last = 0; const queued: TerminalEvent[] = [];
     const terminal = new Terminal({ cursorBlink: false, fontSize: 13, lineHeight: 1.35, scrollback: 4000,
       fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
-      theme: { background: '#101216', foreground: '#d5d9e0', cursor: '#bdcfaa', selectionBackground: '#36423c',
-        black: '#23272f', red: '#e59a93', green: '#a9c293', yellow: '#d9c18c', blue: '#8faac8', magenta: '#b6a0c5', cyan: '#92bfbd', white: '#d5d9e0' } });
+      theme: terminalThemes[appearanceRef.current] });
+    terminalRef.current = terminal;
     const fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(host.current);
     terminal.parser.registerOscHandler(52, () => true); // Never accept terminal-originated clipboard writes.
     terminal.parser.registerOscHandler(8, () => true); // No automatic links to external applications.
@@ -49,7 +52,8 @@ export function TerminalPane({ sessionId, live, onError }: { sessionId: string; 
       });
     };
     const observer = new ResizeObserver(resize); observer.observe(host.current); resize();
-    return () => { disposed = true; cancelAnimationFrame(resizeFrame); observer.disconnect(); removeListener?.(); input.dispose(); terminal.dispose(); };
+    return () => { disposed = true; cancelAnimationFrame(resizeFrame); observer.disconnect(); removeListener?.(); input.dispose(); terminalRef.current = null; terminal.dispose(); };
   }, [sessionId]);
+  useEffect(() => { if (terminalRef.current) terminalRef.current.options.theme = terminalThemes[appearance]; }, [appearance]);
   return <div ref={host} className="terminal-surface" aria-label="Agent terminal" />;
 }
