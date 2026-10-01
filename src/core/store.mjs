@@ -7,6 +7,7 @@ import { choice, relativePath, refuseCredentials, text } from './validation.mjs'
 import { branchDraft, commitsSince, overviewDraft, PLACEHOLDER } from './status.mjs';
 import { aliasesFor, areaMatches, isDuplicate, possibleConflict, queryTerms } from './retrieval.mjs';
 import { checkoutBaseline, fileDiff, openableFile, sessionChanges } from './changes.mjs';
+import { ruleProposals, statusProposal, testCommandProposals } from './proposals.mjs';
 import { addWorktree, creationNotices, listGitWorktrees, plannedPath, registered, removalBlockers, removeWorktree, resolveBase, validateBranchName, workspaceView } from './workspaces.mjs';
 import { redact } from './validation.mjs';
 
@@ -345,6 +346,53 @@ export class JournalStore {
     this.db.prepare('INSERT INTO audit(at,action,body) VALUES(?,?,?)').run(now(), text(action, 'audit action', 80), JSON.stringify(body).slice(0, 4000));
   }
   listAudit(limit = 200) { return this.db.prepare('SELECT * FROM (SELECT id,at,action,body FROM audit ORDER BY id DESC LIMIT ?) ORDER BY id').all(Math.min(limit, 1000)).map(row => ({ ...row, body: JSON.parse(row.body) })); }
+
+  // ----- Proposal inbox (deterministic extraction) -----
+  generateProposals(sessionId) {
+    const session = this.getSession(sessionId);
+    const receipt = (() => { try { return this.getReceipt(session.receiptId); } catch { return null; } })();
+    let project; try { project = this.sessionView(session); } catch { return []; }
+    const existing = this.db.prepare(`SELECT r.body FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.project_id=? AND m.status IN ('active','candidate')`).all(session.projectId).map(row => parse(row).statement);
+    const branchUpdate = this.db.prepare(`SELECT r.body FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.project_id=? AND m.status='active'
+      AND json_extract(r.body,'$.category')='brief' AND json_extract(r.body,'$.scope')='branch' AND json_extract(r.body,'$.branch')=? ORDER BY r.rowid DESC LIMIT 1`).get(session.projectId, project.branch);
+    const update = branchUpdate ? parse(branchUpdate) : null;
+    const candidates = [...ruleProposals(session, receipt), ...testCommandProposals(session, this.listEvents(sessionId, 2000)),
+      ...statusProposal(session, project, update ? this.drift(project, { ...update, category: 'brief', scope: 'branch' }, new Map()) : 0, !!update)];
+    const created = [];
+    for (const candidate of candidates.slice(0, 10)) {
+      if (candidate.statement && candidate.kind !== 'branch-status' && existing.some(statement => isDuplicate(statement, candidate.statement))) continue;
+      const body = { id: randomUUID(), projectId: session.projectId, ...candidate, branch: candidate.scope === 'branch' ? project.branch : null, state: 'open', createdAt: now() };
+      // UNIQUE(project, fingerprint): regenerating, or a dismissed fingerprint, never duplicates.
+      const result = this.db.prepare('INSERT INTO proposals(id,project_id,fingerprint,body) VALUES(?,?,?,?) ON CONFLICT(project_id,fingerprint) DO NOTHING').run(body.id, body.projectId, body.fingerprint, JSON.stringify(body));
+      if (result.changes) created.push(body);
+    }
+    return created;
+  }
+  listProposals(projectId, state = 'open') {
+    this.project(projectId); choice(state, ['open', 'accepted', 'dismissed'], 'proposal state');
+    return this.db.prepare(`SELECT body FROM proposals WHERE project_id=? AND json_extract(body,'$.state')=? ORDER BY rowid DESC LIMIT 100`).all(projectId, state).map(parse);
+  }
+  getProposal(id) {
+    const proposal = parse(this.db.prepare('SELECT body FROM proposals WHERE id=?').get(text(id, 'proposal ID', 100)));
+    if (!proposal) throw new Error('Unknown proposal'); return proposal;
+  }
+  // Accepting creates a candidate (still unapproved); status proposals open the helper instead.
+  acceptProposal(id) {
+    const proposal = this.getProposal(id);
+    if (proposal.state !== 'open') throw new Error('This proposal was already handled');
+    if (proposal.kind === 'branch-status') throw new Error('Use Propose branch update for status proposals');
+    if (proposal.evidence?.sessionId) this.getSession(proposal.evidence.sessionId);
+    const memory = this.proposeMemory(proposal.projectId, { statement: proposal.statement, category: proposal.category, scope: proposal.scope, area: '', source: proposal.source });
+    this.db.prepare('UPDATE proposals SET body=? WHERE id=?').run(JSON.stringify({ ...proposal, state: 'accepted', memoryId: memory.id, handledAt: now() }), id);
+    this.audit('proposal-accepted', { id, memoryId: memory.id, kind: proposal.kind });
+    return memory;
+  }
+  dismissProposal(id) {
+    const proposal = this.getProposal(id);
+    this.db.prepare('UPDATE proposals SET body=? WHERE id=?').run(JSON.stringify({ ...proposal, state: 'dismissed', handledAt: now() }), id);
+    this.audit('proposal-dismissed', { id, kind: proposal.kind });
+    return { ...proposal, state: 'dismissed' };
+  }
 
   // ----- Workspaces -----
   getWorkspace(id) {

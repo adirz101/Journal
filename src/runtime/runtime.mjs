@@ -70,9 +70,14 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
     ...(identify ? { identify } : {}), ...(table ? { table } : {}), ...(stopGraceMs ? { stopGraceMs } : {}) });
   const recovered = await manager.recover();
   if (recovered.length) log(`recovered ${recovered.length} session(s) from a previous runtime`);
-  let client = null; let lastClientAt = Date.now(); let closing = null;
+  let client = null; let lastClientAt = Date.now(); let closing = null; const ended = new Set();
   manager.on('event', event => {
-    if (event.type === 'status' && !['starting', 'running', 'waiting', 'stopping'].includes(event.session.status)) setTimeout(() => { try { observers.release(event.session.id); } catch (error) { log(`observer release failed: ${error.message}`); } }, 500).unref();
+    if (event.type === 'status' && !['starting', 'running', 'waiting', 'stopping'].includes(event.session.status) && !ended.has(event.session.id)) {
+      ended.add(event.session.id);
+      setTimeout(() => { try { observers.release(event.session.id); } catch (error) { log(`observer release failed: ${error.message}`); } }, 500).unref();
+      // Deterministic proposals after a session ends; never blocks or fails the session.
+      setTimeout(() => { Promise.resolve().then(() => store.generateProposals?.(event.session.id)).then(created => { if (created?.length) client?.send({ event: { type: 'proposals', projectId: event.session.projectId, count: created.length } }); }).catch(() => {}); }, 1500).unref();
+    }
     client?.send({ event });
   });
   const observerTimer = setInterval(() => observers.poll(), observerMs); observerTimer.unref();

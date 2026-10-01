@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type Memory, type MemoryPage, type Project, type StatusDraft } from './types';
+import { api, type Memory, type MemoryPage, type Project, type Proposal, type StatusDraft } from './types';
 
 const PAGE = 50;
 
@@ -8,16 +8,22 @@ export function KnowledgePanel({ project, version, busy, onEdit, onPropose, onCh
   onPropose: (scope: 'checkout' | 'branch') => void; onChanged: () => void; onError: (error: unknown) => void;
 }) {
   const [filter, setFilter] = useState('all'); const [search, setSearch] = useState(''); const [expanded, setExpanded] = useState<string | null>(null);
-  const [page, setPage] = useState<MemoryPage | null>(null); const [items, setItems] = useState<Memory[]>([]);
+  const [page, setPage] = useState<MemoryPage | null>(null); const [items, setItems] = useState<Memory[]>([]); const [proposals, setProposals] = useState<Proposal[]>([]);
   const load = useCallback(async (offset = 0) => {
     const next = await api<MemoryPage>('memoryPage', { projectId: project.id, offset, limit: PAGE, filter, search });
     setPage(next); setItems(current => offset ? [...current, ...next.items] : next.items);
   }, [project.id, filter, search]);
   useEffect(() => { const timer = setTimeout(() => void load(0).catch(onError), search ? 150 : 0); return () => clearTimeout(timer); }, [load, version, search, onError]);
+  useEffect(() => { void api<Proposal[]>('proposals', { projectId: project.id }).then(setProposals).catch(onError); }, [project.id, version, onError]);
   const act = async (action: () => Promise<unknown>) => { try { await action(); onChanged(); } catch (error) { onError(error); } };
   const counts = page?.counts ?? {};
   return <div className="panel-content"><div className="section-heading"><div><span className="eyebrow">A SHARED FOUNDATION</span><h2>Project knowledge</h2></div><button className="icon-button" aria-label="Add knowledge" onClick={() => onEdit({})}>＋</button></div><p className="muted panel-intro">A repo overview and current branch update orient every session. Relevant decisions and lessons add task context.</p>
     <div className="brief-actions"><button onClick={() => onEdit({ initialCategory: 'brief' })}>Add project brief</button><button disabled={busy || !project.branch} onClick={() => onPropose('branch')}>Propose branch update</button><button disabled={busy} onClick={() => onPropose('checkout')}>Propose overview</button></div>
+    {proposals.length > 0 && <section className="proposal-inbox" aria-label="Proposals"><span className="eyebrow">INBOX · {proposals.length} PROPOSAL{proposals.length === 1 ? '' : 'S'} FROM OBSERVED EVIDENCE</span>
+      {proposals.map(proposal => <article key={proposal.id} className="proposal"><p dir="auto">{proposal.statement}</p><small className="muted">{proposal.kind === 'rule' ? 'Rule line in a task' : proposal.kind === 'test-command' ? 'Observed passing test command' : 'Branch moved after a session'} · {proposal.category}{proposal.branch ? ` · ⑂ ${proposal.branch}` : ''}</small>
+        <div className="memory-actions">{proposal.kind === 'branch-status' ? <button onClick={() => { onPropose('branch'); void act(() => api('dismissProposal', { id: proposal.id })); }}>Propose branch update</button>
+          : <button className="approve" onClick={() => void act(() => api('acceptProposal', { id: proposal.id }))}>Add for review</button>}<button onClick={() => void act(() => api('dismissProposal', { id: proposal.id }))}>Dismiss</button></div></article>)}
+    </section>}
     <input className="knowledge-search" aria-label="Search knowledge" placeholder="Search knowledge…" value={search} onChange={e => setSearch(e.target.value)} maxLength={200} />
     <div className="filter-tabs"><button aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>Current</button><button aria-pressed={filter === 'review'} onClick={() => setFilter('review')}>Needs review <span>{counts.candidate ?? 0}</span></button><button aria-pressed={filter === 'active'} onClick={() => setFilter('active')}>Approved</button><button aria-pressed={filter === 'history'} onClick={() => setFilter('history')}>History</button></div>
     <div className="memory-list">{items.map(memory => <article className="memory-card" key={memory.id}><div className="memory-meta"><span>{memory.category}{memory.pinned ? ' · pinned' : ''}{memory.promotedFrom ? ` · from ⑂ ${memory.promotedFrom.branch}` : ''}</span><span className={`memory-state ${memory.validation !== 'current' ? 'stale' : memory.status}`}>{memory.validation !== 'current' ? memory.validation : memory.status === 'active' ? 'approved' : memory.status === 'candidate' ? 'needs review' : memory.status}</span></div><p dir="auto">{memory.statement}</p><div className="memory-scope">{memory.scope === 'branch' ? `⑂ ${memory.branch}` : 'This checkout'}{memory.area && ` · ${memory.area}`}{memory.environment && ` · applies when: ${memory.environment}`} · r{memory.revision}</div>

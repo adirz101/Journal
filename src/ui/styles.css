@@ -132,3 +132,5 @@
 .receipt-items{list-style:none;padding:0;margin:0 0 12px;display:flex;flex-direction:column;gap:10px}.receipt-items li{border:1px solid #323944;border-radius:7px;background:#1d222a;padding:11px}.receipt-items p{font-size:11px;line-height:1.55;margin:8px 0 6px;white-space:pre-line;overflow-wrap:anywhere}
 .visually-hidden{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;padding:0;margin:0}
 :root[data-theme=light] .receipt-items li{background:#fff;border-color:#dce2ec}:root[data-theme=light] .receipt-facts dd{color:#35435a}
+.proposal-inbox{border:1px dashed #3a4a63;border-radius:7px;padding:10px 11px;margin:0 0 14px;display:flex;flex-direction:column;gap:9px}.proposal p{font-size:11px;line-height:1.55;margin:0 0 4px;white-space:pre-line}.proposal small{font-size:9px}
+:root[data-theme=light] .proposal-inbox{border-color:#bdd0f4}

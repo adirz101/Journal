@@ -83,6 +83,7 @@ export default function App() {
         return;
       }
       if (event.type === 'timeline') { setLiveEvents(current => [...current.slice(-1999), event.event]); return; }
+      if (event.type === 'proposals') { setKnowledgeVersion(v => v + 1); return; }
       if (event.type !== 'status') return;
       merge([event.session]);
     });
