@@ -363,3 +363,14 @@ test('a runtime from another protocol version is reported and never launched ove
   await assert.rejects(c.connect(), /another version/);
   assert.equal(launches, 0); assert.equal(warnings.length, 1);
 });
+
+test('the runtime lock records a real identity and recognizes a live owner', { skip: process.platform === 'win32' }, async t => {
+  const f = fixture(t); const { acquireLock } = await import('../src/runtime/runtime.mjs');
+  const release = await acquireLock(f.dataDir, join(f.dataDir, 'none.sock'));
+  const lock = JSON.parse(readFileSync(join(f.dataDir, 'runtime.lock'), 'utf8'));
+  assert.equal(lock.identity.started, (await processIdentity(process.pid)).started); release();
+  const child = spawnChild(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); t.after(() => child.kill('SIGKILL'));
+  let identity; await until(async () => (identity = await processIdentity(child.pid)));
+  writeFileSync(join(f.dataDir, 'runtime.lock'), JSON.stringify({ pid: child.pid, identity }));
+  await assert.rejects(acquireLock(f.dataDir, join(f.dataDir, 'none.sock')), /already running/);
+});

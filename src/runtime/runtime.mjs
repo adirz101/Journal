@@ -37,7 +37,7 @@ export function logger(dataDir) {
 // PID and process identity. A lock whose owner is gone (or is now another
 // program) is stale and replaced; a live owner means this start must exit.
 export async function acquireLock(dataDir, path, identify = processIdentity) {
-  const file = join(dataDir, 'runtime.lock'); const mine = { pid: process.pid, identity: identify(process.pid) };
+  const file = join(dataDir, 'runtime.lock'); const mine = { pid: process.pid, identity: await identify(process.pid) };
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const fd = openSync(file, 'wx', 0o600); writeFileSync(fd, JSON.stringify(mine)); closeSync(fd);
@@ -45,7 +45,7 @@ export async function acquireLock(dataDir, path, identify = processIdentity) {
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
       let owner = null; try { owner = JSON.parse(readFileSync(file, 'utf8')); } catch { /* unreadable lock is stale */ }
-      const verified = owner?.identity && sameIdentity(identify(owner.pid), owner.identity);
+      const verified = !!owner?.identity && sameIdentity(await identify(owner.pid), owner.identity);
       const unverifiedButServing = owner && !owner.identity && isAlive(owner.pid) && await canConnect(path);
       if (owner && owner.pid !== process.pid && (verified || unverifiedButServing)) throw Object.assign(new Error('A Journal runtime is already running for this data directory'), { code: 'RUNTIME_EXISTS' });
       rmSync(file, { force: true });
