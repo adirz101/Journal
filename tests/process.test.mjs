@@ -36,7 +36,7 @@ test('a verified signal refuses a reused PID and reaches the recorded process', 
   const child = spawn(process.execPath, ['-e', 'process.title = "renamed-by-cli"; setInterval(() => {}, 1000)'], { stdio: 'ignore' });
   t.after(() => { try { child.kill('SIGKILL'); } catch {} });
   let identity = null; for (let i = 0; i < 50 && !identity; i++) { identity = await processIdentity(child.pid); await wait(20); }
-  assert.ok(identity?.started); assert.ok(!('command' in identity), 'Identity stores no command text');
+  assert.ok(identity?.started); assert.deepEqual(Object.keys(identity), ['started'], 'Identity stores no command text');
   await wait(200);
   // A CLI that rewrites its process title keeps the same identity.
   assert.ok(sameIdentity(identity, await processIdentity(child.pid)));
@@ -51,9 +51,10 @@ test('a verified signal refuses a reused PID and reaches the recorded process', 
 
 test('identity start times are reported in UTC regardless of the caller time zone', { skip: !posix }, async () => {
   const { execFileSync } = await import('node:child_process');
-  const script = `import('${new URL('../src/core/process.mjs', import.meta.url).href}').then(async m => console.log((await m.processIdentity(process.pid)).started))`;
+  // The same fixed process (this test runner) must read identically from every zone.
+  const script = `import('${new URL('../src/core/process.mjs', import.meta.url).href}').then(async m => console.log((await m.processIdentity(${process.pid})).started))`;
   const zones = ['UTC', 'America/Los_Angeles', 'Asia/Tokyo'].map(TZ => execFileSync(process.execPath, ['-e', script], { encoding: 'utf8', env: { ...process.env, TZ } }).trim());
-  assert.ok(zones.every(Boolean)); assert.match(zones[1], /^\w{3} \w{3} \d+ [\d:]+ \d{4}$/);
+  assert.match(zones[0], /^\w{3} \w{3} \d+ [\d:]+ \d{4}$/); assert.equal(new Set(zones).size, 1, zones.join(' | '));
 });
 
 test('executables resolve from PATH, including Windows PATHEXT shims', t => {

@@ -61,7 +61,8 @@ export class RuntimeClient extends EventEmitter {
           // A runtime from another Journal version still holds this data directory.
           // Never launch over it; its sessions stay running until it is stopped.
           const message = `A Journal runtime from another version (protocol ${connection.mismatch}) is running and keeps its sessions. Quit that version of Journal, or end its runtime, to connect.`;
-          this.emit('warning', message); throw new Error(message);
+          if (!this.mismatch) this.emit('warning', message);
+          this.mismatch = true; throw Object.assign(new Error(message), { mismatch: true });
         }
         if (connection) {
           if (connection.hello.build !== buildId() && !connection.hello.live && !launched) {
@@ -91,8 +92,9 @@ export class RuntimeClient extends EventEmitter {
   }
   async reconnect() {
     for (let attempt = 0; !this.closing && !this.socket; attempt++) {
-      try { const hello = await this.connect(); this.emit('reconnected', hello); return; }
-      catch { await wait(Math.min(5000, 500 * (attempt + 1))); }
+      try { const hello = await this.connect(); this.mismatch = false; this.emit('reconnected', hello); return; }
+      // Another version's runtime will not change by retrying quickly.
+      catch (error) { await wait(error.mismatch ? 30000 : Math.min(5000, 500 * (attempt + 1))); }
     }
   }
   receive(message) {

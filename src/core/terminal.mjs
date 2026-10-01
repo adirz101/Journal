@@ -162,12 +162,15 @@ export class TerminalManager extends EventEmitter {
     const recorded = [...entry.descendants.values()];
     session.survivors = recorded.length ? null : [];
     this.persist(session, true); this.emitStatus(session); this.scheduleFlush();
-    void (async () => {
-      const remaining = recorded.length ? survivors(recorded, await Promise.resolve(this.table()).catch(() => null)) : [];
+    const event = survivors => this.record(session.id, entry.stopping ? 'stop' : 'exit', { exitCode, signal: signal ?? null, survivors });
+    if (!recorded.length) { event(0); return; }
+    // Leftover children: scanned after exit, always saved (dispose waits for it).
+    entry.survivorScan = (async () => {
+      const remaining = survivors(recorded, await Promise.resolve(this.table()).catch(() => null));
       session.survivors = remaining === null ? null : remaining.map(row => ({ pid: row.pid, started: row.started, command: redact(row.command, 120) }));
-      this.record(session.id, entry.stopping ? 'stop' : 'exit', { exitCode, signal: signal ?? null, survivors: session.survivors?.length ?? null });
-      if (!this.disposed) this.emitStatus(session);
-    })();
+      event(session.survivors?.length ?? null);
+      if (this.disposed) this.persist(session, true); else this.emitStatus(session);
+    })().catch(() => {});
   }
   owned(id) {
     const entry = this.entries.get(id);
@@ -199,7 +202,8 @@ export class TerminalManager extends EventEmitter {
       if (entry.exited) return;
       try {
         if (this.platform !== 'win32' && Number.isInteger(pid)) process.kill(-pid, name);
-        else if (name === 'SIGKILL' && Number.isInteger(pid)) void Promise.resolve(this.verifiedSignal(pid, entry.session.identity, 'SIGKILL', this.platform)).catch(() => {});
+        // We still hold the live PTY handle; with no identity yet, kill through it.
+        else if (name === 'SIGKILL' && Number.isInteger(pid) && entry.session.identity) void Promise.resolve(this.verifiedSignal(pid, entry.session.identity, 'SIGKILL', this.platform)).catch(() => {});
         else entry.proc.kill();
       } catch { try { entry.proc.kill(name); } catch { /* already gone */ } }
     };
@@ -350,7 +354,7 @@ export class TerminalManager extends EventEmitter {
     const recovered = [];
     for (const session of await this.store.liveSessions()) {
       if (session.runtimeId === this.runtimeId) continue;
-      // Verified: same PID, start time and command. A live PID whose identity
+      // Verified: same PID and start time. A live PID whose identity
       // cannot be read stays orphaned but unverified: never reported as ended.
       const current = session.pid ? await this.identify(session.pid) : null;
       const verified = !!session.identity && sameIdentity(current, session.identity);
@@ -405,8 +409,9 @@ export class TerminalManager extends EventEmitter {
         if (entry.exited) return resolve();
         entry.waiters.push(resolve); setTimeout(resolve, timeoutMs).unref?.();
       }));
-      for (const entry of live) { try { this.stop(entry.session.id); } catch { /* already gone */ } }
+      for (const entry of live) { try { void this.stop(entry.session.id).catch(() => {}); } catch { /* already gone */ } }
       await Promise.all(exits);
+      await Promise.all(live.map(entry => entry.survivorScan).filter(Boolean));
     }
     this.disposed = true; this.detach();
     for (const entry of this.liveEntries()) {

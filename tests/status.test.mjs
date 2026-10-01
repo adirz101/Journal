@@ -143,3 +143,11 @@ test('a git-backed repo overview stays current on older branches; branch updates
   f.git('switch', 'older');
   assert.ok(!f.store.prepareContext(f.project.id, '').items.some(i => i.id === update.id));
 });
+
+test('a repo overview goes stale once no branch, remote or tag contains its commit', t => {
+  const f = fixture(t); f.commit('docs/a.md', 'a\n', 'Docs to be discarded');
+  const overview = f.save(f.store.proposeStatusUpdate(f.project.id, 'checkout')); f.store.setMemoryStatus(overview.id, 'active');
+  assert.equal(f.store.listMemories(f.project.id)[0].validation, 'current');
+  f.git('reset', '--hard', 'HEAD~1');
+  assert.equal(f.store.listMemories(f.project.id)[0].validation, 'stale', 'Only the reflog still holds the commit');
+});

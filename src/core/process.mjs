@@ -1,5 +1,4 @@
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { delimiter, isAbsolute, join, win32 } from 'node:path';
 
@@ -14,9 +13,6 @@ import { delimiter, isAbsolute, join, win32 } from 'node:path';
 // C locale and UTC keep ps start times in one parseable, DST-stable format.
 const options = timeout => ({ encoding: 'utf8', timeout, maxBuffer: 8 * 1024 * 1024, windowsHide: true, env: { ...process.env, LC_ALL: 'C', LANG: 'C', TZ: 'UTC' } });
 const run = (file, args, timeout = 3000) => new Promise((resolve, reject) => execFile(file, args, options(timeout), (error, stdout) => error ? reject(error) : resolve(stdout)));
-// Identities persist a hash of the command line: agent command lines carry
-// prompt text, which belongs in receipts, not in process metadata.
-const digest = command => createHash('sha256').update(command).digest('hex').slice(0, 32);
 const LSTART = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s(.*)$/;
 
 export function isAlive(pid) {
@@ -24,18 +20,18 @@ export function isAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; }
 }
 
-// { started, commandHash } or null when the platform cannot report it.
+// { started } or null when the platform cannot report it.
 export async function processIdentity(pid, platform = process.platform) {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   try {
     if (platform === 'win32') {
       const value = (await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$p=Get-Process -Id ${pid} -ErrorAction Stop; "$($p.StartTime.ToFileTimeUtc())|$($p.Path)"`], 6000)).trim();
       const [started, command] = value.split('|');
-      return started ? { started, commandHash: digest(command ?? '') } : null;
+      void command; return started ? { started } : null;
     }
     const line = (await run('ps', ['-ww', '-o', 'lstart=', '-o', 'command=', '-p', String(pid)])).trim();
     const match = line.match(/^(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s(.*)$/);
-    return match ? { started: match[1].replace(/\s+/g, ' '), commandHash: digest(match[2]) } : null;
+    return match ? { started: match[1].replace(/\s+/g, ' ') } : null;
   } catch { return null; }
 }
 
@@ -48,7 +44,7 @@ export function parseProcessTable(text) {
   const rows = [];
   for (const line of text.split('\n')) {
     const match = line.match(LSTART);
-    if (match) rows.push({ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), started: match[4].replace(/\s+/g, ' '), commandHash: digest(match[5]), command: match[5].slice(0, 200) });
+    if (match) rows.push({ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), started: match[4].replace(/\s+/g, ' '), command: match[5].slice(0, 200) });
   }
   return rows;
 }

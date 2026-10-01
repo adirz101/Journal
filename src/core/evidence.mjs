@@ -78,9 +78,10 @@ export function validateEvidence(project, source, cache, scope = 'branch') {
   if (source.kind === 'git') {
     // A branch update describes this branch's history: it goes stale when that
     // history is rewritten or reset. A repo overview stays valid on every
-    // branch of the checkout while its commit still exists in the repository.
+    // branch of the checkout while some branch, remote or tag still contains its commit.
     const key = `git:${scope}:${source.head}`;
-    const check = () => isCommit(project.root, source.head) && (scope === 'checkout' || isAncestor(project.root, source.head));
+    const reachable = () => { try { return !!git(project.root, ['for-each-ref', '--count=1', '--contains', source.head, 'refs/heads', 'refs/remotes', 'refs/tags']); } catch { return false; } };
+    const check = () => isCommit(project.root, source.head) && (scope === 'checkout' ? reachable() : isAncestor(project.root, source.head));
     if (!cache) return check();
     if (!cache.has(key)) cache.set(key, check());
     return cache.get(key);

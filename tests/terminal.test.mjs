@@ -182,3 +182,13 @@ test('display credit stays bounded during flood while interrupts still reach the
   f.manager.interrupt(started.session.id); assert.equal(f.inputs.at(-1), '\x03');
   assert.throws(() => f.manager.write('another-session', 'no'), /owned/);
 });
+
+test('a launch that spawned before failing records uncertain delivery, not failed', async t => {
+  const f = runtime(t); const save = f.store.saveSession.bind(f.store); let calls = 0;
+  f.store.saveSession = session => { if (session.status === 'running' && ++calls === 1) throw new Error('disk full'); return save(session); };
+  await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'claude', task: 'spawned' }), /Could not start/);
+  assert.equal(f.launches.length, 1);
+  assert.equal(f.store.listReceipts(f.project.id)[0].state, 'uncertain');
+  await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'bogus', task: 'x' }), /Unknown agent provider/);
+  assert.equal(f.store.listSessions(f.project.id).length, 1, 'An invalid provider saves nothing');
+});
