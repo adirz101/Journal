@@ -81,14 +81,16 @@ test('edits require new admission and cannot mutate historical context', t => {
 test('receipts and approved knowledge survive reopening SQLite', t => {
   const f = fixture(t); const m = f.propose(); f.store.setMemoryStatus(m.id, 'active');
   const before = f.store.prepareContext(f.project.id, 'Docker'); f.store.close();
-  const reopened = new JournalStore(f.path); t.after(() => reopened.close());
-  assert.equal(reopened.getReceipt(before.id).packet, before.packet);
-  assert.equal(reopened.prepareContext(f.project.id, 'Docker').items.length, 1);
+  const reopened = new JournalStore(f.path);
+  try {
+    assert.equal(reopened.getReceipt(before.id).packet, before.packet);
+    assert.equal(reopened.prepareContext(f.project.id, 'Docker').items.length, 1);
+  } finally { reopened.close(); }
 });
 test('FTS input is escaped and packets preserve whole claims inside the byte budget', t => {
   const f = fixture(t);
   for (let i = 0; i < 9; i++) {
-    const m = f.propose({ statement: `Docker ${i} ` + 'מידע '.repeat(130), source: { kind: 'user', note: 'Explicit fixture policy' } });
+    const m = f.propose({ statement: `Docker ${i} ` + '\u05de\u05d9\u05d3\u05e2 '.repeat(130), source: { kind: 'user', note: 'Explicit fixture policy' } });
     f.store.setMemoryStatus(m.id, 'active');
   }
   const receipt = f.store.prepareContext(f.project.id, 'Docker " OR NEAR(*');

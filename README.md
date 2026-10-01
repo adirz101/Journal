@@ -27,6 +27,8 @@ Knowledge, source excerpts, initial tasks, session metadata and context receipts
 
 ## Verification and limits
 
+Run checks manually on your own computer. CI, hosted runners, nightly tests and scheduled checks are disabled at this stage; the former GitHub Actions workflow has been removed.
+
 ```sh
 npm test
 npm run check
@@ -35,9 +37,9 @@ npm run test:desktop
 npm run smoke:agents
 ```
 
-Verified locally on macOS: 33 core tests, typecheck, production build and desktop acceptance. The desktop scenario uses real Electron/node-pty with safe stand-in CLIs: Claude→Codex knowledge handoff, exact resume, 2.2 MB output flood, input/interrupt, renderer reload, device-query replay suppression and app restart.
+Verified locally on macOS: 37 core tests, typecheck, production build and desktop acceptance. The desktop scenario uses real Electron/node-pty with safe stand-in CLIs: Claude→Codex knowledge handoff, exact resume, separate resume-ID drafts, 2.2 MB output flood, input/interrupt, renderer reload, device-query replay suppression and app restart.
 
-Native startup smoke produced output from Claude Code 2.1.284 and Codex 0.154.0 without task submission. Claude reached a checkout trust prompt; Codex displayed its native header. An authenticated model turn, permission allow/deny and real-provider native resume are **not** verified end to end. Windows CI is configured but has not run; native Windows behavior remains unverified. No packaged or signed release.
+Native startup smoke produced output from Claude Code 2.1.284 and Codex 0.154.0 without task submission. Claude reached a checkout trust prompt; Codex displayed its native header. An authenticated model turn, permission allow/deny and real-provider native resume are **not** verified end to end. Native Windows behavior remains unverified on a local Windows machine. No packaged or signed release.
 
 One active terminal, manual knowledge entry, exact branch/checkout scope and lexical search. Automatic extraction, structured chat, cloud sync, background jobs, runtime sidecar and cross-worktree promotion remain roadmap work. Source fingerprints detect changes; they do not prove a claim is true. Receipts record launch text, not model acknowledgment.
 
@@ -46,8 +48,7 @@ One active terminal, manual knowledge entry, exact branch/checkout scope and lex
 - [Current specification](docs/TERMINAL-FIRST-SPEC.md)
 - [Foundation decision and source policy](docs/adr/002-terminal-first-foundation.md)
 - [Implementation status and evidence](docs/IMPLEMENTATION-STATUS.md)
-- [Continuation handoff](HANDOFF.md)
-- [Executive summary — Hebrew](docs/EXECUTIVE-SUMMARY.he.md)
+- [Executive summary](docs/EXECUTIVE-SUMMARY.md)
 - [Original design proposal](docs/JOURNAL-DESIGN.md)
 - [Historical full-product roadmap](docs/IMPLEMENTATION-PLAN.md)
 - [Source ledger](docs/RESEARCH.md)

@@ -144,6 +144,17 @@ export class JournalStore {
     if (!receipt) throw new Error('Unknown receipt');
     return receipt;
   }
+  latestNativeReceipt(projectId, provider, nativeId) {
+    // A native conversation spans launch rows. Ignore previews/failed launches,
+    // but retain possibly delivered context after an uncertain interruption.
+    const row = this.db.prepare(`WITH deliveries AS (
+      SELECT r.rowid AS sequence,r.body FROM sessions s JOIN receipts r ON r.id=json_extract(s.body,'$.receiptId')
+      WHERE s.project_id=? AND json_extract(s.body,'$.provider')=? AND json_extract(s.body,'$.nativeId')=?
+      AND json_extract(r.body,'$.state') IN ('submitted','uncertain')
+    ) SELECT body,EXISTS(SELECT 1 FROM deliveries WHERE json_array_length(body,'$.items')>0) AS had_knowledge
+      FROM deliveries ORDER BY sequence DESC LIMIT 1`).get(projectId, provider, nativeId);
+    return row ? { ...parse(row), hadKnowledge: !!row.had_knowledge } : null;
+  }
   listReceipts(projectId) {
     this.project(projectId);
     return this.db.prepare('SELECT body FROM receipts WHERE project_id=? ORDER BY rowid DESC LIMIT 50').all(projectId).map(parse);

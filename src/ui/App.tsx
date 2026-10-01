@@ -11,7 +11,10 @@ export default function App() {
   const [receipt, setReceipt] = useState<Receipt | null>(null); const [task, setTask] = useState('');
   const [panel, setPanel] = useState<'knowledge' | 'context'>('knowledge'); const [filter, setFilter] = useState('all'); const [search, setSearch] = useState('');
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState<{ memory?: Memory } | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null); const [resumeValue, setResumeValue] = useState('');
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [resumeDraft, setResumeDraft] = useState<{ sessionId: string; value: string } | null>(null);
+  // A confirmation draft belongs to one launch, never to another conversation.
+  const resumeValue = resumeDraft?.sessionId === session?.id ? resumeDraft?.value ?? '' : session?.nativeId ?? '';
   const taskRef = useRef<HTMLTextAreaElement>(null); const projectRef = useRef<Project | null>(null); const sessionRef = useRef<Session | null>(null);
   projectRef.current = state?.project ?? null; sessionRef.current = session;
   const failed = (error: unknown) => setError(error instanceof Error ? error.message : String(error));
@@ -61,7 +64,7 @@ export default function App() {
     });
   }
   async function selectSession(next: Session) {
-    await run(async () => { setSession(next); setReceipt(await api<Receipt>('getReceipt', { id: next.receiptId })); setResumeValue(next.nativeId ?? ''); });
+    await run(async () => { setSession(next); setReceipt(await api<Receipt>('getReceipt', { id: next.receiptId })); });
   }
   const memories = state?.memories.filter(m => (filter === 'all' ? !['archived', 'rejected'].includes(m.status) : filter === 'review' ? m.status === 'candidate' : filter === 'active' ? m.status === 'active' : true) && `${m.statement} ${m.category} ${m.source.path ?? ''}`.toLocaleLowerCase().includes(search.toLocaleLowerCase())) ?? [];
   const candidates = state?.memories.filter(m => m.status === 'candidate').length ?? 0;
@@ -91,7 +94,7 @@ export default function App() {
           </section>
           <section className="terminal-panel"><div className="terminal-heading"><div><span className={`status-dot ${session?.status ?? ''}`} /><strong>{session ? session.provider === 'claude' ? 'Claude Code' : 'Codex' : 'Terminal'}</strong><span className="terminal-label">{session?.status ?? 'Ready to start'}</span></div>{session && isLive(session) && <div><button onClick={() => void api('interrupt', { id: session.id }).catch(failed)}>Interrupt <kbd>^C</kbd></button><button onClick={() => void api('stop', { id: session.id }).catch(failed)}>Stop terminal</button></div>}</div>
             {session ? <TerminalPane sessionId={session.id} live={isLive(session)} onError={setError} /> : <div className="terminal-empty"><span className="prompt-symbol">›_</span><h2>A familiar place to work.</h2><p>Start an agent above. Your native login, settings,<br />and tool approvals stay with the CLI.</p></div>}
-            {session && !isLive(session) && !session.nativeIdConfirmed && <div className="resume-id"><label>Native session ID<input value={resumeValue} onChange={e => setResumeValue(e.target.value)} placeholder="Exact UUID from the native CLI" /></label><button onClick={() => void run(async () => { const next = await api<Session>('confirmNativeId', { id: session.id, nativeId: resumeValue }); setSession(next); await refresh(); })}>Confirm resume ID</button></div>}
+            {session && !isLive(session) && !session.nativeIdConfirmed && <div className="resume-id"><label>Native session ID<input value={resumeValue} onChange={e => setResumeDraft({ sessionId: session.id, value: e.target.value })} placeholder="Exact UUID from the native CLI" /></label><button disabled={busy} onClick={() => void run(async () => { const next = await api<Session>('confirmNativeId', { id: session.id, nativeId: resumeValue }); setSession(next); await refresh(); })}>Confirm resume ID</button></div>}
             <footer className="terminal-footer"><span>{state.project.root}</span><span>Native permissions · volatile output</span></footer>
           </section>
         </>}

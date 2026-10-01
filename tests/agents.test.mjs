@@ -6,7 +6,7 @@ const id = 'f1b5cc71-364f-4136-bbc7-20acf06f1435';
 
 test('agent launch builder exists', () => assert.equal(typeof module.buildAgentLaunch, 'function'));
 test('Claude preassigns a fresh UUID and passes prompts as literal argv', () => {
-  const prompt = 'Check $(touch /tmp/no) `echo nope` "quote"\nעברית';
+  const prompt = 'Check $(touch /tmp/no) `echo nope` "quote"\n\u05e2\u05d1\u05e8\u05d9\u05ea';
   const launch = module.buildAgentLaunch({ provider: 'claude', nativeId: id, prompt });
   assert.equal(launch.executable, 'claude');
   assert.deepEqual(launch.argv, ['--session-id', id, '--', prompt]);

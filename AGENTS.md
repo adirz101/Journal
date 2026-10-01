@@ -3,7 +3,8 @@
 The product and GitHub repository are named **Journal** (formerly Blackbox).
 Repository: `https://github.com/adirz101/Journal`.
 The local repository is `/Users/azechary/Documents/GitHub/Journal`.
-For continuation in a new conversation, read `HANDOFF.md` first.
+For continuation, read `docs/TERMINAL-FIRST-SPEC.md` and
+`docs/IMPLEMENTATION-STATUS.md`. The user deleted HANDOFF.md; do not recreate it.
 
 ## User-selected UI skills
 
@@ -47,3 +48,9 @@ Use Node >=24. Run `npm test`, `npm run check` and `npm run build`; desktop chan
 also need `npm run test:desktop` with Electron-native node-pty. Distinguish fixture
 acceptance from authenticated native provider behavior. Preserve native settings,
 permissions, exact-ID resume, reviewed evidence and immutable receipts.
+
+All verification at this stage is manual and local on the user's computer.
+Do not add or run CI, GitHub Actions, hosted macOS/Windows runners, nightly tests
+or scheduled test jobs. The former GitHub workflow is disabled and removed.
+Keep local test commands available. Repository documents and authored text use
+English; Unicode fixture data may use escapes to retain multilingual coverage.

@@ -58,12 +58,22 @@ process.stdin.on('data',data=>{
     await page.locator('.xterm-helper-textarea').pressSequentially('device-query');
     await page.locator('.xterm-helper-textarea').press('Enter');
     await expect(page.locator('.terminal-surface')).toContainText('DEVICE_RESPONSE');
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(900, 640));
     await page.reload();
+    await expect(page.locator('.terminal-surface')).toContainText('ECHO hello-terminal');
+    // A small viewport shows only recent rows. Verify earlier output by scrolling
+    // through retained history, rather than requiring it to remain on screen.
+    await page.locator('.xterm-helper-textarea').press('Shift+PageUp');
+    await page.locator('.xterm-helper-textarea').press('Shift+PageUp');
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
+    await page.locator('.xterm-helper-textarea').press('Shift+PageDown');
+    await page.locator('.xterm-helper-textarea').press('Shift+PageDown');
+    await expect(page.locator('.terminal-surface')).toContainText('ECHO hello-terminal');
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused();
     await page.locator('.xterm-helper-textarea').pressSequentially('response-count');
     await page.locator('.xterm-helper-textarea').press('Enter');
     await expect(page.locator('.terminal-surface')).toContainText('RESPONSE_COUNT 1');
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 900));
     await page.locator('.xterm-helper-textarea').pressSequentially('flood');
     await page.locator('.xterm-helper-textarea').press('Enter');
     await expect(page.locator('.terminal-surface')).toContainText('FLOOD_COMPLETE', { timeout: 15000 });
@@ -88,6 +98,13 @@ process.stdin.on('data',data=>{
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
     await page.getByRole('button', { name: 'Stop terminal' }).click();
     await expect(page.getByText('exited', { exact: true }).first()).toBeVisible();
+    // Selecting a confirmed older session must not prefill a new conversation's ID.
+    await page.locator('.session-row').filter({ has: page.getByText('Codex', { exact: true }) }).first().getByRole('button').first().click();
+    await page.getByLabel('Initial task').fill('Docker tests NEW_CODEX_SESSION_MARKER');
+    await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
+    await expect(page.locator('.terminal-surface')).toContainText('NEW_CODEX_SESSION_MARKER');
+    await page.getByRole('button', { name: 'Stop terminal' }).click();
+    await expect(page.getByLabel('Native session ID')).toHaveValue('');
     // Security boundary rejects arbitrary IPC actions and filesystem operations.
     const error = await page.evaluate(async () => {
       try { await (window as any).journal.request('readFile', { path: '/etc/passwd' }); return 'allowed'; }

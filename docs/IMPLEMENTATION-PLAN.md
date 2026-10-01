@@ -1,10 +1,12 @@
 # Journal: phased implementation plan
 
+**Current testing policy:** all checks are manual and local on the user's computer. No CI, hosted runners, nightly tests or scheduled verification. This policy supersedes historical testing proposals below.
+
 Date: 1 October 2026. **Historical full-product roadmap.** The user approved a narrower terminal-only first slice and rejected all dev3 code reuse. The current [specification](TERMINAL-FIRST-SPEC.md), [plan](superpowers/plans/2026-10-01-terminal-first.md), [foundation decision](adr/002-terminal-first-foundation.md) and [verified status](IMPLEMENTATION-STATUS.md) supersede the initial stack, chat and reuse assumptions below. Later phases remain proposals.
 
 ## Execution principles
 
-One maintainer can start the work, but public native Windows support requires access to Windows hardware/CI and a repeatable test owner. Budget substantial integration/maintenance time; do not treat a chat renderer plus a vector store as the product. Timeboxes below are rough engineering estimates for an experienced developer, not delivery commitments. Research/legal responses and external release/signing lead times are not included.
+One maintainer can start the work, but public native Windows support requires access to a local Windows machine and a repeatable test owner. Budget substantial integration/maintenance time; do not treat a chat renderer plus a vector store as the product. Timeboxes below are rough engineering estimates for an experienced developer, not delivery commitments. Research/legal responses and external release/signing lead times are not included.
 
 No product scaffolding before the feasibility decision. Keep spike code throwaway and outside the eventual core. Each milestone produces a reviewable result and evidence, not a percentage complete. Stop or reduce scope when a gate fails. Feature code follows the agreed design after this planning phase.
 

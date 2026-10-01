@@ -52,11 +52,11 @@ Consumes a narrow `window.journal` bridge; views projects/sessions, terminal, kn
 
 ### Task 5 — Verify and record limits
 
-Files: `README.md`, `HANDOFF.md`, `docs/IMPLEMENTATION-STATUS.md`, `.github/workflows/ci.yml`.
+Files: `README.md`, `docs/IMPLEMENTATION-STATUS.md`. Current user instruction removes HANDOFF.md and the GitHub workflow; do not recreate them.
 - [x] Run full core suite, typecheck, production build and Electron desktop test against native PTY.
 - [x] Smoke real provider startup without task submission and report observed outcomes. Review final diff for security/validity defects; fix with regression tests.
 - [x] Update instructions/docs to implementation phase, record Windows/authenticated-handoff limits and provide start command. No push or public release.
 
 ## Completion evidence
 
-Local macOS: clean npm ci (Electron installer and native rebuild), 33 core tests, typecheck, production build and real Electron/PTTY fixture acceptance passed. Native Claude/Codex startup smoke produced output without task submission. Exact native authenticated resume and Windows interactive behavior remain unverified; CI is authored, not run. Details: docs/IMPLEMENTATION-STATUS.md. Work remains on codex/terminal-first; no push, merge or public release.
+Local macOS: clean npm ci (Electron installer and native rebuild), 33 core tests, typecheck, production build and real Electron/PTY fixture acceptance passed. Native Claude/Codex startup smoke produced output without task submission. Exact native authenticated resume and Windows interactive behavior remain unverified; The former workflow was later disabled and removed at the user's request; checks are now manual and local only. Details: docs/IMPLEMENTATION-STATUS.md. Work is published in draft PR #1 from codex/terminal-first; no merge or public release.

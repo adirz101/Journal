@@ -10,7 +10,7 @@ Extending dev3 retains its working shell but couples Journal to Electrobun/Bun, 
 
 ## Decision
 
-Electron + React/Vite + node-pty + xterm.js + Node SQLite/FTS5. Mature existing PTY/emulator libraries replace the provisional Rust/PTTY plan. Native CLIs run directly with inherited login/settings; no SDK, app-server chat, new agent loop, token extraction or global hook/config edits. No bypass-permission flags.
+Electron + React/Vite + node-pty + xterm.js + Node SQLite/FTS5. Mature existing PTY/emulator libraries replace the provisional Rust/PTY plan. Native CLIs run directly with inherited login/settings; no SDK, app-server chat, new agent loop, token extraction or global hook/config edits. No bypass-permission flags.
 
 Claude gets a preassigned UUID and optional per-launch lifecycle observer hooks. Codex ID can be reported by its exact resume banner or explicitly supplied by the user; terminal-derived IDs need confirmation before targeted resume. Never use `--last` or `--continue`. Automatic trusted Codex hooks are deferred rather than overwriting existing native hook settings or bypassing hook trust.
 
@@ -18,6 +18,6 @@ Knowledge goes in the visible initial CLI prompt, together with the user-supplie
 
 ## Validation limits
 
-Installed executables: Claude Code 2.1.284 and Codex CLI 0.154.0. Version/help inspection is not a successful authenticated run. Native Windows quality and provider account policy are not proved by upstream code. Windows CI covers install/build/core tests; native interactive smoke remains required before advertising support. No release/signing/cloud in this slice. Native terminal output stays volatile; persisted knowledge is explicitly reviewed. No raw keystroke or PTY transcript capture.
+Installed executables: Claude Code 2.1.284 and Codex CLI 0.154.0. Version/help inspection is not a successful authenticated run. Native Windows quality and provider account policy are not proved by upstream code. All current checks run manually on the user's local computer; CI and nightly testing are disabled. Native Windows install/build/core and interactive smoke require a local Windows machine before advertising support. No release/signing/cloud in this slice. Native terminal output stays volatile; persisted knowledge is explicitly reviewed. No raw keystroke or PTY transcript capture.
 
 Primary references: [node-pty](https://github.com/microsoft/node-pty), [xterm flow control](https://xtermjs.org/docs/guides/flowcontrol/), [Claude CLI](https://code.claude.com/docs/en/cli-reference), [Claude hooks](https://code.claude.com/docs/en/hooks), [Codex CLI](https://developers.openai.com/codex/cli/reference/).

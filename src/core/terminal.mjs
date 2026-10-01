@@ -49,15 +49,15 @@ export class TerminalManager extends EventEmitter {
       if (!prior.nativeIdConfirmed || !UUID.test(prior.nativeId ?? '')) throw new Error('Confirm the exact native session ID before resuming');
     }
     // Always reselect and revalidate here; a stale preview never authorizes delivery.
-    const oldReceipt = prior ? await this.store.getReceipt(prior.receiptId) : null;
+    const oldReceipt = prior ? await this.store.latestNativeReceipt(projectId, provider, prior.nativeId) : null;
     const receipt = await this.store.prepareContext(projectId, task || oldReceipt?.query || '');
     const session = { id: randomUUID(), projectId, provider, nativeId: prior?.nativeId ?? (provider === 'claude' ? randomUUID() : null),
       nativeIdConfirmed: provider === 'claude' || !!prior, title: task.slice(0, 80) || (prior ? 'Resume session' : 'Interactive session'),
       status: 'starting', receiptId: receipt.id, resumedFrom: prior?.id ?? null, createdAt: new Date().toISOString() };
     let prompt = task;
-    if (receipt.packet || (prior && oldReceipt?.items.length)) {
+    if (receipt.packet || (prior && (oldReceipt?.hadKnowledge || oldReceipt?.items.length))) {
       const withdrawn = oldReceipt?.items.filter(item => !receipt.items.some(current => current.revisionId === item.revisionId)) ?? [];
-      const update = prior ? `Current Journal knowledge has been revalidated. Earlier context may remain. ${withdrawn.length ? `Do not rely on prior Journal revisions now excluded: ${withdrawn.map(item => item.revisionId).join(', ')}. ` : ''}No previous task is being repeated.\n` : '';
+      const update = prior ? `Current Journal knowledge has been revalidated. Earlier context may remain. Only claims listed in the current packet by memory ID and revision are applicable; do not rely on any other earlier Journal claims. ${withdrawn.length ? `Previously delivered claims now excluded: ${withdrawn.map(item => `${item.id} r${item.revision}`).join(', ')}. ` : ''}${!receipt.items.length ? 'No prior Journal knowledge is currently applicable. ' : ''}No previous task is being repeated.\n` : '';
       prompt = `${update}${receipt.packet}${task ? `\nTask:\n${task}` : ''}`;
     }
     await this.store.saveSession(session);
