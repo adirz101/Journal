@@ -10,7 +10,7 @@ export default function App() {
   const [state, setState] = useState<ProjectState | null>(null); const [session, setSession] = useState<Session | null>(null); const [active, setActive] = useState<Session | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null); const [task, setTask] = useState('');
   const [panel, setPanel] = useState<'knowledge' | 'context'>('knowledge'); const [filter, setFilter] = useState('all'); const [search, setSearch] = useState('');
-  const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState<{ memory?: Memory } | null>(null);
+  const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState<{ memory?: Memory; initialCategory?: string } | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [resumeDraft, setResumeDraft] = useState<{ sessionId: string; value: string } | null>(null);
   // A confirmation draft belongs to one launch, never to another conversation.
@@ -101,7 +101,7 @@ export default function App() {
     </main>
 
     {state && <aside className="knowledge-panel"><div className="panel-tabs" role="tablist" aria-label="Project information"><button role="tab" aria-selected={panel === 'knowledge'} onClick={() => setPanel('knowledge')}>Knowledge <span>{state.memories.filter(m => m.status === 'active').length}</span></button><button role="tab" aria-selected={panel === 'context'} onClick={() => setPanel('context')}>Context</button></div>
-      {panel === 'knowledge' ? <div className="panel-content"><div className="section-heading"><div><span className="eyebrow">A SHARED FOUNDATION</span><h2>Project knowledge</h2></div><button className="icon-button" aria-label="Add knowledge" onClick={() => setForm({})}>＋</button></div><p className="muted panel-intro">Reviewed facts and decisions. Available to both agents, with their sources attached.</p>
+      {panel === 'knowledge' ? <div className="panel-content"><div className="section-heading"><div><span className="eyebrow">A SHARED FOUNDATION</span><h2>Project knowledge</h2></div><button className="icon-button" aria-label="Add knowledge" onClick={() => setForm({})}>＋</button></div><p className="muted panel-intro">A repo overview and current branch update orient every session. Relevant decisions and lessons add task context.</p><button onClick={() => setForm({ initialCategory: 'brief' })}>Add project brief</button>
         <input className="knowledge-search" aria-label="Search knowledge" placeholder="Search knowledge…" value={search} onChange={e => setSearch(e.target.value)} />
         <div className="filter-tabs"><button aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>Current</button><button aria-pressed={filter === 'review'} onClick={() => setFilter('review')}>Needs review <span>{candidates}</span></button><button aria-pressed={filter === 'active'} onClick={() => setFilter('active')}>Approved</button><button aria-pressed={filter === 'history'} onClick={() => setFilter('history')}>History</button></div>
         <div className="memory-list">{memories.map(memory => <article className="memory-card" key={memory.id}><div className="memory-meta"><span>{memory.category}</span><span className={`memory-state ${memory.validation !== 'current' ? 'stale' : memory.status}`}>{memory.validation !== 'current' ? memory.validation : memory.status === 'active' ? 'approved' : memory.status === 'candidate' ? 'needs review' : memory.status}</span></div><p dir="auto">{memory.statement}</p><div className="memory-scope">{memory.scope === 'branch' ? `⑂ ${memory.branch}` : 'This checkout'}{memory.area && ` · ${memory.area}`} · r{memory.revision}</div>
@@ -115,6 +115,6 @@ export default function App() {
         {state.receipts.length > 0 && <div className="receipt-history"><span className="eyebrow">RECENT RECEIPTS</span>{state.receipts.slice(0, 10).map(r => <button key={r.id} onClick={() => setReceipt(r)}><span>{r.query || 'Interactive session'}</span><small>{r.items.length} claims · {r.state}</small></button>)}</div>}
       </div>}
     </aside>}
-    {state && form && <KnowledgeForm project={state.project} memory={form.memory} onClose={() => setForm(null)} onSaved={() => { setForm(null); setPanel('knowledge'); void refresh().catch(failed); }} />}
+    {state && form && <KnowledgeForm project={state.project} memory={form.memory} initialCategory={form.initialCategory} onClose={() => setForm(null)} onSaved={() => { setForm(null); setPanel('knowledge'); void refresh().catch(failed); }} />}
   </div>;
 }

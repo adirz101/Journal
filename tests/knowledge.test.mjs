@@ -34,6 +34,59 @@ test('only manually admitted knowledge is retrieved, with exact sources and rece
   assert.equal(receipt.state, 'prepared');
   assert.ok(receipt.items[0].source.contentHash); assert.equal(receipt.items[0].source.excerpt, 'Integration tests require Docker.');
 });
+test('incidental English grammar words cannot inject unrelated approved knowledge', t => {
+  const f = fixture(t);
+  const memory = f.propose({ statement: 'The native terminal requires Electron', source: { kind: 'user', note: 'Explicit fixture development policy' } });
+  f.store.setMemoryStatus(memory.id, 'active');
+  assert.equal(f.store.prepareContext(f.project.id, 'Translate THE marketing landing page').items.length, 0);
+  assert.equal(f.store.prepareContext(f.project.id, 'the and for').items.length, 0);
+  assert.equal(f.store.prepareContext(f.project.id, 'Update the Electron setup').items[0]?.id, memory.id);
+  assert.equal(f.store.prepareContext(f.project.id, 'a an and are as at be by for from in is it of on or Electron').items[0]?.id, memory.id);
+});
+test('an approved project brief orients empty and unrelated tasks before task-specific knowledge', t => {
+  const f = fixture(t);
+  const brief = f.propose({ category: 'brief', scope: 'checkout', statement: 'Purpose: fixture project. Status: integration foundation ready. Next: validate Docker setup.', source: { kind: 'user', note: 'Reviewed fixture project status' } });
+  assert.equal(f.store.prepareContext(f.project.id, '').items.length, 0, 'Candidates are never orientation');
+  f.store.setMemoryStatus(brief.id, 'active');
+  for (const query of ['', 'Translate marketing']) assert.deepEqual(f.store.prepareContext(f.project.id, query).items.map(x => x.id), [brief.id]);
+  const rule = f.propose(); f.store.setMemoryStatus(rule.id, 'active');
+  const receipt = f.store.prepareContext(f.project.id, 'Docker');
+  assert.deepEqual(receipt.items.map(x => x.id), [brief.id, rule.id]);
+  assert.match(receipt.packet, /Project brief/); assert.match(receipt.packet, /checkout with spaces/); assert.match(receipt.packet, /branch main/);
+  f.git('switch', '-c', 'feature'); assert.equal(f.store.prepareContext(f.project.id, '').items[0]?.id, brief.id);
+});
+test('project briefs retain source freshness, branch boundaries and explicit revision admission', t => {
+  const f = fixture(t); const brief = f.propose({ category: 'brief', statement: 'Status: integration tests require Docker.' });
+  f.store.setMemoryStatus(brief.id, 'active'); const original = f.store.prepareContext(f.project.id, '');
+  f.git('switch', '-c', 'feature'); assert.equal(f.store.prepareContext(f.project.id, '').items.length, 0);
+  f.git('switch', 'main'); writeFileSync(resolve(f.repo, 'tests.md'), 'Changed project state\n');
+  const stale = f.store.prepareContext(f.project.id, '');
+  assert.equal(stale.items.length, 0); assert.ok(stale.excluded.some(x => x.id === brief.id && x.reason === 'stale'));
+  const revised = f.propose({ memoryId: brief.id, category: 'brief', statement: 'Status: updated integration setup.', source: { kind: 'user', note: 'Reviewed current status' } });
+  assert.equal(f.store.prepareContext(f.project.id, '').items.length, 0);
+  f.store.setMemoryStatus(revised.id, 'active'); assert.equal(f.store.prepareContext(f.project.id, '').items[0]?.revision, 2);
+  assert.equal(f.store.getReceipt(original.id).items[0].statement, brief.statement);
+  f.store.setMemoryStatus(revised.id, 'archived'); assert.equal(f.store.prepareContext(f.project.id, '').items.length, 0);
+  assert.throws(() => f.propose({ category: 'brief', area: 'src' }), /whole checkout/);
+});
+test('project orientation is prioritized and bounded without hiding dropped briefs', t => {
+  const f = fixture(t);
+  for (let i = 0; i < 5; i++) { const m = f.propose({ category: 'brief', statement: `Purpose and current status ${i}`, source: { kind: 'user', note: 'Reviewed fixture summary' } }); f.store.setMemoryStatus(m.id, 'active'); }
+  const receipt = f.store.prepareContext(f.project.id, '');
+  assert.equal(receipt.items.length, 4); assert.ok(receipt.excluded.some(x => x.reason === 'brief-limit'));
+  assert.ok(receipt.warnings.some(x => /project brief/i.test(x))); assert.ok(Buffer.byteLength(receipt.packet) <= 6000);
+});
+test('every branch keeps the repo overview and receives only its own progress update', t => {
+  const f = fixture(t);
+  const addBrief = (statement, scope) => { const m = f.propose({ category: 'brief', statement, scope, source: { kind: 'user', note: 'Reviewed fixture orientation' } }); f.store.setMemoryStatus(m.id, 'active'); return m; };
+  const overview = addBrief('Purpose: Journal-style project memory cockpit.', 'checkout');
+  const main = addBrief('Status: main foundation complete. Next: lifecycle tests.', 'branch');
+  f.git('switch', '-c', 'feature');
+  const feature = addBrief('Status: feature implementation underway. Next: review feature.', 'branch');
+  assert.deepEqual(f.store.prepareContext(f.project.id, '').items.map(x => x.id), [overview.id, feature.id]);
+  f.git('switch', 'main');
+  assert.deepEqual(f.store.prepareContext(f.project.id, 'unrelated task').items.map(x => x.id), [overview.id, main.id]);
+});
 test('file-backed knowledge is excluded after a change or deletion', t => {
   const f = fixture(t); const m = f.propose(); f.store.setMemoryStatus(m.id, 'active');
   writeFileSync(resolve(f.repo, 'tests.md'), 'Docker is no longer required');

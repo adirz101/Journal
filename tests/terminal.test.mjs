@@ -94,6 +94,17 @@ test('a chunked native Codex banner supplies only a hint until exact-ID confirma
   assert.equal(resumed.session.nativeId, nativeId);
   assert.deepEqual(f.launches[1].argv, ['resume', nativeId]);
 });
+test('a later incomplete Codex banner clears a stored unconfirmed hint across callbacks', async t => {
+  const f = runtime(t); const nativeId = '01a0f661-908b-7193-8520-6ac6f3b44aeb';
+  const first = await f.manager.start({ projectId: f.project.id, provider: 'codex' });
+  f.callbacks.data(`To continue this session, run codex resume ${nativeId}\n`);
+  assert.equal(f.store.getSession(first.session.id).nativeId, nativeId);
+  f.callbacks.data('To continue this session, run:\n  codex resume ');
+  assert.equal(f.store.getSession(first.session.id).nativeId, null);
+  assert.equal(f.store.getSession(first.session.id).nativeIdConfirmed, false);
+  f.callbacks.exit({ exitCode: 0 });
+  await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'codex', resumeId: first.session.id }), /Confirm the exact/);
+});
 
 test('withdrawal names the claim and revision that the native agent actually received', async t => {
   const f = runtime(t); const memory = approvedRule(f);

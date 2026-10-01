@@ -1,10 +1,12 @@
 # Journal implementation status
 
-1 October 2026. First terminal-only slice merged in [PR #1](https://github.com/adirz101/Journal/pull/1), commit `eebb9e3`. Follow-up native validation and Codex resume-banner fix on `codex/native-provider-validation`. A working foundation for the larger roadmap; no public release.
+1 October 2026. First terminal-only slice merged in [PR #1](https://github.com/adirz101/Journal/pull/1), commit `eebb9e3`. Native validation is in [PR #2](https://github.com/adirz101/Journal/pull/2). Repo overview/branch updates and local validation follow-up are on separate branch `codex/terminal-lifecycle-validation`, based on PR #2. A working foundation for the larger roadmap; no public release.
 
 All current verification is manual and local on the user's computer. GitHub Actions was disabled before these fixes, and its workflow file removed. No CI, hosted runners, nightly tests or scheduled verification.
 
 ## Implemented
+
+- [Project orientation](PROJECT-ORIENTATION.md): current approved repo overview plus exact-branch progress/next-step updates precede task-specific knowledge for every Journal-launched session, including empty tasks and resume. Source freshness, explicit admission, immutable revisions, checkout/branch boundaries and shared packet budgets remain enforced. Status is reviewed content; there is no automatic extraction from terminal output.
 
 - Original CLI launcher: literal argv, inherited settings/login/permission prompts, Claude preassigned UUID and scoped observer hooks, Codex resume UUID requiring human confirmation. No latest-session fallback or permission bypass.
 - Electron sandboxed React cockpit with node-pty/xterm, project/session navigation, input/resize/interrupt/stop, flow control, renderer reconnect and explicit resume. One active terminal.
@@ -22,10 +24,10 @@ Local macOS, Node 25.6.1; Electron 44.5.1 with Node 24.21.0; node-pty 1.1.0 rebu
 | Check | Observed result | Coverage |
 | --- | --- | --- |
 | `npm ci` | Passed | Clean install, Electron download and native node-pty postinstall rebuild |
-| `npm test` | 40 passed, 0 failed | Literal argv; real Git/SQLite evidence, scope, revisions and restart; latest native context and visible exclusion IDs; worker failure/recovery; output/input bounds and shutdown callbacks; current multiline Codex banner and chunked unconfirmed-ID capture |
+| `npm test` | 47 passed, 0 failed | Prior evidence/resume/bounds coverage plus latest incomplete banner revocation, grammar-only relevance exclusion, always-supplied project overview/current-branch update, freshness/admission/limits and history |
 | `npm run check` | Passed | Renderer and desktop acceptance TypeScript |
 | `npm run build` | Passed | Production renderer; roughly 545 KiB minified chunk warning, no build failure |
-| `npm run test:desktop` | One scenario passed | Real Electron/native PTY with safe fixture CLIs: file knowledge, admission, Claude→Codex handoff, exact resume, isolated resume-ID drafts, keystrokes, 2.2 MB flood, interrupt, small-window reload/keyboard scrollback/device-query replay suppression, preload rejection, app restart/persistence |
+| `npm run test:desktop` | Three scenarios passed | Real Electron/native PTY with controlled fixture CLIs: original handoff/reload/flood/security coverage; OS-verified running-child interrupt/stop/app-exit and exact restart/resume; UI admission of repo overview/branch updates and empty-task delivery to both providers |
 | `npm run smoke:agents` | Both native CLIs launched and produced output | Startup only; no input, trust acceptance, login or task submission |
 
 Native versions: Claude Code 2.1.284, Codex CLI 0.154.0. The earlier startup smoke involved no model requests. The subsequent [authenticated native trial](NATIVE-VALIDATION.md) completed a real Codex fixture task, manually reviewed knowledge handoff to Claude, exact native resume for both providers, Claude one-time permission refusal/approval, and Codex inference interruption. Provider replies and host file inspection corroborated outcomes separately from submitted transport receipts.
@@ -33,6 +35,8 @@ Native versions: Claude Code 2.1.284, Codex CLI 0.154.0. The earlier startup smo
 Codex's inherited model was unsupported for the user's ChatGPT login. The user selected `gpt-5.6-luna` for this short trial only; a temporary invocation wrapper supplied it without changing permanent model settings or production launcher arguments. Native trust/settings/integrations remained inherited. Claude's permission trial used its native manual mode. Codex's existing custom workspace profile did not present interactive approvals, leaving that specific native check open.
 
 The trial exposed Codex 0.154.0's new multiline resume banner. Capture now recognizes this and the older inline banner while requiring UUID validation and explicit user confirmation. Two parser regressions and a chunked runtime regression verify the fix; the live trial confirmed the UUID manually, so fresh native automatic-hint capture is not claimed.
+
+The [follow-up](LIFECYCLE-AND-MEMORY-VALIDATION.md) subsequently observed fresh native automatic-hint capture and stopped a running Codex background command with CLI exit. It passed ordinary owned-child lifecycle fixtures without changing production termination. Incomplete latest banners now clear older unconfirmed hints. The frozen offline 28-claim/20-task pilot supplied no planted stale/wrong-scope/unapproved claims, but exposed incidental English grammar matches. A bounded filter fixed unrelated-task injection; recall stayed 23/25 and strict precision improved from 36.5% to 39.7%. This task-only corpus has no orientation briefs; it does not measure model usefulness or saved time.
 
 Independent read-only review identified pathspec wildcard bypass, stale results hiding valid knowledge, repeated initial tasks, historical device-query input, evidence races and synchronous storage delaying PTY handling. Fixes were checked locally. Regressions cover source races/wildcards, retrieval crowding, task-repeat avoidance, hook identity ambiguity, late shutdown callbacks and exact launch receipts. Desktop acceptance covers replay and flood. The reviewer did not independently rerun the final fixes.
 
@@ -44,7 +48,8 @@ A fresh review of these fixes reproduced one additional edge case: a failed firs
 
 ## Limits and next work
 
-- Remaining native checks: Codex interactive allow/deny under an approval-capable native profile, interruption of an already running tool and child-process cleanup, and fresh real-provider automatic Codex hint capture. Inference interruption does not establish running-tool cancellation. Additional native requests should remain bounded and use explicit trial settings rather than permanent configuration edits.
+- Remaining native checks: Codex interactive allow/deny under a suitable native profile, broader foreground tools, crash cleanup, detached/signal-resistant descendants and Windows. Background-command stopping with CLI exit and ordinary owned-child fixtures do not establish universal process cleanup. Keep additional native requests bounded with invocation-only trial settings.
+- Main product goal is repo understanding/current status in every new Journal session. The reviewed orientation layer implements this delivery contract. Next: reduce the burden of maintaining status with evidence-backed update proposals, and evaluate real recurring tasks against curated instructions. Automatic admission/extraction is not implemented.
 - No hosted testing is configured or active. The POSIX desktop fixture is skipped on Windows; manual checks on a local Windows machine must verify install/build, discovery, quoting and native interaction before advertising support.
 - PTY survives renderer reload, not app exit/crash. Volatile output loses older history with visible gaps. Runtime sidecar and concurrent terminals remain later work.
 - Lexical retrieval with finite caps; area paths must appear in the task. No embeddings, automatic extraction, cross-worktree promotion, background jobs, cloud or chat. Recent UI lists are bounded rather than fully paginated.

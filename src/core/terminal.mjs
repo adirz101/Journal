@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { buildAgentLaunch, captureCodexId, UUID } from './agents.mjs';
+import { buildAgentLaunch, captureCodexId, CODEX_RESUME_MARKER, UUID } from './agents.mjs';
 import { text } from './validation.mjs';
 
 export class OutputBuffer {
@@ -77,7 +77,9 @@ export class TerminalManager extends EventEmitter {
         buffer.append(data); active.tail = (active.tail + data).slice(-8192);
         if (provider === 'codex' && !session.nativeIdConfirmed) {
           const captured = captureCodexId(active.tail);
-          if (captured && session.nativeId !== captured) {
+          // A newly printed incomplete/invalid banner revokes an earlier hint.
+          // Do not clear hints merely because unrelated output evicted the banner.
+          if (active.tail.includes(CODEX_RESUME_MARKER) && session.nativeId !== captured) {
             session.nativeId = captured;
             this.persistSession(session); this.emit('event', { type: 'status', session: { ...session } });
           }

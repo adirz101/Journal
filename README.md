@@ -16,9 +16,9 @@ npm run dev
 For the production renderer, run `npm run build` followed by `npm start`. If node-pty has been rebuilt for system Node, restore Electron compatibility with `npm run rebuild`.
 
 1. Open an existing Git checkout.
-2. Add a knowledge claim with your explicit source note or 1–30 lines from a tracked file. Review it and click **Approve**.
+2. Click **Add project brief** to describe what the repo is, its structure and stable constraints once. Use checkout scope for the repo overview and branch scope for current progress/next steps. Attach an explicit source note or 1–30 lines from a tracked file, review and **Approve**. Current briefs orient every session, including empty tasks.
 3. Enter an initial task and **Preview context**. Start Claude or Codex; interaction and tool approvals stay in the native terminal.
-4. Stop before switching providers. Knowledge matching the next task is revalidated and supplied to either CLI.
+4. Stop before switching providers. The current repo overview, exact-branch update and relevant task knowledge are revalidated and supplied to either CLI. Revise/approve status when work changes; progress is not inferred automatically from terminal output.
 5. **Resume** targets a confirmed exact session. Codex needs confirmation of the UUID from its native CLI after stopping; Journal never selects the latest session automatically.
 
 Keyboard: Cmd/Ctrl+O opens a project, Cmd/Ctrl+N focuses the task, Cmd/Ctrl+Shift+K adds knowledge. Ctrl+C in the terminal or **Interrupt** reaches the native process.
@@ -37,15 +37,18 @@ npm run test:desktop
 npm run smoke:agents
 ```
 
-Verified locally on macOS: 40 core tests, typecheck, production build and desktop acceptance. The desktop scenario uses real Electron/node-pty with safe stand-in CLIs: Claude→Codex knowledge handoff, exact resume, separate resume-ID drafts, 2.2 MB output flood, input/interrupt, renderer reload, device-query replay suppression and app restart.
+Verified locally on macOS: 47 core tests, typecheck, production build and three desktop scenarios. Real Electron/node-pty fixtures cover knowledge handoff, exact resume, separate resume-ID drafts, output flood, reload/replay suppression, running-child interrupt/stop/app exit and empty-task repo overview/current-branch delivery.
 
-The subsequent [local native trial](docs/NATIVE-VALIDATION.md) completed authenticated Codex and Claude tasks, reviewed knowledge handoff, exact native resume for both, Claude manual permission refusal/approval and Codex inference interruption. Codex used the user-selected `gpt-5.6-luna` for the trial only. Interactive Codex approval under its current profile, running-tool cancellation and native Windows behavior remain unverified. No packaged or signed release.
+The [local native trial](docs/NATIVE-VALIDATION.md) completed authenticated Codex/Claude tasks, reviewed knowledge handoff, exact native resume, Claude manual refusal/approval and Codex inference interruption. The [follow-up](docs/LIFECYCLE-AND-MEMORY-VALIDATION.md) stopped a running native background command with CLI exit and observed fresh Codex UUID-hint capture. Codex used the user-selected `gpt-5.6-luna` for trials only. Interactive Codex approval, broader process/crash cases and native Windows remain unverified. No packaged or signed release.
+
+`npm run pilot:memory` runs the manual offline retrieval pilot: 28 frozen synthetic claims and 20 labelled tasks, without provider requests. It demonstrates scope/evidence exclusion in this sample and remaining lexical relevance limits, not improved model quality or time savings.
 
 One active terminal, manual knowledge entry, exact branch/checkout scope and lexical search. Automatic extraction, structured chat, cloud sync, background jobs, runtime sidecar and cross-worktree promotion remain roadmap work. Source fingerprints detect changes; they do not prove a claim is true. Receipts record launch text, not model acknowledgment.
 
 ## Documents
 
 - [Current specification](docs/TERMINAL-FIRST-SPEC.md)
+- [Repo overview and branch updates](docs/PROJECT-ORIENTATION.md)
 - [Foundation decision and source policy](docs/adr/002-terminal-first-foundation.md)
 - [Implementation status and evidence](docs/IMPLEMENTATION-STATUS.md)
 - [Executive summary](docs/EXECUTIVE-SUMMARY.md)
