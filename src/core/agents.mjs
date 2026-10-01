@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { launchTarget, resolveExecutable } from './process.mjs';
 
 // Journal-owned adapter for the documented interactive CLI arguments.
 // https://code.claude.com/docs/en/cli-reference
@@ -30,11 +31,23 @@ export function captureCodexId(output) {
   return UUID.test(candidate) ? candidate : null;
 }
 
-export function detectAgents() {
+// What Journal can observe per provider in this terminal-first mode. Anything
+// not listed is unknown and shown as unknown, never inferred.
+export const CAPABILITIES = {
+  claude: { exactResume: 'preassigned --session-id; --resume <UUID>', identity: 'known at launch; hook UUID mismatch requires confirmation',
+    observer: 'per-launch hooks', status: ['working', 'idle', 'waiting for permission'], commands: 'Bash command text, exit code, duration (foreground only)', fileEdits: true, interrupt: 'Ctrl+C to the PTY' },
+  codex: { exactResume: 'codex resume <UUID> after confirming the exit-banner hint', identity: 'hint from exit banner; confirmation required',
+    observer: 'none', status: ['running', 'exited'], commands: 'unknown', fileEdits: false, interrupt: 'Ctrl+C to the PTY' },
+};
+
+export function detectAgents(env = process.env) {
   return ['claude', 'codex'].map(provider => {
+    const path = resolveExecutable(provider, env);
     try {
-      const version = execFileSync(provider, ['--version'], { timeout: 4000, encoding: 'utf8', windowsHide: true, maxBuffer: 16384, stdio: 'pipe' });
-      return { provider, available: true, version: version.trim().split('\n').at(-1) };
-    } catch { return { provider, available: false, version: null }; }
+      if (!path) throw new Error('not found');
+      const target = launchTarget(path, ['--version'], { env });
+      const version = execFileSync(target.file, target.args, { timeout: 4000, encoding: 'utf8', windowsHide: true, maxBuffer: 16384, stdio: 'pipe' });
+      return { provider, available: true, version: version.trim().split('\n').at(-1), path, capabilities: CAPABILITIES[provider] };
+    } catch { return { provider, available: false, version: null, path, capabilities: CAPABILITIES[provider] }; }
   });
 }

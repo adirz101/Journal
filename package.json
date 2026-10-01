@@ -18,7 +18,10 @@
     "pilot:memory": "node scripts/memory-pilot.mjs",
     "check": "tsc --noEmit",
     "rebuild": "electron-rebuild -f -w node-pty",
-    "postinstall": "node node_modules/electron/install.js && electron-rebuild -f -w node-pty"
+    "postinstall": "node node_modules/electron/install.js && electron-rebuild -f -w node-pty",
+    "trial:usefulness": "node scripts/usefulness-trial.mjs",
+    "dist": "npm run build && electron-builder --publish never",
+    "dist:dir": "npm run build && electron-builder --dir --publish never"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
@@ -33,6 +36,7 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "electron": "44.5.1",
+    "electron-builder": "26.15.3",
     "typescript": "6.0.3",
     "vite": "8.3.1"
   }

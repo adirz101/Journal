@@ -9,7 +9,7 @@ test('both sidebars resize by pointer and keyboard, persist, and leave room for 
   mkdirSync(project);
   execFileSync('git', ['-C', project, 'init', '-b', 'main'], { stdio: 'pipe' });
   writeFileSync(resolve(project, 'README.md'), 'Local layout fixture.\n');
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), JOURNAL_DATA_DIR: resolve(directory, 'data') }; delete env.ELECTRON_RUN_AS_NODE;
+  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), JOURNAL_DATA_DIR: resolve(directory, 'data'), JOURNAL_QUIT_POLICY: 'stop' }; delete env.ELECTRON_RUN_AS_NODE;
   const app = await electron.launch({ args: ['.'], env });
   try {
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);

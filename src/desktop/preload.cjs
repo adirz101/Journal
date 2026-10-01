@@ -1,5 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
-const allowed = new Set(['bootstrap', 'openProject', 'project', 'proposeMemory', 'setMemoryStatus', 'memoryHistory', 'prepareContext', 'getReceipt', 'start', 'attach', 'write', 'resize', 'interrupt', 'stop', 'acknowledge', 'confirmNativeId', 'setAppearance']);
+const allowed = new Set(['bootstrap', 'openProject', 'project', 'memoryPage', 'proposeMemory', 'setMemoryStatus', 'proposeStatusUpdate', 'memoryHistory', 'prepareContext', 'getReceipt', 'sessions', 'getSession', 'sessionEvents', 'sessionChanges', 'sessionFileDiff', 'openPath', 'archiveSession', 'start', 'attach', 'detach', 'write', 'resize', 'interrupt', 'stop', 'terminateSurvivors', 'terminateOrphan', 'acknowledge', 'confirmNativeId', 'setAppearance']);
 contextBridge.exposeInMainWorld('journal', {
   request: async (action, input = {}) => {
     if (!allowed.has(action)) throw new Error('Unknown desktop action');

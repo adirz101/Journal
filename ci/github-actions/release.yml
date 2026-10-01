@@ -1,0 +1,55 @@
+# Unsigned packaging builds for manual inspection only.
+# This is NOT a public release: nothing is signed or notarized, nothing is
+# published, and no GitHub Release is created. Packages are uploaded as
+# short-lived workflow artifacts.
+name: Package (unsigned)
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JOURNAL_CI: '1'
+  # No signing identities or secrets are used.
+  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+jobs:
+  package:
+    name: package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # The dist script passes --publish never; electron-builder.yml also sets publish: null.
+      - run: npm run dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: journal-unsigned-${{ matrix.os }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: error
+          retention-days: 14

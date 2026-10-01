@@ -21,6 +21,9 @@ Switching agents should not mean rediscovering architecture decisions, constrain
 ## What works today
 
 - **Local Git projects and native terminals:** open an existing checkout and run Claude Code or Codex with its existing login, settings, and permission prompts.
+- **Up to four sessions at once:** a separate local runtime owns the terminals, so reloading the UI, an app crash, or choosing *Keep running in background* on quit leaves agents running; reopening Journal reconnects. A runtime crash is recovered explicitly, without resending prompts.
+- **Session views:** per-session state and attention markers, a changes view against the session's starting commit, and an activity timeline with observed commands and exit codes (Claude Code hooks; unknown for Codex).
+- **Status-update helper:** propose a branch update or repo overview drafted from Git history; nothing is saved until you review and approve it.
 - **Reviewed project knowledge:** manually add and approve repo overviews, branch updates, decisions, constraints, conventions, lessons, and issues, backed by a source note or tracked-file excerpt.
 - **Checkout and exact-branch scope:** eligible project briefs orient Journal-launched sessions, including empty tasks; task-specific knowledge uses bounded lexical retrieval and source-freshness checks.
 - **Context visibility:** preview selected knowledge and exclusions; immutable receipts preserve the launch prompt and delivery state. A receipt records transport, not model acknowledgment.
@@ -31,10 +34,10 @@ Switching agents should not mean rediscovering architecture decisions, constrain
 
 ## Current limitations
 
-- Alpha software, with one active terminal at a time and no packaged/signed release, installer, or automatic updates.
-- Local validation is on macOS. Native Windows operation is not yet fully validated.
+- Alpha software with no signed release, installer verification, or automatic updates. Sessions in one checkout share its working tree; there is no worktree isolation.
+- Local validation is on macOS. Native Windows operation is unverified; see the [Windows audit](docs/WINDOWS.md).
 - Knowledge and status updates require manual review. Automatic extraction, cloud sync, background agent orchestration, and cross-worktree knowledge promotion are not implemented.
-- Retrieval is lexical, with finite context limits. Source fingerprints detect changes; they do not establish whether a claim is true. Journal does not inject context into conversations launched outside the app.
+- Retrieval is lexical (stemmed, with identifier and path aliases), with finite context limits. Source fingerprints detect changes; they do not establish whether a claim is true. Journal does not inject context into conversations launched outside the app.
 - Observability depends on what the native CLI exposes. Interactive Codex approvals, broader running-tool cancellation, crash cleanup, and detached child processes remain validation gaps.
 
 ## Quick start
@@ -63,7 +66,7 @@ If node-pty has been rebuilt for system Node, restore Electron compatibility wit
 
 On macOS, development and start commands use a cached local `Journal.app` runtime. It opens this checkout directly, including when launched without CLI arguments. This checkout-bound runtime is not a distributable or signed release.
 
-Data remains in the `journal-desktop` directory under Electron's application-data location; set `JOURNAL_DATA_DIR` to use another directory. Terminal output and keystrokes are volatile. Reloading reconnects to the terminal; quitting stops it, and reopening requires explicit native resume.
+Data remains in the `journal-desktop` directory under Electron's application-data location; set `JOURNAL_DATA_DIR` to use another directory. Terminal output and keystrokes are volatile and live only in the runtime's bounded memory. Reloading or reopening reconnects to running sessions; quitting asks whether to stop them or keep them running; a stopped session needs explicit native resume.
 
 ## Basic workflow
 
@@ -71,16 +74,16 @@ Data remains in the `journal-desktop` directory under Electron's application-dat
 2. **Add and review knowledge.** Use **Add project brief** for a checkout-wide overview or current-branch update. Attach a source note or 1–30 lines from a tracked file, then review and **Approve**. Keep branch status current by revising and approving it when work changes.
 3. **Preview context.** Enter a task and select **Preview context** to inspect the proposed knowledge packet. Eligible briefs are considered even without task text; context is revalidated at launch.
 4. **Start Claude or Codex.** Work and approve tools in the native terminal.
-5. **Switch providers.** Stop the active terminal before starting the other CLI. Journal supplies the current reviewed overview, applicable branch update, and relevant task knowledge.
+5. **Run several agents.** Start up to four sessions, across projects or providers. Each receives the current reviewed overview, applicable branch update, and relevant task knowledge for its own project and branch.
 6. **Resume explicitly.** Select the session and confirm its exact native ID where required. For Codex, confirm the UUID from the native CLI after stopping. Journal never falls back to the latest session.
 
-Keyboard shortcuts: Cmd/Ctrl+O opens a project, Cmd/Ctrl+N focuses the task, and Cmd/Ctrl+Shift+K adds knowledge. Ctrl+C in the terminal or **Interrupt** sends an interrupt to the native process.
+Keyboard shortcuts: Cmd/Ctrl+O opens a project, Cmd/Ctrl+N starts a new session (focuses the task), ⌘1–4 (macOS) or Alt+1–4 switches active sessions, and Cmd/Ctrl+Shift+K adds knowledge. Ctrl+C in the terminal or **Interrupt** sends an interrupt to the native process.
 
 Use **Light mode** / **Dark mode** in the sidebar to change appearance. Drag either sidebar's inner edge to resize it, or focus the divider and use arrow keys (Shift for larger steps), Home/End for limits, or Enter to reset. Double-click also resets. Theme and widths are saved locally.
 
 ## Development / verification
 
-Run checks manually on your own computer. There is no CI, hosted-runner, nightly, or scheduled verification at this stage.
+Fixture-only GitHub Actions workflows for macOS, Linux and (experimentally) Windows are staged in `ci/github-actions/` and not yet active; they never use provider logins. Provider trials stay manual and local. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```sh
 npm test
@@ -91,7 +94,7 @@ npm run smoke:agents
 npm run pilot:memory
 ```
 
-The [current implementation status](docs/IMPLEMENTATION-STATUS.md) records 48 passing core tests, a passing typecheck and production build, and five passing local desktop scenarios. Desktop checks use real Electron/native node-pty with controlled fixture CLIs: they cover context delivery, resume, terminal lifecycle, reload/replay handling, output load, and appearance/layout persistence. These fixtures do not establish authenticated provider behavior.
+The [current implementation status](docs/IMPLEMENTATION-STATUS.md) records 95 passing core tests, a passing typecheck and production build, and ten passing desktop scenarios. Desktop checks use real Electron, the runtime process and node-pty with controlled fixture CLIs: they cover context delivery, resume, four concurrent sessions, reload, app and runtime crashes, process cleanup, and the changes view. These fixtures do not establish authenticated provider behavior.
 
 `smoke:agents` checks installed native CLI startup without submitting a task or accepting trust prompts. `pilot:memory` evaluates local retrieval against 28 frozen synthetic claims and 20 labelled tasks without provider requests; it measures scope/evidence exclusion and lexical relevance, not model quality or time savings.
 
@@ -99,7 +102,7 @@ Separate [authenticated native trials](docs/NATIVE-VALIDATION.md) observed Codex
 
 ## Architecture / docs
 
-Journal uses Electron and React, node-pty and xterm.js for terminals, and SQLite for reviewed knowledge and immutable receipts. Git, evidence checks, and storage run in a worker so they do not block terminal handling.
+Journal uses Electron and React for the app, a separate local runtime process with node-pty for terminals, xterm.js for display, and SQLite for reviewed knowledge, session metadata and immutable receipts. See [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 - **Current contract:** [Terminal-first specification](docs/TERMINAL-FIRST-SPEC.md) and [foundation architecture decision](docs/adr/002-terminal-first-foundation.md).
 - **Project orientation:** [Repo overviews and branch updates](docs/PROJECT-ORIENTATION.md).

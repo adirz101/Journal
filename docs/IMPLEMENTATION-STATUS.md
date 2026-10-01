@@ -1,61 +1,59 @@
 # Journal implementation status
 
-1 October 2026. First terminal-only slice merged in [PR #1](https://github.com/adirz101/Journal/pull/1), commit `eebb9e3`. Native validation merged in [PR #2](https://github.com/adirz101/Journal/pull/2). Repo overview/branch updates, local validation follow-up and Apache-2.0 licensing are implemented in [PR #3](https://github.com/adirz101/Journal/pull/3), developed on separate branch `codex/terminal-lifecycle-validation` from PR #2. A working foundation for the larger roadmap; no public release.
+2 October 2026. Merged to `main`: the terminal-first slice (PR #1), native validation (PR #2), orientation, licensing and local validation (PR #3), and branding and layout (PR #4). Branch `claude/status-helper-and-usefulness` adds the status-update helper, usefulness trial round 1, and the durable multi-session runtime milestone. It is unmerged. Alpha; no public release.
 
-All current verification is manual and local on the user's computer. GitHub Actions was disabled before these fixes, and its workflow file removed. No CI, hosted runners, nightly tests or scheduled verification.
-
-The desktop UI retains the original layout with a royal blue accent, light/dark appearance, owner-supplied branding and a local macOS runtime named Journal. Both sidebar widths can be changed by pointer or keyboard and persist locally, with bounds preserving workspace space. Project rows use folder icons and tab hover is confined to the label. The public-facing README describes the implemented alpha workflow, setup, validation and current limits.
+Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI (macOS, Linux and experimental Windows) is written but staged in `ci/github-actions/`: **BLOCKED** until a GitHub token with the `workflow` scope can push it. CI never uses provider logins. Authenticated native trials and the usefulness trial are manual and local.
 
 ## Implemented
 
-- [Project orientation](PROJECT-ORIENTATION.md): current approved repo overview plus exact-branch progress/next-step updates precede task-specific knowledge for every Journal-launched session, including empty tasks and resume. Source freshness, explicit admission, immutable revisions, checkout/branch boundaries and shared packet budgets remain enforced. Status is reviewed content; there is no automatic extraction from terminal output.
+**Runtime and sessions** ([architecture](ARCHITECTURE.md))
+- A detached local runtime process (Electron in Node mode) owns all PTYs and native CLIs. It serves the app over a token-authenticated Unix socket or named pipe; one runtime runs per data directory.
+- Up to four concurrent Claude Code or Codex sessions, each with provider, project, branch, baseline, task, state, native ID, PID identity, start time, last activity and survivors. Input, output, flow control and receipts are per session; only the visible session streams output.
+- Renderer reload, app crash and **Keep running in background** on quit leave sessions running, and the next launch rediscovers them. **Stop sessions and quit** stops them gracefully. A runtime crash recovers sessions as `interrupted`, or `orphaned` when a verified process survives; delivery becomes `uncertain`, and prompts are never resent.
+- Process ownership: signals go through the held PTY handle until exit. After a restart, a process is signalled only if its PID, start time and command hash all match. Stop sends SIGTERM to the PTY group, then SIGKILL after 3 s. Descendants are sampled; leftovers are reported and ended only on request.
+- Claude per-launch hooks report working, idle and permission-waiting status, Bash commands with exit codes and durations, and edited files. Codex activity beyond Journal's own events is reported as unknown.
 
-- Original CLI launcher: literal argv, inherited settings/login/permission prompts, Claude preassigned UUID and scoped observer hooks, Codex resume UUID requiring human confirmation. No latest-session fallback or permission bypass.
-- Electron sandboxed React cockpit with node-pty/xterm, project/session navigation, input/resize/interrupt/stop, flow control, renderer reconnect and explicit resume. One active terminal.
-- SQLite WAL/FTS5: manual candidates, admission/rejection/withdrawal, immutable revisions, exact branch/checkout and area scope, source revalidation and bounded retrieval. Evidence is a bounded tracked UTF-8 excerpt and whole-file hash or explicit user source note.
-- Immutable knowledge receipts and exact launch-prompt snapshot, with prepared/submitted/failed/uncertain delivery. Revalidate at launch even after preview. Resume uses the latest delivered receipt for the same project/provider/native UUID, including when selecting an ancestor launch. Exclusions use the delivered memory ID/revision; current packets explicitly replace earlier Journal claims. Empty tasks are never repeated. Native history can retain older context.
-- Worker-thread SQLite/Git/evidence service and bounded PTY history/display credit. Interrupted deliveries recover as uncertain. No raw terminal/keystroke persistence.
-- Keyboard access, labeled controls/focus, readable responsive layout, pointer-gated hover and no decorative motion library.
+**Desktop UI**
+- Session list: active sessions across projects plus recent sessions in this project, with provider, task, project, state, elapsed or last-activity time and an attention marker. Includes New session, switching (click, or ⌘1–4 on macOS and Alt+1–4 elsewhere), Interrupt, Stop, Resume, Close, and ending orphans or leftovers.
+- Changes tab: working tree compared with the session's starting commit, with additions and deletions, new and pre-existing markers, per-file diffs (sensitive filenames hidden), opening in the default editor, and refresh.
+- Activity tab: observed commands, test-command exit summary (exit status only), and a virtualized timeline.
+- Knowledge tab: paged, filtered and searchable; flags possible conflicts on candidates.
+- Light and dark themes, resizable sidebars, keyboard access and no decorative motion, all retained.
 
-No dev3 vendor, code or checkout is retained. The old source audit remains historical research. No Superset ELv2 code was copied. Journal's original code is licensed under the [Apache License 2.0](../LICENSE), with project attribution in [NOTICE](../NOTICE). Dependency and bundled-binary notices remain a release task.
+**Knowledge** ([orientation](PROJECT-ORIENTATION.md))
+- Reviewed claims with evidence, immutable revisions and receipts, branch and checkout scope, freshness checks, briefs that orient every session, and exact resume with revalidation (unchanged from PRs #1–#4).
+- The status-update helper drafts branch and overview updates from Git. Saving and approval are explicit, Git-range evidence goes stale when history is rewritten, and branch updates report drift.
+- Retrieval uses FTS5 porter stemming with identifier and path aliases, area relevance by distinctive path segment, duplicate suppression that respects numbers and polarity, and conflict flags and warnings. Still lexical.
 
-## Observed validation
+**Persistence and security**
+- SQLite migrations (`user_version` 3) add a bounded `events` timeline and the alias/stemmed FTS index. Recovery markers are stored on sessions.
+- No terminal output, prompts or tool results are persisted in timelines; command text is redacted. Runtime logs are bounded (512 KiB rotation) and redacted. Hook event files are bounded (1 MiB) and removed when a session ends.
 
-Local macOS, Node 25.6.1; Electron 44.5.1 with Node 24.21.0; node-pty 1.1.0 rebuilt for Electron. Results below are local checks, not a guarantee of native provider behavior.
+**Repository**
+- Fixture-only CI and an unsigned electron-builder configuration. A packaged macOS build was verified to start its runtime from `app.asar.unpacked`. Includes a manual release workflow (artifacts only), CONTRIBUTING, SECURITY, issue and PR templates, [ARCHITECTURE](ARCHITECTURE.md) and the [Windows audit](WINDOWS.md).
 
-| Check | Observed result | Coverage |
-| --- | --- | --- |
-| `npm ci` | Passed | Clean install, Electron download and native node-pty postinstall rebuild |
-| `npm test` | 48 passed, 0 failed | Prior evidence/resume/bounds coverage plus latest incomplete banner revocation, grammar-only relevance exclusion, always-supplied project overview/current-branch update, freshness/admission/limits, history and local macOS runtime identity |
-| `npm run check` | Passed | Renderer and desktop acceptance TypeScript |
-| `npm run build` | Passed | Production renderer; roughly 545 KiB minified chunk warning, no build failure |
-| `npm run test:desktop` | Five scenarios passed | Real Electron/native PTY with controlled fixture CLIs: handoff/reload/flood/security; running-child interrupt/stop/app-exit and exact restart/resume; repo overview/branch updates and empty-task delivery; branded runtime; theme/panel changes retaining a live terminal plus pointer/keyboard resizing, persistence, reset and viewport bounds |
-| `npm run smoke:agents` | Both native CLIs launched and produced output | Startup only; no input, trust acceptance, login or task submission |
+## Observed validation (this branch, local macOS)
 
-Native versions: Claude Code 2.1.284, Codex CLI 0.154.0. The earlier startup smoke involved no model requests. The subsequent [authenticated native trial](NATIVE-VALIDATION.md) completed a real Codex fixture task, manually reviewed knowledge handoff to Claude, exact native resume for both providers, Claude one-time permission refusal/approval, and Codex inference interruption. Provider replies and host file inspection corroborated outcomes separately from submitted transport receipts.
+| Check | Result |
+| --- | --- |
+| `npm test` | 95 passed, 0 failed: real-process start-time identity and SIGTERM→SIGKILL escalation, observer rotation and lost-observation reporting, protocol-mismatch handling, overview validity across branches, runtime protocol, HMAC handshake and impostor refusal, runtime lock and launch cap, unverified orphans, four sessions and isolation, reconnect, stop/interrupt/exit, runtime-crash recovery, orphan and PID-reuse refusal, hooks and redaction, cross-project knowledge isolation, partial metadata, status helper, retrieval, duplicates, conflicts, pagination, v1→v3 migration, diff baseline, glob/symlink/launchable-file refusal, process table and Windows shim handling, plus earlier coverage |
+| `npm run check`, `npm run build` | Passed (the existing ~545 KiB chunk warning remains) |
+| `npm run test:desktop` | 10 passed: earlier scenarios plus four real-PTY runtime scenarios (four sessions with reload and switching, app crash reconnect, runtime crash recovery, and keep-running quit with leftover cleanup and the changes view). The new scenarios passed 12/12 across three repetitions; a stale-snapshot race in the UI (an older store read replacing a newer status) was found by an intermittent failure and fixed with per-session versions. |
+| `npm run dist:dir` | Unsigned `Journal.app` built; the packaged runtime started and exited cleanly |
+| GitHub Actions | BLOCKED: workflows staged in `ci/github-actions/`; the local GitHub token lacks the `workflow` scope needed to push them |
 
-Codex's inherited model was unsupported for the user's ChatGPT login. The user selected `gpt-5.6-luna` for this short trial only; a temporary invocation wrapper supplied it without changing permanent model settings or production launcher arguments. Native trust/settings/integrations remained inherited. Claude's permission trial used its native manual mode. Codex's existing custom workspace profile did not present interactive approvals, leaving that specific native check open.
+Earlier authenticated evidence still applies to launch, resume, permission and handoff behavior ([native validation](NATIVE-VALIDATION.md), [lifecycle follow-up](LIFECYCLE-AND-MEMORY-VALIDATION.md)). It was gathered before the runtime split. The new runtime uses the same launcher and arguments, but authenticated providers have **not** been rerun under it.
 
-The trial exposed Codex 0.154.0's new multiline resume banner. Capture now recognizes this and the older inline banner while requiring UUID validation and explicit user confirmation. Two parser regressions and a chunked runtime regression verify the fix; the live trial confirmed the UUID manually, so fresh native automatic-hint capture is not claimed.
-
-The [follow-up](LIFECYCLE-AND-MEMORY-VALIDATION.md) subsequently observed fresh native automatic-hint capture and stopped a running Codex background command with CLI exit. It passed ordinary owned-child lifecycle fixtures without changing production termination. Incomplete latest banners now clear older unconfirmed hints. The frozen offline 28-claim/20-task pilot supplied no planted stale/wrong-scope/unapproved claims, but exposed incidental English grammar matches. A bounded filter fixed unrelated-task injection; recall stayed 23/25 and strict precision improved from 36.5% to 39.7%. This task-only corpus has no orientation briefs; it does not measure model usefulness or saved time.
-
-Independent read-only review identified pathspec wildcard bypass, stale results hiding valid knowledge, repeated initial tasks, historical device-query input, evidence races and synchronous storage delaying PTY handling. Fixes were checked locally. Regressions cover source races/wildcards, retrieval crowding, task-repeat avoidance, hook identity ambiguity, late shutdown callbacks and exact launch receipts. Desktop acceptance covers replay and flood. The reviewer did not independently rerun the final fixes.
-
-The subsequent clean PR review found four issues: exclusion notices used undelivered revision UUIDs, ancestor resume missed later deliveries, a new Codex session inherited another session's confirmation input, and a reopened SQLite test connection outlived directory cleanup. These are corrected with local regression coverage. The previous desktop reload failure was reproduced locally at 900×640: xterm retained its history, but the test incorrectly required the first line to remain visible. Acceptance now scrolls with Shift+PageUp/PageDown and verifies history plus live input; hidden font-measurement text is not terminal output. Windows cleanup now closes the connection before removing files; the Windows-specific lock behavior has not been rerun locally.
-
-The executive summary is translated into English, with its research-stage scope preserved. Authored project text is English; Unicode fixtures use escapes to preserve the same multilingual byte/argv checks.
-
-A fresh review of these fixes reproduced one additional edge case: a failed first launch could supply undelivered history through a fallback. The fallback is removed; a regression verifies that an empty-task resume of a manually confirmed failed row supplies no historical query or exclusion notice. The reviewer independently reran that regression and three related context tests, confirmed the correction, and reported no remaining actionable findings in this scope. The parent reran all 37 core tests and local desktop acceptance after the correction.
+The [usefulness trial](USEFULNESS-TRIAL.md) was inconclusive: every condition passed every task. The knowledge thesis is MODIFY pending a harder round.
 
 ## Limits and next work
 
-- Remaining native checks: Codex interactive allow/deny under a suitable native profile, broader foreground tools, crash cleanup, detached/signal-resistant descendants and Windows. Background-command stopping with CLI exit and ordinary owned-child fixtures do not establish universal process cleanup. Keep additional native requests bounded with invocation-only trial settings.
-- Main product goal is repo understanding/current status in every new Journal session. The reviewed orientation layer implements this delivery contract. Next: reduce the burden of maintaining status with evidence-backed update proposals, and evaluate real recurring tasks against curated instructions. Automatic admission/extraction is not implemented.
-- No hosted testing is configured or active. The POSIX desktop fixture is skipped on Windows; manual checks on a local Windows machine must verify install/build, discovery, quoting and native interaction before advertising support.
-- PTY survives renderer reload, not app exit/crash. Volatile output loses older history with visible gaps. Runtime sidecar and concurrent terminals remain later work.
-- Lexical retrieval with finite caps; area paths must appear in the task. No embeddings, automatic extraction, cross-worktree promotion, background jobs, cloud or chat. Recent UI lists are bounded rather than fully paginated.
-- Whole-file fingerprints conservatively invalidate evidence after any edit. Freshness is not semantic proof. Credential checks use finite patterns; reviewed content, source excerpts, tasks and receipts are durable local content, not automatic redaction.
-- No installer, signing, updates or provider-support/redistribution claim. Historical full roadmap: `IMPLEMENTATION-PLAN.md`; current scope: `TERMINAL-FIRST-SPEC.md`.
+- An independent review of the runtime found 11 issues, including glob/symlink reads in the diff view, opening launchable files, a two-runtime race, locale-dependent process identity and token exposure to a squatting socket; all are fixed with regression tests. A second, from-scratch PR review found a blocking bug (Git-backed repo overviews went stale on branches without the recorded commit) plus identity timing, synchronous process lookups, trial-metric disclosure, an Open blocklist, protocol-mismatch handling, receipt state, event pruning, hidden-terminal streaming and quit-time launches; all fixed. Process identity is now PID plus UTC start time, read asynchronously.
+- Real Claude Code and Codex have not been run under the new runtime: multi-session, keep-running and crash recovery are verified with fixture CLIs only. Codex interactive approvals, cancelling a running foreground tool, and Windows remain open.
+- A runtime crash still ends terminals; only app or renderer loss is survivable. Descendants that daemonize between samples cannot be attributed; Windows descendant tracking is not implemented.
+- Concurrent sessions in one checkout share a working tree, so the Changes view cannot attribute edits to a single agent. There is no worktree isolation.
+- Retrieval is lexical; conflict detection is a heuristic flag. There is no automatic extraction.
+- No signing, notarization, installer verification on Windows or Linux, auto-update or public release. Dependency and bundled-binary notices remain a release task.
+- Windows: see [WINDOWS.md](WINDOWS.md). Nothing is verified on a real Windows machine.
 
-Run `npm ci` then `npm run dev`. See README for the knowledge/resume workflow.
+Historical full roadmap: [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).

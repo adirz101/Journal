@@ -2,11 +2,14 @@ import { createHash } from 'node:crypto';
 import { lstatSync, realpathSync, openSync, closeSync, fstatSync, readSync, constants } from 'node:fs';
 import { resolve, relative, sep } from 'node:path';
 import { git } from './project.mjs';
+import { commitsSince, isAncestor, isCommit } from './status.mjs';
 import { relativePath, refuseCredentials, text } from './validation.mjs';
+
+export const isSensitivePath = path => path.split('/').some(p => p === '.git' || /^\.env(?:\.|$)/i.test(p) || /^(?:auth|credentials|secrets?)(?:\.|$)/i.test(p) || /\.(?:pem|p12|pfx|key)$/i.test(p) || /^(?:id_rsa|id_ed25519|\.npmrc|\.netrc|\.pypirc)$/i.test(p));
 
 function sourceFile(root, path) {
   path = relativePath(path);
-  if (path.split('/').some(p => p === '.git' || /^\.env(?:\.|$)/i.test(p) || /^(?:auth|credentials|secrets?)(?:\.|$)/i.test(p) || /\.(?:pem|p12|pfx|key)$/i.test(p))) {
+  if (isSensitivePath(path)) {
     throw new Error('Sensitive files cannot be used as evidence');
   }
   const full = resolve(root, path);
@@ -49,6 +52,14 @@ export function captureEvidence(project, input) {
     const note = text(input.note, 'user source'); refuseCredentials(note);
     return { kind: 'user', note, capturedAt: new Date().toISOString() };
   }
+  if (input.kind === 'git') {
+    // A Git range is evidence that the described commits exist in this history.
+    // Base is optional for an overview of the current checkout.
+    if (!project.head) throw new Error('Git evidence requires a commit');
+    const base = input.base ?? null;
+    if (base !== null && (!isCommit(project.root, base) || !isAncestor(project.root, base))) throw new Error('Git evidence base must be a commit in the current history');
+    return { kind: 'git', base, head: project.head, commitCount: base ? commitsSince(project.root, base) : null, capturedAt: new Date().toISOString() };
+  }
   if (input.kind !== 'file') throw new Error('Invalid source kind');
   const file = sourceFile(project.root, input.path);
   const lines = file.content.split(/\r?\n/);
@@ -62,8 +73,19 @@ export function captureEvidence(project, input) {
   return { kind: 'file', path: file.path, contentHash: file.contentHash, excerpt, startLine, endLine, commit: project.head, capturedAt: new Date().toISOString() };
 }
 
-export function validateEvidence(project, source, cache) {
+export function validateEvidence(project, source, cache, scope = 'branch') {
   if (source.kind === 'user') return true;
+  if (source.kind === 'git') {
+    // A branch update describes this branch's history: it goes stale when that
+    // history is rewritten or reset. A repo overview stays valid on every
+    // branch of the checkout while some branch, remote or tag still contains its commit.
+    const key = `git:${scope}:${source.head}`;
+    const reachable = () => { try { return !!git(project.root, ['for-each-ref', '--count=1', '--contains', source.head, 'refs/heads', 'refs/remotes', 'refs/tags']); } catch { return false; } };
+    const check = () => isCommit(project.root, source.head) && (scope === 'checkout' ? reachable() : isAncestor(project.root, source.head));
+    if (!cache) return check();
+    if (!cache.has(key)) cache.set(key, check());
+    return cache.get(key);
+  }
   if (cache?.has(source.path)) return cache.get(source.path) === source.contentHash;
   try {
     const hash = sourceFile(project.root, source.path).contentHash; cache?.set(source.path, hash);

@@ -28,7 +28,7 @@ test('incremental output reconnect uses sequence, not duplicate prompt input', (
   assert.equal(buffer.since(first.lastSequence).gap, false);
 });
 test('input dimensions and maximum size are validated before reaching native PTY', () => {
-  const manager = new TerminalManager({ store: {}, spawn: () => {} });
+  const manager = new TerminalManager({ store: {}, spawn: () => {}, trackMs: 0 });
   assert.throws(() => manager.write('not-owned', 'hello'), /active|owned/);
   assert.throws(() => manager.resize('not-owned', 0, 20), /size/);
 });
@@ -37,7 +37,7 @@ function runtime(t) {
   const root = mkdtempSync(resolve(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'terminal-'));
   execFileSync('git', ['init', '-b', 'main', root], { stdio: 'pipe' });
   const store = new JournalStore(':memory:'); const project = store.openProject(root); const callbacks = {}; const inputs = []; const launches = [];
-  const manager = new TerminalManager({ store, spawn: (executable, argv) => {
+  const manager = new TerminalManager({ store, trackMs: 0, identify: () => null, table: () => null, spawn: (executable, argv) => {
     launches.push({ executable, argv });
     return { onData: f => { callbacks.data = f; }, onExit: f => { callbacks.exit = f; }, write: data => inputs.push(data), resize() {}, kill() {} };
   }});
@@ -164,10 +164,10 @@ test('a foreign hook UUID cannot silently replace the native resume identity', a
   const f = runtime(t); const started = await f.manager.start({ projectId: f.project.id, provider: 'claude' });
   const nativeId = started.session.nativeId;
   f.manager.observe(started.session.id, 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', 'waiting');
-  assert.equal(f.manager.active.session.nativeId, nativeId);
-  assert.equal(f.manager.active.session.nativeIdConfirmed, false);
+  assert.equal(f.manager.entry(started.session.id).session.nativeId, nativeId);
+  assert.equal(f.manager.entry(started.session.id).session.nativeIdConfirmed, false);
   f.manager.observe(started.session.id, nativeId, 'running');
-  assert.equal(f.manager.active.session.nativeIdConfirmed, false);
+  assert.equal(f.manager.entry(started.session.id).session.nativeIdConfirmed, false);
   f.callbacks.exit({ exitCode: 0 });
   await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'claude', resumeId: started.session.id }), /Confirm the exact/);
 });
@@ -177,8 +177,18 @@ test('display credit stays bounded during flood while interrupts still reach the
   f.manager.attach(started.session.id); const events = []; f.manager.on('event', e => events.push(e));
   f.callbacks.data('line\n'.repeat(200000)); await new Promise(setImmediate);
   assert.ok(events.filter(e => e.type === 'output').reduce((sum, e) => sum + Buffer.byteLength(e.data), 0) <= 65536);
-  assert.ok(f.manager.last.buffer.bytes <= 256 * 1024);
+  assert.ok(f.manager.entry(started.session.id).buffer.bytes <= 256 * 1024);
   assert.ok(events.some(e => e.type === 'gap'));
   f.manager.interrupt(started.session.id); assert.equal(f.inputs.at(-1), '\x03');
   assert.throws(() => f.manager.write('another-session', 'no'), /owned/);
+});
+
+test('a launch that spawned before failing records uncertain delivery, not failed', async t => {
+  const f = runtime(t); const save = f.store.saveSession.bind(f.store); let calls = 0;
+  f.store.saveSession = session => { if (session.status === 'running' && ++calls === 1) throw new Error('disk full'); return save(session); };
+  await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'claude', task: 'spawned' }), /Could not start/);
+  assert.equal(f.launches.length, 1);
+  assert.equal(f.store.listReceipts(f.project.id)[0].state, 'uncertain');
+  await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'bogus', task: 'x' }), /Unknown agent provider/);
+  assert.equal(f.store.listSessions(f.project.id).length, 1, 'An invalid provider saves nothing');
 });
