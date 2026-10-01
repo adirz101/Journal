@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { delimiter, isAbsolute, join, win32 } from 'node:path';
 
 // Process ownership. A PID alone is never authority to signal: after a runtime
 // restart a PID may belong to an unrelated program. Journal signals a process
@@ -102,15 +102,15 @@ export function resolveExecutable(name, env = process.env, platform = process.pl
 // newlines. npm installs Windows CLIs as .cmd shims that call a Node script;
 // launch that script directly instead of routing knowledge through cmd.exe.
 // Unverified on a real Windows machine; see docs/WINDOWS.md.
-export function launchTarget(executable, argv, { env = process.env, platform = process.platform, read } = {}) {
+export function launchTarget(executable, argv, { env = process.env, platform = process.platform, read, node: nodePath } = {}) {
   if (platform !== 'win32' || !/\.(?:cmd|bat)$/i.test(executable)) return { file: executable, args: argv };
   let shim = '';
   try { shim = (read ?? (path => readFileSync(path, 'utf8')))(executable); } catch { /* handled below */ }
   const script = shim.match(/"%~?dp0%?\\([^"%]+\.(?:c|m)?js)"/i)?.[1];
   if (!script) throw new Error(`${executable} is a cmd.exe launcher without a recognizable Node script; multi-line prompts cannot be passed safely through cmd.exe`);
-  const dir = executable.replace(/[\\/][^\\/]+$/, '');
-  const localNode = join(dir, 'node.exe');
-  const node = existsSync(localNode) ? localNode : resolveExecutable('node', env, platform);
+  const dir = win32.dirname(executable);
+  const localNode = win32.join(dir, 'node.exe');
+  const node = nodePath ?? (existsSync(localNode) ? localNode : resolveExecutable('node', env, platform));
   if (!node) throw new Error('Node.js is required to start this CLI on Windows');
-  return { file: node, args: [join(dir, script), ...argv] };
+  return { file: node, args: [win32.join(dir, script), ...argv] };
 }

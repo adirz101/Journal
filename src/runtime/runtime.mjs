@@ -131,7 +131,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   process.on('uncaughtException', error => { log(`uncaught: ${error.stack ?? error.message}`); process.exit(1); });
   process.on('unhandledRejection', error => { log(`unhandled: ${error?.stack ?? error}`); });
   try {
-    const { spawn } = await import('node-pty');
+    const pty = await import('node-pty');
+    const { launchTarget, resolveExecutable } = await import('../core/process.mjs');
+    // Resolve on PATH (PATHEXT on Windows) and avoid cmd.exe for npm shims.
+    const spawn = (executable, argv, options) => {
+      const resolved = resolveExecutable(executable, options.env) ?? executable;
+      const target = launchTarget(resolved, argv, { env: options.env });
+      return pty.spawn(target.file, target.args, options);
+    };
     const { StoreClient } = await import('../desktop/store-client.mjs');
     const store = new StoreClient(join(dataDir, 'journal.sqlite')); await store.ready;
     const runtime = await startRuntime({ dataDir, store, spawn, log, hookScript: unpacked(join(here, '../desktop/hook.mjs')),

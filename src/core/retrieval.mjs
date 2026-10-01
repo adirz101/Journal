@@ -5,7 +5,7 @@
 
 export const STOPWORDS = new Set(('a an and are as at be by for from in is it of on or that the this to was with ' +
   'add make do does please should would could can will into onto out up use using new update fix change file files code').split(' '));
-const GENERIC_SEGMENTS = new Set(['src', 'lib', 'app', 'apps', 'packages', 'test', 'tests', 'spec', 'index', 'main', 'mjs', 'js', 'ts', 'tsx', 'jsx', 'cjs', 'json', 'md', 'core', 'utils', 'util']);
+const GENERIC_SEGMENTS = new Set(['src', 'lib', 'app', 'apps', 'packages', 'test', 'tests', 'spec', 'index', 'main', 'mjs', 'js', 'ts', 'tsx', 'jsx', 'cjs', 'md', 'core', 'utils', 'util']);
 
 // Split identifiers and paths: readTable -> read, table; jsonStore.mjs -> json, store.
 export function identifierParts(value) {
@@ -55,13 +55,14 @@ export function similarity(a, b) {
   return shared / (x.size + y.size - shared);
 }
 export const normalizedStatement = statement => statement.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-export const isDuplicate = (a, b) => normalizedStatement(a) === normalizedStatement(b) || similarity(a, b) >= 0.85;
-
 const NEGATION = /\b(?:never|not|no|don'?t|do not|must not|avoid|without|disallow|forbid(?:den)?|deprecated|instead of)\b/i;
 const numbers = statement => (statement.match(/\b\d+(?:\.\d+)?\b/g) ?? []).sort().join(',');
+// Near-duplicates must agree on numbers and polarity; otherwise they may conflict.
+export const isDuplicate = (a, b) => normalizedStatement(a) === normalizedStatement(b)
+  || (similarity(a, b) >= 0.85 && numbers(a) === numbers(b) && NEGATION.test(a) === NEGATION.test(b));
 // Basic conflict signal for review, not a verdict: similar subject matter with
 // opposite polarity or different numbers.
 export function possibleConflict(a, b) {
-  if (isDuplicate(a, b) || similarity(a, b) < 0.35) return false;
+  if (normalizedStatement(a) === normalizedStatement(b) || similarity(a, b) < 0.35) return false;
   return NEGATION.test(a) !== NEGATION.test(b) || (numbers(a) !== numbers(b) && !!numbers(a) && !!numbers(b));
 }
