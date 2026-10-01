@@ -31,7 +31,13 @@ Current work: what this branch changes.
 Next: the next concrete task and any known blocker.
 ```
 
-Status is explicitly reviewed information, not an automatically inferred summary of terminal output. This slice does not automatically extract progress, modify native instruction files, promote context across worktrees, or admit generated claims. Those require a later design; reviewed status must be updated when work changes.
+## Git-drafted updates
+
+**Propose branch update** and **Propose overview** draft a revision from local Git facts; no model is called and nothing is stored. A branch draft lists commit subjects, changed areas and uncommitted files since the last update, or since the branch point from `origin/HEAD`, `main` or `master`. It carries the previous update's `Current work` and `Next` lines for confirmation, and otherwise leaves bracketed placeholders, which cannot be saved. An overview draft takes the README's first prose line and the tracked top-level structure; a later draft replaces only the `Structure:` line and lists added or removed directories and changed manifests. Commit subjects or paths that look like credentials are omitted, and drafts are capped at the 2,000-character statement limit.
+
+The draft opens in the knowledge form. **Save for review** creates a candidate revision, and agents receive it only after **Approve**. Its evidence is the Git range: the update becomes stale when history is rewritten or reset so that its recorded HEAD is no longer an ancestor. A current-branch update shows how many commits were made after it was recorded; packets annotate it, and the receipt warns that it may be behind. Drift prompts a review; it never excludes the update.
+
+Status is explicitly reviewed information, not an automatically inferred summary of terminal output. This slice does not admit generated status, modify native instruction files, promote context across worktrees, or admit generated claims. Those require a later design; reviewed status must be updated when work changes.
 
 ## Verification
 

@@ -77,7 +77,10 @@ function parseTranscript(path, repo) {
   }
   const editing = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
   const inRepo = use => String(use.input?.file_path ?? '').startsWith(repo);
-  const firstEdit = uses.findIndex(use => editing.has(use.name) && inRepo(use));
+  // Agents also write files from Bash (heredoc redirects, tee, sed -i); count the attempt.
+  const shellWrite = use => use.name === 'Bash' && /(?:^|[^<>&0-9])>{1,2}\s*(?!&|\/dev\/null)[\w./"'-]|\btee\b|\bsed\s+-i/.test(use.input?.command ?? '');
+  const isEdit = use => (editing.has(use.name) && inRepo(use)) || shellWrite(use);
+  const firstEdit = uses.findIndex(isEdit);
   const tests = uses.filter(use => use.name === 'Bash' && /npm (?:run )?test|node --test/.test(use.input?.command ?? ''));
   const failedTests = tests.filter(use => { const o = outcomes.get(use.id); return o && (o.error || /# fail [1-9]|not ok \d/.test(o.text)); });
   const usage = result?.usage ?? {};
@@ -88,7 +91,8 @@ function parseTranscript(path, repo) {
     inputTokens: (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0), outputTokens: usage.output_tokens ?? 0,
     toolCalls: uses.length, exploreBeforeEdit: firstEdit >= 0 ? firstEdit : uses.length, edited: firstEdit >= 0,
     testRuns: tests.length, failedTestRuns: failedTests.length,
-    editedGenerated: uses.some(use => editing.has(use.name) && String(use.input?.file_path ?? '').includes('src/generated/')),
+    editedGenerated: uses.some(use => (editing.has(use.name) && String(use.input?.file_path ?? '').includes('src/generated/')) || (shellWrite(use) && /src\/generated\//.test(use.input.command))),
+    shellWrites: uses.filter(shellWrite).length,
     filesRead: new Set(uses.filter(use => use.name === 'Read').map(use => use.input?.file_path)).size,
     deniedTools: uses.filter(use => /permission|denied|not allowed/i.test(outcomes.get(use.id)?.text ?? '') && outcomes.get(use.id)?.error).map(use => use.name),
   };
@@ -242,7 +246,9 @@ async function run() {
 
 function report() {
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-  const rows = readFileSync(join(OUT, 'results.jsonl'), 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line));
+  // Re-derive transcript metrics so parser corrections apply to every saved run.
+  const rows = readFileSync(join(OUT, 'results.jsonl'), 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line))
+    .map(row => ({ ...row, ...parseTranscript(join(OUT, 'runs', `${row.condition}-${row.task}-${row.rep}.jsonl`), repoOf(row.condition)) }));
   const mean = values => { const v = values.filter(x => typeof x === 'number'); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
   const byCondition = Object.fromEntries(CONDITIONS.map(condition => {
     const mine = rows.filter(r => r.condition === condition);
@@ -253,6 +259,7 @@ function report() {
       meanTurns: mean(mine.map(r => r.turns)), meanCostUsd: mean(mine.map(r => r.costUsd)), meanDurationS: mean(mine.map(r => r.durationMs && r.durationMs / 1000)),
       meanInputTokens: mean(mine.map(r => r.inputTokens)), meanContextBytes: mean(mine.map(r => r.context?.bytes)),
       failedTestRuns: mine.reduce((a, r) => a + r.failedTestRuns, 0), generatedFileEdits: mine.filter(r => r.editedGenerated).length,
+      deniedToolCalls: mine.reduce((a, r) => a + r.deniedTools.length, 0),
       incomplete: mine.filter(r => r.isError || r.exit !== 0).length,
     }];
   }));

@@ -10,6 +10,10 @@ The desktop UI retains the original layout with a royal blue accent, light/dark 
 
 - [Project orientation](PROJECT-ORIENTATION.md): current approved repo overview plus exact-branch progress/next-step updates precede task-specific knowledge for every Journal-launched session, including empty tasks and resume. Source freshness, explicit admission, immutable revisions, checkout/branch boundaries and shared packet budgets remain enforced. Status is reviewed content; there is no automatic extraction from terminal output.
 
+- [Status-update helper](PROJECT-ORIENTATION.md#git-drafted-updates): read-only Git drafts of a branch update (commits, changed areas, uncommitted files since the last update or branch point) and a repo overview (README purpose, tracked structure). Nothing is stored before **Save for review**; approval is still required. Git-range evidence goes stale when history is rewritten, and branch updates report commits made since they were recorded.
+
+- [Usefulness trial, round 1](USEFULNESS-TRIAL.md): 48 real Claude Code runs comparing no context, AGENTS.md, native memory and Journal on a synthetic repository. Every condition passed every task, so no reduction in mistakes was demonstrated. Decision: MODIFY the knowledge thesis pending a harder round 2.
+
 - Original CLI launcher: literal argv, inherited settings/login/permission prompts, Claude preassigned UUID and scoped observer hooks, Codex resume UUID requiring human confirmation. No latest-session fallback or permission bypass.
 - Electron sandboxed React cockpit with node-pty/xterm, project/session navigation, input/resize/interrupt/stop, flow control, renderer reconnect and explicit resume. One active terminal.
 - SQLite WAL/FTS5: manual candidates, admission/rejection/withdrawal, immutable revisions, exact branch/checkout and area scope, source revalidation and bounded retrieval. Evidence is a bounded tracked UTF-8 excerpt and whole-file hash or explicit user source note.
