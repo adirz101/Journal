@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { Unicode11Addon } from '@xterm/addon-unicode11';
 import '@xterm/xterm/css/xterm.css';
 import { api, type OutputSnapshot, type TerminalEvent } from './types';
 import { terminalThemes, type Appearance } from './theme';
@@ -14,11 +15,14 @@ export function TerminalPane({ sessionId, live, appearance, onError }: { session
     if (!host.current) return;
     let disposed = false; let attached = false; let acceptInput = false; let last = 0; const queued: TerminalEvent[] = [];
     // Bounded scrollback per visible terminal; the runtime keeps 256 KiB per session.
-    const terminal = new Terminal({ cursorBlink: false, fontSize: 13, lineHeight: 1.35, scrollback: 4000,
+    const terminal = new Terminal({ cursorBlink: false, fontSize: 13, lineHeight: 1.35, scrollback: 4000, allowProposedApi: true,
       fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
       theme: terminalThemes[appearanceRef.current] });
     terminalRef.current = terminal;
-    const fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(host.current);
+    const fit = new FitAddon(); terminal.loadAddon(fit);
+    // Unicode 11 widths keep CJK and emoji aligned with what CLIs assume.
+    terminal.loadAddon(new Unicode11Addon()); terminal.unicode.activeVersion = '11';
+    terminal.open(host.current);
     terminal.parser.registerOscHandler(52, () => true); // Never accept terminal-originated clipboard writes.
     terminal.parser.registerOscHandler(8, () => true); // No automatic links to external applications.
     const failed = (error: unknown) => { if (!disposed) errorRef.current(String(error instanceof Error ? error.message : error)); };

@@ -30,6 +30,7 @@ if(char==='\\x03'){console.log('INTERRUPTED');continue}
 if(char!=='\\r'&&char!=='\\n'){input+=char;continue}
 const command=input;input='';
 if(command==='daemon'){const c=spawn(process.execPath,['-e',${JSON.stringify(daemonCode)}],{detached:true,stdio:'ignore'});c.unref();console.log('DAEMON_STARTED')}
+else if(command==='unicode'){process.stdout.write('\\x1b[31mRED\\x1b[0m \\u6f22\\u5b57\\u30c6\\u30b9\\u30c8 \\u{1F600} \\u05e2\\u05d1\\u05e8\\u05d9\\u05ea\\r\\nCRLF_OK\\r\\n')}
 else if(command.startsWith('write ')){fs.writeFileSync(command.slice(6),'created by agent\\n');console.log('WROTE')}
 else console.log('ECHO '+command);
 }});`;
@@ -70,6 +71,11 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     await expect(page.getByText('4/4 active')).toBeVisible();
     await sessionButton(page, 'TASK_1').click();
     await expect(page.locator('.terminal-surface')).toContainText('TASK TASK_1');
+    await typeLine(page, 'unicode');
+    await expect(page.locator('.terminal-surface')).toContainText('RED \u6f22\u5b57\u30c6\u30b9\u30c8');
+    await expect(page.locator('.terminal-surface')).toContainText('CRLF_OK');
+    await expect(page.locator('.terminal-surface')).not.toContainText('[31m');
+    expect(await page.evaluate(() => (document.querySelector('.xterm-rows')?.textContent ?? '').includes('\u{1F600}'))).toBe(true);
     await typeLine(page, 'only-in-one');
     await expect(page.locator('.terminal-surface')).toContainText('ECHO only-in-one');
     await sessionButton(page, 'TASK_2').click();

@@ -192,3 +192,13 @@ test('a launch that spawned before failing records uncertain delivery, not faile
   await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'bogus', task: 'x' }), /Unknown agent provider/);
   assert.equal(f.store.listSessions(f.project.id).length, 1, 'An invalid provider saves nothing');
 });
+
+test('output keeps ANSI sequences, CRLF and multi-byte text intact across chunk boundaries', () => {
+  const buffer = new OutputBuffer(64 * 1024);
+  const text = '\x1b[31mRED\x1b[0m \u6f22\u5b57 \u{1F600} \u05e2\u05d1\r\n'.repeat(2000);
+  buffer.append(text);
+  const joined = buffer.since(0).chunks.map(c => c.data).join('');
+  assert.ok(text.endsWith(joined), 'Only whole older chunks are dropped');
+  assert.ok(buffer.since(0).chunks.every(c => Buffer.byteLength(c.data) <= 8192));
+  assert.ok(!joined.includes('\ufffd'));
+});

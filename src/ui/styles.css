@@ -135,3 +135,4 @@
 .proposal-inbox{border:1px dashed #3a4a63;border-radius:7px;padding:10px 11px;margin:0 0 14px;display:flex;flex-direction:column;gap:9px}.proposal p{font-size:11px;line-height:1.55;margin:0 0 4px;white-space:pre-line}.proposal small{font-size:9px}
 :root[data-theme=light] .proposal-inbox{border-color:#bdd0f4}
 .small-print{font-size:10px;margin-top:12px}.sidebar-footer .theme-toggle+.theme-toggle{margin-top:6px}
+.provider-line{display:flex;gap:12px;font-size:9px;color:#727c89;margin:8px 0 0}

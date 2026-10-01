@@ -19,7 +19,7 @@ export interface Proposal { id: string; kind: 'rule' | 'test-command' | 'branch-
 export interface ProjectState { project: Project; sessions: Session[]; receipts: Receipt[]; }
 export interface ChangedFile { path: string; from: string | null; additions: number | null; deletions: number | null; binary: boolean; untracked: boolean; preexisting: boolean; sensitive: boolean; }
 export interface Changes { base: string; available: boolean; reason?: string; head?: string; branch?: string; headMoved?: boolean; commitsSince?: number; files: ChangedFile[]; truncated?: boolean; additions?: number; deletions?: number; preexistingCount?: number; }
-export interface Bootstrap { projects: Project[]; agents: { provider: Provider; available: boolean; version: string | null }[]; platform: string; runtime: { state: 'connected' | 'disconnected' | 'connecting'; warning: string | null }; live: Session[]; active: Session[]; }
+export interface Bootstrap { projects: Project[]; agents: { provider: Provider; available: boolean; version: string | null; path?: string | null; capabilities?: { exactResume: string; status: string[]; commands: string; fileEdits: boolean } }[]; platform: string; runtime: { state: 'connected' | 'disconnected' | 'connecting'; warning: string | null }; live: Session[]; active: Session[]; }
 export interface StatusDraft { scope: 'checkout' | 'branch'; memoryId: string | null; previousRevision: number | null; previousStatement: string | null; statement: string; source: { kind: 'git'; base: string | null };
   basis: { label: string; base: string | null; head: string; commitCount?: number; changedFiles?: number; uncommitted?: number; carried?: string[]; structureChanges?: string[]; unchanged?: boolean; notes: string[] }; }
 declare global {
