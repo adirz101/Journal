@@ -14,7 +14,7 @@ Renderer (React, sandboxed)  ──IPC──>  Electron main (app)  ──local 
 
 - **Renderer:** UI only. Context isolation, sandbox, CSP, no Node, and no navigation or remote content. Every request goes through `window.journal.request(action, input)`, which `preload.cjs` allowlists and `main.mjs` validates against the sender frame.
 - **Electron main:** windows, dialogs, knowledge and project operations (through the store worker), and a `RuntimeClient`. It never owns a PTY.
-- **Runtime:** a detached process started with the Electron binary in Node mode (`ELECTRON_RUN_AS_NODE=1`), so `node-pty` uses its Electron-built native module. It owns every PTY, native child process, output buffer, attach and flow-control state, and hook observation. It listens on a Unix socket in the data directory (or a hashed path under the temp directory when that path would be too long), or on a Windows named pipe. Clients must present the random token from `runtime.json` (mode 0600). One runtime runs per data directory, and one app client at a time; a reconnecting app replaces a stale client.
+- **Runtime:** a detached process started with the Electron binary in Node mode (`ELECTRON_RUN_AS_NODE=1`), so `node-pty` uses its Electron-built native module. It owns every PTY, native child process, output buffer, attach and flow-control state, and hook observation. It listens on a Unix socket in the data directory (or a hashed path under the temp directory when that path would be too long), or on a Windows named pipe. Both sides prove knowledge of the random token in `runtime.json` (mode 0600) with an HMAC challenge-response; the token never crosses the socket, so a process squatting on the path learns nothing and the app refuses it. An exclusive `runtime.lock` (owner PID plus process identity) guarantees one runtime per data directory; a runtime removes only the socket file it created. One app client at a time; a reconnecting app replaces a stale client. The app launches at most three runtimes in a row without a successful connection, then reports the failure.
 - **Store worker:** synchronous SQLite, Git and evidence validation run in a worker thread so they never block PTY or UI handling. The app and the runtime each have one and share the same WAL database file.
 
 ## Lifecycle
@@ -24,7 +24,7 @@ Renderer (React, sandboxed)  ──IPC──>  Electron main (app)  ──local 
 | Renderer reload | Main asks the runtime to detach output streaming; the reloaded renderer re-attaches and repaints from the bounded buffer. Sessions continue. |
 | Window close or app quit | With live sessions, Journal asks: **Stop sessions and quit** (graceful stop, then the runtime exits) or **Keep running in background** (the runtime keeps sessions, and the next launch rediscovers them). `JOURNAL_QUIT_POLICY=stop` or `keep` skips the prompt. |
 | App crash | The runtime notices the client disconnect and keeps sessions. The next launch connects to the same runtime and lists live sessions. |
-| Runtime crash | PTY masters close and native CLIs normally exit. The app reconnects, starting a new runtime if needed. The new runtime recovers sessions owned by any previous runtime: `interrupted`, or `orphaned` when the recorded process still exists with the same identity. Prompt delivery becomes `uncertain`, and nothing is resent. |
+| Runtime crash | PTY masters close and native CLIs normally exit. The app reconnects, starting a new runtime if needed. The new runtime recovers sessions owned by any previous runtime: `interrupted`; `orphaned` when the recorded process still exists with the same identity; or `orphaned` and *unverified* when the PID is alive but its identity cannot be read (never signalled). Orphans block resume and ID confirmation for the same conversation and are rechecked every 5 s; once gone they become `interrupted`. Prompt delivery becomes `uncertain`, and nothing is resent. |
 | Idle runtime | It exits after 60 s with no client and no live sessions. |
 | Build mismatch | An idle runtime from another build is replaced. A busy one is kept, and the app shows a warning. |
 
@@ -34,7 +34,7 @@ Session states: `starting`, `running` (activity `working` or `idle` when Claude 
 
 - Signals go through the live PTY handle Journal holds. Once the exit callback fires, Journal sends no further signals through that handle, so a reused PID is never targeted.
 - **Stop:** SIGTERM to the PTY's process group (on Windows, ConPTY close through node-pty), then SIGKILL after a 3 s grace period only if the process has not exited.
-- **Identity:** at launch, Journal records the PID, the process start time and a SHA-256 prefix of the command line. The prefix keeps prompt text out of process metadata. After a runtime restart, Journal signals a process only when all three still match (`signalVerified`).
+- **Identity:** at launch, Journal records the PID, the process start time (read with `ps` under the C locale) and a SHA-256 prefix of the command line. The prefix keeps prompt text out of process metadata. After a runtime restart, Journal signals a process only when all three still match (`signalVerified`); ending an orphan signals its process group and records an end only after the process is gone.
 - **Descendants:** the process table is sampled every 5 s and right before stop. Children that survive the agent are listed as leftovers, and ending them is an explicit, identity-verified action. A process that called `setsid` and was reparented between samples cannot be attributed.
 
 ## Data
@@ -45,6 +45,10 @@ One SQLite file with ordered, idempotent migrations (`PRAGMA user_version`, curr
 - `sessions`: provider, project, branch, baseline (HEAD plus files already dirty at start), native ID and confirmation, PID identity, runtime ID, last activity, survivors, recovery marker and archived flag.
 - `events`: a bounded per-session timeline of at most 2,000 rows. Rows hold small metadata only: redacted command text, exit codes, durations and edited paths. No prompts, tool output or terminal output.
 - `memory_fts`: FTS5 with `porter unicode61` over the statement plus an alias column built from identifiers and paths.
+
+The Changes view runs Git with literal pathspecs, reads untracked files only when no path component is a symlink and the file stays inside the checkout, and serves diffs only for paths it listed. **Open** uses the system default application only for regular, non-executable, non-launchable files; anything else is revealed in the file manager.
+
+Hook event files are redacted at write time, rotated once consumed, swept at runtime start, and report lost observation if they reach 1 MiB.
 
 Terminal output exists only in runtime memory: 256 KiB per session in 8 KiB chunks, with 64 KiB of in-flight display credit per attached session. A gap marker discloses dropped history.
 

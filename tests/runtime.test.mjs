@@ -53,17 +53,39 @@ function client(f, t, launch = () => {}) {
   t.after(() => c.close()); return c;
 }
 
-test('the runtime refuses clients without its token', async t => {
+test('the runtime refuses clients that cannot prove the token, and never receives it', async t => {
   const f = fixture(t); const { runtime } = await f.boot();
-  const reply = await new Promise(resolvePromise => {
+  const exchange = messages => new Promise(resolvePromise => {
+    const socket = net.connect(runtime.path); socket.setEncoding('utf8'); let text = '';
+    socket.on('data', d => { text += d; if (text.includes('\n') && messages.length) socket.write(frame(messages.shift())); }); socket.on('close', () => resolvePromise(text));
+    socket.on('connect', () => socket.write(frame({ id: 1, method: 'hello', params: { protocol: 2, nonce: 'n'.repeat(48) } })));
+    setTimeout(() => socket.destroy(), 500);
+  });
+  const reply = await exchange([{ id: 2, method: 'auth', params: { proof: 'f'.repeat(64) } }]);
+  assert.match(reply, /"challenge"/); assert.match(reply, /Unauthorized/);
+  assert.ok(!reply.includes(runtime.token), 'The token itself never crosses the socket');
+  assert.match(await exchange([]), /challenge/);
+  const legacy = await new Promise(resolvePromise => {
     const socket = net.connect(runtime.path); socket.setEncoding('utf8'); let text = '';
     socket.on('data', d => { text += d; }); socket.on('close', () => resolvePromise(text));
-    socket.on('connect', () => socket.write(frame({ id: 1, method: 'hello', params: { token: 'wrong', protocol: 1 } })));
+    socket.on('connect', () => socket.write(frame({ id: 1, method: 'hello', params: { token: runtime.token, protocol: 1 } })));
   });
-  assert.match(reply, /Unauthorized/);
+  assert.match(legacy, /Unauthorized/);
   const info = JSON.parse(readFileSync(join(f.dataDir, 'runtime.json'), 'utf8'));
   assert.equal(info.runtimeId, runtime.runtimeId);
   if (process.platform !== 'win32') assert.equal((await import('node:fs')).statSync(join(f.dataDir, 'runtime.json')).mode & 0o777, 0o600);
+});
+
+test('a client refuses a server that cannot prove the token', async t => {
+  const f = fixture(t);
+  const impostorPath = (await import('../src/runtime/protocol.mjs')).socketPath(f.dataDir);
+  const seen = [];
+  const impostor = net.createServer(socket => { socket.setEncoding('utf8'); socket.on('data', d => { seen.push(d); socket.write(frame({ id: 0, value: { challenge: 'c'.repeat(48), proof: '0'.repeat(64) } })); }); });
+  await new Promise(r => impostor.listen(impostorPath, r)); t.after(() => impostor.close());
+  writeFileSync(join(f.dataDir, 'runtime.json'), JSON.stringify({ socket: impostorPath, token: 'secret-token-value', protocol: 2 }));
+  const c = new RuntimeClient({ dataDir: f.dataDir, launch: () => null, connectTimeoutMs: 600 }); t.after(() => c.close());
+  await assert.rejects(c.connect(), /Could not start/);
+  assert.ok(seen.length && seen.every(text => !text.includes('secret-token-value') && !/"auth"/.test(text)));
 });
 
 test('a second runtime for the same data directory is refused', async t => {
@@ -194,6 +216,50 @@ test('a session cannot be closed while live, and closing hides it from the proje
   await c.call('release', { id: session.id }); f.store.archiveSession(session.id);
   assert.equal(f.store.listSessions(f.project.id).length, 0);
   assert.equal(f.store.listSessions(f.project.id, true).length, 1);
+});
+
+test('a stale lock is replaced, a live owner keeps it, and launches are capped', async t => {
+  const f = fixture(t);
+  const { acquireLock } = await import('../src/runtime/runtime.mjs');
+  writeFileSync(join(f.dataDir, 'runtime.lock'), JSON.stringify({ pid: 999999, identity: { started: 'x', commandHash: 'y' } }));
+  const release = await acquireLock(f.dataDir, join(f.dataDir, 'none.sock'), () => ({ started: 'me', commandHash: 'me' }));
+  assert.equal(JSON.parse(readFileSync(join(f.dataDir, 'runtime.lock'), 'utf8')).pid, process.pid); release();
+  const child = spawnChild(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); t.after(() => child.kill('SIGKILL'));
+  writeFileSync(join(f.dataDir, 'runtime.lock'), JSON.stringify({ pid: child.pid, identity: { started: 'same', commandHash: 'same' } }));
+  await assert.rejects(acquireLock(f.dataDir, join(f.dataDir, 'none.sock'), () => ({ started: 'same', commandHash: 'same' })), /already running/);
+  let launches = 0; const failures = [];
+  const c = new RuntimeClient({ dataDir: join(f.root, 'empty-data'), launch: () => { launches++; return null; }, connectTimeoutMs: 300 });
+  c.on('failed', message => failures.push(message)); t.after(() => c.close());
+  for (let i = 0; i < 5; i++) await assert.rejects(c.connect());
+  assert.equal(launches, 3); assert.ok(failures.length >= 1);
+});
+
+test('orphan recovery: unverifiable live processes stay orphaned and block resume and signals', async t => {
+  const f = fixture(t);
+  const child = spawnChild(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); t.after(() => child.kill('SIGKILL'));
+  const nativeId = '22222222-2222-4222-8222-222222222222';
+  f.store.saveSession({ id: 'unknown', projectId: f.project.id, provider: 'claude', nativeId, nativeIdConfirmed: true, status: 'running', pid: child.pid, identity: null, receiptId: 'r', runtimeId: 'gone', title: 'x', createdAt: new Date().toISOString() });
+  const { runtime } = await f.boot(fakeSpawner(), { identify: () => null });
+  const recovered = f.store.getSession('unknown');
+  assert.equal(recovered.status, 'orphaned'); assert.equal(recovered.identityVerified, false); assert.equal(recovered.endedAt, null);
+  const c = client(f, t); await c.connect();
+  await assert.rejects(c.call('terminateOrphan', { id: 'unknown' }), /cannot verify/);
+  await assert.rejects(c.call('confirmNativeId', { id: 'unknown', nativeId }), /Stop this session/);
+  f.store.saveSession({ id: 'older', projectId: f.project.id, provider: 'claude', nativeId, nativeIdConfirmed: true, status: 'stopped', receiptId: 'r', title: 'y', createdAt: new Date().toISOString() });
+  await assert.rejects(c.call('start', { projectId: f.project.id, provider: 'claude', resumeId: 'older' }), /orphaned process/);
+  assert.ok(isAlive(child.pid), 'Nothing was signalled');
+  child.kill('SIGKILL'); await until(() => !isAlive(child.pid));
+  await runtime.manager.recheckOrphans();
+  assert.equal(f.store.getSession('unknown').status, 'interrupted', 'Once the process is gone the session is released');
+});
+
+test('confirming a resume ID survives later saves of a retained session', async t => {
+  const f = fixture(t); const { fake, runtime } = await f.boot(); const c = client(f, t); await c.connect();
+  const { session } = await c.call('start', { projectId: f.project.id, provider: 'codex', task: 'x' });
+  fake.procs[0].exit({ exitCode: 0 }); await until(() => f.store.getSession(session.id).status === 'exited');
+  await c.call('confirmNativeId', { id: session.id, nativeId: '33333333-3333-4333-8333-333333333333' });
+  runtime.manager.persist(runtime.manager.entry(session.id).session, true); await wait(20);
+  assert.equal(f.store.getSession(session.id).nativeIdConfirmed, true);
 });
 
 test('the client relaunches and reconnects when the runtime goes away', async t => {

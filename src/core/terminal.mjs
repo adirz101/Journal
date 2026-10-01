@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { buildAgentLaunch, captureCodexId, CODEX_RESUME_MARKER, UUID } from './agents.mjs';
-import { descendants, processIdentity, processTable, sameIdentity, signalVerified, survivors } from './process.mjs';
+import { descendants, isAlive, processIdentity, processTable, sameIdentity, signalVerified, survivors } from './process.mjs';
 import { redact, text } from './validation.mjs';
 
 export const MAX_SESSIONS = 4;
@@ -50,11 +50,11 @@ export class OutputBuffer {
 // signals. Output stays in bounded memory; nothing raw is persisted.
 export class TerminalManager extends EventEmitter {
   constructor({ store, spawn, makeSettings = () => null, runtimeId = randomUUID(), platform = process.platform,
-    identify = processIdentity, table = processTable, verifiedSignal = signalVerified, stopGraceMs = 3000, trackMs = 5000 }) {
+    identify = processIdentity, table = processTable, verifiedSignal = signalVerified, alive = isAlive, stopGraceMs = 3000, trackMs = 5000 }) {
     super(); this.store = store; this.spawn = spawn; this.makeSettings = makeSettings; this.runtimeId = runtimeId; this.platform = platform;
-    this.identify = identify; this.table = table; this.verifiedSignal = verifiedSignal; this.stopGraceMs = stopGraceMs;
+    this.identify = identify; this.table = table; this.verifiedSignal = verifiedSignal; this.alive = alive; this.stopGraceMs = stopGraceMs;
     this.entries = new Map(); this.pending = 0; this.flushPending = false; this.disposed = false;
-    this.tracker = trackMs ? setInterval(() => this.trackDescendants(), trackMs) : null; this.tracker?.unref?.();
+    this.tracker = trackMs ? setInterval(() => { this.trackDescendants(); void this.recheckOrphans().catch(() => {}); }, trackMs) : null; this.tracker?.unref?.();
   }
   entry(id) { return this.entries.get(id) ?? null; }
   liveEntries() { return [...this.entries.values()].filter(entry => !entry.exited); }
@@ -74,6 +74,9 @@ export class TerminalManager extends EventEmitter {
       if (prior.projectId !== projectId || prior.provider !== provider) throw new Error('Session belongs to another project or provider');
       if (!prior.nativeIdConfirmed || !UUID.test(prior.nativeId ?? '')) throw new Error('Confirm the exact native session ID before resuming');
       if (this.liveEntries().some(entry => entry.session.provider === provider && entry.session.nativeId === prior.nativeId)) throw new Error('This native conversation is already open in another session');
+      // An orphan may still be writing to the same conversation outside Journal.
+      const orphans = await this.store.activeSessions?.() ?? [];
+      if (prior.status === 'orphaned' || orphans.some(other => other.status === 'orphaned' && other.provider === provider && other.nativeId === prior.nativeId)) throw new Error('This conversation may still be running in an orphaned process. End it before resuming.');
     }
     // Always reselect and revalidate here; a stale preview never authorizes delivery.
     const oldReceipt = prior ? await this.store.latestNativeReceipt(projectId, provider, prior.nativeId) : null;
@@ -212,8 +215,10 @@ export class TerminalManager extends EventEmitter {
   async confirmNativeId(id, nativeId) {
     if (!UUID.test(nativeId ?? '')) throw new Error('Enter the exact native session ID (UUID)');
     const session = await this.store.getSession(id);
-    if (isLive(session.status)) throw new Error('Stop this session before confirming its resume ID');
+    if (isLive(session.status) || session.status === 'orphaned') throw new Error('Stop this session before confirming its resume ID');
     session.nativeId = nativeId; session.nativeIdConfirmed = true;
+    // Keep a retained in-memory copy in step so a later save cannot revert it.
+    const entry = this.entries.get(id); if (entry) Object.assign(entry.session, { nativeId, nativeIdConfirmed: true });
     await this.store.saveSession(session); this.emitStatus(session); return session;
   }
   observe(id, nativeId, status, activity) {
@@ -311,7 +316,11 @@ export class TerminalManager extends EventEmitter {
     if (entry && !entry.exited) throw new Error('Stop the session before closing it');
     this.entries.delete(id);
   }
-  emitStatus(session) { if (!this.disposed) this.emit('event', { type: 'status', session: { ...session } }); }
+  // Every state change bumps a version so the UI can ignore older snapshots.
+  emitStatus(session) {
+    session.version = (session.version ?? 0) + 1; this.persist(session);
+    if (!this.disposed) this.emit('event', { type: 'status', session: { ...session } });
+  }
   persist(session, force = false) {
     const entry = this.entries.get(session.id); if (entry) entry.lastPersist = Date.now();
     void force;
@@ -325,25 +334,52 @@ export class TerminalManager extends EventEmitter {
     const recovered = [];
     for (const session of await this.store.liveSessions()) {
       if (session.runtimeId === this.runtimeId) continue;
-      const alive = session.pid && session.identity && sameIdentity(this.identify(session.pid), session.identity);
-      const next = { ...session, status: alive ? 'orphaned' : 'interrupted', activity: null, endedAt: alive ? null : new Date().toISOString(), recoveredAt: new Date().toISOString() };
+      // Verified: same PID, start time and command. A live PID whose identity
+      // cannot be read stays orphaned but unverified: never reported as ended.
+      const current = session.pid ? this.identify(session.pid) : null;
+      const verified = !!session.identity && sameIdentity(current, session.identity);
+      const unverified = !verified && !!session.pid && this.alive(session.pid) && (!current || !session.identity);
+      const orphaned = verified || unverified;
+      const next = { ...session, status: orphaned ? 'orphaned' : 'interrupted', identityVerified: orphaned ? verified : undefined, activity: null, endedAt: orphaned ? null : new Date().toISOString(), recoveredAt: new Date().toISOString() };
       await this.store.saveSession(next);
       const receipt = await Promise.resolve().then(() => this.store.getReceipt(session.receiptId)).catch(() => null);
       if (receipt && ['prepared', 'submitted'].includes(receipt.state)) await this.store.updateReceiptState(receipt.id, 'uncertain', session.id);
       this.record(session.id, 'recovered', { status: next.status, previousStatus: session.status });
       recovered.push(next);
     }
+    await this.recheckOrphans();
     return recovered;
+  }
+  // Orphans end on their own; once the process is gone the session becomes
+  // interrupted (and resumable) instead of staying blocked forever.
+  async recheckOrphans() {
+    for (const session of await this.store.activeSessions?.() ?? []) {
+      if (session.status !== 'orphaned') continue;
+      const running = session.identityVerified === false ? this.alive(session.pid) : sameIdentity(this.identify(session.pid), session.identity);
+      if (running) continue;
+      const next = { ...session, status: 'interrupted', endedAt: new Date().toISOString() };
+      await this.store.saveSession(next); this.record(session.id, 'recovered', { status: 'interrupted', previousStatus: 'orphaned' }); this.emitStatus(next);
+    }
   }
   // An orphan keeps running without a terminal. Ending it is explicit and
   // requires the recorded process identity to match.
-  async terminateOrphan(id) {
+  async terminateOrphan(id, { waitMs = 3000 } = {}) {
     const session = await this.store.getSession(id);
     if (session.status !== 'orphaned') throw new Error('Only an orphaned session can be terminated this way');
-    const result = this.verifiedSignal(session.pid, session.identity, 'SIGTERM', this.platform);
-    const next = { ...session, status: result.signalled ? 'stopped' : 'interrupted', endedAt: new Date().toISOString() };
-    await this.store.saveSession(next); this.record(id, 'cleanup', { signalled: result.signalled, reason: result.reason ?? null });
-    this.emitStatus(next); return result;
+    if (session.identityVerified === false || !session.identity) throw new Error('Journal cannot verify that this process is the original agent, so it will not signal it. End it outside Journal if needed.');
+    let result;
+    if (this.platform !== 'win32' && sameIdentity(this.identify(session.pid), session.identity)) {
+      // The PTY child led its own session and process group; end the group.
+      try { process.kill(-session.pid, 'SIGTERM'); result = { signalled: true }; }
+      catch { result = this.verifiedSignal(session.pid, session.identity, 'SIGTERM', this.platform); }
+    } else result = this.verifiedSignal(session.pid, session.identity, 'SIGTERM', this.platform);
+    // Record an end only after confirming the process is gone.
+    const deadline = Date.now() + waitMs; let gone = false;
+    while (result.signalled && Date.now() < deadline) { if (!sameIdentity(this.identify(session.pid), session.identity)) { gone = true; break; } await new Promise(r => setTimeout(r, 100)); }
+    const next = gone ? { ...session, status: 'stopped', endedAt: new Date().toISOString() } : session;
+    if (gone) await this.store.saveSession(next);
+    this.record(id, 'cleanup', { signalled: result.signalled, exited: gone, reason: result.reason ?? null });
+    this.emitStatus(next); return { ...result, exited: gone };
   }
   async dispose({ stopSessions = true, timeoutMs = 5000 } = {}) {
     if (this.disposed) return; clearInterval(this.tracker);

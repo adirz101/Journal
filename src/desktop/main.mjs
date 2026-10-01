@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, shell } 
 import { spawn } from 'node:child_process';
 import { resolve, dirname, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { existsSync, mkdirSync, openSync, realpathSync } from 'node:fs';
+import { mkdirSync, openSync } from 'node:fs';
 import { StoreClient } from './store-client.mjs';
 import { RuntimeClient } from './runtime-client.mjs';
 import { detectAgents } from '../core/agents.mjs';
@@ -47,7 +47,7 @@ function launchRuntime() {
   const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
   const log = openSync(join(userData, 'runtime-stderr.log'), 'a', 0o600);
   const child = spawn(process.execPath, [unpacked(resolve(here, '../runtime/runtime.mjs')), '--data', userData], { detached: true, stdio: ['ignore', 'ignore', log], env, windowsHide: true });
-  child.unref();
+  child.unref(); return child.pid;
 }
 
 function createWindow() {
@@ -63,11 +63,6 @@ function createWindow() {
   if (devUrl) window.loadURL(devUrl); else window.loadFile(resolve(root, 'dist/index.html'));
 }
 
-async function sessionProject(id) {
-  const session = await store.getSession(text(id, 'session ID', 100));
-  return { session, project: await store.project(session.projectId) };
-}
-
 // Do not top-level-await readiness: Electron waits for its entry module to finish
 // evaluating before emitting ready (and automation loaders also defer that event).
 app.whenReady().then(async () => {
@@ -78,6 +73,7 @@ runtime = new RuntimeClient({ dataDir: userData, launch: launchRuntime });
 runtime.on('event', send);
 runtime.on('warning', message => { runtimeWarning = message; send({ type: 'runtime', state: runtimeState, warning: message }); });
 runtime.on('disconnected', () => { runtimeState = 'disconnected'; send({ type: 'runtime', state: 'disconnected' }); });
+runtime.on('failed', message => { runtimeWarning = message; send({ type: 'runtime', state: 'disconnected', warning: message }); });
 runtime.on('reconnected', () => { runtimeState = 'connected'; send({ type: 'runtime', state: 'connected', recovered: true }); });
 const agents = detectAgents();
 const actions = {
@@ -105,14 +101,13 @@ const actions = {
   sessionEvents: ({ id }) => store.listEvents(id, 500),
   sessionChanges: ({ id }) => store.sessionChanges(id),
   sessionFileDiff: ({ id, path }) => store.sessionFileDiff(id, path),
-  // Opens a changed file with the operating system's default application.
+  // Opens a listed, regular, non-executable changed file with its default
+  // application. Anything launchable is revealed in the file manager instead.
   openPath: async ({ id, path }) => {
-    const { project } = await sessionProject(id);
-    const full = resolve(project.root, relativePath(path));
-    if (!existsSync(full)) throw new Error('File no longer exists');
-    const canonical = realpathSync(full);
-    if (canonical !== project.root && !canonical.startsWith(project.root + sep)) throw new Error('File is outside the project');
-    const error = await shell.openPath(canonical); if (error) throw new Error(error);
+    const file = await store.openableFile(text(id, 'session ID', 100), relativePath(path));
+    if (!file.open) { shell.showItemInFolder(file.path); return { revealed: true }; }
+    const error = await shell.openPath(file.path); if (error) throw new Error(error);
+    return { revealed: false };
   },
   archiveSession: async ({ id }) => { await runtime.call('release', { id }).catch(() => {}); return store.archiveSession(id); },
   start: input => runtime.call('start', input),

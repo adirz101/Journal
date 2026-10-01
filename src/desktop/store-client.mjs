@@ -20,7 +20,7 @@ export class StoreClient {
     };
     this.worker.on('error', failed);
     this.worker.on('exit', code => { if (code !== 0 || this.pending.size) failed(new Error('Storage worker stopped unexpectedly')); });
-    for (const method of ['openProject', 'listProjects', 'project', 'proposeMemory', 'getMemory', 'memoryHistory', 'listMemories', 'listMemoryPage', 'liveSessions', 'activeSessions', 'archiveSession', 'appendEvent', 'listEvents', 'checkoutBaseline', 'sessionChanges', 'sessionFileDiff', 'proposeStatusUpdate', 'setMemoryStatus', 'prepareContext', 'getReceipt', 'latestNativeReceipt', 'listReceipts', 'updateReceiptState', 'saveSession', 'getSession', 'listSessions', 'recoverSessions', 'close']) {
+    for (const method of ['openProject', 'listProjects', 'project', 'proposeMemory', 'getMemory', 'memoryHistory', 'listMemories', 'listMemoryPage', 'liveSessions', 'activeSessions', 'archiveSession', 'appendEvent', 'listEvents', 'checkoutBaseline', 'sessionChanges', 'sessionFileDiff', 'openableFile', 'proposeStatusUpdate', 'setMemoryStatus', 'prepareContext', 'getReceipt', 'latestNativeReceipt', 'listReceipts', 'updateReceiptState', 'saveSession', 'getSession', 'listSessions', 'recoverSessions', 'close']) {
       this[method] = (...args) => this.call(method, args);
     }
   }

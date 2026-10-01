@@ -4,13 +4,14 @@
 // Node mode so node-pty uses the Electron-built native module.
 import net from 'node:net';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TerminalManager } from '../core/terminal.mjs';
+import { isAlive, processIdentity, sameIdentity } from '../core/process.mjs';
 import { redact } from '../core/validation.mjs';
 import { Observers } from './observers.mjs';
-import { buildId, frame, lineReader, PROTOCOL, socketPath } from './protocol.mjs';
+import { buildId, frame, lineReader, nonce, proof, proofMatches, PROTOCOL, socketPath } from './protocol.mjs';
 
 const METHODS = new Set(['list', 'start', 'attach', 'detach', 'acknowledge', 'write', 'resize', 'interrupt', 'stop', 'terminateSurvivors', 'terminateOrphan', 'confirmNativeId', 'release', 'shutdown', 'ping']);
 
@@ -32,22 +33,46 @@ export function logger(dataDir) {
   };
 }
 
+// One runtime per data directory: an exclusive lock file names the owner by
+// PID and process identity. A lock whose owner is gone (or is now another
+// program) is stale and replaced; a live owner means this start must exit.
+export async function acquireLock(dataDir, path, identify = processIdentity) {
+  const file = join(dataDir, 'runtime.lock'); const mine = { pid: process.pid, identity: identify(process.pid) };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = openSync(file, 'wx', 0o600); writeFileSync(fd, JSON.stringify(mine)); closeSync(fd);
+      return () => { try { if (JSON.parse(readFileSync(file, 'utf8')).pid === process.pid) rmSync(file, { force: true }); } catch { /* already gone */ } };
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      let owner = null; try { owner = JSON.parse(readFileSync(file, 'utf8')); } catch { /* unreadable lock is stale */ }
+      const verified = owner?.identity && sameIdentity(identify(owner.pid), owner.identity);
+      const unverifiedButServing = owner && !owner.identity && isAlive(owner.pid) && await canConnect(path);
+      if (owner && owner.pid !== process.pid && (verified || unverifiedButServing)) throw Object.assign(new Error('A Journal runtime is already running for this data directory'), { code: 'RUNTIME_EXISTS' });
+      rmSync(file, { force: true });
+    }
+  }
+  throw Object.assign(new Error('A Journal runtime is already running for this data directory'), { code: 'RUNTIME_EXISTS' });
+}
+
 export async function startRuntime({ dataDir, store, spawn, platform = process.platform, identify, table, hookScript, execPath = process.execPath,
   idleMs = 60_000, log = () => {}, exit = () => {}, observerMs = 300, stopGraceMs }) {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const path = socketPath(dataDir, platform);
-  if (await canConnect(path)) throw Object.assign(new Error('A Journal runtime is already running for this data directory'), { code: 'RUNTIME_EXISTS' });
+  const releaseLock = await acquireLock(dataDir, path, identify ?? processIdentity);
+  if (await canConnect(path)) { releaseLock(); throw Object.assign(new Error('A Journal runtime is already running for this data directory'), { code: 'RUNTIME_EXISTS' }); }
+  // We hold the lock and nothing answers: any socket file left here is stale.
   if (platform !== 'win32') rmSync(path, { force: true });
   const token = randomBytes(32).toString('hex'); const runtimeId = randomUUID(); const build = buildId();
   let manager = null;
-  const observers = new Observers({ dataDir, hookScript, execPath, platform, ingest: (id, event) => manager.ingest(id, event) });
+  const observers = new Observers({ dataDir, hookScript, execPath, platform, ingest: (id, event) => manager.ingest(id, event),
+    lost: id => manager.record(id, 'error', { message: 'Activity observation stopped: the hook event file reached its size limit.' }) });
   manager = new TerminalManager({ store, spawn, runtimeId, platform, makeSettings: (session, project) => observers.settings(session, project),
     ...(identify ? { identify } : {}), ...(table ? { table } : {}), ...(stopGraceMs ? { stopGraceMs } : {}) });
   const recovered = await manager.recover();
   if (recovered.length) log(`recovered ${recovered.length} session(s) from a previous runtime`);
   let client = null; let lastClientAt = Date.now(); let closing = null;
   manager.on('event', event => {
-    if (event.type === 'status' && !['starting', 'running', 'waiting', 'stopping'].includes(event.session.status)) setTimeout(() => observers.release(event.session.id), 500).unref();
+    if (event.type === 'status' && !['starting', 'running', 'waiting', 'stopping'].includes(event.session.status)) setTimeout(() => { try { observers.release(event.session.id); } catch (error) { log(`observer release failed: ${error.message}`); } }, 500).unref();
     client?.send({ event });
   });
   const observerTimer = setInterval(() => observers.poll(), observerMs); observerTimer.unref();
@@ -71,13 +96,18 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
   };
 
   const server = net.createServer(socket => {
-    let authenticated = false;
+    let authenticated = false; let challenge = null;
     const connection = { send: message => { if (!socket.destroyed) socket.write(frame(message)); }, close: () => socket.destroy() };
     socket.setEncoding('utf8');
     socket.on('data', lineReader(async message => {
       const { id, method, params } = message ?? {};
       if (!authenticated) {
-        if (method !== 'hello' || params?.token !== token || params?.protocol !== PROTOCOL) { connection.send({ id, error: 'Unauthorized runtime client' }); socket.destroy(); return; }
+        // hello: client nonce -> server proves the token and issues a challenge.
+        if (method === 'hello' && !challenge && params?.protocol === PROTOCOL && typeof params?.nonce === 'string' && params.nonce.length >= 32) {
+          challenge = { client: params.nonce, server: nonce() };
+          connection.send({ id, value: { challenge: challenge.server, proof: proof(token, 'server', challenge.client, challenge.server) } }); return;
+        }
+        if (method !== 'auth' || !challenge || !proofMatches(proof(token, 'client', challenge.server, challenge.client), params?.proof)) { connection.send({ id, error: 'Unauthorized runtime client' }); socket.destroy(); return; }
         authenticated = true;
         // One desktop client at a time; a restarted app replaces a stale one.
         if (client) { client.close(); manager.detach(); }
@@ -94,7 +124,10 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
     socket.on('error', () => {});
     socket.on('close', () => { if (client === connection) { client = null; lastClientAt = Date.now(); manager.detach(); log('client disconnected'); } });
   });
-  await new Promise((resolvePromise, reject) => { server.once('error', reject); server.listen(path, resolvePromise); });
+  try { await new Promise((resolvePromise, reject) => { server.once('error', reject); server.listen(path, resolvePromise); }); }
+  catch (error) { releaseLock(); throw error; }
+  // Remember our socket file so shutdown never unlinks another runtime's.
+  const socketInode = platform === 'win32' ? null : lstatSync(path).ino;
   const infoFile = join(dataDir, 'runtime.json');
   writeFileSync(`${infoFile}.tmp`, JSON.stringify({ pid: process.pid, socket: path, token, runtimeId, build, protocol: PROTOCOL, startedAt: new Date().toISOString() }), { mode: 0o600 });
   renameSync(`${infoFile}.tmp`, infoFile);
@@ -113,7 +146,8 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
       await manager.dispose({ stopSessions });
       client?.close(); server.close();
       try { if (JSON.parse(readFileSync(infoFile, 'utf8')).runtimeId === runtimeId) rmSync(infoFile, { force: true }); } catch { /* already gone */ }
-      if (platform !== 'win32') rmSync(path, { force: true });
+      try { if (platform !== 'win32' && lstatSync(path).ino === socketInode) rmSync(path, { force: true }); } catch { /* already gone */ }
+      releaseLock();
       await store.close?.();
       exit();
     })();

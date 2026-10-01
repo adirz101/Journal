@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join, sep } from 'node:path';
 
@@ -9,11 +9,14 @@ const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PermissionRequest', 'S
 const quote = (value, platform) => platform === 'win32' ? `"${value.replaceAll('"', '\\"')}"` : `'${value.replaceAll("'", "'\\''")}'`;
 
 export class Observers {
-  constructor({ dataDir, hookScript, execPath, platform = process.platform, ingest }) {
-    this.dir = join(dataDir, 'observers'); this.hookScript = hookScript; this.execPath = execPath; this.platform = platform; this.ingest = ingest;
+  constructor({ dataDir, hookScript, execPath, platform = process.platform, ingest, lost = () => {} }) {
+    this.dir = join(dataDir, 'observers'); this.hookScript = hookScript; this.execPath = execPath; this.platform = platform; this.ingest = ingest; this.lost = lost;
     this.sessions = new Map();
     mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+    // Files from a previous runtime belong to sessions it can no longer observe.
+    for (const name of readdirSync(this.dir)) this.remove(join(this.dir, name));
   }
+  remove(path) { try { rmSync(path, { force: true }); } catch { /* Windows may hold the file briefly; a later sweep retries. */ } }
   settings(session, project) {
     const target = join(this.dir, `${session.id}.events.jsonl`); const token = randomBytes(24).toString('hex');
     const runner = `${quote(this.execPath, this.platform)} ${quote(this.hookScript, this.platform)} ${quote(target, this.platform)} ${quote(token, this.platform)}`;
@@ -37,8 +40,22 @@ export class Observers {
         const count = readSync(fd, buffer, 0, buffer.length, observer.offset); observer.offset += count;
         const lines = (observer.partial + buffer.subarray(0, count).toString('utf8')).split('\n'); observer.partial = lines.pop().slice(-8192);
         for (const line of lines) this.accept(id, observer, line);
+        // The hook stops writing at 1 MiB; report it instead of freezing silently.
+        if (size >= 1024 * 1024 && !observer.reportedLost) { observer.reportedLost = true; this.lost(id); }
       } catch { /* Observation failures never affect the native agent. */ }
       finally { if (fd !== undefined) closeSync(fd); }
+      if (!observer.rotating && observer.offset > 256 * 1024 && observer.offset >= (this.sizeOf(observer.target) ?? 0)) this.rotate(id, observer);
+    }
+  }
+  sizeOf(path) { try { const fd = openSync(path, 'r'); try { return fstatSync(fd).size; } finally { closeSync(fd); } } catch { return null; } }
+  // Consumed events are dropped: rename, drain anything appended meanwhile,
+  // delete. The hook then starts a new file. Raw command text never lingers.
+  rotate(id, observer) {
+    const consumed = `${observer.target}.consumed`;
+    try { renameSync(observer.target, consumed); } catch { return; }
+    const target = observer.target; observer.target = consumed; observer.rotating = true;
+    try { this.poll(); } finally {
+      this.remove(consumed); Object.assign(observer, { target, offset: 0, partial: '', reportedLost: false, rotating: false });
     }
   }
   accept(id, observer, line) {
@@ -50,7 +67,7 @@ export class Observers {
   }
   release(id) {
     const observer = this.sessions.get(id); if (!observer) return;
-    this.poll(); this.sessions.delete(id);
-    rmSync(observer.target, { force: true }); rmSync(observer.settingsFile, { force: true });
+    try { this.poll(); } catch { /* best effort */ }
+    this.sessions.delete(id); this.remove(observer.target); this.remove(observer.settingsFile);
   }
 }

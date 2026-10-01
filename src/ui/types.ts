@@ -8,7 +8,7 @@ export interface Receipt { id: string; packet: string; launchPrompt?: string; qu
 export type SessionStatus = 'starting' | 'running' | 'waiting' | 'stopping' | 'stopped' | 'exited' | 'failed' | 'interrupted' | 'orphaned';
 export interface Survivor { pid: number; started: string; command: string; }
 export interface Session { id: string; projectId: string; provider: Provider; nativeId: string | null; nativeIdConfirmed: boolean; title: string; status: SessionStatus; receiptId: string; createdAt: string;
-  lastActivityAt?: string; endedAt?: string | null; exitCode?: number | null; branch?: string | null; head?: string | null; activity?: 'idle' | 'working' | 'permission' | null; archived?: boolean; survivors?: Survivor[] | null; resumedFrom?: string | null; }
+  lastActivityAt?: string; endedAt?: string | null; exitCode?: number | null; branch?: string | null; head?: string | null; activity?: 'idle' | 'working' | 'permission' | null; archived?: boolean; survivors?: Survivor[] | null; resumedFrom?: string | null; version?: number; identityVerified?: boolean; }
 export interface TimelineEvent { id?: number; sessionId?: string; at: string; kind: string; body: Record<string, unknown>; }
 export type TerminalEvent = { type: 'output'; sessionId: string; sequence: number; data: string } | { type: 'gap'; sessionId: string } | { type: 'status'; session: Session } | { type: 'error'; message: string; sessionId?: string }
   | { type: 'timeline'; event: TimelineEvent } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; recovered?: boolean };

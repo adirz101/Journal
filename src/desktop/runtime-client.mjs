@@ -2,7 +2,8 @@ import net from 'node:net';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildId, frame, lineReader, PROTOCOL } from '../runtime/protocol.mjs';
+import { buildId, frame, lineReader, nonce, proof, proofMatches, PROTOCOL } from '../runtime/protocol.mjs';
+import { isAlive } from '../core/process.mjs';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -13,6 +14,7 @@ export class RuntimeClient extends EventEmitter {
   constructor({ dataDir, launch, connectTimeoutMs = 15000 }) {
     super(); this.dataDir = dataDir; this.launch = launch; this.connectTimeoutMs = connectTimeoutMs;
     this.socket = null; this.pending = new Map(); this.sequence = 0; this.closing = false; this.info = null; this.connecting = null;
+    this.launchedPid = null; this.launches = 0;
   }
   readInfo() { try { return JSON.parse(readFileSync(join(this.dataDir, 'runtime.json'), 'utf8')); } catch { return null; } }
   async attempt() {
@@ -22,16 +24,31 @@ export class RuntimeClient extends EventEmitter {
       const fail = () => { if (!settled) { settled = true; socket.destroy(); resolve(null); } };
       socket.setEncoding('utf8'); socket.once('error', fail); setTimeout(fail, 2000).unref();
       socket.once('connect', () => {
+        const mine = nonce(); let challenged = false;
         const reader = lineReader(message => {
           if (settled) return this.receive(message);
-          settled = true;
-          if (message.error) { socket.destroy(); resolve(null); return; }
-          resolve({ socket, hello: message.value, reader });
+          if (message.error) { fail(); return; }
+          if (!challenged) {
+            // The server must prove the token before we prove ours.
+            challenged = true;
+            const { challenge, proof: serverProof } = message.value ?? {};
+            if (typeof challenge !== 'string' || !proofMatches(proof(info.token, 'server', mine, challenge), serverProof)) { fail(); return; }
+            socket.write(frame({ id: 0, method: 'auth', params: { proof: proof(info.token, 'client', challenge, mine) } }));
+            return;
+          }
+          settled = true; resolve({ socket, hello: message.value, reader });
         }, fail);
         socket.on('data', chunk => reader(chunk));
-        socket.write(frame({ id: 0, method: 'hello', params: { token: info.token, protocol: PROTOCOL } }));
+        socket.write(frame({ id: 0, method: 'hello', params: { protocol: PROTOCOL, nonce: mine } }));
       });
     });
+  }
+  // Start a runtime only when none we launched is still starting, and at most
+  // three times in a row without a successful connection.
+  maybeLaunch() {
+    if (this.launchedPid && isAlive(this.launchedPid)) return false;
+    if (this.launches >= 3) { this.emit('failed', 'The Journal runtime could not be started. See runtime.log in the data directory.'); return false; }
+    this.launches++; this.launchedPid = this.launch() ?? null; return true;
   }
   async connect() {
     if (this.connecting) return this.connecting;
@@ -45,9 +62,9 @@ export class RuntimeClient extends EventEmitter {
             connection.socket.write(frame({ id: -1, method: 'shutdown', params: { stopSessions: false } }));
             connection.socket.destroy(); await wait(300); continue;
           }
-          this.adopt(connection); return connection.hello;
+          this.launches = 0; this.adopt(connection); return connection.hello;
         }
-        if (!launched) { launched = true; this.launch(); }
+        if (!launched) launched = this.maybeLaunch() || true;
         await wait(150);
       }
       throw new Error('Could not start the Journal runtime');
@@ -81,7 +98,9 @@ export class RuntimeClient extends EventEmitter {
     if (!this.socket) { if (this.closing) throw new Error('Journal runtime is closed'); await this.connect(); }
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { if (this.pending.delete(id)) reject(new Error('Journal runtime did not respond')); }, 30000); timer.unref();
+      // Starting a session may legitimately take long; never time it out and
+      // invite a duplicate launch of the same task.
+      const timer = method === 'start' ? null : setTimeout(() => { if (this.pending.delete(id)) reject(new Error('Journal runtime did not respond')); }, 30000); timer?.unref();
       this.pending.set(id, { resolve: value => { clearTimeout(timer); resolve(value); }, reject: error => { clearTimeout(timer); reject(error); } });
       this.socket.write(frame({ id, method, params }));
     });

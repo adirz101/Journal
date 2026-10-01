@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { lstatSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { relative, resolve, sep } from 'node:path';
 import { isSensitivePath } from './evidence.mjs';
 import { relativePath } from './validation.mjs';
 
@@ -10,7 +10,7 @@ import { relativePath } from './validation.mjs';
 
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const MAX_FILES = 500; const MAX_DIFF = 200 * 1024;
-const raw = (root, args, maxBuffer = 8 * 1024 * 1024) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', timeout: 8000, maxBuffer, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' } });
+const raw = (root, args, maxBuffer = 8 * 1024 * 1024) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', timeout: 8000, maxBuffer, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1' } });
 const quiet = (action, fallback) => { try { return action(); } catch { return fallback; } };
 
 // Paths with uncommitted changes, so pre-existing edits are labelled later.
@@ -24,9 +24,18 @@ export function checkoutBaseline(project) {
   return { head: project.head, branch: project.branch, dirty: dirty.slice(0, 200), dirtyCount: dirty.length, capturedAt: new Date().toISOString() };
 }
 
+// A regular file inside the checkout, reached without any symlink component.
+function safeFile(root, path) {
+  let current = root;
+  for (const part of path.split('/')) { current = resolve(current, part); if (lstatSync(current).isSymbolicLink()) return null; }
+  const canonical = realpathSync(current); const rel = relative(realpathSync(root), canonical);
+  return rel && !rel.startsWith(`..${sep}`) && rel !== '..' && !rel.startsWith(sep) ? canonical : null;
+}
+
 function untrackedLines(root, path) {
   try {
-    const full = resolve(root, path); const stat = lstatSync(full);
+    const full = safeFile(root, path); if (!full) return null;
+    const stat = lstatSync(full);
     if (!stat.isFile() || stat.size > 1024 * 1024) return null;
     const bytes = readFileSync(full); if (bytes.includes(0)) return null;
     const text = bytes.toString('utf8'); return text ? text.split('\n').length - (text.endsWith('\n') ? 1 : 0) : 0;
@@ -65,14 +74,27 @@ export function sessionChanges(project, session) {
   };
 }
 
+// Opening is limited to listed, regular, non-executable files.
+export function openableFile(project, session, path) {
+  path = relativePath(path);
+  if (!sessionChanges(project, session).files.some(file => file.path === path)) throw new Error('File is not in this session\'s changes');
+  const full = safeFile(project.root, path); if (!full) throw new Error('File is not a regular file inside the project');
+  const stat = lstatSync(full);
+  const launchable = /\.(?:app|command|terminal|tool|workflow|scpt|applescript|webloc|inetloc|url|lnk|exe|bat|cmd|com|ps1|vbs|vbe|js|jse|wsf|wsh|msi|msc|jar|pkg|dmg|sh|bash|zsh|desktop|appimage|reg|scr|hta|cpl)$/i.test(path);
+  return { path: full, open: stat.isFile() && !(stat.mode & 0o111) && !launchable };
+}
+
 export function fileDiff(project, session, path) {
   path = relativePath(path);
   if (isSensitivePath(path)) return { path, hidden: true, text: '' };
+  // Only paths this view listed; never an arbitrary request.
+  if (!sessionChanges(project, session).files.some(file => file.path === path)) throw new Error('File is not in this session\'s changes');
   const base = session.baseline?.head ?? session.head ?? EMPTY_TREE;
   let text = quiet(() => raw(project.root, ['diff', '--no-color', '--no-ext-diff', base, '--', path], MAX_DIFF * 4), '');
   if (!text) {
     const tracked = quiet(() => { raw(project.root, ['ls-files', '--error-unmatch', '--literal-pathspecs', '--', path]); return true; }, false);
-    if (!tracked && untrackedLines(project.root, path) !== null) text = readFileSync(resolve(project.root, path), 'utf8').split('\n').map(line => `+${line}`).join('\n');
+    const full = !tracked && untrackedLines(project.root, path) !== null ? safeFile(project.root, path) : null;
+    if (full) text = readFileSync(full, 'utf8').split('\n').map(line => `+${line}`).join('\n');
   }
   return { path, hidden: false, truncated: text.length > MAX_DIFF, text: text.slice(0, MAX_DIFF) };
 }

@@ -5,7 +5,7 @@ import { captureEvidence, validateEvidence } from './evidence.mjs';
 import { choice, relativePath, refuseCredentials, text } from './validation.mjs';
 import { branchDraft, commitsSince, overviewDraft, PLACEHOLDER } from './status.mjs';
 import { aliasesFor, areaMatches, isDuplicate, possibleConflict, queryTerms } from './retrieval.mjs';
-import { checkoutBaseline, fileDiff, sessionChanges } from './changes.mjs';
+import { checkoutBaseline, fileDiff, openableFile, sessionChanges } from './changes.mjs';
 import { redact } from './validation.mjs';
 
 const LIVE = "('starting','running','waiting','stopping')";
@@ -313,6 +313,7 @@ export class JournalStore {
   }
   checkoutBaseline(projectId) { return checkoutBaseline(this.project(projectId)); }
   sessionChanges(sessionId) { const session = this.getSession(sessionId); return sessionChanges(this.project(session.projectId), session); }
+  openableFile(sessionId, path) { const session = this.getSession(sessionId); return openableFile(this.project(session.projectId), session, path); }
   sessionFileDiff(sessionId, path) { const session = this.getSession(sessionId); return fileDiff(this.project(session.projectId), session, path); }
   recoverSessions() {
     for (const row of this.db.prepare('SELECT body FROM sessions').all()) {

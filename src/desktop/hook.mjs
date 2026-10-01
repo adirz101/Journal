@@ -1,6 +1,7 @@
 // Observer only: appends small, bounded metadata for Journal's activity view.
 // No prompt text, tool output or file contents; never makes approval decisions.
 import { appendFileSync, statSync } from 'node:fs';
+import { redact } from '../core/validation.mjs';
 const [target, token] = process.argv.slice(2);
 const EVENTS = ['SessionStart', 'UserPromptSubmit', 'PermissionRequest', 'Stop', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure'];
 const FILE_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
@@ -20,7 +21,7 @@ process.stdin.on('end', () => {
     const observation = { token, id: process.env.JOURNAL_SESSION_ID, nativeId: event.session_id, event: event.hook_event_name, cwd: event.cwd, at: Date.now(),
       tool, toolUseId: typeof event.tool_use_id === 'string' ? event.tool_use_id.slice(0, 100) : null };
     if (tool === 'Bash') {
-      observation.command = String(event.tool_input?.command ?? '').slice(0, 600);
+      observation.command = redact(String(event.tool_input?.command ?? ''), 600);
       observation.background = !!(event.tool_input?.run_in_background || response.backgroundTaskId);
     }
     if (FILE_TOOLS.includes(tool)) observation.filePath = String(event.tool_input?.file_path ?? event.tool_input?.notebook_path ?? '').slice(0, 1000);

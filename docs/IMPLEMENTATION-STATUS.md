@@ -36,9 +36,9 @@ Verification uses local checks on the user's Mac plus fixture-only GitHub Action
 
 | Check | Result |
 | --- | --- |
-| `npm test` | 82 passed, 0 failed: runtime protocol and auth, four sessions and isolation, reconnect, stop/interrupt/exit, runtime-crash recovery, orphan and PID-reuse refusal, hooks and redaction, cross-project knowledge isolation, partial metadata, status helper, retrieval, duplicates, conflicts, pagination, v1→v3 migration, diff baseline, process table and Windows shim handling, plus earlier coverage |
+| `npm test` | 87 passed, 0 failed: runtime protocol, HMAC handshake and impostor refusal, runtime lock and launch cap, unverified orphans, four sessions and isolation, reconnect, stop/interrupt/exit, runtime-crash recovery, orphan and PID-reuse refusal, hooks and redaction, cross-project knowledge isolation, partial metadata, status helper, retrieval, duplicates, conflicts, pagination, v1→v3 migration, diff baseline, glob/symlink/launchable-file refusal, process table and Windows shim handling, plus earlier coverage |
 | `npm run check`, `npm run build` | Passed (the existing ~545 KiB chunk warning remains) |
-| `npm run test:desktop` | 10 passed: earlier scenarios plus four real-PTY runtime scenarios (four sessions with reload and switching, app crash reconnect, runtime crash recovery, and keep-running quit with leftover cleanup and the changes view). The new scenarios passed 12/12 across three repetitions. |
+| `npm run test:desktop` | 10 passed: earlier scenarios plus four real-PTY runtime scenarios (four sessions with reload and switching, app crash reconnect, runtime crash recovery, and keep-running quit with leftover cleanup and the changes view). The new scenarios passed 12/12 across three repetitions; a stale-snapshot race in the UI (an older store read replacing a newer status) was found by an intermittent failure and fixed with per-session versions. |
 | `npm run dist:dir` | Unsigned `Journal.app` built; the packaged runtime started and exited cleanly |
 | GitHub Actions | Not yet run: the branch could not be pushed because the local GitHub token lacks the `workflow` scope |
 
@@ -48,6 +48,7 @@ The [usefulness trial](USEFULNESS-TRIAL.md) was inconclusive: every condition pa
 
 ## Limits and next work
 
+- An independent review of the runtime found 11 issues, including glob/symlink reads in the diff view, opening launchable files, a two-runtime race, locale-dependent process identity and token exposure to a squatting socket; all are fixed with regression tests.
 - Real Claude Code and Codex have not been run under the new runtime: multi-session, keep-running and crash recovery are verified with fixture CLIs only. Codex interactive approvals, cancelling a running foreground tool, and Windows remain open.
 - A runtime crash still ends terminals; only app or renderer loss is survivable. Descendants that daemonize between samples cannot be attributed; Windows descendant tracking is not implemented.
 - Concurrent sessions in one checkout share a working tree, so the Changes view cannot attribute edits to a single agent. There is no worktree isolation.

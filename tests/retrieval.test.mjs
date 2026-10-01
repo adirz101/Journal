@@ -125,3 +125,24 @@ test('session changes compare with the starting commit and label pre-existing ed
   assert.throws(() => fileDiff(f.store.project(f.project.id), session, '../outside'), /relative path/);
   assert.equal(sessionChanges(f.store.project(f.project.id), { head: 'f'.repeat(40) }).available, false);
 });
+
+test('diffs refuse glob pathspecs, symlinked folders and unlisted paths; launchable files are only revealed', { skip: process.platform === 'win32' }, async t => {
+  const f = fixture(t); const { symlinkSync, chmodSync } = await import('node:fs');
+  writeFileSync(join(f.repo, '.env'), 'SECRET=tracked\n'); writeFileSync(join(f.repo, 'secrets.json'), '{"k":"v"}\n');
+  f.git('add', '-f', '.env', 'secrets.json'); f.git('-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qm', 'secrets');
+  const project = f.store.project(f.project.id); const session = { head: project.head, baseline: checkoutBaseline(project) };
+  writeFileSync(join(f.repo, '.env'), 'SECRET=changed\n'); writeFileSync(join(f.repo, 'secrets.json'), '{"k":"changed"}\n');
+  const outside = join(f.root, 'outside'); mkdirSync(outside); writeFileSync(join(outside, 'id_key'), 'PRIVATE\n');
+  symlinkSync(outside, join(f.repo, 'link'));
+  for (const path of ['*', '.env*', 'secret*', '[s]ecrets.json', 'link/id_key']) {
+    let text = ''; try { text = fileDiff(f.store.project(f.project.id), session, path).text; } catch { /* refused */ }
+    assert.doesNotMatch(text, /changed|PRIVATE/, path);
+  }
+  writeFileSync(join(f.repo, 'run.command'), '#!/bin/sh\necho hi\n'); writeFileSync(join(f.repo, 'tool.sh'), 'echo\n'); chmodSync(join(f.repo, 'tool.sh'), 0o755);
+  writeFileSync(join(f.repo, 'notes.md'), 'ok\n');
+  const { openableFile } = await import('../src/core/changes.mjs');
+  assert.equal(openableFile(f.store.project(f.project.id), session, 'notes.md').open, true);
+  assert.equal(openableFile(f.store.project(f.project.id), session, 'run.command').open, false);
+  assert.equal(openableFile(f.store.project(f.project.id), session, 'tool.sh').open, false);
+  assert.throws(() => openableFile(f.store.project(f.project.id), session, 'README.md'), /not in this session/);
+});

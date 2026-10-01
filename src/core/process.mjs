@@ -8,7 +8,8 @@ import { delimiter, isAbsolute, join, win32 } from 'node:path';
 // only through a live PTY handle it still holds, or after its recorded start
 // time and command match the current process exactly.
 
-const run = (file, args, timeout = 3000) => execFileSync(file, args, { encoding: 'utf8', timeout, maxBuffer: 8 * 1024 * 1024, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+// The C locale keeps ps start times in one parseable English format.
+const run = (file, args, timeout = 3000) => execFileSync(file, args, { encoding: 'utf8', timeout, maxBuffer: 8 * 1024 * 1024, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, LC_ALL: 'C', LANG: 'C' } });
 // Identities persist a hash of the command line: agent command lines carry
 // prompt text, which belongs in receipts, not in process metadata.
 const digest = command => createHash('sha256').update(command).digest('hex').slice(0, 32);
@@ -28,7 +29,7 @@ export function processIdentity(pid, platform = process.platform) {
       const [started, command] = value.split('|');
       return started ? { started, commandHash: digest(command ?? '') } : null;
     }
-    const line = run('ps', ['-o', 'lstart=', '-o', 'command=', '-p', String(pid)]).trim();
+    const line = run('ps', ['-ww', '-o', 'lstart=', '-o', 'command=', '-p', String(pid)]).trim();
     const match = line.match(/^(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s(.*)$/);
     return match ? { started: match[1].replace(/\s+/g, ' '), commandHash: digest(match[2]) } : null;
   } catch { return null; }
@@ -50,8 +51,12 @@ export function parseProcessTable(text) {
 
 export function processTable(platform = process.platform) {
   if (platform === 'win32') return null; // Unknown: no portable cheap process table without extra tooling.
-  try { return parseProcessTable(run('ps', ['-A', '-o', 'pid=', '-o', 'ppid=', '-o', 'pgid=', '-o', 'lstart=', '-o', 'command='])); }
-  catch { return null; }
+  try {
+    const output = run('ps', ['-A', '-ww', '-o', 'pid=', '-o', 'ppid=', '-o', 'pgid=', '-o', 'lstart=', '-o', 'command=']);
+    const rows = parseProcessTable(output);
+    // Unparseable output means unknown, never "no processes".
+    return rows.length || !output.trim() ? rows : null;
+  } catch { return null; }
 }
 
 // Descendants by parent links plus the root's process group (children that

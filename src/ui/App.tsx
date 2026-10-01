@@ -40,7 +40,12 @@ export default function App() {
   projectRef.current = state?.project ?? null;
   const connected = runtime.state === 'connected';
   const failed = useCallback((error: unknown) => setError(error instanceof Error ? error.message : String(error)), []);
-  const merge = useCallback((items: Session[]) => setSessions(current => { const next = { ...current }; for (const item of items) next[item.id] = { ...next[item.id], ...item }; return next; }), []);
+  // Older snapshots (for example a slow store read) never replace newer runtime state.
+  const merge = useCallback((items: Session[]) => setSessions(current => {
+    const next = { ...current };
+    for (const item of items) { const known = next[item.id]; if (!known || (item.version ?? 0) >= (known.version ?? 0)) next[item.id] = { ...known, ...item }; }
+    return next;
+  }), []);
   useEffect(() => { void api('setAppearance', { appearance }).catch(failed); }, [appearance, failed]);
   // Relative times only; no animation.
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 15000); return () => clearInterval(timer); }, []);
@@ -160,12 +165,12 @@ export default function App() {
             {session && <div className="terminal-actions">
               {isLive(session) && connected && <><button onClick={() => void sessionAction('interrupt')}>Interrupt <kbd>^C</kbd></button><button onClick={() => void sessionAction('stop')} disabled={session.status === 'stopping'}>Stop terminal</button></>}
               {resumable(session) && <button disabled={busy || !canStart} onClick={() => void start(session.provider, session)}>Resume</button>}
-              {session.status === 'orphaned' && <button onClick={() => void sessionAction('terminateOrphan')}>End orphaned process</button>}
+              {session.status === 'orphaned' && session.identityVerified !== false && <button onClick={() => void sessionAction('terminateOrphan')}>End orphaned process</button>}
               {!!session.survivors?.length && <button onClick={() => void sessionAction('terminateSurvivors')}>End {session.survivors.length} leftover process{session.survivors.length === 1 ? '' : 'es'}</button>}
               {!isLive(session) && session.status !== 'orphaned' && <button onClick={() => void closeSession()}>Close</button>}
             </div>}</div>
             {projectBranchChanged && <p className="hint session-hint">The checkout is now on {state.project.branch ?? 'a detached HEAD'}; this session started on {session.branch ?? 'a detached HEAD'}.</p>}
-            {session?.status === 'orphaned' && <p className="hint session-hint">The runtime that owned this terminal stopped while its process kept running. Journal cannot reattach to it. End it here, or leave it running and close it later.</p>}
+            {session?.status === 'orphaned' && <p className="hint session-hint">{session.identityVerified === false ? `A process with this session's PID (${(session as { pid?: number }).pid ?? 'unknown'}) is still running, but Journal cannot verify it is the original agent, so it will not signal it. Resume stays blocked until it ends; check it outside Journal.` : 'The runtime that owned this terminal stopped while its process kept running. Journal cannot reattach to it. End it here, or leave it running; resuming this conversation stays blocked while it runs.'}</p>}
             {session?.status === 'interrupted' && <p className="hint session-hint">This session's runtime stopped unexpectedly. Its prompt delivery is marked uncertain and nothing was resent.{resumable(session) ? ' Resume reopens the exact native conversation.' : ''}</p>}
             {!!session?.survivors?.length && <p className="hint session-hint">Child processes outlived the agent: {session.survivors.map(s => `${s.pid} ${s.command}`).join('; ')}</p>}
             {session ? <TerminalPane key={session.id} sessionId={session.id} live={isLive(session) && connected} appearance={appearance} onError={setError} /> : <div className="terminal-empty"><img className="terminal-brand-mark" src={journalMark} alt="" width={50} height={50} /><h2>A familiar place to work.</h2><p>Start an agent above. Your native login, settings,<br />and tool approvals stay with the CLI.</p></div>}

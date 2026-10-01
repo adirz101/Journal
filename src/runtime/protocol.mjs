@@ -1,21 +1,34 @@
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 // Local runtime protocol: newline-delimited JSON over a Unix socket or a
-// Windows named pipe. The first message must carry the random token from
-// runtime.json (mode 0600 in the user's data directory).
-export const PROTOCOL = 1;
+// Windows named pipe. Both sides prove knowledge of the random token in
+// runtime.json (mode 0600) with HMAC challenges; the token itself is never
+// sent, so a process squatting on the socket path learns nothing.
+export const PROTOCOL = 2;
+export const nonce = () => randomBytes(24).toString('hex');
+export const proof = (token, role, a, b) => createHmac('sha256', token).update(`${role}:${a}:${b}`).digest('hex');
+export function proofMatches(expected, actual) {
+  if (typeof actual !== 'string' || actual.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(expected), Buffer.from(actual));
+}
 export const MAX_LINE = 1024 * 1024;
 
 export function socketPath(dataDir, platform = process.platform) {
   const hash = createHash('sha256').update(dataDir).digest('hex').slice(0, 16);
   if (platform === 'win32') return `\\\\.\\pipe\\journal-runtime-${hash}`;
   const preferred = join(dataDir, 'runtime.sock');
-  // Unix socket paths are limited to about 104 bytes on macOS.
-  return Buffer.byteLength(preferred) < 100 ? preferred : join(tmpdir(), `journal-${hash}.sock`);
+  // Unix socket paths are limited to about 104 bytes on macOS. The fallback
+  // lives in a private per-user directory, never directly in the shared temp.
+  if (Buffer.byteLength(preferred) < 100) return preferred;
+  const dir = join(tmpdir(), `journal-${process.getuid?.() ?? 'user'}-${hash}`);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const stat = statSync(dir);
+  if ((process.getuid && stat.uid !== process.getuid()) || (stat.mode & 0o077)) throw new Error(`Refusing runtime socket directory ${dir}: not private to this user`);
+  return join(dir, 'runtime.sock');
 }
 
 // Code identity of the process owner. A runtime from another build keeps its
