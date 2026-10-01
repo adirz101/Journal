@@ -18,7 +18,8 @@
     "pilot:memory": "node scripts/memory-pilot.mjs",
     "check": "tsc --noEmit",
     "rebuild": "electron-rebuild -f -w node-pty",
-    "postinstall": "node node_modules/electron/install.js && electron-rebuild -f -w node-pty"
+    "postinstall": "node node_modules/electron/install.js && electron-rebuild -f -w node-pty",
+    "trial:usefulness": "node scripts/usefulness-trial.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
