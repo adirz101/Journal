@@ -1,0 +1,62 @@
+# Local packaging groundwork. Builds are unsigned and are not public releases.
+# Placeholder bundle ID until a project domain and final bundle ID are chosen.
+appId: dev.journal.desktop
+productName: Journal
+copyright: Copyright 2026 Adir Zak
+
+directories:
+  output: release
+  buildResources: assets/branding
+
+files:
+  - dist/**
+  - src/**
+  - assets/branding/**
+  - package.json
+  - LICENSE
+  - NOTICE
+  # The renderer ships from dist/; TypeScript sources are not needed at runtime.
+  - "!src/ui/**"
+  - "!tests/**"
+  - "!docs/**"
+  - "!fixtures/**"
+  - "!scripts/**"
+
+asar: true
+# Native modules and files executed by a separate process (ELECTRON_RUN_AS_NODE)
+# must be real files on disk, not entries inside app.asar.
+asarUnpack:
+  - node_modules/node-pty/**
+  # The runtime (src/runtime) imports src/core and src/desktop/store-client.mjs,
+  # and hooks run src/desktop/hook.mjs, all from a separate Node-mode process.
+  - src/**
+
+npmRebuild: true
+icon: assets/branding/journal-app-icon.png
+publish: null
+
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  # Code signing and notarization are future work; these builds are unsigned.
+  identity: null
+  hardenedRuntime: false
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  # No Authenticode signing yet.
+  signAndEditExecutable: false
+
+linux:
+  category: Development
+  # deb packages require a maintainer; package.json has no author field.
+  maintainer: Adir Zak
+  target:
+    - AppImage
+    - deb

@@ -26,7 +26,7 @@ Read additional skills when the task calls for them:
 - `animation-vocabulary/SKILL.md`: discussing or specifying motion precisely.
 
 Read each selected skill before applying it. Expo and Swift skills are conditional
-on a future stack decision; the implemented first slice uses React inside Electron.
+on a future stack decision; the implemented app uses React inside Electron.
 If the collection becomes unavailable, report the missing source instead of
 claiming to have applied it.
 
@@ -49,8 +49,10 @@ also need `npm run test:desktop` with Electron-native node-pty. Distinguish fixt
 acceptance from authenticated native provider behavior. Preserve native settings,
 permissions, exact-ID resume, reviewed evidence and immutable receipts.
 
-All verification at this stage is manual and local on the user's computer.
-Do not add or run CI, GitHub Actions, hosted macOS/Windows runners, nightly tests
-or scheduled test jobs. The former GitHub workflow is disabled and removed.
+Fixture-based CI runs on GitHub Actions (`.github/workflows/ci.yml`, macOS, Linux and
+experimental Windows) at the user's explicit request of 2 October 2026. CI never uses
+real provider logins, provider requests or secrets; authenticated native trials and the
+usefulness trial stay manual and local on the user's computer. Do not add nightly or
+scheduled jobs. The release workflow builds unsigned artifacts only and publishes nothing.
 Keep local test commands available. Repository documents and authored text use
 English; Unicode fixture data may use escapes to retain multilingual coverage.
