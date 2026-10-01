@@ -65,29 +65,33 @@ export class TerminalManager extends EventEmitter {
     this.pending++;
     try { return await this.launch(request); } finally { this.pending--; }
   }
-  async launch({ projectId, provider, task = '', resumeId }) {
+  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false }) {
     if (provider !== 'claude' && provider !== 'codex') throw new Error('Unknown agent provider');
-    const project = await this.store.project(projectId);
+    if (typeof research !== 'boolean') throw new Error('Invalid research option');
     task = text(task, 'task', 4000, true);
     let prior = null;
     if (resumeId) {
       prior = await this.store.getSession(resumeId);
       if (prior.projectId !== projectId || prior.provider !== provider) throw new Error('Session belongs to another project or provider');
+      // Native conversations are tied to their working directory: resume in place.
+      workspaceId = prior.workspaceId ?? null; research = !!prior.research;
       if (!prior.nativeIdConfirmed || !UUID.test(prior.nativeId ?? '')) throw new Error('Confirm the exact native session ID before resuming');
       if (this.liveEntries().some(entry => entry.session.provider === provider && entry.session.nativeId === prior.nativeId)) throw new Error('This native conversation is already open in another session');
       // An orphan may still be writing to the same conversation outside Journal.
       const orphans = await this.store.activeSessions?.() ?? [];
       if (prior.status === 'orphaned' || orphans.some(other => other.status === 'orphaned' && other.provider === provider && other.nativeId === prior.nativeId)) throw new Error('This conversation may still be running in an orphaned process. End it before resuming.');
     }
+    // The cwd is a registered worktree of this project (or its checkout), never another session's.
+    const project = await (this.store.view ? this.store.view(projectId, workspaceId) : this.store.project(projectId));
     // Always reselect and revalidate here; a stale preview never authorizes delivery.
     const oldReceipt = prior ? await this.store.latestNativeReceipt(projectId, provider, prior.nativeId) : null;
-    const receipt = await this.store.prepareContext(projectId, task || oldReceipt?.query || '');
-    const baseline = await this.store.checkoutBaseline?.(projectId) ?? null;
+    const receipt = await this.store.prepareContext(projectId, task || oldReceipt?.query || '', { workspaceId });
+    const baseline = await this.store.checkoutBaseline?.(projectId, workspaceId) ?? null;
     const now = new Date().toISOString();
     const session = { id: randomUUID(), projectId, provider, nativeId: prior?.nativeId ?? (provider === 'claude' ? randomUUID() : null),
       nativeIdConfirmed: provider === 'claude' || !!prior, title: task.slice(0, 80) || (prior ? 'Resume session' : 'Interactive session'),
       status: 'starting', receiptId: receipt.id, resumedFrom: prior?.id ?? null, createdAt: now, lastActivityAt: now,
-      branch: project.branch, head: project.head, cwd: project.root, baseline, runtimeId: this.runtimeId, activity: null, archived: false };
+      branch: project.branch, head: project.head, cwd: project.root, workspaceId, research, baseline, runtimeId: this.runtimeId, activity: null, archived: false };
     let prompt = task;
     if (receipt.packet || (prior && (oldReceipt?.hadKnowledge || oldReceipt?.items.length))) {
       const withdrawn = oldReceipt?.items.filter(item => !receipt.items.some(current => current.revisionId === item.revisionId)) ?? [];
@@ -100,7 +104,7 @@ export class TerminalManager extends EventEmitter {
     try {
       if (this.disposed) throw new Error('Journal is shutting down');
       const settingsFile = provider === 'claude' ? this.makeSettings(session, project) : null;
-      const launch = buildAgentLaunch({ provider, nativeId: session.nativeId, resume: !!prior, prompt, settingsFile });
+      const launch = buildAgentLaunch({ provider, nativeId: session.nativeId, resume: !!prior, prompt, settingsFile, research });
       const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', JOURNAL_SESSION_ID: session.id };
       delete env.ELECTRON_RUN_AS_NODE;
       const proc = this.spawn(launch.executable, launch.argv, { cwd: project.root, env, name: 'xterm-256color', cols: 100, rows: 30 });

@@ -6,11 +6,12 @@ import { ResizableWorkspace } from './ResizableWorkspace';
 import { SessionList, needsAttention, resumable, stateLabel } from './SessionList';
 import { ChangesPanel } from './ChangesPanel';
 import { ActivityPanel } from './ActivityPanel';
+import { WorkspaceDialog } from './WorkspaceDialog';
 import journalMarkWhite from '../../assets/branding/journal-mark-white.png';
 import journalMarkDark from '../../assets/branding/journal-mark.png';
 import journalWordmark from '../../assets/branding/journal-wordmark.png';
 import { storedAppearance, type Appearance } from './theme';
-import { api, isLive, type Bootstrap, type Memory, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent } from './types';
+import { api, isLive, type Bootstrap, type Memory, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
 
 const MAX_SESSIONS = 4;
 type Panel = 'knowledge' | 'context' | 'changes' | 'activity';
@@ -32,6 +33,8 @@ export default function App() {
   const [runtime, setRuntime] = useState<{ state: string; warning?: string | null }>({ state: 'connecting' });
   const [liveEvents, setLiveEvents] = useState<TimelineEvent[]>([]);
   const [now, setNow] = useState(Date.now());
+  const [workspaces, setWorkspaces] = useState<WorkspaceList | null>(null); const [workspaceId, setWorkspaceId] = useState<string>(''); const [research, setResearch] = useState(false);
+  const [workspaceDialog, setWorkspaceDialog] = useState(false);
   const [resumeDraft, setResumeDraft] = useState<{ sessionId: string; value: string } | null>(null);
   const session = selectedId ? sessions[selectedId] ?? null : null;
   // A confirmation draft belongs to one launch, never to another conversation.
@@ -51,7 +54,10 @@ export default function App() {
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 15000); return () => clearInterval(timer); }, []);
   const refresh = useCallback(async (id?: string) => {
     const projectId = id ?? projectRef.current?.id; if (!projectId) return;
-    const next = await api<ProjectState>('project', { projectId }); setState(next); merge(next.sessions); return next;
+    const next = await api<ProjectState>('project', { projectId }); setState(next); merge(next.sessions);
+    const list = await api<WorkspaceList>('workspaces', { projectId }).catch(() => null); setWorkspaces(list);
+    setWorkspaceId(current => list?.workspaces.some(w => w.id === current && w.state === 'ready') ? current : '');
+    return next;
   }, [merge]);
   const reloadSessions = useCallback(async () => {
     const result = await api<{ live: Session[]; active: Session[] }>('sessions'); merge([...result.active, ...result.live]);
@@ -122,7 +128,7 @@ export default function App() {
     const submitted = resumeFrom ? '' : task; if (!resumeFrom) setTask('');
     await run(async () => {
       try {
-        const result = await api<{ session: Session; receipt: Receipt }>('start', { projectId, provider, task: submitted, resumeId: resumeFrom?.id });
+        const result = await api<{ session: Session; receipt: Receipt }>('start', { projectId, provider, task: submitted, resumeId: resumeFrom?.id, ...(resumeFrom ? {} : { workspaceId: workspaceId || null, research }) });
         merge([result.session]); setSelectedId(result.session.id); setReceipt(result.receipt); setPanel('context'); await refresh(projectId);
       } catch (error) { if (submitted) setTask(current => current || submitted); throw error; }
     });
@@ -138,7 +144,7 @@ export default function App() {
   }
   const available = (provider: Provider) => bootstrap?.agents.some(a => a.provider === provider && a.available);
   const label = session ? stateLabel(session, connected) : '';
-  const projectBranchChanged = session && state && session.projectId === state.project.id && isLive(session) && session.branch !== undefined && session.branch !== state.project.branch;
+  const projectBranchChanged = session && state && !session.workspaceId && session.projectId === state.project.id && isLive(session) && session.branch !== undefined && session.branch !== state.project.branch;
 
   return <ResizableWorkspace hasKnowledge={!!state}>
     <aside className="sidebar" id="project-sidebar">
@@ -158,10 +164,15 @@ export default function App() {
       {!state ? <section className="welcome"><img className="welcome-wordmark" src={journalWordmark} alt="Journal" width={280} height={84} /><span className="eyebrow">A CONTINUOUS THREAD</span><h2>Your project, remembered.</h2><p>Work with Claude Code and Codex in their native terminals.<br />Carry the decisions and lessons into the next session.</p><button className="primary" onClick={() => void openProject()} disabled={busy}>Open project</button><div className="welcome-steps"><span>01 <strong>Open a checkout</strong></span><span>02 <strong>Work in a terminal</strong></span><span>03 <strong>Keep what matters</strong></span></div></section>
         : <>
           <section className="launch-bar" aria-label="Start an agent terminal"><label htmlFor="initial-task">Initial task <span className="optional">optional · used to select relevant knowledge</span></label><textarea ref={taskRef} id="initial-task" value={task} onChange={e => setTask(e.target.value)} maxLength={4000} rows={2} placeholder="What are you working on? Mention a module or path to include knowledge scoped to it." />
-            <div className="launch-actions"><div><button className="primary" disabled={busy || !canStart || !available('claude')} onClick={() => void start('claude')}>Start Claude</button><button disabled={busy || !canStart || !available('codex')} onClick={() => void start('codex')}>Start Codex</button>{liveCount >= MAX_SESSIONS && <span className="hint inline">{MAX_SESSIONS} sessions are running. Stop one to start another.</span>}</div><button className="text-button" disabled={busy} onClick={() => void run(async () => { setReceipt(await api<Receipt>('prepareContext', { projectId: state.project.id, task })); setPanel('context'); })}>Preview context ↗</button></div>
+            <div className="launch-actions"><div><button className="primary" disabled={busy || !canStart || !available('claude')} onClick={() => void start('claude')}>Start Claude</button><button disabled={busy || !canStart || !available('codex')} onClick={() => void start('codex')}>Start Codex</button>{liveCount >= MAX_SESSIONS && <span className="hint inline">{MAX_SESSIONS} sessions are running. Stop one to start another.</span>}</div><button className="text-button" disabled={busy} onClick={() => void run(async () => { setReceipt(await api<Receipt>('prepareContext', { projectId: state.project.id, task, workspaceId: workspaceId || null })); setPanel('context'); })}>Preview context ↗</button></div>
+            <div className="launch-options"><label className="inline-label">Workspace<select value={workspaceId} onChange={e => setWorkspaceId(e.target.value)} aria-label="Workspace">
+              <option value="">Current checkout · {state.project.branch ?? 'detached HEAD'}</option>
+              {workspaces?.workspaces.filter(w => w.state === 'ready').map(w => <option key={w.id} value={w.id!}>{w.kind === 'managed' ? 'Worktree' : 'Imported'} · {w.branch ?? 'detached'}</option>)}
+            </select></label><button className="text-button" onClick={() => setWorkspaceDialog(true)}>Workspaces…</button>
+              <label className="inline-check"><input type="checkbox" checked={research} onChange={e => setResearch(e.target.checked)} /> Research (read-only: Claude plan mode, Codex read-only sandbox)</label></div>
             {bootstrap?.agents.some(a => !a.available) && <p className="hint">{bootstrap.agents.filter(a => !a.available).map(a => a.provider).join(', ')} not found on PATH. Install the native CLI, then reopen Journal.</p>}
           </section>
-          <section className="terminal-panel"><div className="terminal-heading"><div><span className={`status-dot ${session?.status ?? ''}`} /><strong>{session ? session.provider === 'claude' ? 'Claude Code' : 'Codex' : 'Terminal'}</strong><span className="terminal-label">{session ? `${label}${session.branch ? ` · ⑂ ${session.branch}` : ''}` : 'Ready to start'}</span>{session && <span className="terminal-title" title={session.title}>{session.title}</span>}</div>
+          <section className="terminal-panel"><div className="terminal-heading"><div><span className={`status-dot ${session?.status ?? ''}`} /><strong>{session ? session.provider === 'claude' ? 'Claude Code' : 'Codex' : 'Terminal'}</strong><span className="terminal-label">{session ? `${label}${session.branch ? ` · ⑂ ${session.branch}` : ''}${session.workspaceId ? ' · worktree' : ''}${session.research ? ' · research' : ''}` : 'Ready to start'}</span>{session && <span className="terminal-title" title={session.title}>{session.title}</span>}</div>
             {session && <div className="terminal-actions">
               {isLive(session) && connected && <><button onClick={() => void sessionAction('interrupt')}>Interrupt <kbd>^C</kbd></button><button onClick={() => void sessionAction('stop')} disabled={session.status === 'stopping'}>Stop terminal</button></>}
               {resumable(session) && <button disabled={busy || !canStart} onClick={() => void start(session.provider, session)}>Resume</button>}
@@ -194,6 +205,7 @@ export default function App() {
         {state.receipts.length > 0 && <div className="receipt-history"><span className="eyebrow">RECENT RECEIPTS</span>{state.receipts.slice(0, 10).map(r => <button key={r.id} onClick={() => setReceipt(r)}><span>{r.query || 'Interactive session'}</span><small>{r.items.length} claims · {r.state}</small></button>)}</div>}
       </div>}
     </aside>}
+    {state && workspaceDialog && <WorkspaceDialog project={state.project} onClose={() => setWorkspaceDialog(false)} onChanged={() => void refresh().catch(failed)} />}
     {state && form && <KnowledgeForm project={state.project} memory={form.memory} initialCategory={form.initialCategory} draft={form.draft} onClose={() => setForm(null)} onSaved={() => { setForm(null); setPanel('knowledge'); setKnowledgeVersion(v => v + 1); }} />}
   </ResizableWorkspace>;
 }

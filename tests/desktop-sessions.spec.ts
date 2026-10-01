@@ -23,7 +23,7 @@ const fs=require('node:fs');const {spawn}=require('node:child_process');
 if(process.argv.includes('--version')){console.log('fixture 1.0');process.exit(0)}
 fs.appendFileSync(${JSON.stringify(ledger)},JSON.stringify({pid:process.pid,argv:process.argv.slice(2)})+'\\n');
 const task=(process.argv.at(-1)||'').split('\\n').at(-1);
-console.log('PTY_READY '+process.stdout.isTTY);console.log('TASK '+task);
+console.log('PTY_READY '+process.stdout.isTTY);console.log('TASK '+task);console.log('CWD '+process.cwd());console.log('ARGS '+JSON.stringify(process.argv.slice(2,4)));
 process.stdin.setRawMode(true);process.stdin.setEncoding('utf8');let input='';
 process.stdin.on('data',data=>{for(const char of data){
 if(char==='\\x03'){console.log('INTERRUPTED');continue}
@@ -162,5 +162,38 @@ test('keep-running quit is rediscovered; stopping reports and cleans detached le
     await expect.poll(() => alive(daemon)).toBe(false);
     await page.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(sessionButton(page, 'KEEP_RUNNING')).toHaveCount(0);
+  } finally { await app.close(); f.cleanup(); }
+});
+
+test('a managed worktree is created from the dialog, hosts a research session and refuses removal while in use', async () => {
+  const f = setup('worktree'); const { app, page } = await open(f.env, f.project);
+  try {
+    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    writeFileSync(resolve(f.project, 'uncommitted.txt'), 'local\n');
+    await page.getByRole('button', { name: 'Workspaces…' }).click();
+    await page.getByLabel('New branch').fill('journal/isolated');
+    await page.getByRole('button', { name: 'Review', exact: true }).click();
+    await expect(page.getByText(/will not be in the new worktree/)).toBeVisible();
+    await page.getByRole('button', { name: 'Create worktree' }).click();
+    await expect(page.getByRole('list', { name: 'Workspaces' })).toContainText('managed · ready');
+    await page.getByRole('button', { name: 'Done' }).click();
+    await page.getByLabel('Workspace').selectOption({ label: 'Worktree · journal/isolated' });
+    await page.getByLabel(/Research/).check();
+    await page.getByLabel('Initial task').fill('WORKTREE_TASK');
+    await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
+    await expect(page.locator('.terminal-surface')).toContainText('TASK WORKTREE_TASK');
+    await expect(page.locator('.terminal-surface')).toContainText('ARGS ["--sandbox","read-only"]');
+    await expect(page.locator('.terminal-surface')).toContainText(/CWD .*worktrees/);
+    await expect(page.locator('.terminal-label')).toContainText('worktree · research');
+    await page.getByRole('button', { name: 'Workspaces…' }).click();
+    await page.getByRole('button', { name: 'Remove worktree' }).click();
+    await expect(page.getByText(/still running in it/)).toBeVisible();
+    await page.getByRole('button', { name: 'Done' }).click();
+    await page.getByRole('button', { name: 'Stop terminal' }).click();
+    await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await page.getByRole('button', { name: 'Workspaces…' }).click();
+    await page.getByRole('button', { name: 'Remove worktree' }).click();
+    await expect(page.getByRole('list', { name: 'Workspaces' })).not.toContainText('journal/isolated');
+    expect(existsSync(resolve(f.project, 'uncommitted.txt'))).toBe(true);
   } finally { await app.close(); f.cleanup(); }
 });

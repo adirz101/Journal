@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { inspectProject } from './project.mjs';
 import { captureEvidence, validateEvidence } from './evidence.mjs';
@@ -6,6 +7,7 @@ import { choice, relativePath, refuseCredentials, text } from './validation.mjs'
 import { branchDraft, commitsSince, overviewDraft, PLACEHOLDER } from './status.mjs';
 import { aliasesFor, areaMatches, isDuplicate, possibleConflict, queryTerms } from './retrieval.mjs';
 import { checkoutBaseline, fileDiff, openableFile, sessionChanges } from './changes.mjs';
+import { addWorktree, creationNotices, listGitWorktrees, plannedPath, registered, removalBlockers, removeWorktree, resolveBase, validateBranchName, workspaceView } from './workspaces.mjs';
 import { redact } from './validation.mjs';
 
 const LIVE = "('starting','running','waiting','stopping')";
@@ -41,6 +43,9 @@ export class JournalStore {
         const insert = this.db.prepare('INSERT INTO memory_fts(revision_id,statement,aliases) VALUES(?,?,?)');
         for (const row of this.db.prepare('SELECT id, body FROM revisions').all()) { const item = JSON.parse(row.body); insert.run(row.id, item.statement, aliasesFor(item)); }
       }],
+      [4, () => this.db.exec(`CREATE TABLE IF NOT EXISTS workspaces(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), body TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, at TEXT NOT NULL, action TEXT NOT NULL, body TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS proposals(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), fingerprint TEXT NOT NULL, body TEXT NOT NULL, UNIQUE(project_id, fingerprint));`)],
     ];
     for (const [version, apply] of steps) {
       if (this.db.prepare('PRAGMA user_version').get().user_version >= version) continue;
@@ -171,9 +176,9 @@ export class JournalStore {
     this.db.prepare('UPDATE memories SET status=? WHERE id=?').run(status, id);
     return this.getMemory(id);
   }
-  prepareContext(projectId, query) {
+  prepareContext(projectId, query, { workspaceId = null } = {}) {
     query = text(query, 'task', 4000, true); refuseCredentials(query);
-    const project = this.project(projectId);
+    const project = this.view(projectId, workspaceId);
     const terms = queryTerms(query);
     let matches = []; const cache = new Map(); const warnings = [];
     // Orientation is independent of task words. Current checkout identity and
@@ -286,6 +291,102 @@ export class JournalStore {
     if (!session) throw new Error('Unknown session');
     return session;
   }
+  // Audit trail of reviewer and maintenance actions (bounded metadata).
+  audit(action, body = {}) {
+    this.db.prepare('INSERT INTO audit(at,action,body) VALUES(?,?,?)').run(now(), text(action, 'audit action', 80), JSON.stringify(body).slice(0, 4000));
+  }
+  listAudit(limit = 200) { return this.db.prepare('SELECT * FROM (SELECT id,at,action,body FROM audit ORDER BY id DESC LIMIT ?) ORDER BY id').all(Math.min(limit, 1000)).map(row => ({ ...row, body: JSON.parse(row.body) })); }
+
+  // ----- Workspaces -----
+  getWorkspace(id) {
+    const workspace = parse(this.db.prepare('SELECT body FROM workspaces WHERE id=?').get(text(id, 'workspace ID', 100)));
+    if (!workspace) throw new Error('Unknown workspace');
+    return workspace;
+  }
+  saveWorkspace(workspace) {
+    this.db.prepare('INSERT INTO workspaces VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(workspace.id, workspace.projectId, JSON.stringify(workspace));
+    return workspace;
+  }
+  // Brings stored workspaces in line with Git: unfinished intents become
+  // ready (Git finished) or failed; vanished worktrees become missing.
+  // Nothing on disk is created or deleted here.
+  reconcileWorkspaces(projectId) {
+    const project = this.project(projectId);
+    for (const row of this.db.prepare(`SELECT body FROM workspaces WHERE project_id=? AND json_extract(body,'$.state') IN ('intent','ready','missing')`).all(projectId)) {
+      const workspace = parse(row); const entry = registered(project, workspace.path);
+      let next = workspace;
+      if (entry) next = { ...workspace, state: 'ready', branch: entry.branch ?? workspace.branch, head: entry.head, detached: entry.detached, error: null };
+      else if (workspace.state === 'intent') next = { ...workspace, state: 'failed', error: existsSync(workspace.path) ? 'Creation did not finish; the folder exists but is not a registered worktree, so Journal left it untouched.' : 'Creation did not finish; no worktree was created.' };
+      else next = { ...workspace, state: 'missing', error: 'This worktree is no longer registered or its folder was removed outside Journal.' };
+      if (JSON.stringify(next) !== JSON.stringify(workspace)) { this.saveWorkspace(next); this.audit('workspace-reconciled', { id: workspace.id, from: workspace.state, to: next.state }); }
+    }
+  }
+  listWorkspaces(projectId) {
+    this.reconcileWorkspaces(projectId);
+    const project = this.project(projectId);
+    const tracked = this.db.prepare(`SELECT body FROM workspaces WHERE project_id=? AND json_extract(body,'$.state')<>'removed' ORDER BY rowid`).all(projectId).map(parse);
+    const known = new Set([project.root, ...tracked.map(w => w.path)]);
+    const importable = listGitWorktrees(project.root).filter(entry => !known.has(entry.path) && !entry.bare && !entry.prunable && existsSync(entry.path)).map(entry => ({ path: entry.path, branch: entry.branch, head: entry.head, detached: entry.detached }));
+    return { checkout: { id: null, kind: 'checkout', path: project.root, branch: project.branch, head: project.head, state: 'ready' }, workspaces: tracked, importable };
+  }
+  planWorkspace(projectId, { branch, base }, worktreeRoot) {
+    const project = this.project(projectId);
+    branch = validateBranchName(project.root, branch);
+    const commit = resolveBase(project.root, base || project.branch || 'HEAD');
+    const id = randomUUID();
+    return { id, branch, base: commit, baseLabel: base || project.branch || 'HEAD', path: plannedPath(text(worktreeRoot, 'worktree root', 4096), project, branch, id), notices: creationNotices(project) };
+  }
+  createWorkspace(projectId, request, worktreeRoot) {
+    const project = this.project(projectId);
+    const plan = this.planWorkspace(projectId, request, worktreeRoot);
+    // Intent first: a crash after this point is reconciled from Git.
+    const workspace = { id: plan.id, projectId, kind: 'managed', path: plan.path, branch: plan.branch, base: plan.base, baseLabel: plan.baseLabel, state: 'intent', notices: plan.notices, createdAt: now() };
+    this.saveWorkspace(workspace); this.audit('workspace-intent', { id: workspace.id, branch: workspace.branch, base: workspace.base });
+    try { addWorktree(project, workspace); }
+    catch (error) { this.reconcileWorkspaces(projectId); const current = this.getWorkspace(workspace.id); if (current.state !== 'ready') { this.saveWorkspace({ ...current, state: 'failed', error: error.message }); throw error; } }
+    this.reconcileWorkspaces(projectId);
+    const created = this.getWorkspace(workspace.id); this.audit('workspace-created', { id: created.id, state: created.state });
+    return created;
+  }
+  importWorkspace(projectId, path) {
+    const project = this.project(projectId);
+    const entry = registered(project, text(path, 'worktree path', 4096));
+    if (!entry || entry.path === project.root) throw new Error('Choose another registered worktree of this repository');
+    if (this.db.prepare(`SELECT 1 FROM workspaces WHERE project_id=? AND json_extract(body,'$.path')=? AND json_extract(body,'$.state')<>'removed'`).get(projectId, entry.path)) throw new Error('This worktree is already in Journal');
+    const workspace = { id: randomUUID(), projectId, kind: 'imported', path: entry.path, branch: entry.branch, head: entry.head, detached: entry.detached, state: 'ready', createdAt: now() };
+    this.saveWorkspace(workspace); this.audit('workspace-imported', { id: workspace.id, path: entry.path });
+    return workspace;
+  }
+  workspaceRemovalBlockers(id) {
+    const workspace = this.getWorkspace(id); const project = this.project(workspace.projectId);
+    const live = this.activeSessions().filter(session => session.workspaceId === id);
+    return removalBlockers(project, workspace, live);
+  }
+  removeWorkspace(id) {
+    const workspace = this.getWorkspace(id); const project = this.project(workspace.projectId);
+    const blockers = this.workspaceRemovalBlockers(id);
+    if (blockers.length) throw new Error(`Not removed: ${blockers.join(' ')}`);
+    removeWorktree(project, workspace);
+    this.audit('workspace-removed', { id, path: workspace.path, branchKept: workspace.branch });
+    return this.saveWorkspace({ ...workspace, state: 'removed', removedAt: now() });
+  }
+  // Stops tracking without touching files (imported, failed or missing entries).
+  forgetWorkspace(id) {
+    const workspace = this.getWorkspace(id);
+    if (workspace.kind === 'managed' && workspace.state === 'ready') throw new Error('Remove a ready managed worktree instead; forgetting it would leave it unmanaged');
+    if (this.activeSessions().some(session => session.workspaceId === id)) throw new Error('A session is still running in this workspace');
+    this.audit('workspace-forgotten', { id, path: workspace.path });
+    return this.saveWorkspace({ ...workspace, state: 'removed', removedAt: now() });
+  }
+  // The project as seen from a workspace (or its own checkout when null).
+  view(projectId, workspaceId = null) {
+    const project = this.project(projectId);
+    if (!workspaceId) return project;
+    const workspace = this.getWorkspace(workspaceId);
+    if (workspace.projectId !== projectId) throw new Error('Workspace belongs to another project');
+    return workspaceView(project, workspace);
+  }
+
   listSessions(projectId, includeArchived = false) {
     this.project(projectId);
     return this.db.prepare(`SELECT body FROM sessions WHERE project_id=? AND (? OR coalesce(json_extract(body,'$.archived'),0)=0) ORDER BY rowid DESC LIMIT 100`).all(projectId, includeArchived ? 1 : 0).map(parse);
@@ -312,10 +413,11 @@ export class JournalStore {
     return this.db.prepare('SELECT * FROM (SELECT id,at,kind,body FROM events WHERE session_id=? ORDER BY id DESC LIMIT ?) ORDER BY id').all(sessionId, Math.min(Math.max(1, limit), EVENT_LIMIT))
       .map(row => ({ id: row.id, at: row.at, kind: row.kind, body: JSON.parse(row.body) }));
   }
-  checkoutBaseline(projectId) { return checkoutBaseline(this.project(projectId)); }
-  sessionChanges(sessionId) { const session = this.getSession(sessionId); return sessionChanges(this.project(session.projectId), session); }
-  openableFile(sessionId, path) { const session = this.getSession(sessionId); return openableFile(this.project(session.projectId), session, path); }
-  sessionFileDiff(sessionId, path) { const session = this.getSession(sessionId); return fileDiff(this.project(session.projectId), session, path); }
+  checkoutBaseline(projectId, workspaceId = null) { return checkoutBaseline(this.view(projectId, workspaceId)); }
+  sessionView(session) { return this.view(session.projectId, session.workspaceId ?? null); }
+  sessionChanges(sessionId) { const session = this.getSession(sessionId); return sessionChanges(this.sessionView(session), session); }
+  openableFile(sessionId, path) { const session = this.getSession(sessionId); return openableFile(this.sessionView(session), session, path); }
+  sessionFileDiff(sessionId, path) { const session = this.getSession(sessionId); return fileDiff(this.sessionView(session), session, path); }
   recoverSessions() {
     for (const row of this.db.prepare('SELECT body FROM sessions').all()) {
       const session = parse(row);

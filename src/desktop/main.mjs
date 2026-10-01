@@ -47,7 +47,10 @@ function launchRuntime() {
   const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
   const log = openSync(join(userData, 'runtime-stderr.log'), 'a', 0o600);
   const child = spawn(process.execPath, [unpacked(resolve(here, '../runtime/runtime.mjs')), '--data', userData], { detached: true, stdio: ['ignore', 'ignore', log], env, windowsHide: true });
-  child.unref(); return child.pid;
+  // Report exit from the child handle: a killed, not yet reaped runtime still
+  // answers kill(pid, 0), which must not block launching a replacement.
+  let exited = false; child.once('exit', () => { exited = true; }); child.unref();
+  return { pid: child.pid, alive: () => !exited };
 }
 
 function createWindow() {
@@ -89,12 +92,19 @@ const actions = {
     return result.canceled ? null : store.openProject(result.filePaths[0]);
   },
   project: async ({ projectId }) => ({ project: await store.project(projectId), sessions: await store.listSessions(projectId), receipts: await store.listReceipts(projectId) }),
+  workspaces: ({ projectId }) => store.listWorkspaces(projectId),
+  planWorkspace: ({ projectId, branch, base }) => store.planWorkspace(projectId, { branch, base }, join(userData, 'worktrees')),
+  createWorkspace: ({ projectId, branch, base }) => store.createWorkspace(projectId, { branch, base }, join(userData, 'worktrees')),
+  importWorkspace: ({ projectId, path }) => store.importWorkspace(projectId, path),
+  workspaceRemovalBlockers: ({ id }) => store.workspaceRemovalBlockers(id),
+  removeWorkspace: ({ id }) => store.removeWorkspace(id),
+  forgetWorkspace: ({ id }) => store.forgetWorkspace(id),
   memoryPage: ({ projectId, offset, limit, filter, search }) => store.listMemoryPage(projectId, { offset, limit, filter, search }),
   proposeMemory: ({ projectId, input }) => store.proposeMemory(projectId, input),
   setMemoryStatus: ({ id, status }) => store.setMemoryStatus(id, status),
   proposeStatusUpdate: ({ projectId, scope }) => store.proposeStatusUpdate(projectId, scope),
   memoryHistory: ({ id }) => store.memoryHistory(id),
-  prepareContext: ({ projectId, task }) => store.prepareContext(projectId, task),
+  prepareContext: ({ projectId, task, workspaceId }) => store.prepareContext(projectId, task, { workspaceId: workspaceId ?? null }),
   getReceipt: ({ id }) => store.getReceipt(id),
   sessions: async () => ({ live: await runtime.call('list'), active: await store.activeSessions() }),
   getSession: ({ id }) => store.getSession(id),
