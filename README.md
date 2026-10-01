@@ -83,7 +83,7 @@ Use **Light mode** / **Dark mode** in the sidebar to change appearance. Drag eit
 
 ## Development / verification
 
-GitHub Actions runs these checks on macOS, Linux and (experimentally) Windows with fixture CLIs only; it never uses provider logins. Provider trials stay manual and local. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Fixture-only GitHub Actions workflows for macOS, Linux and (experimentally) Windows are staged in `ci/github-actions/` and not yet active; they never use provider logins. Provider trials stay manual and local. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```sh
 npm test

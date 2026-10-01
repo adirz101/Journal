@@ -28,6 +28,6 @@ Open an existing Git checkout, launch Claude Code or Codex in a real interactive
 
 Task-only lexical matching normalizes case and removes a small set of English grammar words before the 16-term limit. It remains lexical OR, not semantic relevance. Project/branch briefs are intentionally independent of task vocabulary.
 
-Fixture-only CI runs on macOS, Linux and (experimentally) Windows; authenticated provider trials stay manual and local. No nightly or scheduled verification. Native Windows verification still requires a local Windows machine (see [WINDOWS.md](WINDOWS.md)).
+Fixture-only CI for macOS, Linux and (experimentally) Windows is prepared (staged until it can be activated); authenticated provider trials stay manual and local. No nightly or scheduled verification. Native Windows verification still requires a local Windows machine (see [WINDOWS.md](WINDOWS.md)).
 
 Real SQLite restart/retrieval/receipt tests, traversal/symlink/credential/branch/stale exclusion tests, exact argv tests with shell metacharacters and spaces, owned PTY/resize/interrupt/reload tests, desktop flow adding and approving file-backed knowledge and starting a safe fixture terminal with the exact context. Native CLI startup smoke must report trust/auth failures honestly. Paid inference is not needed for deterministic acceptance; authenticated provider handoff is separately reported if unavailable.

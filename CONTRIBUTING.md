@@ -35,7 +35,7 @@ On Linux without a display, run desktop tests with `xvfb-run -a npm run test:des
 
 ## CI and provider trials
 
-CI runs the checks above on macOS, Linux and Windows using **fixture CLIs only**. It never uses real Claude Code or Codex logins, provider requests or secrets. Windows desktop tests are experimental and do not fail the run.
+CI is prepared to run the checks above on macOS, Linux and Windows using **fixture CLIs only** (staged in `ci/github-actions/` until it can be activated; see the README there). It never uses real Claude Code or Codex logins, provider requests or secrets. Windows desktop tests are experimental and do not fail the run.
 
 Some trials exercise the real native CLIs. They are manual and local only:
 

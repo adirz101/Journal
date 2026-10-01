@@ -2,7 +2,7 @@
 
 2 October 2026. Merged to `main`: the terminal-first slice (PR #1), native validation (PR #2), orientation, licensing and local validation (PR #3), and branding and layout (PR #4). Branch `claude/status-helper-and-usefulness` adds the status-update helper, usefulness trial round 1, and the durable multi-session runtime milestone. It is unmerged. Alpha; no public release.
 
-Verification uses local checks on the user's Mac plus fixture-only GitHub Actions CI (macOS, Linux and experimental Windows). CI never uses provider logins. Authenticated native trials and the usefulness trial are manual and local.
+Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI (macOS, Linux and experimental Windows) is written but staged in `ci/github-actions/`: **BLOCKED** until a GitHub token with the `workflow` scope can push it. CI never uses provider logins. Authenticated native trials and the usefulness trial are manual and local.
 
 ## Implemented
 
@@ -40,7 +40,7 @@ Verification uses local checks on the user's Mac plus fixture-only GitHub Action
 | `npm run check`, `npm run build` | Passed (the existing ~545 KiB chunk warning remains) |
 | `npm run test:desktop` | 10 passed: earlier scenarios plus four real-PTY runtime scenarios (four sessions with reload and switching, app crash reconnect, runtime crash recovery, and keep-running quit with leftover cleanup and the changes view). The new scenarios passed 12/12 across three repetitions; a stale-snapshot race in the UI (an older store read replacing a newer status) was found by an intermittent failure and fixed with per-session versions. |
 | `npm run dist:dir` | Unsigned `Journal.app` built; the packaged runtime started and exited cleanly |
-| GitHub Actions | Not yet run: the branch could not be pushed because the local GitHub token lacks the `workflow` scope |
+| GitHub Actions | BLOCKED: workflows staged in `ci/github-actions/`; the local GitHub token lacks the `workflow` scope needed to push them |
 
 Earlier authenticated evidence still applies to launch, resume, permission and handoff behavior ([native validation](NATIVE-VALIDATION.md), [lifecycle follow-up](LIFECYCLE-AND-MEMORY-VALIDATION.md)). It was gathered before the runtime split. The new runtime uses the same launcher and arguments, but authenticated providers have **not** been rerun under it.
 
