@@ -20,9 +20,10 @@
     "rebuild": "electron-rebuild -f -w node-pty",
     "postinstall": "node node_modules/electron/install.js && electron-rebuild -f -w node-pty",
     "trial:usefulness": "node scripts/usefulness-trial.mjs",
-    "dist": "npm run build && electron-builder --publish never",
-    "dist:dir": "npm run build && electron-builder --dir --publish never",
-    "data:restore": "node scripts/data-restore.mjs"
+    "dist": "npm run build && npm run notices && electron-builder --publish never",
+    "dist:dir": "npm run build && npm run notices && electron-builder --dir --publish never",
+    "data:restore": "node scripts/data-restore.mjs",
+    "notices": "node scripts/notices.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
@@ -41,5 +42,11 @@
     "electron-builder": "26.15.3",
     "typescript": "6.0.3",
     "vite": "8.3.1"
+  },
+  "author": "Adir Zak",
+  "homepage": "https://github.com/adirz101/Journal",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adirz101/Journal.git"
   }
 }

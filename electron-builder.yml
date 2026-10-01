@@ -2,6 +2,8 @@
 # Placeholder bundle ID until a project domain and final bundle ID are chosen.
 appId: dev.journal.desktop
 productName: Journal
+# Journal-<version>-<os>-<arch>.<ext>, for example Journal-0.1.0-mac-arm64.dmg
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 copyright: Copyright 2026 Adir Zak
 
 directories:
@@ -15,6 +17,7 @@ files:
   - package.json
   - LICENSE
   - NOTICE
+  - THIRD_PARTY_NOTICES.md
   # The renderer ships from dist/; TypeScript sources are not needed at runtime.
   - "!src/ui/**"
   - "!tests/**"
