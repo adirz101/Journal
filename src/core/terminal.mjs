@@ -65,7 +65,7 @@ export class TerminalManager extends EventEmitter {
     this.pending++;
     try { return await this.launch(request); } finally { this.pending--; }
   }
-  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false }) {
+  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, disabled = [] }) {
     if (provider !== 'claude' && provider !== 'codex') throw new Error('Unknown agent provider');
     if (typeof research !== 'boolean') throw new Error('Invalid research option');
     task = text(task, 'task', 4000, true);
@@ -85,7 +85,7 @@ export class TerminalManager extends EventEmitter {
     const project = await (this.store.view ? this.store.view(projectId, workspaceId) : this.store.project(projectId));
     // Always reselect and revalidate here; a stale preview never authorizes delivery.
     const oldReceipt = prior ? await this.store.latestNativeReceipt(projectId, provider, prior.nativeId) : null;
-    const receipt = await this.store.prepareContext(projectId, task || oldReceipt?.query || '', { workspaceId });
+    const receipt = await this.store.prepareContext(projectId, task || oldReceipt?.query || '', { workspaceId, disabled });
     const baseline = await this.store.checkoutBaseline?.(projectId, workspaceId) ?? null;
     const now = new Date().toISOString();
     const session = { id: randomUUID(), projectId, provider, nativeId: prior?.nativeId ?? (provider === 'claude' ? randomUUID() : null),

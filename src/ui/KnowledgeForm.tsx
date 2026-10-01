@@ -6,7 +6,7 @@ const placeholder = /\[describe[^\]]*\]/;
 export function KnowledgeForm({ project, memory, initialCategory, draft, onClose, onSaved }: { project: Project; memory?: Memory; initialCategory?: string; draft?: StatusDraft; onClose: () => void; onSaved: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [statement, setStatement] = useState(draft?.statement ?? memory?.statement ?? ''); const [category, setCategory] = useState(draft ? 'brief' : memory?.category ?? initialCategory ?? 'constraint');
-  const [scope, setScope] = useState(draft?.scope ?? memory?.scope ?? (initialCategory === 'brief' ? 'checkout' : project.branch ? 'branch' : 'checkout')); const [area, setArea] = useState(memory?.area ?? '');
+  const [scope, setScope] = useState(draft?.scope ?? memory?.scope ?? (initialCategory === 'brief' ? 'checkout' : project.branch ? 'branch' : 'checkout')); const [area, setArea] = useState(memory?.area ?? ''); const [environment, setEnvironment] = useState(memory?.environment ?? '');
   const [kind, setKind] = useState(draft ? 'git' : memory?.source.kind ?? 'user');
   // A proposal or an existing Git-backed update can keep its commit range as evidence.
   const gitBase = draft ? draft.source.base : memory?.source.kind === 'git' ? memory.source.base ?? null : undefined;
@@ -19,7 +19,7 @@ export function KnowledgeForm({ project, memory, initialCategory, draft, onClose
     if (placeholder.test(statement)) { setError('Replace the bracketed placeholders with the reviewed status before saving.'); return; }
     setSaving(true);
     try {
-      await api('proposeMemory', { projectId: project.id, input: { memoryId, statement, category, scope, area,
+      await api('proposeMemory', { projectId: project.id, input: { memoryId, statement, category, scope, area, environment,
         source: kind === 'file' ? { kind, path, startLine, endLine } : kind === 'git' ? { kind, base: gitBase ?? null } : { kind, note } } });
       onSaved();
     } catch (error) { setError(error instanceof Error ? error.message : 'Could not save knowledge'); }
@@ -36,6 +36,7 @@ export function KnowledgeForm({ project, memory, initialCategory, draft, onClose
       <label>Statement<textarea autoFocus required maxLength={2000} value={statement} onChange={e => setStatement(e.target.value)} placeholder={category === 'brief' ? 'Purpose: …\nStructure: …\nCurrent status: …\nNext step: …' : 'What should the next session know?'} rows={category === 'brief' ? 6 : 3} /></label>
       <div className="form-row"><label>Category<select value={category} onChange={e => { setCategory(e.target.value); if (e.target.value === 'brief') setArea(''); }}>{['brief', 'constraint', 'decision', 'convention', 'lesson', 'issue'].map(x => <option key={x} value={x}>{x === 'brief' ? 'Project brief / branch update' : x}</option>)}</select></label>
       <label>Scope<select value={scope} onChange={e => setScope(e.target.value as 'branch' | 'checkout')}><option value="branch" disabled={!project.branch}>{category === 'brief' ? 'Current branch update' : 'This branch'}</option><option value="checkout">{category === 'brief' ? 'Repo overview · all branches in this checkout' : 'This checkout'}</option></select></label></div>
+      {category !== 'brief' && <label>Applies when <span className="optional">optional · for example "macOS only" or "with Docker running"</span><input value={environment} onChange={e => setEnvironment(e.target.value)} maxLength={200} /></label>}
       {category !== 'brief' && <label>Area path <span className="optional">optional</span><input value={area} onChange={e => setArea(e.target.value)} placeholder="Whole checkout, or e.g. src/runtime" maxLength={1024} /></label>}
       <label>Source type<select value={kind} onChange={e => setKind(e.target.value as 'user' | 'file' | 'git')}>{gitBase !== undefined && <option value="git">Git history{gitBase ? ` since ${gitBase.slice(0, 7)}` : ' at current HEAD'}</option>}<option value="user">My explicit statement</option><option value="file">Tracked project file</option></select></label>
       {kind === 'git' ? <p className="muted git-source">Evidence records the commit range up to the current HEAD. Rewriting or resetting that history marks the update stale.</p>

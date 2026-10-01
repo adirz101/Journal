@@ -95,7 +95,7 @@ test('a version 1 database migrates in place and keeps knowledge searchable', t 
   const store = new JournalStore(path); const project = store.openProject(repo);
   // Reopen the old file as v1, insert a memory with the old schema, then migrate again from scratch.
   store.close(); const raw = new DatabaseSync(path);
-  assert.equal(raw.prepare('PRAGMA user_version').get().user_version, 4);
+  assert.equal(raw.prepare('PRAGMA user_version').get().user_version, 5);
   raw.close();
   const reopened = new JournalStore(path); t.after(() => reopened.close());
   const memory = reopened.proposeMemory(project.id, { statement: 'Payments retry with backoff', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'x' } });
@@ -145,4 +145,50 @@ test('diffs refuse glob pathspecs, symlinked folders and unlisted paths; launcha
   assert.equal(openableFile(f.store.project(f.project.id), session, 'run.command').open, false);
   assert.equal(openableFile(f.store.project(f.project.id), session, 'tool.sh').open, false);
   assert.throws(() => openableFile(f.store.project(f.project.id), session, 'README.md'), /not in this session/);
+});
+
+test('pinned rules ride along with every task but stale or wrong-branch pins are still excluded', t => {
+  const f = fixture(t);
+  const pinned = f.approve('Never push directly to the release branch.');
+  const stale = f.store.proposeMemory(f.project.id, { statement: 'README says fixture setup', category: 'convention', scope: 'checkout', area: '', source: { kind: 'file', path: 'README.md', startLine: 1, endLine: 1 } });
+  f.store.setMemoryStatus(stale.id, 'active');
+  f.store.setPinned(pinned.id, true); f.store.setPinned(stale.id, true);
+  assert.throws(() => f.store.setPinned(f.store.proposeMemory(f.project.id, { statement: 'candidate', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'x' } }).id, true), /approved/);
+  const receipt = f.store.prepareContext(f.project.id, 'translate the landing page');
+  assert.deepEqual(receipt.items.map(i => i.id).sort(), [pinned.id, stale.id].sort());
+  assert.ok(receipt.items.every(i => i.selection.reason === 'pinned'));
+  writeFileSync(join(f.repo, 'README.md'), 'changed\n');
+  const after = f.store.prepareContext(f.project.id, 'translate the landing page');
+  assert.deepEqual(after.items.map(i => i.id), [pinned.id]); assert.ok(after.excluded.some(x => x.id === stale.id && x.reason === 'stale'));
+});
+
+test('a claim can be left out for one task, marked incorrect, superseded or promoted to all branches', t => {
+  const f = fixture(t);
+  const rule = f.approve('Payment retries wait 30 seconds between attempts.', { environment: 'staging only' });
+  const once = f.store.prepareContext(f.project.id, 'payment retries', { disabled: [rule.id] });
+  assert.equal(once.items.length, 0); assert.deepEqual(once.excluded, [{ id: rule.id, reason: 'left-out-for-task' }]);
+  const normal = f.store.prepareContext(f.project.id, 'payment retries');
+  assert.match(normal.packet, /Applies when: staging only/); assert.match(normal.items[0].selection.reason, /matched payment/);
+  const replacement = f.store.proposeMemory(f.project.id, { statement: 'Payment retries use exponential backoff starting at 5 seconds.', category: 'constraint', scope: 'checkout', area: '', supersedes: rule.id, source: { kind: 'user', note: 'Ops change' } });
+  f.store.setMemoryStatus(replacement.id, 'active');
+  assert.equal(f.store.getMemory(rule.id).status, 'archived', 'Approving a replacement retires the superseded claim');
+  f.store.setMemoryStatus(replacement.id, 'archived', { reason: 'incorrect' });
+  assert.ok(f.store.listAudit().some(a => a.action === 'memory-archived' && a.body.reason === 'incorrect'));
+  f.git('switch', '-q', '-c', 'feature');
+  const branchRule = f.approve('Feature flags live in config/flags.json.', { scope: 'branch' });
+  const promoted = f.store.proposePromotion(branchRule.id);
+  assert.equal(promoted.scope, 'checkout'); assert.equal(promoted.status, 'candidate'); assert.equal(promoted.promotedFrom.branch, 'feature');
+  f.git('switch', '-q', 'main'); assert.equal(f.store.prepareContext(f.project.id, 'feature flags config').items.length, 0, 'Promotion still needs approval');
+  f.store.setMemoryStatus(promoted.id, 'active');
+  assert.equal(f.store.prepareContext(f.project.id, 'feature flags config').items[0].id, promoted.id);
+});
+
+test('category diversity keeps one kind of claim from filling the packet', t => {
+  const f = fixture(t);
+  for (let i = 0; i < 7; i++) f.approve(`Deployment lesson ${i}: verify region ${i} health before rollout step ${i * 3}.`, { category: 'lesson' });
+  const decision = f.approve('Deployment decision: roll out with blue green switching.', { category: 'decision' });
+  const receipt = f.store.prepareContext(f.project.id, 'deployment rollout');
+  assert.equal(receipt.items.filter(i => i.category === 'lesson').length, 4);
+  assert.ok(receipt.items.some(i => i.id === decision.id));
+  assert.ok(receipt.excluded.some(x => x.reason === 'category-limit'));
 });
