@@ -29,6 +29,13 @@ test('Codex capture accepts only the explicit native resume banner, marked uncon
   assert.equal(module.captureCodexId(`Random UUID ${id}`), null);
   assert.equal(module.captureCodexId(`To continue this session, run codex resume ${id}`), id);
 });
+test('Codex captures the current multiline native resume banner with terminal styling', () => {
+  assert.equal(module.captureCodexId(`To continue this session, run:\r\n  \x1b[32mcodex resume ${id}\x1b[0m\r\nOr run codex resume and select the session.`), id);
+});
+test('Codex rejects an invalid latest banner instead of suggesting an older native ID', () => {
+  assert.equal(module.captureCodexId(`To continue this session, run codex resume ${id}\nTo continue this session, run:\n  codex resume not-a-uuid\n`), null);
+  assert.equal(module.captureCodexId(`Example command: codex resume ${id}`), null);
+});
 test('unknown native session IDs cannot be used to construct a Claude launch', () => {
   assert.throws(() => module.buildAgentLaunch({ provider: 'claude', nativeId: 'not-a-uuid' }), /session ID/);
 });

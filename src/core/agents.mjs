@@ -20,10 +20,10 @@ export function buildAgentLaunch(request) {
 export function captureCodexId(output) {
   // Native banner is a hint, never a trusted acknowledgment or auto-resume authorization.
   const clean = output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
-  const marker = 'To continue this session, run codex resume ';
-  const offset = clean.lastIndexOf(marker);
-  if (offset < 0) return null;
-  const candidate = clean.slice(offset + marker.length).split(/\s/)[0];
+  // Current Codex prints a colon/newline before the command; retain the older
+  // inline form too. Validate the latest banner, even if its ID is malformed.
+  const banners = [...clean.matchAll(/To continue this session, run:?\s+codex resume\s+(\S+)/g)];
+  const candidate = banners.at(-1)?.[1];
   return UUID.test(candidate) ? candidate : null;
 }
 
