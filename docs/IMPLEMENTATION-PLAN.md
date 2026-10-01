@@ -4,6 +4,26 @@
 
 Date: 1 October 2026. **Historical full-product roadmap.** The user approved a narrower terminal-only first slice and rejected all dev3 code reuse. The current [specification](TERMINAL-FIRST-SPEC.md), [plan](superpowers/plans/2026-10-01-terminal-first.md), [foundation decision](adr/002-terminal-first-foundation.md) and [verified status](IMPLEMENTATION-STATUS.md) supersede the initial stack, chat and reuse assumptions below. Later phases remain proposals.
 
+## Roadmap status (2 October 2026)
+
+The phases below were written before implementation. Status against today's code; details in [IMPLEMENTATION-STATUS](IMPLEMENTATION-STATUS.md).
+
+| Phase | Status | Notes |
+| --- | --- | --- |
+| 0 Feasibility (S0 integration route) | PARTIAL | Native-CLI route chosen and validated manually on macOS; ADR 001 policy write-up not done |
+| 0 S1/S2 transport, PTY, reconnect | DONE (macOS) / BLOCKED (Windows) | Electron + node-pty runtime instead of Tauri/Rust; Windows needs hardware |
+| 0 S3 usefulness | PARTIAL / BLOCKED | Round 1 inconclusive (MODIFY); round-2 harness ready; real suite needs repository choice |
+| 0 S4 schema/security probe | PARTIAL | Redaction, migrations, backups, disk-full tested; no 5k-claim/500k-event benchmark |
+| 1 Runtime, trust, persistence | DONE | Detached runtime, token handshake, lock, recovery, migrations v5 |
+| 2 Structured single agent | SUPERSEDED | Terminal-first design; no chat timeline by design |
+| 3 Brain vertical slice | DONE | Admission, revisions, scopes, evidence, retrieval, conflicts, inspector |
+| 4 Second provider and handoff | DONE (macOS) | Native CLIs; authenticated runs not repeated under the new runtime |
+| 5 Worktrees, sessions | DONE | Up to 4 sessions; managed/imported worktrees; research mode |
+| 6 Timeline, terminal, diff, tests | DONE (scoped) | Hook-based commands/exit codes for Claude; unknown for Codex; no test-report parsing |
+| 7 Extraction and maintenance | PARTIAL | Deterministic inbox done; model-assisted extraction DEFERRED |
+| 8 Export, privacy, recovery | DONE (scoped) | Export/import, backups/restore, purge, retention; finite redaction |
+| 9 Release and pilot | PARTIAL / BLOCKED | Unsigned packaging, notices, staged release workflow; signing, CI activation and pilot blocked on external input |
+
 ## Execution principles
 
 One maintainer can start the work, but public native Windows support requires access to a local Windows machine and a repeatable test owner. Budget substantial integration/maintenance time; do not treat a chat renderer plus a vector store as the product. Timeboxes below are rough engineering estimates for an experienced developer, not delivery commitments. Research/legal responses and external release/signing lead times are not included.
