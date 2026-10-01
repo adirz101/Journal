@@ -105,7 +105,7 @@ Exact API details can change. The plan requires generating/reviewing version-spe
 - [xterm security](https://xtermjs.org/docs/guides/security/) and [flow control](https://xtermjs.org/docs/guides/flowcontrol/): reuse terminal rendering; privileged JS/output boundaries and fast-producer backpressure need application-level handling.
 - [SQLite FTS5](https://www.sqlite.org/fts5.html) and [WAL](https://www.sqlite.org/wal.html): lexical search and local transactional persistence are suitable; keep live backups, writer contention, checkpoints and version fixes in scope.
 - [Git worktree](https://git-scm.com/docs/git-worktree): real lifecycle/ownership operations; a worktree is filesystem/Git isolation, not a process sandbox.
-- [Apache-2.0 text](https://www.apache.org/licenses/LICENSE-2.0), [MIT text](https://opensource.org/license/mit): recommendation for original code only, not a license change applied in this phase.
+- [Apache-2.0 text](https://www.apache.org/licenses/LICENSE-2.0), [MIT text](https://opensource.org/license/mit): alternatives evaluated for original code during research. The user subsequently selected Apache-2.0 for Journal; see [LICENSE](../LICENSE) and [NOTICE](../NOTICE).
 - [BLACKBOX AI agents](https://www.blackbox.ai/agents), [developer product docs](https://docs.blackbox.ai/features/vscode-agent/introduction): direct developer/coding-agent brand collision. Actual trademark search/clearance was not conducted.
 
 ## Repository snapshots

@@ -153,7 +153,7 @@ Acceptance: export/import round trip preserves qualification without automatical
 
 Dependencies: full workflow and security/platform evidence. Estimate: 2–3 weeks plus external signing/pilot lead times.
 
-Rename, choose license, add contribution/security/support docs and dependency notices; produce signed/notarized Mac release and signed Windows installer when ready; ensure packaged bridge/runtime versions launch without developer tools. Intel Mac preview only after native smoke. No cloud/telemetry/update agent in the MVP by default.
+The product is now named Journal and its original code uses the [Apache License 2.0](../LICENSE). Add contribution/security/support docs and dependency notices; produce signed/notarized Mac release and signed Windows installer when ready; ensure packaged bridge/runtime versions launch without developer tools. Intel Mac preview only after native smoke. No cloud/telemetry/update agent in the MVP by default.
 
 Run a 5–10 developer pilot on recurring tasks with matched baselines, measure usefulness/review burden and resource use. Publish honest provider capability/version matrix and release limitations. Fix integration/privacy failures before expanding features.
 

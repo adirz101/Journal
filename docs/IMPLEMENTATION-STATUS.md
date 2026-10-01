@@ -15,7 +15,7 @@ All current verification is manual and local on the user's computer. GitHub Acti
 - Worker-thread SQLite/Git/evidence service and bounded PTY history/display credit. Interrupted deliveries recover as uncertain. No raw terminal/keystroke persistence.
 - Keyboard access, labeled controls/focus, readable responsive layout, pointer-gated hover and no decorative motion library.
 
-No dev3 vendor, code or checkout is retained. The old source audit remains historical research. No Superset ELv2 code was copied. No newly assigned license for Journal's original code; choosing the distribution license and release notices remains a release task.
+No dev3 vendor, code or checkout is retained. The old source audit remains historical research. No Superset ELv2 code was copied. Journal's original code is licensed under the [Apache License 2.0](../LICENSE), with project attribution in [NOTICE](../NOTICE). Dependency and bundled-binary notices remain a release task.
 
 ## Observed validation
 

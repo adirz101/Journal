@@ -57,3 +57,9 @@ One active terminal, manual knowledge entry, exact branch/checkout scope and lex
 - [Source ledger](docs/RESEARCH.md)
 
 Earlier research records design alternatives. The current specification and later user instructions take precedence.
+
+## License
+
+Journal is licensed under the [Apache License 2.0](LICENSE).
+
+Copyright 2026 Adir Zak

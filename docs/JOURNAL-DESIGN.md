@@ -810,7 +810,7 @@ Memory evaluation corpus includes useful failures, generic noise, invented facts
 
 ## 33. Open-source, naming and future paid boundary
 
-Recommend **Apache-2.0** for our original code: permissive use and an explicit patent grant/termination framework help infrastructure contributors. MIT is simpler and also reasonable; choose one at project start and do not suggest either makes third-party/vendor components open source. Apache/MIT comparison comes from the [Apache license text](https://www.apache.org/licenses/LICENSE-2.0) and [MIT text](https://opensource.org/license/mit).
+The user selected **Apache-2.0** for Journal's original code; see [LICENSE](../LICENSE) and [NOTICE](../NOTICE). The original research compared the [Apache license text](https://www.apache.org/licenses/LICENSE-2.0) and [MIT text](https://opensource.org/license/mit). Third-party dependencies retain their own licenses.
 
 Contributor model: small reviewed PRs; DCO sign-off rather than broad copyright assignment initially; architecture/behavior proposals before new dependencies; platform maintainer ownership; sanitized fixtures mandatory; SECURITY disclosure channel, code of conduct, contribution guide, support/version matrix and changelog. Publish adapters' capabilities/fixtures before a plugin SDK. Audit dependency/bundled binary licenses and notices; AGPL tools such as Claude Squad/claude-mem are not permissive code donors. Studying architecture does not require copying their implementation.
 

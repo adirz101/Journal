@@ -2,6 +2,7 @@
   "name": "journal-desktop",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "Terminal workspace with reviewed project knowledge for Claude Code and Codex",
   "main": "src/desktop/main.mjs",
