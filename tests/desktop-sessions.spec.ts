@@ -203,3 +203,19 @@ test('a managed worktree is created from the dialog, hosts a research session an
     expect(existsSync(resolve(f.project, 'uncommitted.txt'))).toBe(true);
   } finally { await app.close(); f.cleanup(); }
 });
+
+test('a branch switched outside Journal is picked up and live sessions say where they started', async () => {
+  const f = setup('switch'); const { app, page } = await open(f.env, f.project);
+  try {
+    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByLabel('Initial task').fill('SWITCH_TASK');
+    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await expect(page.locator('.terminal-surface')).toContainText('TASK SWITCH_TASK');
+    await expect(page.getByLabel('Workspace')).toContainText('Current checkout · main');
+    execFileSync('git', ['-C', f.project, 'switch', '-q', '-c', 'feat/elsewhere']);
+    await expect(page.getByLabel('Workspace')).toContainText('Current checkout · feat/elsewhere', { timeout: 8000 });
+    await expect(page.locator('.branch-badge')).toContainText('feat/elsewhere');
+    await expect(page.locator('.terminal-label')).toContainText('started on ⑂ main');
+    await expect(page.getByText(/The checkout is now on feat\/elsewhere; this session started on main/)).toBeVisible();
+  } finally { await app.close(); f.cleanup(); }
+});
