@@ -61,3 +61,12 @@ test('a status proposal is only made for the branch the session ran on', t => {
   f.git('switch', '-q', '-c', 'other'); writeFileSync(join(f.repo, 'c.txt'), 'c\n'); f.git('add', '.'); f.git('-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qm', 'other work');
   assert.equal(f.store.generateProposals(s.id).filter(p => p.kind === 'branch-status').length, 0);
 });
+
+test('approving a branch update closes that branch\'s open status proposals', t => {
+  const f = fixture(t); const s = f.session('', { head: f.store.project(f.project.id).head });
+  writeFileSync(join(f.repo, 'd.txt'), 'd\n'); f.git('add', '.'); f.git('-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qm', 'work');
+  assert.equal(f.store.generateProposals(s.id).filter(p => p.kind === 'branch-status').length, 1);
+  const update = f.store.proposeMemory(f.project.id, { statement: 'Status: work done.', category: 'brief', scope: 'branch', area: '', source: { kind: 'user', note: 'n' } });
+  f.store.setMemoryStatus(update.id, 'active');
+  assert.equal(f.store.listProposals(f.project.id).length, 0);
+});

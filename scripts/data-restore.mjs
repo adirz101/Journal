@@ -3,7 +3,7 @@
 // Refuses while a runtime holds the data directory. The current database is
 // kept beside the restored one; nothing is deleted.
 import { DatabaseSync } from 'node:sqlite';
-import { copyFileSync, existsSync, readFileSync, renameSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, readFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,9 @@ export function restore(backup, dataDir = defaultDataDir(), { alive = pid => { t
   const lock = join(dataDir, 'runtime.lock');
   if (existsSync(lock)) { const owner = JSON.parse(readFileSync(lock, 'utf8')); if (alive(owner.pid)) throw new Error('Quit Journal and stop its runtime (choose "Stop sessions and quit") before restoring'); }
   // Electron's single-instance lock exists while the app is open.
-  if (!force && existsSync(join(dataDir, 'SingletonLock'))) throw new Error('Journal appears to be open. Quit it first (or pass --force if it crashed)');
+  // SingletonLock is a dangling symlink on macOS/Linux (lstat, not exists); Windows uses 'lockfile'.
+  const appLock = ['SingletonLock', 'lockfile'].some(name => lstatSync(join(dataDir, name), { throwIfNoEntry: false }));
+  if (!force && appLock) throw new Error('Journal appears to be open. Quit it first (or pass --force if it crashed and left a stale lock)');
   const check = new DatabaseSync(backup, { readOnly: true });
   try {
     const result = check.prepare('PRAGMA integrity_check').get().integrity_check; if (result !== 'ok') throw new Error(`Backup failed its integrity check: ${result}`);

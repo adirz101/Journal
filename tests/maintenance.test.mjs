@@ -113,7 +113,7 @@ test('review fixes: export approved only, purge keeps shared resume history, res
   assert.throws(() => restore(other, f.data, { alive: () => false }), /not a Journal backup/);
   const newer = join(f.root, 'newer.sqlite'); await f.store.backup(newer); const n = new DatabaseSync(newer); n.exec('PRAGMA user_version=99'); n.close();
   assert.throws(() => restore(newer, f.data, { alive: () => false }), /newer Journal/);
-  writeFileSync(join(f.data, 'SingletonLock'), '');
+  (await import('node:fs')).symlinkSync('host-12345', join(f.data, 'SingletonLock')); // dangling, as Chromium creates it
   const good = join(f.root, 'good.sqlite'); await f.store.backup(good);
   assert.throws(() => restore(good, f.data, { alive: () => false }), /appears to be open/);
 });

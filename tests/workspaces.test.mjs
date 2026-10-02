@@ -126,3 +126,16 @@ test('review fixes: create the reviewed plan exactly; removed worktrees leave re
   f.store.setMemoryStatus(keep.id, 'active');
   assert.throws(() => f.store.proposeMemory(f.project.id, { memoryId: keep.id, supersedes: keep.id, statement: 'Self', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'n' } }), /another approved claim/);
 });
+
+test('a plan ID cannot be replayed to overwrite a workspace, and revisions keep what they replace', t => {
+  const f = fixture(t);
+  const plan = f.store.planWorkspace(f.project.id, { branch: 'once', base: 'main' }, f.worktreeRoot);
+  f.store.createWorkspace(f.project.id, { branch: 'once', base: 'main', baseCommit: plan.base, planId: plan.id }, f.worktreeRoot);
+  assert.throws(() => f.store.createWorkspace(f.project.id, { branch: 'twice', base: 'main', baseCommit: plan.base, planId: plan.id }, f.worktreeRoot), /already used/);
+  assert.equal(f.store.getWorkspace(plan.id).branch, 'once');
+  const old = f.store.proposeMemory(f.project.id, { statement: 'Old rule about retries.', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'n' } }); f.store.setMemoryStatus(old.id, 'active');
+  const replacement = f.store.proposeMemory(f.project.id, { supersedes: old.id, statement: 'New rule about retries.', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'n' } });
+  const revised = f.store.proposeMemory(f.project.id, { memoryId: replacement.id, statement: 'New rule about retries, revised.', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'n' } });
+  assert.equal(revised.supersedes.id, old.id);
+  f.store.setMemoryStatus(revised.id, 'active'); assert.equal(f.store.getMemory(old.id).status, 'archived');
+});

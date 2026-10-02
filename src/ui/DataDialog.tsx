@@ -20,7 +20,7 @@ export function DataDialog({ project, onClose, onChanged }: { project: Project |
       {project && <button disabled={busy} onClick={() => void act(async () => { const r = await api<{ path: string; memories: number; markdown: string | null } | null>('exportBrain', { projectId: project.id }); return r ? `Exported ${r.memories} approved claims to ${r.path}${r.markdown ? ' and a Markdown copy' : ' (Markdown copy skipped: a file with that name exists)'}.` : null; })}>Export {project.name} knowledge…</button>}
       {project && <button disabled={busy} onClick={() => void act(async () => { const r = await api<{ imported: number; skipped: unknown[] } | null>('importBrain', { projectId: project.id }); return r ? `Imported ${r.imported} claims for review; skipped ${r.skipped.length}. Imported claims wait in Needs review.` : null; })}>Import knowledge…</button>}
     </div>
-    <p className="muted small-print">Restore a backup with Journal closed: <code>npm run data:restore -- &lt;backup.sqlite&gt;</code>. The current database is kept beside the restored one.</p>
+    <p className="muted small-print">Restore a backup with Journal closed: <code>npm run data:restore -- &lt;backup.sqlite&gt;</code>. The current database is kept beside the restored one. Add <code>--force</code> only if Journal crashed and left a stale lock.</p>
     {message && <p className="hint" role="status">{message}</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="dialog-actions"><button onClick={onClose}>Done</button></div>

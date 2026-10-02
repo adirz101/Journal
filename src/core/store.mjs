@@ -98,9 +98,11 @@ export class JournalStore {
     const area = relativePath(input.area ?? '', true);
     // Optional environment qualifier ("macOS only", "with Docker running").
     const environment = text(input.environment ?? '', 'environment qualifier', 200, true); if (environment) refuseCredentials(environment);
-    const supersedes = input.supersedes ? this.getMemory(input.supersedes) : null;
+    // A revision of a replacement keeps what it replaces unless told otherwise.
+    const carried = !input.supersedes && input.memoryId ? (() => { try { return this.getMemory(input.memoryId).supersedes?.id ?? null; } catch { return null; } })() : null;
+    const supersedes = input.supersedes || carried ? this.getMemory(input.supersedes || carried) : null;
     if (supersedes && supersedes.projectId !== projectId) throw new Error('Superseded memory belongs to another project');
-    if (supersedes && (supersedes.id === input.memoryId || supersedes.status !== 'active')) throw new Error('Only another approved claim can be superseded; revise a claim to change it');
+    if (supersedes && (supersedes.id === input.memoryId || (supersedes.status !== 'active' && !carried))) throw new Error('Only another approved claim can be superseded; revise a claim to change it');
     if (category === 'brief' && area) throw new Error('Project briefs apply to the whole checkout; leave the area empty');
     if (input.source?.kind === 'git' && PLACEHOLDER.test(statement)) throw new Error('Replace the bracketed placeholders before saving the update');
     const source = captureEvidence(project, input.source);
@@ -198,6 +200,7 @@ export class JournalStore {
       this.db.prepare('UPDATE memories SET status=?, pinned=CASE WHEN ?=\'active\' THEN pinned ELSE 0 END WHERE id=?').run(status, status, id);
       // Approving a replacement retires the claim it supersedes.
       if (status === 'active' && memory.supersedes) this.db.prepare(`UPDATE memories SET status='archived', pinned=0 WHERE id=? AND status='active'`).run(memory.supersedes.id);
+      if (status === 'active' && memory.category === 'brief' && memory.scope === 'branch') this.db.prepare(`UPDATE proposals SET body=json_set(body,'$.state','accepted','$.memoryId',?) WHERE project_id=? AND json_extract(body,'$.kind')='branch-status' AND json_extract(body,'$.branch')=? AND json_extract(body,'$.state')='open'`).run(id, memory.projectId, memory.branch);
       this.audit(`memory-${status}`, { id, revision: memory.revision, reason, supersedes: status === 'active' ? memory.supersedes?.id ?? null : null });
     });
     return this.getMemory(id);
@@ -452,10 +455,12 @@ export class JournalStore {
     const plan = this.planWorkspace(projectId, { branch: request.branch, base: request.baseCommit ?? request.base }, worktreeRoot);
     if (request.planId) {
       if (!/^[0-9a-f-]{36}$/.test(request.planId)) throw new Error('Invalid plan');
+      // A plan ID creates one workspace once; it can never overwrite a record.
+      if (this.db.prepare('SELECT 1 FROM workspaces WHERE id=?').get(request.planId)) throw new Error('This plan was already used; review again');
       plan.id = request.planId; plan.path = plannedPath(text(worktreeRoot, 'worktree root', 4096), project, plan.branch, request.planId);
     }
     // Intent first: a crash after this point is reconciled from Git.
-    const workspace = { id: plan.id, projectId, kind: 'managed', path: plan.path, branch: plan.branch, base: plan.base, baseLabel: request.base ?? plan.baseLabel, state: 'intent', notices: plan.notices, createdAt: now() };
+    const workspace = { id: plan.id, projectId, kind: 'managed', path: plan.path, branch: plan.branch, base: plan.base, baseLabel: request.base === undefined ? plan.baseLabel : text(request.base, 'base', 200), state: 'intent', notices: plan.notices, createdAt: now() };
     this.saveWorkspace(workspace); this.audit('workspace-intent', { id: workspace.id, branch: workspace.branch, base: workspace.base });
     try { addWorktree(project, workspace); }
     catch (error) { this.reconcileWorkspaces(projectId); const current = this.getWorkspace(workspace.id); if (current.state !== 'ready') { this.saveWorkspace({ ...current, state: 'failed', error: error.message }); throw error; } }
