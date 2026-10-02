@@ -61,6 +61,22 @@ export default function App() {
     setWorkspaceId(current => list?.workspaces.some(w => w.id === current && w.state === 'ready') ? current : '');
     return next;
   }, [merge]);
+  // Branch switches happen outside Journal (terminal, editor, the agent itself):
+  // poll the checkout while visible and on focus, and refresh when it moved.
+  useEffect(() => {
+    let busy = false;
+    const check = async () => {
+      const current = projectRef.current; if (!current || busy || document.visibilityState !== 'visible') return;
+      busy = true;
+      try {
+        const checkout = await api<{ branch: string | null; head: string | null }>('checkout', { projectId: current.id });
+        if (projectRef.current?.id === current.id && (checkout.branch !== current.branch || checkout.head !== current.head)) { await refresh(current.id); setKnowledgeVersion(v => v + 1); }
+      } catch { /* the next tick retries; project errors surface on explicit actions */ } finally { busy = false; }
+    };
+    const timer = setInterval(() => void check(), 3000);
+    window.addEventListener('focus', check); document.addEventListener('visibilitychange', check);
+    return () => { clearInterval(timer); window.removeEventListener('focus', check); document.removeEventListener('visibilitychange', check); };
+  }, [refresh]);
   const reloadSessions = useCallback(async () => {
     const result = await api<{ live: Session[]; active: Session[] }>('sessions'); merge([...result.active, ...result.live]);
   }, [merge]);
@@ -176,7 +192,7 @@ export default function App() {
             <p className="provider-line">{bootstrap?.agents.map(a => <span key={a.provider} title={a.available ? `${a.path ?? ''}\nResume: ${a.capabilities?.exactResume}\nObserved: status ${a.capabilities?.status.join(', ')}; commands ${a.capabilities?.commands}` : 'Not found on PATH'}>{a.provider === 'claude' ? 'Claude Code' : 'Codex'} {a.available ? a.version ?? '' : '· not found'}</span>)}</p>
             {bootstrap?.agents.some(a => !a.available) && <p className="hint">{bootstrap.agents.filter(a => !a.available).map(a => a.provider).join(', ')} not found on PATH. Install the native CLI, then reopen Journal.</p>}
           </section>
-          <section className="terminal-panel"><div className="terminal-heading"><div><span className={`status-dot ${session?.status ?? ''}`} /><strong>{session ? session.provider === 'claude' ? 'Claude Code' : 'Codex' : 'Terminal'}</strong><span className="terminal-label">{session ? `${label}${session.branch ? ` · ⑂ ${session.branch}` : ''}${session.workspaceId ? ' · worktree' : ''}${session.research ? ' · research' : ''}` : 'Ready to start'}</span>{session && <span className="terminal-title" title={session.title}>{session.title}</span>}</div>
+          <section className="terminal-panel"><div className="terminal-heading"><div><span className={`status-dot ${session?.status ?? ''}`} /><strong>{session ? session.provider === 'claude' ? 'Claude Code' : 'Codex' : 'Terminal'}</strong><span className="terminal-label">{session ? `${label}${session.branch ? ` · ${projectBranchChanged ? 'started on ' : ''}⑂ ${session.branch}` : ''}${session.workspaceId ? ' · worktree' : ''}${session.research ? ' · research' : ''}` : 'Ready to start'}</span>{session && <span className="terminal-title" title={session.title}>{session.title}</span>}</div>
             {session && <div className="terminal-actions">
               {isLive(session) && connected && <><button onClick={() => void sessionAction('interrupt')}>Interrupt <kbd>^C</kbd></button><button onClick={() => void sessionAction('stop')} disabled={session.status === 'stopping'}>Stop terminal</button></>}
               {resumable(session) && <button disabled={busy || !canStart} onClick={() => void start(session.provider, session)}>Resume</button>}

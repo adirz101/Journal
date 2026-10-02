@@ -92,6 +92,8 @@ const actions = {
     const result = await dialog.showOpenDialog(window, { title: 'Open a Git project', properties: ['openDirectory'] });
     return result.canceled ? null : store.openProject(result.filePaths[0]);
   },
+  // Cheap branch/HEAD read so the UI notices checkouts switched outside Journal.
+  checkout: async ({ projectId }) => { const project = await store.project(projectId); return { branch: project.branch, head: project.head }; },
   project: async ({ projectId }) => ({ project: await store.project(projectId), sessions: await store.listSessions(projectId), receipts: await store.listReceipts(projectId) }),
   workspaces: ({ projectId }) => store.listWorkspaces(projectId),
   planWorkspace: ({ projectId, branch, base }) => store.planWorkspace(projectId, { branch, base }, join(userData, 'worktrees')),
