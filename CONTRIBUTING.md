@@ -33,6 +33,12 @@ npm run test:desktop  # Playwright Electron tests with fixture CLIs
 
 On Linux without a display, run desktop tests with `xvfb-run -a npm run test:desktop`.
 
+## Data, releases and benchmarks
+
+- `npm run data:restore -- <backup.sqlite>` restores a backup made in the app (Journal must be closed).
+- `npm run notices` regenerates third-party notices; see [docs/RELEASING.md](docs/RELEASING.md).
+- `node scripts/benchmark.mjs <suite> …` runs a usefulness benchmark with real paid Claude requests on your own account; never in CI. See [docs/BENCHMARK.md](docs/BENCHMARK.md).
+
 ## CI and provider trials
 
 CI is prepared to run the checks above on macOS, Linux and Windows using **fixture CLIs only** (staged in `ci/github-actions/` until it can be activated; see the README there). It never uses real Claude Code or Codex logins, provider requests or secrets. Windows desktop tests are experimental and do not fail the run.

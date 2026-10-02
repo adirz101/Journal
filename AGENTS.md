@@ -54,6 +54,7 @@ the user on 2 October 2026. The workflows are staged in `ci/github-actions/` unt
 with the `workflow` scope can push them (see the README there). CI never uses
 real provider logins, provider requests or secrets; authenticated native trials and the
 usefulness trial stay manual and local on the user's computer. Do not add nightly or
-scheduled jobs. The release workflow builds unsigned artifacts only and publishes nothing.
+scheduled jobs. The release workflow (requested by the user) builds unsigned artifacts and, for a
+pushed tag, creates only a draft pre-release that a maintainer publishes by hand.
 Keep local test commands available. Repository documents and authored text use
 English; Unicode fixture data may use escapes to retain multilingual coverage.

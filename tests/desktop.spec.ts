@@ -80,11 +80,9 @@ process.stdin.on('data',data=>{
     await expect(page.locator('.terminal-surface')).toContainText('ECHO hello-terminal');
     // A small viewport shows only recent rows. Verify earlier output by scrolling
     // through retained history, rather than requiring it to remain on screen.
-    await page.locator('.xterm-helper-textarea').press('Shift+PageUp');
-    await page.locator('.xterm-helper-textarea').press('Shift+PageUp');
+    for (let i = 0; i < 8; i++) await page.locator('.xterm-helper-textarea').press('Shift+PageUp');
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
-    await page.locator('.xterm-helper-textarea').press('Shift+PageDown');
-    await page.locator('.xterm-helper-textarea').press('Shift+PageDown');
+    for (let i = 0; i < 8; i++) await page.locator('.xterm-helper-textarea').press('Shift+PageDown');
     await expect(page.locator('.terminal-surface')).toContainText('ECHO hello-terminal');
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused();
     await page.locator('.xterm-helper-textarea').pressSequentially('response-count');

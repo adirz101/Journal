@@ -14,7 +14,7 @@ export class RuntimeClient extends EventEmitter {
   constructor({ dataDir, launch, connectTimeoutMs = 15000 }) {
     super(); this.dataDir = dataDir; this.launch = launch; this.connectTimeoutMs = connectTimeoutMs;
     this.socket = null; this.pending = new Map(); this.sequence = 0; this.closing = false; this.info = null; this.connecting = null;
-    this.launchedPid = null; this.launches = 0;
+    this.launched = null; this.launches = 0;
   }
   readInfo() { try { return JSON.parse(readFileSync(join(this.dataDir, 'runtime.json'), 'utf8')); } catch { return null; } }
   async attempt() {
@@ -47,9 +47,9 @@ export class RuntimeClient extends EventEmitter {
   // Start a runtime only when none we launched is still starting, and at most
   // three times in a row without a successful connection.
   maybeLaunch() {
-    if (this.launchedPid && isAlive(this.launchedPid)) return false;
+    if (this.launched && (typeof this.launched.alive === 'function' ? this.launched.alive() : isAlive(this.launched))) return false;
     if (this.launches >= 3) { this.emit('failed', 'The Journal runtime could not be started. See runtime.log in the data directory.'); return false; }
-    this.launches++; this.launchedPid = this.launch() ?? null; return true;
+    this.launches++; this.launched = this.launch() ?? null; return true;
   }
   async connect() {
     if (this.connecting) return this.connecting;

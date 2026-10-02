@@ -65,5 +65,15 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
     await page.getByRole('button', { name: 'Preview context' }).click();
     await expect(page.getByTestId('context-packet')).toContainText('REPO_PURPOSE');
     await expect(page.getByTestId('context-packet')).not.toContainText('FEATURE_PROGRESS');
+    // Leaving a claim out applies to the next start only and is recorded.
+    await page.getByRole('button', { name: 'Leave out for this task' }).first().click();
+    await expect(page.getByTestId('context-packet')).not.toContainText('REPO_PURPOSE');
+    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await expect(page.locator('.terminal-surface')).toContainText('PTY_READY');
+    await expect(page.locator('.terminal-surface')).not.toContainText('REPO_PURPOSE');
+    await expect(page.getByText(/left out by you/)).toBeAttached();
+    await page.getByRole('button', { name: 'Stop terminal' }).click();
+    await page.getByRole('button', { name: 'Preview context' }).click();
+    await expect(page.getByTestId('context-packet')).toContainText('REPO_PURPOSE');
   } finally { await app.close(); rmSync(root, { recursive: true, force: true }); }
 });

@@ -1,59 +1,74 @@
 # Journal implementation status
 
-2 October 2026. Merged to `main`: the terminal-first slice (PR #1), native validation (PR #2), orientation, licensing and local validation (PR #3), and branding and layout (PR #4). Branch `claude/status-helper-and-usefulness` adds the status-update helper, usefulness trial round 1, and the durable multi-session runtime milestone. It is unmerged. Alpha; no public release.
+2 October 2026. Merged to `main`: the terminal-first slice (PR #1), native validation (PR #2), orientation and licensing (PR #3), branding and layout (PR #4), and the durable multi-session runtime with the status helper and usefulness trial round 1 (PR #5). Branch `claude/roadmap-completion` adds worktrees, Brain completion, the proposal inbox, data maintenance, release groundwork and the benchmark harness. Alpha; no public release.
 
-Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI (macOS, Linux and experimental Windows) is written but staged in `ci/github-actions/`: **BLOCKED** until a GitHub token with the `workflow` scope can push it. CI never uses provider logins. Authenticated native trials and the usefulness trial are manual and local.
+Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI is written but staged in `ci/github-actions/`: **BLOCKED** until a GitHub token with the `workflow` scope can push it. CI never uses provider logins. Authenticated native trials and usefulness benchmarks are manual and local.
 
 ## Implemented
 
 **Runtime and sessions** ([architecture](ARCHITECTURE.md))
-- A detached local runtime process (Electron in Node mode) owns all PTYs and native CLIs. It serves the app over a token-authenticated Unix socket or named pipe; one runtime runs per data directory.
-- Up to four concurrent Claude Code or Codex sessions, each with provider, project, branch, baseline, task, state, native ID, PID identity, start time, last activity and survivors. Input, output, flow control and receipts are per session; only the visible session streams output.
-- Renderer reload, app crash and **Keep running in background** on quit leave sessions running, and the next launch rediscovers them. **Stop sessions and quit** stops them gracefully. A runtime crash recovers sessions as `interrupted`, or `orphaned` when a verified process survives; delivery becomes `uncertain`, and prompts are never resent.
-- Process ownership: signals go through the held PTY handle until exit. After a restart, a process is signalled only if its PID, start time and command hash all match. Stop sends SIGTERM to the PTY group, then SIGKILL after 3 s. Descendants are sampled; leftovers are reported and ended only on request.
-- Claude per-launch hooks report working, idle and permission-waiting status, Bash commands with exit codes and durations, and edited files. Codex activity beyond Journal's own events is reported as unknown.
+- A detached local runtime (Electron in Node mode) owns all PTYs and native CLIs. It sits behind a local socket or named pipe with HMAC challenge-response, an exclusive lock and launch caps.
+- Up to four concurrent sessions, with per-session input, output, flow control, receipts, versions and attention markers.
+- Renderer reload, app crash and keep-running quit leave sessions running and are rediscovered. A runtime crash recovers sessions as interrupted or orphaned (verified or unverified), with uncertain delivery and no resend.
+- Ownership: signals go through the held PTY handle, or after a restart through PID plus UTC start time; stop escalates SIGTERM to the group, then SIGKILL after 3 s. Leftover descendants are reported and ended only on request.
 
-**Desktop UI**
-- Session list: active sessions across projects plus recent sessions in this project, with provider, task, project, state, elapsed or last-activity time and an attention marker. Includes New session, switching (click, or ⌘1–4 on macOS and Alt+1–4 elsewhere), Interrupt, Stop, Resume, Close, and ending orphans or leftovers.
-- Changes tab: working tree compared with the session's starting commit, with additions and deletions, new and pre-existing markers, per-file diffs (sensitive filenames hidden), opening in the default editor, and refresh.
-- Activity tab: observed commands, test-command exit summary (exit status only), and a virtualized timeline.
-- Knowledge tab: paged, filtered and searchable; flags possible conflicts on candidates.
-- Light and dark themes, resizable sidebars, keyboard access and no decorative motion, all retained.
+**Workspaces**
+- Current checkout, Journal-managed worktrees from an explicit base, and imported worktrees, with intent persisted before Git side effects and reconciliation after crashes.
+- No force, no stash, no transfer of uncommitted work. Removal refuses dirty, untracked, ignored, locked or in-use worktrees and keeps the branch; imported worktrees are never deleted.
+- Context, baselines and diffs follow the session's workspace, and resume reuses it.
+- Research mode starts Claude in plan mode or Codex in its read-only sandbox. It is a starting intent, not enforcement: both can be changed natively inside the session.
 
-**Knowledge** ([orientation](PROJECT-ORIENTATION.md))
-- Reviewed claims with evidence, immutable revisions and receipts, branch and checkout scope, freshness checks, briefs that orient every session, and exact resume with revalidation (unchanged from PRs #1–#4).
-- The status-update helper drafts branch and overview updates from Git. Saving and approval are explicit, Git-range evidence goes stale when history is rewritten, and branch updates report drift.
-- Retrieval uses FTS5 porter stemming with identifier and path aliases, area relevance by distinctive path segment, duplicate suppression that respects numbers and polarity, and conflict flags and warnings. Still lexical.
+**Observability** ([providers](PROVIDERS.md))
+- Claude per-launch hooks report status, permission waits, redacted Bash commands with working directory, exit code and duration, and edited paths. Codex activity beyond Journal's own events is unknown.
+- Activity view with a test-command exit summary (exit status only) and a virtualized timeline. Changes view against the session's starting commit with safe diffs and Open-or-reveal.
 
-**Persistence and security**
-- SQLite migrations (`user_version` 3) add a bounded `events` timeline and the alias/stemmed FTS index. Recovery markers are stored on sessions.
-- No terminal output, prompts or tool results are persisted in timelines; command text is redacted. Runtime logs are bounded (512 KiB rotation) and redacted. Hook event files are bounded (1 MiB) and removed when a session ends.
+**Knowledge**
+- Reviewed claims with evidence, immutable revisions and receipts, checkout and exact-branch scope, freshness checks, and orientation briefs.
+- Status-update helper with Git-range evidence, drift and age.
+- Stemmed, alias-aware retrieval; area-segment relevance; duplicate suppression; conflict flags and warnings; category diversity; pinned rules; per-task leave-out; mark incorrect; superseding; branch-to-all-branches promotion proposals; environment qualifiers; selection reasons.
+- Context inspector: task, checkout, route, what is not observable, each claim with reason, size and source, exclusions, and the exact text.
+- Proposal inbox from explicit rule lines, passing test commands and moved branches. Deterministic, idempotent and review-gated.
 
-**Repository**
-- Fixture-only CI and an unsigned electron-builder configuration. A packaged macOS build was verified to start its runtime from `app.asar.unpacked`. Includes a manual release workflow (artifacts only), CONTRIBUTING, SECURITY, issue and PR templates, [ARCHITECTURE](ARCHITECTURE.md) and the [Windows audit](WINDOWS.md).
+**Data and security**
+- SQLite (migrations v5): workspaces, proposals, audit, events and pinned claims.
+- Integrity-checked online backups, an offline restore script that keeps the previous database, storage and free-space reporting, a clear disk-full error, and a transaction fix that preserves the original SQLite error.
+- Versioned Brain export of approved claims (JSON plus Markdown, checksum, redaction) and import (size and schema limits, checksum, candidates only, no automatic branch matching).
+- Explicit session purge (refused when other sessions continue the same native conversation, so resume history stays correct) and 90-day timeline retention; knowledge is never pruned.
+- Redaction before persistence, logs, hooks and export. Sensitive filenames are hidden. Diffs use literal pathspecs and refuse symlinks.
 
-## Observed validation (this branch, local macOS)
+**Terminal**
+- xterm with Unicode 11 widths, bounded per-session buffers (256 KiB) and display credit, gap disclosure, and repaint after reload or runtime reconnect.
+- No raw output or keystroke persistence.
+
+**Release and repository**
+- Unsigned electron-builder configuration with `Journal-<version>-<os>-<arch>` artifacts and generated `THIRD_PARTY_NOTICES.md`, bundled and verified in a packaged macOS build.
+- Staged release workflow with checksums and draft pre-releases; [RELEASING](RELEASING.md).
+- CONTRIBUTING, SECURITY, templates, [ARCHITECTURE](ARCHITECTURE.md), [PROVIDERS](PROVIDERS.md) and the [Windows audit](WINDOWS.md).
+- Benchmark harness with frozen suites, conditions A–D, Wilson intervals and GO/MODIFY criteria ([BENCHMARK](BENCHMARK.md)).
+
+## Observed validation (local macOS)
 
 | Check | Result |
 | --- | --- |
-| `npm test` | 95 passed, 0 failed: real-process start-time identity and SIGTERM→SIGKILL escalation, observer rotation and lost-observation reporting, protocol-mismatch handling, overview validity across branches, runtime protocol, HMAC handshake and impostor refusal, runtime lock and launch cap, unverified orphans, four sessions and isolation, reconnect, stop/interrupt/exit, runtime-crash recovery, orphan and PID-reuse refusal, hooks and redaction, cross-project knowledge isolation, partial metadata, status helper, retrieval, duplicates, conflicts, pagination, v1→v3 migration, diff baseline, glob/symlink/launchable-file refusal, process table and Windows shim handling, plus earlier coverage |
+| `npm test` | 123 passed |
 | `npm run check`, `npm run build` | Passed (the existing ~545 KiB chunk warning remains) |
-| `npm run test:desktop` | 10 passed: earlier scenarios plus four real-PTY runtime scenarios (four sessions with reload and switching, app crash reconnect, runtime crash recovery, and keep-running quit with leftover cleanup and the changes view). The new scenarios passed 12/12 across three repetitions; a stale-snapshot race in the UI (an older store read replacing a newer status) was found by an intermittent failure and fixed with per-session versions. |
-| `npm run dist:dir` | Unsigned `Journal.app` built; the packaged runtime started and exited cleanly |
-| GitHub Actions | BLOCKED: workflows staged in `ci/github-actions/`; the local GitHub token lacks the `workflow` scope needed to push them |
+| `npm run test:desktop` | 11 passed: real Electron, runtime and node-pty with fixture CLIs, covering four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, and the status helper |
+| `npm run dist:dir` | Unsigned app builds; packaged runtime starts; notices bundled |
+| GitHub Actions | BLOCKED (workflow scope) |
 
-Earlier authenticated evidence still applies to launch, resume, permission and handoff behavior ([native validation](NATIVE-VALIDATION.md), [lifecycle follow-up](LIFECYCLE-AND-MEMORY-VALIDATION.md)). It was gathered before the runtime split. The new runtime uses the same launcher and arguments, but authenticated providers have **not** been rerun under it.
+Earlier authenticated evidence ([native validation](NATIVE-VALIDATION.md), [lifecycle follow-up](LIFECYCLE-AND-MEMORY-VALIDATION.md)) predates the runtime split; authenticated providers have not been rerun under the runtime or in worktrees. The [usefulness trial](USEFULNESS-TRIAL.md) round 1 was inconclusive (MODIFY).
 
-The [usefulness trial](USEFULNESS-TRIAL.md) was inconclusive: every condition passed every task. The knowledge thesis is MODIFY pending a harder round.
+## Blocked or deferred
 
-## Limits and next work
+| Item | Status | Reason | Next human action |
+| --- | --- | --- | --- |
+| CI activation | BLOCKED | Token lacks the `workflow` scope | `gh auth refresh -h github.com -s workflow`, then move `ci/github-actions/*.yml` to `.github/workflows/` |
+| Windows validation, Job Objects | BLOCKED | No Windows hardware; Job Objects need a native module | Run the [Windows checklist](WINDOWS.md) on Windows 11 |
+| Signing and notarization | BLOCKED | Needs an Apple Developer ID and a Windows code-signing certificate | See [RELEASING](RELEASING.md) |
+| Usefulness round 2 | BLOCKED | Needs a chosen repository, tasks and paid runs | Create a suite from `benchmarks/TEMPLATE.md` |
+| Authenticated rerun under the runtime | DEFERRED | Requires the user's interactive provider sessions | Repeat `NATIVE-VALIDATION.md` trials in Journal |
+| Model-assisted extraction | DEFERRED | Must not add hidden provider calls; needs an explicit provider and cost decision | Decide provider and budget; design is in IMPLEMENTATION-PLAN Phase 7 |
+| Changed-path and diff-based proposals; evidence-grade ranking | NOT STARTED | Lower value than the delivered inbox and controls | — |
+| Public pilot | BLOCKED | Needs real users | — |
 
-- An independent review of the runtime found 11 issues, including glob/symlink reads in the diff view, opening launchable files, a two-runtime race, locale-dependent process identity and token exposure to a squatting socket; all are fixed with regression tests. A second, from-scratch PR review found a blocking bug (Git-backed repo overviews went stale on branches without the recorded commit) plus identity timing, synchronous process lookups, trial-metric disclosure, an Open blocklist, protocol-mismatch handling, receipt state, event pruning, hidden-terminal streaming and quit-time launches; all fixed. Process identity is now PID plus UTC start time, read asynchronously.
-- Real Claude Code and Codex have not been run under the new runtime: multi-session, keep-running and crash recovery are verified with fixture CLIs only. Codex interactive approvals, cancelling a running foreground tool, and Windows remain open.
-- A runtime crash still ends terminals; only app or renderer loss is survivable. Descendants that daemonize between samples cannot be attributed; Windows descendant tracking is not implemented.
-- Concurrent sessions in one checkout share a working tree, so the Changes view cannot attribute edits to a single agent. There is no worktree isolation.
-- Retrieval is lexical; conflict detection is a heuristic flag. There is no automatic extraction.
-- No signing, notarization, installer verification on Windows or Linux, auto-update or public release. Dependency and bundled-binary notices remain a release task.
-- Windows: see [WINDOWS.md](WINDOWS.md). Nothing is verified on a real Windows machine.
-
-Historical full roadmap: [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).
+Historical full roadmap and phase status: [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).

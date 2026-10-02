@@ -2,9 +2,10 @@ import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, shell } 
 import { spawn } from 'node:child_process';
 import { resolve, dirname, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { mkdirSync, openSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { StoreClient } from './store-client.mjs';
 import { RuntimeClient } from './runtime-client.mjs';
+import { buildId } from '../runtime/protocol.mjs';
 import { detectAgents } from '../core/agents.mjs';
 import { relativePath, text } from '../core/validation.mjs';
 
@@ -47,7 +48,10 @@ function launchRuntime() {
   const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
   const log = openSync(join(userData, 'runtime-stderr.log'), 'a', 0o600);
   const child = spawn(process.execPath, [unpacked(resolve(here, '../runtime/runtime.mjs')), '--data', userData], { detached: true, stdio: ['ignore', 'ignore', log], env, windowsHide: true });
-  child.unref(); return child.pid;
+  // Report exit from the child handle: a killed, not yet reaped runtime still
+  // answers kill(pid, 0), which must not block launching a replacement.
+  let exited = false; child.once('exit', () => { exited = true; }); child.unref();
+  return { pid: child.pid, alive: () => !exited };
 }
 
 function createWindow() {
@@ -89,12 +93,54 @@ const actions = {
     return result.canceled ? null : store.openProject(result.filePaths[0]);
   },
   project: async ({ projectId }) => ({ project: await store.project(projectId), sessions: await store.listSessions(projectId), receipts: await store.listReceipts(projectId) }),
+  workspaces: ({ projectId }) => store.listWorkspaces(projectId),
+  planWorkspace: ({ projectId, branch, base }) => store.planWorkspace(projectId, { branch, base }, join(userData, 'worktrees')),
+  createWorkspace: ({ projectId, branch, base, baseCommit, planId }) => store.createWorkspace(projectId, { branch, base, baseCommit, planId }, join(userData, 'worktrees')),
+  importWorkspace: ({ projectId, path }) => store.importWorkspace(projectId, path),
+  workspaceRemovalBlockers: ({ id }) => store.workspaceRemovalBlockers(id),
+  removeWorkspace: ({ id }) => store.removeWorkspace(id),
+  forgetWorkspace: ({ id }) => store.forgetWorkspace(id),
   memoryPage: ({ projectId, offset, limit, filter, search }) => store.listMemoryPage(projectId, { offset, limit, filter, search }),
   proposeMemory: ({ projectId, input }) => store.proposeMemory(projectId, input),
-  setMemoryStatus: ({ id, status }) => store.setMemoryStatus(id, status),
+  setMemoryStatus: ({ id, status }) => store.setMemoryStatus(id, status, { reason: status === 'archived' ? 'withdrawn' : null }),
   proposeStatusUpdate: ({ projectId, scope }) => store.proposeStatusUpdate(projectId, scope),
   memoryHistory: ({ id }) => store.memoryHistory(id),
-  prepareContext: ({ projectId, task }) => store.prepareContext(projectId, task),
+  prepareContext: ({ projectId, task, workspaceId, disabled }) => store.prepareContext(projectId, task, { workspaceId: workspaceId ?? null, disabled: disabled ?? [] }),
+  setPinned: ({ id, pinned }) => store.setPinned(id, pinned),
+  proposals: ({ projectId }) => store.listProposals(projectId, 'open'),
+  storageInfo: () => store.storageInfo(),
+  backupData: async () => {
+    const result = await dialog.showSaveDialog(window, { title: 'Back up Journal data', defaultPath: `journal-backup-${new Date().toISOString().slice(0, 10)}.sqlite` });
+    return result.canceled ? null : store.backup(result.filePath);
+  },
+  exportBrain: async ({ projectId }) => {
+    const result = await dialog.showSaveDialog(window, { title: 'Export project knowledge', defaultPath: 'journal-knowledge.json', filters: [{ name: 'Journal knowledge', extensions: ['json'] }] });
+    if (result.canceled) return null;
+    const { json, markdown } = await store.exportBrain(projectId);
+    writeFileSync(result.filePath, JSON.stringify(json, null, 2));
+    // Never overwrite an unrelated Markdown file that the save dialog did not ask about.
+    const mdPath = result.filePath.replace(/\.json$/i, '') + '.md'; const wroteMarkdown = !existsSync(mdPath);
+    if (wroteMarkdown) writeFileSync(mdPath, markdown);
+    return { path: result.filePath, memories: json.memories.length, markdown: wroteMarkdown ? mdPath : null };
+  },
+  importBrain: async ({ projectId }) => {
+    const result = await dialog.showOpenDialog(window, { title: 'Import project knowledge', properties: ['openFile'], filters: [{ name: 'Journal knowledge', extensions: ['json'] }] });
+    if (result.canceled) return null;
+    if (statSync(result.filePaths[0]).size > 5 * 1024 * 1024) throw new Error('Import file is larger than 5 MiB');
+    return store.importBrain(projectId, readFileSync(result.filePaths[0], 'utf8'));
+  },
+  purgeSession: async ({ id }) => {
+    const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Delete history', 'Cancel'], defaultId: 1, cancelId: 1, message: 'Delete this session\'s history?',
+      detail: 'Removes its timeline, context receipts and metadata from Journal. Project knowledge, your files and the native CLI conversation are not affected.' });
+    if (response !== 0) return null;
+    await runtime.call('release', { id }).catch(() => {});
+    return store.purgeSession(id);
+  },
+  acceptProposal: ({ id }) => store.acceptProposal(id),
+  dismissProposal: ({ id }) => store.dismissProposal(id),
+  markIncorrect: ({ id }) => store.setMemoryStatus(id, 'archived', { reason: 'incorrect' }),
+  proposePromotion: ({ id }) => store.proposePromotion(id),
+  getMemory: ({ id }) => store.getMemory(id),
   getReceipt: ({ id }) => store.getReceipt(id),
   sessions: async () => ({ live: await runtime.call('list'), active: await store.activeSessions() }),
   getSession: ({ id }) => store.getSession(id),
@@ -110,7 +156,12 @@ const actions = {
     return { revealed: false };
   },
   archiveSession: async ({ id }) => { await runtime.call('release', { id }).catch(() => {}); return store.archiveSession(id); },
-  start: input => runtime.call('start', input),
+  start: input => {
+    // A runtime from another build may not understand newer launch options;
+    // never let it silently run in the wrong workspace or mode.
+    if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.disabled?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, research mode or leave-out.');
+    return runtime.call('start', input);
+  },
   attach: ({ id }) => runtime.call('attach', { id }),
   detach: ({ id }) => runtime.call('detach', { id }),
   write: ({ id, data }) => runtime.call('write', { id, data }),

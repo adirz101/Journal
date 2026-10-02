@@ -8,7 +8,7 @@ export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 export const CODEX_RESUME_MARKER = 'To continue this session, run';
 
 export function buildAgentLaunch(request) {
-  const { provider, nativeId, resume, prompt, settingsFile } = request;
+  const { provider, nativeId, resume, prompt, settingsFile, research = false } = request;
   if (provider !== 'claude' && provider !== 'codex') throw new Error('Unknown agent provider');
   if ((resume || nativeId) && !UUID.test(nativeId ?? '')) throw new Error('An exact native session ID is required');
 
@@ -16,7 +16,10 @@ export function buildAgentLaunch(request) {
     ? (resume ? ['resume', nativeId] : [])
     : (resume ? ['--resume', nativeId] : nativeId ? ['--session-id', nativeId] : []);
   const settingsArgs = provider === 'claude' && settingsFile ? ['--settings', settingsFile] : [];
-  return { executable: provider, argv: [...sessionArgs, ...settingsArgs, ...(prompt ? ['--', prompt] : [])] };
+  // Research mode starts each CLI in its own stricter mode. It is an intent,
+  // not enforcement: the user can leave plan mode or approve escalation natively.
+  const researchArgs = !research ? [] : provider === 'claude' ? ['--permission-mode', 'plan'] : ['--sandbox', 'read-only'];
+  return { executable: provider, argv: [...sessionArgs, ...researchArgs, ...settingsArgs, ...(prompt ? ['--', prompt] : [])] };
 }
 
 export function captureCodexId(output) {

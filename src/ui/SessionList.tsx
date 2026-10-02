@@ -37,7 +37,7 @@ export function SessionList({ sessions, projects, selectedId, currentProjectId, 
       aria-label={`${providerName(session)}: ${session.title}. ${label}${attention ? ', needs attention' : ''}`}>
       <span className={`status-dot ${session.status}${label === 'disconnected' ? ' disconnected' : ''}`} />
       <span className="session-text"><strong>{providerName(session)}{attention && <span className="attention" aria-hidden="true"> ●</span>}</strong><small>{session.title}</small>
-        {session.projectId !== currentProjectId && <small className="session-project">{projectName(session.projectId)}</small>}</span>
+        {(session.projectId !== currentProjectId || session.workspaceId) && <small className="session-project">{session.projectId !== currentProjectId ? projectName(session.projectId) : ''}{session.workspaceId ? `${session.projectId !== currentProjectId ? ' · ' : ''}⑂ ${session.branch ?? 'worktree'}` : ''}</small>}</span>
       <span className="session-meta"><span className={`session-status ${attention ? 'attention-text' : ''}`}>{label}</span><time dateTime={session.createdAt} title={isLive(session) ? 'Elapsed' : 'Ended'}>{time}</time></span>
     </button>;
   };

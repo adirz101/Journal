@@ -24,6 +24,9 @@ Switching agents should not mean rediscovering architecture decisions, constrain
 - **Up to four sessions at once:** a separate local runtime owns the terminals, so reloading the UI, an app crash, or choosing *Keep running in background* on quit leaves agents running; reopening Journal reconnects. A runtime crash is recovered explicitly, without resending prompts.
 - **Session views:** per-session state and attention markers, a changes view against the session's starting commit, and an activity timeline with observed commands and exit codes (Claude Code hooks; unknown for Codex).
 - **Status-update helper:** propose a branch update or repo overview drafted from Git history; nothing is saved until you review and approve it.
+- **Workspaces:** run a session in the current checkout, a Journal-managed Git worktree created from a base you choose, or an existing worktree. Journal never force-removes, stashes or copies your uncommitted work. Research mode starts each CLI in its own read-only mode (Claude plan mode, Codex read-only sandbox); it can be changed inside the session, so it is an intent rather than enforcement.
+- **Knowledge controls:** pin rules, leave a claim out for one task, mark it incorrect, supersede it, or propose a branch rule for all branches. A deterministic inbox suggests rules you stated in tasks and observed passing test commands, for your review.
+- **Data:** integrity-checked backups and restore, knowledge export/import (imports wait for review), session purge, and automatic trimming of old timelines.
 - **Reviewed project knowledge:** manually add and approve repo overviews, branch updates, decisions, constraints, conventions, lessons, and issues, backed by a source note or tracked-file excerpt.
 - **Checkout and exact-branch scope:** eligible project briefs orient Journal-launched sessions, including empty tasks; task-specific knowledge uses bounded lexical retrieval and source-freshness checks.
 - **Context visibility:** preview selected knowledge and exclusions; immutable receipts preserve the launch prompt and delivery state. A receipt records transport, not model acknowledgment.
@@ -34,7 +37,7 @@ Switching agents should not mean rediscovering architecture decisions, constrain
 
 ## Current limitations
 
-- Alpha software with no signed release, installer verification, or automatic updates. Sessions in one checkout share its working tree; there is no worktree isolation.
+- Alpha software with no signed release, installer verification, or automatic updates. Sessions in the same checkout share its working tree; use a worktree for isolation.
 - Local validation is on macOS. Native Windows operation is unverified; see the [Windows audit](docs/WINDOWS.md).
 - Knowledge and status updates require manual review. Automatic extraction, cloud sync, background agent orchestration, and cross-worktree knowledge promotion are not implemented.
 - Retrieval is lexical (stemmed, with identifier and path aliases), with finite context limits. Source fingerprints detect changes; they do not establish whether a claim is true. Journal does not inject context into conversations launched outside the app.
@@ -94,7 +97,7 @@ npm run smoke:agents
 npm run pilot:memory
 ```
 
-The [current implementation status](docs/IMPLEMENTATION-STATUS.md) records 95 passing core tests, a passing typecheck and production build, and ten passing desktop scenarios. Desktop checks use real Electron, the runtime process and node-pty with controlled fixture CLIs: they cover context delivery, resume, four concurrent sessions, reload, app and runtime crashes, process cleanup, and the changes view. These fixtures do not establish authenticated provider behavior.
+The [current implementation status](docs/IMPLEMENTATION-STATUS.md) records 123 passing core tests, a passing typecheck and production build, and eleven passing desktop scenarios. Desktop checks use real Electron, the runtime process and node-pty with controlled fixture CLIs: they cover context delivery, resume, four concurrent sessions, reload, app and runtime crashes, process cleanup, worktrees, research mode, and the changes view. These fixtures do not establish authenticated provider behavior.
 
 `smoke:agents` checks installed native CLI startup without submitting a task or accepting trust prompts. `pilot:memory` evaluates local retrieval against 28 frozen synthetic claims and 20 labelled tasks without provider requests; it measures scope/evidence exclusion and lexical relevance, not model quality or time savings.
 
@@ -104,6 +107,8 @@ Separate [authenticated native trials](docs/NATIVE-VALIDATION.md) observed Codex
 
 Journal uses Electron and React for the app, a separate local runtime process with node-pty for terminals, xterm.js for display, and SQLite for reviewed knowledge, session metadata and immutable receipts. See [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+- **Providers:** [Versions and observability](docs/PROVIDERS.md).
+- **Releasing and benchmarks:** [Release process](docs/RELEASING.md) and [usefulness benchmark](docs/BENCHMARK.md).
 - **Current contract:** [Terminal-first specification](docs/TERMINAL-FIRST-SPEC.md) and [foundation architecture decision](docs/adr/002-terminal-first-foundation.md).
 - **Project orientation:** [Repo overviews and branch updates](docs/PROJECT-ORIENTATION.md).
 - **Implementation status:** [What is implemented, verified, and still open](docs/IMPLEMENTATION-STATUS.md).

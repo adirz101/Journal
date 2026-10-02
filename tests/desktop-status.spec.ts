@@ -47,7 +47,7 @@ test('a Git-drafted branch update is saved only after review and approved before
     commit('route.txt', 'REFUND_ROUTE_DONE');
     await page.getByRole('button', { name: /status project/ }).click();
     await page.getByRole('tab', { name: /^Knowledge/ }).click();
-    await expect(page.getByText('1 commit since this update')).toBeVisible();
+    await expect(page.getByText(/Updated 0 day\(s\) ago · 1 commit since/)).toBeVisible();
     await page.getByRole('button', { name: 'Propose update', exact: true }).click();
     await expect(statement).toHaveValue(/REFUND_ROUTE_DONE/);
     await expect(statement).toHaveValue(/Current work: REFUND_ROUTE_IN_PROGRESS/);

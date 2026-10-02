@@ -39,12 +39,13 @@ Session states: `starting`, `running` (activity `working` or `idle` when Claude 
 
 ## Data
 
-One SQLite file with ordered, idempotent migrations (`PRAGMA user_version`, currently 3):
+One SQLite file with ordered, idempotent migrations (`PRAGMA user_version`, currently 5):
 
 - `projects`, `memories`, `revisions` (immutable), and `receipts` (immutable packet, plus the exact launch prompt once delivered).
 - `sessions`: provider, project, branch, baseline (HEAD plus files already dirty at start), native ID and confirmation, PID identity, runtime ID, last activity, survivors, recovery marker and archived flag.
 - `events`: a bounded per-session timeline of at most 2,000 rows. Rows hold small metadata only: redacted command text, exit codes, durations and edited paths. No prompts, tool output or terminal output.
 - `memory_fts`: FTS5 with `porter unicode61` over the statement plus an alias column built from identifiers and paths.
+- `workspaces` (managed and imported worktrees), `proposals` (inbox, unique per project and fingerprint), `audit` (reviewer and maintenance actions), and a `pinned` flag on memories.
 
 The Changes view runs Git with literal pathspecs, reads untracked files only when no path component is a symlink and the file stays inside the checkout, and serves diffs only for paths it listed. **Open** uses the system default application only for regular, non-executable, non-launchable files; anything else is revealed in the file manager.
 
@@ -52,7 +53,19 @@ Hook event files are redacted at write time, rotated once consumed, swept at run
 
 Terminal output exists only in runtime memory: 256 KiB per session in 8 KiB chunks, with 64 KiB of in-flight display credit per attached session. A gap marker discloses dropped history.
 
+## Workspaces
+
+A session runs in the project's own checkout, a Journal-managed Git worktree, or an imported existing worktree (`src/core/workspaces.mjs`). Creating a worktree records an `intent` row before `git worktree add -b <branch> <path> <base>` runs; reconciliation turns unfinished intents into `ready` (Git finished) or `failed` (nothing or an unregistered folder, left untouched), and vanished worktrees into `missing`. Journal never uses `--force`, never stashes or copies uncommitted changes, and removes only clean, unlocked, idle managed worktrees (keeping the branch); imported worktrees are only forgotten, never deleted. Sessions resolve their cwd through a view that requires a registered worktree of the same Git common directory; context, baselines and diffs use that view, and resume reuses the original workspace. Research mode starts each CLI in its own read-only mode; the CLI can leave it in-session, so it is not enforcement. Workspace actions are recorded in the `audit` table.
+
+## Knowledge maintenance
+
+- **Proposal inbox** (`src/core/proposals.mjs`): after a session ends, the runtime derives proposals from explicit `Rule:`/`Decision:` lines in the task, passing test commands observed through hooks, and branches that moved. No model calls; fingerprints make it idempotent; accepting creates an unapproved candidate.
+- **Selection controls**: pinned rules (still validated), leave-out for one task, mark incorrect, superseding replacements, branch-to-all-branches promotion proposals, environment qualifiers, category diversity, and per-claim selection reasons stored in receipts.
+- **Data** (`src/core/maintenance.mjs`): integrity-checked online backups, an offline restore script, storage accounting, versioned Brain export of approved claims and import (imports become candidates), explicit session purge, and 90-day timeline retention. Knowledge is never pruned automatically.
+
 ## Provider observability
+
+See [PROVIDERS.md](PROVIDERS.md) for versions and the full matrix.
 
 | | Claude Code | Codex |
 | --- | --- | --- |

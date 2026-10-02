@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, type Session, type TimelineEvent } from './types';
 
-interface Command { toolUseId: string; command: string; test: boolean; at: string; status: string; exitCode: number | null; durationMs: number | null; }
+interface Command { toolUseId: string; command: string; cwd: string | null; test: boolean; at: string; status: string; exitCode: number | null; durationMs: number | null; endedAt: string | null; }
 
 const describe = (event: TimelineEvent) => {
   const b = event.body as Record<string, any>;
@@ -57,8 +57,8 @@ export function ActivityPanel({ session, live }: { session: Session; live: Timel
     const map = new Map<string, Command>();
     for (const event of events) {
       const b = event.body as Record<string, any>;
-      if (event.kind === 'command-start') map.set(b.toolUseId, { toolUseId: b.toolUseId, command: b.command, test: !!b.test, at: event.at, status: 'running', exitCode: null, durationMs: null });
-      if (event.kind === 'command-end' && map.has(b.toolUseId)) Object.assign(map.get(b.toolUseId)!, { status: b.status, exitCode: b.exitCode, durationMs: b.durationMs });
+      if (event.kind === 'command-start') map.set(b.toolUseId, { toolUseId: b.toolUseId, command: b.command, cwd: b.cwd ?? null, test: !!b.test, at: event.at, status: b.background ? 'background' : 'running', exitCode: null, durationMs: null, endedAt: null });
+      if (event.kind === 'command-end' && map.has(b.toolUseId)) Object.assign(map.get(b.toolUseId)!, { status: b.status, exitCode: b.exitCode, durationMs: b.durationMs, endedAt: event.at });
     }
     return [...map.values()].reverse();
   }, [events]);
@@ -71,11 +71,11 @@ export function ActivityPanel({ session, live }: { session: Session; live: Timel
     {observable && <section aria-label="Tests" className="test-summary">
       <span className="eyebrow">TEST COMMANDS</span>
       {tests.length ? <p>{tests.filter(t => t.status === 'succeeded').length} exited 0 · {tests.filter(t => t.status === 'failed').length} failed · {tests.filter(t => !['succeeded', 'failed'].includes(t.status)).length} running or unknown</p> : <p className="muted">No test commands observed.</p>}
-      <small>Exit status only. Journal does not infer test results from agent text.</small>
+      <small>Exit status only, from Claude Code hooks. Journal does not parse test reports or infer results from agent text, and does not store command output.</small>
     </section>}
     {observable && <section aria-label="Commands"><span className="eyebrow">COMMANDS</span>
       {commands.length ? <ul className="command-list">{commands.slice(0, 100).map(c => <li key={c.toolUseId}>
-        <code title={c.command}>{c.command}</code>
+        <code title={`${c.command}\nin ${c.cwd ?? 'unknown directory'} · started ${new Date(c.at).toLocaleTimeString()}${c.endedAt ? ` · ended ${new Date(c.endedAt).toLocaleTimeString()}` : ''} · output not stored`}>{c.cwd && c.cwd !== '.' ? `${c.cwd} $ ` : ''}{c.command}</code>
         <span className={`command-status ${c.status}`}>{c.status === 'succeeded' ? 'exit 0' : c.exitCode !== null ? `exit ${c.exitCode}` : c.status}{c.durationMs !== null ? ` · ${(c.durationMs / 1000).toFixed(1)}s` : ''}{c.test ? ' · test' : ''}</span>
       </li>)}</ul> : <p className="muted">No commands observed yet.</p>}
     </section>}
