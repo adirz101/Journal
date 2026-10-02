@@ -58,7 +58,7 @@ test('the runtime refuses clients that cannot prove the token, and never receive
   const exchange = messages => new Promise(resolvePromise => {
     const socket = net.connect(runtime.path); socket.setEncoding('utf8'); let text = '';
     socket.on('data', d => { text += d; if (text.includes('\n') && messages.length) socket.write(frame(messages.shift())); }); socket.on('close', () => resolvePromise(text));
-    socket.on('connect', () => socket.write(frame({ id: 1, method: 'hello', params: { protocol: 2, nonce: 'n'.repeat(48) } })));
+    socket.on('connect', () => socket.write(frame({ id: 1, method: 'hello', params: { protocol: 3, nonce: 'n'.repeat(48) } })));
     setTimeout(() => socket.destroy(), 500);
   });
   const reply = await exchange([{ id: 2, method: 'auth', params: { proof: 'f'.repeat(64) } }]);
@@ -82,7 +82,7 @@ test('a client refuses a server that cannot prove the token', async t => {
   const seen = [];
   const impostor = net.createServer(socket => { socket.setEncoding('utf8'); socket.on('data', d => { seen.push(d); socket.write(frame({ id: 0, value: { challenge: 'c'.repeat(48), proof: '0'.repeat(64) } })); }); });
   await new Promise(r => impostor.listen(impostorPath, r)); t.after(() => impostor.close());
-  writeFileSync(join(f.dataDir, 'runtime.json'), JSON.stringify({ socket: impostorPath, token: 'secret-token-value', protocol: 2 }));
+  writeFileSync(join(f.dataDir, 'runtime.json'), JSON.stringify({ socket: impostorPath, token: 'secret-token-value', protocol: 3 }));
   const c = new RuntimeClient({ dataDir: f.dataDir, launch: () => null, connectTimeoutMs: 600 }); t.after(() => c.close());
   await assert.rejects(c.connect(), /Could not start/);
   assert.ok(seen.length && seen.every(text => !text.includes('secret-token-value') && !/"auth"/.test(text)));

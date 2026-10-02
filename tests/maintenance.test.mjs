@@ -99,3 +99,21 @@ test('purge removes one ended session; retention trims old timelines but keeps k
   assert.equal(f.store.getMemory(kept.id).status, 'active');
   assert.ok(f.store.listAudit().some(a => a.action === 'session-purged'));
 });
+
+test('review fixes: export approved only, purge keeps shared resume history, restore validates the file', async t => {
+  const f = fixture(t); f.approve('Approved rule about caching.');
+  f.store.proposeMemory(f.project.id, { statement: 'Unreviewed candidate about queues.', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'x' } });
+  assert.equal(f.store.exportBrain(f.project.id).json.memories.length, 1);
+  const receipt = f.store.prepareContext(f.project.id, '');
+  const base = { projectId: f.project.id, provider: 'claude', nativeId: '44444444-4444-4444-8444-444444444444', status: 'stopped', receiptId: receipt.id, createdAt: '' };
+  f.store.saveSession({ ...base, id: 'a' }); f.store.saveSession({ ...base, id: 'b', resumedFrom: 'a' });
+  assert.throws(() => f.store.purgeSession('b'), /native conversation/);
+  const { DatabaseSync } = await import('node:sqlite');
+  const other = join(f.root, 'other.sqlite'); const db = new DatabaseSync(other); db.exec('CREATE TABLE x(a)'); db.close();
+  assert.throws(() => restore(other, f.data, { alive: () => false }), /not a Journal backup/);
+  const newer = join(f.root, 'newer.sqlite'); await f.store.backup(newer); const n = new DatabaseSync(newer); n.exec('PRAGMA user_version=99'); n.close();
+  assert.throws(() => restore(newer, f.data, { alive: () => false }), /newer Journal/);
+  writeFileSync(join(f.data, 'SingletonLock'), '');
+  const good = join(f.root, 'good.sqlite'); await f.store.backup(good);
+  assert.throws(() => restore(good, f.data, { alive: () => false }), /appears to be open/);
+});

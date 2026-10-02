@@ -6,8 +6,9 @@ import { isDuplicate } from './retrieval.mjs';
 import { redact, refuseCredentials, relativePath, text } from './validation.mjs';
 
 // Backups, storage accounting, Brain export/import, retention and purge.
-// Exports carry reviewed knowledge only: no sessions, terminal output,
-// commands or receipts, and every text field is redacted again on the way out.
+// Exports carry approved knowledge (unreviewed candidates only on request):
+// no sessions, terminal output, commands or receipts, and every text field is
+// redacted again on the way out.
 
 export const BRAIN_FORMAT = 'journal-brain'; export const BRAIN_VERSION = 1;
 export const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
@@ -22,7 +23,8 @@ export async function backupTo(db, destination) {
   if (!isAbsolute(destination)) throw new Error('Backup path must be absolute');
   const temporary = `${destination}.partial-${randomUUID().slice(0, 8)}`;
   try {
-    await sqliteBackup(db, temporary);
+    // One step: a stepped backup restarts whenever the runtime writes.
+    await sqliteBackup(db, temporary, { rate: -1 });
     const copy = new DatabaseSync(temporary, { readOnly: true });
     let integrity; try { integrity = copy.prepare('PRAGMA integrity_check').get().integrity_check; } finally { copy.close(); }
     if (integrity !== 'ok') throw new Error(`Backup failed its integrity check: ${integrity}`);
@@ -45,9 +47,11 @@ function exportSource(source) {
   return { ...base, note: redact(source.note ?? '', 2000) };
 }
 
-export function exportBrain(store, projectId) {
+export function exportBrain(store, projectId, { includeUnreviewed = false } = {}) {
   const project = store.project(projectId);
-  const rows = store.db.prepare(`SELECT m.id, m.status, m.pinned FROM memories m WHERE m.project_id=? AND m.status IN ('active','candidate','archived') ORDER BY m.rowid`).all(projectId);
+  // Approved claims by default; unreviewed candidates only when asked for, and labelled.
+  const statuses = includeUnreviewed ? "('active','candidate')" : "('active')";
+  const rows = store.db.prepare(`SELECT m.id, m.status, m.pinned FROM memories m WHERE m.project_id=? AND m.status IN ${statuses} ORDER BY m.rowid`).all(projectId);
   const memories = rows.map(row => ({
     id: row.id, status: row.status, pinned: !!row.pinned,
     revisions: store.memoryHistory(row.id).reverse().map(r => ({ revision: r.revision, statement: redact(r.statement, 2000), category: r.category, scope: r.scope, branch: r.branch ?? null,
@@ -58,10 +62,10 @@ export function exportBrain(store, projectId) {
 }
 
 export function brainMarkdown(document) {
-  const lines = [`# Journal knowledge: ${document.project.name}`, '', `Exported ${document.exportedAt}. Format ${document.format} v${document.version}. Reviewed claims only; no sessions or terminal output.`, ''];
-  for (const status of ['active', 'candidate', 'archived']) {
+  const lines = [`# Journal knowledge: ${document.project.name}`, '', `Exported ${document.exportedAt}. Format ${document.format} v${document.version}. Approved claims${document.memories.some(m => m.status === 'candidate') ? ' and unreviewed candidates (marked)' : ' only'}; no sessions or terminal output.`, ''];
+  for (const status of ['active', 'candidate']) {
     const group = document.memories.filter(m => m.status === status); if (!group.length) continue;
-    lines.push(`## ${status === 'active' ? 'Approved' : status === 'candidate' ? 'Awaiting review' : 'Withdrawn'}`, '');
+    lines.push(`## ${status === 'active' ? 'Approved' : 'Unreviewed candidates (not approved)'}`, '');
     for (const memory of group) {
       const r = memory.revisions.at(-1);
       lines.push(`- **${r.category}** (${r.scope === 'branch' ? `branch ${r.branch}` : 'all branches'}${r.area ? `, ${r.area}` : ''}${memory.pinned ? ', pinned' : ''}, r${r.revision}): ${r.statement.replace(/\n/g, ' ')}`);
@@ -109,6 +113,9 @@ export function importBrain(store, projectId, raw) {
 export function purgeSession(store, sessionId) {
   const session = store.getSession(sessionId);
   if (['starting', 'running', 'waiting', 'stopping', 'orphaned'].includes(session.status)) throw new Error('Stop the session before purging it');
+  // Resume compares against the latest delivery in the same native
+  // conversation; deleting one of several rows would hide what was delivered.
+  if (session.nativeId && store.db.prepare(`SELECT 1 FROM sessions WHERE id<>? AND json_extract(body,'$.provider')=? AND json_extract(body,'$.nativeId')=?`).get(sessionId, session.provider, session.nativeId)) throw new Error('Other sessions continue this native conversation; purge cannot remove one of them without breaking resume history');
   store.transaction(() => {
     store.db.prepare('DELETE FROM events WHERE session_id=?').run(sessionId);
     store.db.prepare(`DELETE FROM receipts WHERE id=? OR json_extract(body,'$.sessionId')=?`).run(session.receiptId, sessionId);

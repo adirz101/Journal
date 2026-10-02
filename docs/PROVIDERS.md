@@ -15,7 +15,7 @@ Other versions may work. The launch bar shows the detected version and what Jour
 | --- | --- | --- |
 | Launch | `claude --session-id <UUID> [--settings <per-launch hooks>] -- <prompt>` | `codex -- <prompt>` |
 | Exact resume | `--resume <UUID>`; ID known at launch | `codex resume <UUID>` after the user confirms the exit-banner hint |
-| Research mode | `--permission-mode plan` | `--sandbox read-only` |
+| Research mode (starting mode, not enforcement) | `--permission-mode plan`; can be left in-session | `--sandbox read-only`; approvals may escalate under approval-capable profiles |
 | Status | Working, idle, waiting for permission (hooks) | Running or exited |
 | Commands | Bash command text (redacted), working directory, exit code, duration for foreground commands; background commands report unknown | Unknown |
 | File edits | Edit, Write, MultiEdit, NotebookEdit paths | Unknown (the Changes view shows Git state) |

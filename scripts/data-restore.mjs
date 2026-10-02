@@ -6,6 +6,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { copyFileSync, existsSync, readFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const SUPPORTED_VERSION = 5;
 
 export function defaultDataDir() {
   if (process.env.JOURNAL_DATA_DIR) return resolve(process.env.JOURNAL_DATA_DIR);
@@ -14,13 +17,21 @@ export function defaultDataDir() {
   return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'journal-desktop');
 }
 
-export function restore(backup, dataDir = defaultDataDir(), { alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } } } = {}) {
+export function restore(backup, dataDir = defaultDataDir(), { alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }, force = false } = {}) {
   backup = resolve(backup);
   if (!existsSync(backup)) throw new Error(`No backup at ${backup}`);
   const lock = join(dataDir, 'runtime.lock');
   if (existsSync(lock)) { const owner = JSON.parse(readFileSync(lock, 'utf8')); if (alive(owner.pid)) throw new Error('Quit Journal and stop its runtime (choose "Stop sessions and quit") before restoring'); }
+  // Electron's single-instance lock exists while the app is open.
+  if (!force && existsSync(join(dataDir, 'SingletonLock'))) throw new Error('Journal appears to be open. Quit it first (or pass --force if it crashed)');
   const check = new DatabaseSync(backup, { readOnly: true });
-  try { const result = check.prepare('PRAGMA integrity_check').get().integrity_check; if (result !== 'ok') throw new Error(`Backup failed its integrity check: ${result}`); }
+  try {
+    const result = check.prepare('PRAGMA integrity_check').get().integrity_check; if (result !== 'ok') throw new Error(`Backup failed its integrity check: ${result}`);
+    const tables = new Set(check.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => row.name));
+    if (!['projects', 'memories', 'revisions', 'receipts', 'sessions'].every(name => tables.has(name))) throw new Error('This file is not a Journal backup');
+    const version = check.prepare('PRAGMA user_version').get().user_version;
+    if (version > SUPPORTED_VERSION) throw new Error(`This backup is from a newer Journal (schema ${version}); update Journal before restoring it`);
+  }
   finally { check.close(); }
   const target = join(dataDir, 'journal.sqlite'); const kept = `${target}.before-restore-${new Date().toISOString().replace(/[:.]/g, '-')}`;
   for (const suffix of ['', '-wal', '-shm']) if (existsSync(target + suffix)) renameSync(target + suffix, kept + suffix);
@@ -28,7 +39,8 @@ export function restore(backup, dataDir = defaultDataDir(), { alive = pid => { t
   return { restored: target, previous: existsSync(kept) ? kept : null };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
-  try { console.log(JSON.stringify(restore(process.argv[2], process.argv[3] ? resolve(process.argv[3]) : undefined), null, 2)); }
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const args = process.argv.slice(2).filter(arg => arg !== '--force');
+  try { console.log(JSON.stringify(restore(args[0], args[1] ? resolve(args[1]) : undefined, { force: process.argv.includes('--force') }), null, 2)); }
   catch (error) { console.error(error.message); process.exitCode = 1; }
 }

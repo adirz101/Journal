@@ -100,6 +100,7 @@ export class JournalStore {
     const environment = text(input.environment ?? '', 'environment qualifier', 200, true); if (environment) refuseCredentials(environment);
     const supersedes = input.supersedes ? this.getMemory(input.supersedes) : null;
     if (supersedes && supersedes.projectId !== projectId) throw new Error('Superseded memory belongs to another project');
+    if (supersedes && (supersedes.id === input.memoryId || supersedes.status !== 'active')) throw new Error('Only another approved claim can be superseded; revise a claim to change it');
     if (category === 'brief' && area) throw new Error('Project briefs apply to the whole checkout; leave the area empty');
     if (input.source?.kind === 'git' && PLACEHOLDER.test(statement)) throw new Error('Replace the bracketed placeholders before saving the update');
     const source = captureEvidence(project, input.source);
@@ -224,7 +225,7 @@ export class JournalStore {
     if (!Array.isArray(disabled) || disabled.length > 100 || disabled.some(x => typeof x !== 'string')) throw new Error('Invalid disabled claims');
     const project = this.view(projectId, workspaceId);
     const terms = queryTerms(query);
-    let matches = []; const cache = new Map(); const warnings = [];
+    let matches = []; const cache = new Map(); const warnings = []; const matchedIds = new Set();
     // Orientation is independent of task words. Current checkout identity and
     // current-branch updates alternate so neither silently crowds out the other.
     const briefs = this.db.prepare(`SELECT r.body,m.status FROM memories m JOIN revisions r ON r.id=m.current_revision
@@ -242,7 +243,7 @@ export class JournalStore {
     for (const row of this.db.prepare(`SELECT r.body,m.status FROM memories m JOIN revisions r ON r.id=m.current_revision
       WHERE m.project_id=? AND m.status='active' AND m.pinned=1 AND json_extract(r.body,'$.category')!='brief'
       AND (json_extract(r.body,'$.scope')='checkout' OR json_extract(r.body,'$.branch')=?) ORDER BY r.rowid DESC LIMIT 20`).all(projectId, project.branch)) {
-      matches.push({ ...row, validation: this.validation(project, parse(row), cache), reason: 'pinned', pinned: true });
+      matches.push({ ...row, validation: this.validation(project, parse(row), cache), reason: 'pinned', pinned: true }); matchedIds.add(parse(row).id);
     }
     if (terms.length) {
       const fts = terms.map(term => `"${term.replaceAll('"', '""')}"`).join(' OR ');
@@ -261,7 +262,7 @@ export class JournalStore {
           const item = parse(row);
           const validation = this.validation(project, item, cache);
           const valid = validation === 'current' && areaMatches(item.area, query);
-          if (matches.some(match => parse(match).id === item.id)) continue;
+          if (matchedIds.has(item.id)) continue; matchedIds.add(item.id);
           const lower = `${item.statement} ${aliasesFor(item)}`.toLocaleLowerCase();
           const hit = terms.filter(term => lower.includes(term.slice(0, Math.max(4, term.length - 2))));
           matches.push({ ...row, validation, reason: `matched ${hit.slice(0, 4).join(', ') || 'task terms'}${item.area ? ` in ${item.area}` : ''}` }); if (valid) eligible++;
@@ -444,11 +445,17 @@ export class JournalStore {
     const id = randomUUID();
     return { id, branch, base: commit, baseLabel: base || project.branch || 'HEAD', path: plannedPath(text(worktreeRoot, 'worktree root', 4096), project, branch, id), notices: creationNotices(project) };
   }
+  // Creates exactly what was reviewed: the planned ID (hence path) and the
+  // base commit resolved at review time, so a moved branch cannot change it.
   createWorkspace(projectId, request, worktreeRoot) {
     const project = this.project(projectId);
-    const plan = this.planWorkspace(projectId, request, worktreeRoot);
+    const plan = this.planWorkspace(projectId, { branch: request.branch, base: request.baseCommit ?? request.base }, worktreeRoot);
+    if (request.planId) {
+      if (!/^[0-9a-f-]{36}$/.test(request.planId)) throw new Error('Invalid plan');
+      plan.id = request.planId; plan.path = plannedPath(text(worktreeRoot, 'worktree root', 4096), project, plan.branch, request.planId);
+    }
     // Intent first: a crash after this point is reconciled from Git.
-    const workspace = { id: plan.id, projectId, kind: 'managed', path: plan.path, branch: plan.branch, base: plan.base, baseLabel: plan.baseLabel, state: 'intent', notices: plan.notices, createdAt: now() };
+    const workspace = { id: plan.id, projectId, kind: 'managed', path: plan.path, branch: plan.branch, base: plan.base, baseLabel: request.base ?? plan.baseLabel, state: 'intent', notices: plan.notices, createdAt: now() };
     this.saveWorkspace(workspace); this.audit('workspace-intent', { id: workspace.id, branch: workspace.branch, base: workspace.base });
     try { addWorktree(project, workspace); }
     catch (error) { this.reconcileWorkspaces(projectId); const current = this.getWorkspace(workspace.id); if (current.state !== 'ready') { this.saveWorkspace({ ...current, state: 'failed', error: error.message }); throw error; } }
@@ -523,7 +530,11 @@ export class JournalStore {
   }
   checkoutBaseline(projectId, workspaceId = null) { return checkoutBaseline(this.view(projectId, workspaceId)); }
   sessionView(session) { return this.view(session.projectId, session.workspaceId ?? null); }
-  sessionChanges(sessionId) { const session = this.getSession(sessionId); return sessionChanges(this.sessionView(session), session); }
+  sessionChanges(sessionId) {
+    const session = this.getSession(sessionId); let view;
+    try { view = this.sessionView(session); } catch (error) { return { base: session.head ?? '', available: false, reason: `${error.message}. Changes for this session are no longer available.`, files: [] }; }
+    return sessionChanges(view, session);
+  }
   openableFile(sessionId, path) { const session = this.getSession(sessionId); return openableFile(this.sessionView(session), session, path); }
   sessionFileDiff(sessionId, path) { const session = this.getSession(sessionId); return fileDiff(this.sessionView(session), session, path); }
   recoverSessions() {

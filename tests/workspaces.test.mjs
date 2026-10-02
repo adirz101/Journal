@@ -111,3 +111,18 @@ test('sessions run in their workspace with its branch knowledge, resume in place
   assert.equal(launches.at(-1).cwd, ws.path, 'Resume reuses the original workspace');
   manager.disposed = true;
 });
+
+test('review fixes: create the reviewed plan exactly; removed worktrees leave readable history', t => {
+  const f = fixture(t);
+  const plan = f.store.planWorkspace(f.project.id, { branch: 'reviewed', base: 'main' }, f.worktreeRoot);
+  writeFileSync(join(f.repo, 'moved.txt'), 'x'); f.git(f.repo, 'add', '.'); f.git(f.repo, '-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qm', 'main moved');
+  const ws = f.store.createWorkspace(f.project.id, { branch: 'reviewed', base: 'main', baseCommit: plan.base, planId: plan.id }, f.worktreeRoot);
+  assert.equal(ws.path, plan.path); assert.equal(f.git(ws.path, 'rev-parse', 'HEAD'), plan.base, 'The base reviewed, not the moved branch');
+  f.store.saveSession({ id: 'old', projectId: f.project.id, provider: 'claude', status: 'stopped', workspaceId: ws.id, receiptId: 'r', head: plan.base, createdAt: '' });
+  f.store.removeWorkspace(ws.id);
+  const changes = f.store.sessionChanges('old');
+  assert.equal(changes.available, false); assert.match(changes.reason, /no longer available/);
+  const keep = f.store.proposeMemory(f.project.id, { statement: 'Keep me', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'n' } });
+  f.store.setMemoryStatus(keep.id, 'active');
+  assert.throws(() => f.store.proposeMemory(f.project.id, { memoryId: keep.id, supersedes: keep.id, statement: 'Self', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'n' } }), /another approved claim/);
+});

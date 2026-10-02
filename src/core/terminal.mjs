@@ -279,7 +279,7 @@ export class TerminalManager extends EventEmitter {
           entry.commands.set(event.toolUseId, true);
           // Working directory relative to the session's workspace ('.' at its root).
           let cwd = null;
-          if (typeof event.cwd === 'string') { const rel = relative(session.cwd, canonical(event.cwd)); cwd = !rel ? '.' : rel.startsWith('..') ? null : rel.split(sep).join('/').slice(0, 200); }
+          if (typeof event.cwd === 'string') { const rel = relative(session.cwd, canonical(event.cwd)); cwd = !rel ? '.' : rel.startsWith('..') || isAbsolute(rel) ? null : rel.split(sep).join('/').slice(0, 200); }
           this.record(id, 'command-start', { toolUseId: event.toolUseId, command, cwd, background: !!event.background, test: isTestCommand(command) });
         }
         break;

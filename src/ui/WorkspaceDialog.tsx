@@ -7,7 +7,7 @@ export function WorkspaceDialog({ project, onClose, onChanged }: { project: Proj
   const dialog = useRef<HTMLDialogElement>(null);
   const [list, setList] = useState<WorkspaceList | null>(null); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const [branch, setBranch] = useState(''); const [base, setBase] = useState(project.branch ?? 'HEAD');
-  const [plan, setPlan] = useState<{ path: string; notices: string[]; base: string } | null>(null);
+  const [plan, setPlan] = useState<{ id: string; path: string; notices: string[]; base: string } | null>(null);
   const [blockers, setBlockers] = useState<Record<string, string[]>>({});
   const load = async () => setList(await api<WorkspaceList>('workspaces', { projectId: project.id }));
   useEffect(() => { dialog.current?.showModal(); void load().catch(e => setError(e.message)); }, []);
@@ -21,7 +21,7 @@ export function WorkspaceDialog({ project, onClose, onChanged }: { project: Proj
         <label>Base branch or commit<input value={base} onChange={e => { setBase(e.target.value); setPlan(null); }} maxLength={200} /></label></div>
       {plan && <div className="draft-basis"><p>Creates <code>{branch}</code> from {base} ({plan.base.slice(0, 7)}) at <code>{plan.path}</code>.</p>{plan.notices.map(n => <p key={n}>{n}</p>)}</div>}
       <div className="dialog-actions">{!plan ? <button disabled={busy || !branch.trim()} onClick={() => void preview()}>Review</button>
-        : <button className="primary" disabled={busy} onClick={() => void act(async () => { await api('createWorkspace', { projectId: project.id, branch, base }); setBranch(''); setPlan(null); })}>Create worktree</button>}</div>
+        : <button className="primary" disabled={busy} onClick={() => void act(async () => { await api('createWorkspace', { projectId: project.id, branch, base, baseCommit: plan.base, planId: plan.id }); setBranch(''); setPlan(null); })}>Create worktree</button>}</div>
     </section>
     {error && <p className="form-error" role="alert">{error}</p>}
     <ul className="workspace-list" aria-label="Workspaces">

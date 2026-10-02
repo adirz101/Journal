@@ -44,3 +44,11 @@ test('transcript metrics read the result event and tool uses', () => {
   assert.deepEqual(parseTranscript(text), { isError: false, turns: 3, costUsd: 0.05, durationMs: null, inputTokens: 100, outputTokens: 5, toolCalls: 2, toolsBeforeEditTool: 1 });
   void readFileSync;
 });
+
+test('freezing covers the evaluated suite, including imported tasks and graders', async () => {
+  const { suiteHash } = await import('../scripts/benchmark.mjs');
+  const dir = new URL('../benchmarks/ledger-round1', import.meta.url).pathname;
+  const before = suiteHash(dir, suite);
+  const changed = { ...suite, tasks: suite.tasks.map((t, i) => i ? t : { ...t, grader: t.grader + '\n// edited' }) };
+  assert.notEqual(suiteHash(dir, changed)['(evaluated suite)'], before['(evaluated suite)']);
+});

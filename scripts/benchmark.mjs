@@ -17,6 +17,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JournalStore } from '../src/core/store.mjs';
 
 export const CONDITIONS = ['none', 'agents', 'memory', 'journal'];
+export { suiteHash };
 export const DEFAULT_CRITERIA = { minReps: 5, goDelta: 0.15, harmTolerance: 0.05, abandonDelta: 0.10, maxMaintenanceRatio: 1.25 };
 
 // ---------- pure helpers (unit tested) ----------
@@ -134,7 +135,10 @@ export function parseTranscript(text) {
 
 // ---------- commands ----------
 async function loadSuite(dir) { const suite = (await import(pathToFileURL(join(dir, 'suite.mjs')).href)).default; const problems = validateSuite(suite); if (problems.length) throw new Error(`Invalid suite: ${problems.join('; ')}`); return suite; }
-const suiteHash = dir => Object.fromEntries(readdirSync(dir).filter(f => /\.(?:mjs|json|md)$/.test(f)).sort().map(f => [f, createHash('sha256').update(readFileSync(join(dir, f))).digest('hex')]));
+// Hash the evaluated suite (timeline files, knowledge, prompts, grader source)
+// as well as the suite directory, so edits to imported fixtures are caught.
+const suiteHash = (dir, suite) => ({ ...Object.fromEntries(readdirSync(dir).filter(f => /\.(?:mjs|json|md)$/.test(f) && f !== 'FROZEN.json').sort().map(f => [f, createHash('sha256').update(readFileSync(join(dir, f))).digest('hex')])),
+  '(evaluated suite)': createHash('sha256').update(JSON.stringify(suite)).digest('hex') });
 
 async function main() {
   const [suiteArg, command] = process.argv.slice(2); const option = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i >= 0 ? process.argv[i + 1] : fallback; };
@@ -144,9 +148,9 @@ async function main() {
   const root = process.env.JOURNAL_BENCH_DIR ? resolve(process.env.JOURNAL_BENCH_DIR) : join(realpathSync(tmpdir()), `journal-bench-${suite.name}`);
   const config = { model: option('model', 'sonnet'), effort: option('effort', 'medium'), budget: Number(option('budget', '3')), timeoutMs: 15 * 60_000 };
   const conditions = option('conditions', CONDITIONS.join(',')).split(',');
-  if (command === 'freeze') { writeFileSync(join(dir, 'FROZEN.json'), JSON.stringify({ frozenAt: new Date().toISOString(), files: suiteHash(dir) }, null, 2)); console.log('Suite frozen'); return; }
+  if (command === 'freeze') { writeFileSync(join(dir, 'FROZEN.json'), JSON.stringify({ frozenAt: new Date().toISOString(), files: suiteHash(dir, suite) }, null, 2)); console.log('Suite frozen'); return; }
   if (command !== 'report' && existsSync(join(dir, 'FROZEN.json'))) {
-    const frozen = JSON.parse(readFileSync(join(dir, 'FROZEN.json'), 'utf8')).files; const current = suiteHash(dir); delete current['FROZEN.json'];
+    const frozen = JSON.parse(readFileSync(join(dir, 'FROZEN.json'), 'utf8')).files; const current = suiteHash(dir, suite);
     if (JSON.stringify(frozen) !== JSON.stringify(current)) throw new Error('Suite files changed after freezing; re-freeze explicitly before running');
   }
   if (command === 'setup') {

@@ -16,7 +16,7 @@ Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI
 - Current checkout, Journal-managed worktrees from an explicit base, and imported worktrees, with intent persisted before Git side effects and reconciliation after crashes.
 - No force, no stash, no transfer of uncommitted work. Removal refuses dirty, untracked, ignored, locked or in-use worktrees and keeps the branch; imported worktrees are never deleted.
 - Context, baselines and diffs follow the session's workspace, and resume reuses it.
-- Research mode uses Claude's plan mode or the Codex read-only sandbox.
+- Research mode starts Claude in plan mode or Codex in its read-only sandbox. It is a starting intent, not enforcement: both can be changed natively inside the session.
 
 **Observability** ([providers](PROVIDERS.md))
 - Claude per-launch hooks report status, permission waits, redacted Bash commands with working directory, exit code and duration, and edited paths. Codex activity beyond Journal's own events is unknown.
@@ -32,8 +32,8 @@ Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI
 **Data and security**
 - SQLite (migrations v5): workspaces, proposals, audit, events and pinned claims.
 - Integrity-checked online backups, an offline restore script that keeps the previous database, storage and free-space reporting, a clear disk-full error, and a transaction fix that preserves the original SQLite error.
-- Versioned Brain export (JSON plus Markdown, checksum, redaction) and import (size and schema limits, checksum, candidates only, no automatic branch matching).
-- Explicit session purge and 90-day timeline retention; knowledge is never pruned.
+- Versioned Brain export of approved claims (JSON plus Markdown, checksum, redaction) and import (size and schema limits, checksum, candidates only, no automatic branch matching).
+- Explicit session purge (refused when other sessions continue the same native conversation, so resume history stays correct) and 90-day timeline retention; knowledge is never pruned.
 - Redaction before persistence, logs, hooks and export. Sensitive filenames are hidden. Diffs use literal pathspecs and refuse symlinks.
 
 **Terminal**

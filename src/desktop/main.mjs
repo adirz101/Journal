@@ -2,9 +2,10 @@ import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, shell } 
 import { spawn } from 'node:child_process';
 import { resolve, dirname, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { mkdirSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { StoreClient } from './store-client.mjs';
 import { RuntimeClient } from './runtime-client.mjs';
+import { buildId } from '../runtime/protocol.mjs';
 import { detectAgents } from '../core/agents.mjs';
 import { relativePath, text } from '../core/validation.mjs';
 
@@ -94,7 +95,7 @@ const actions = {
   project: async ({ projectId }) => ({ project: await store.project(projectId), sessions: await store.listSessions(projectId), receipts: await store.listReceipts(projectId) }),
   workspaces: ({ projectId }) => store.listWorkspaces(projectId),
   planWorkspace: ({ projectId, branch, base }) => store.planWorkspace(projectId, { branch, base }, join(userData, 'worktrees')),
-  createWorkspace: ({ projectId, branch, base }) => store.createWorkspace(projectId, { branch, base }, join(userData, 'worktrees')),
+  createWorkspace: ({ projectId, branch, base, baseCommit, planId }) => store.createWorkspace(projectId, { branch, base, baseCommit, planId }, join(userData, 'worktrees')),
   importWorkspace: ({ projectId, path }) => store.importWorkspace(projectId, path),
   workspaceRemovalBlockers: ({ id }) => store.workspaceRemovalBlockers(id),
   removeWorkspace: ({ id }) => store.removeWorkspace(id),
@@ -116,8 +117,11 @@ const actions = {
     const result = await dialog.showSaveDialog(window, { title: 'Export project knowledge', defaultPath: 'journal-knowledge.json', filters: [{ name: 'Journal knowledge', extensions: ['json'] }] });
     if (result.canceled) return null;
     const { json, markdown } = await store.exportBrain(projectId);
-    writeFileSync(result.filePath, JSON.stringify(json, null, 2)); writeFileSync(result.filePath.replace(/\.json$/i, '') + '.md', markdown);
-    return { path: result.filePath, memories: json.memories.length };
+    writeFileSync(result.filePath, JSON.stringify(json, null, 2));
+    // Never overwrite an unrelated Markdown file that the save dialog did not ask about.
+    const mdPath = result.filePath.replace(/\.json$/i, '') + '.md'; const wroteMarkdown = !existsSync(mdPath);
+    if (wroteMarkdown) writeFileSync(mdPath, markdown);
+    return { path: result.filePath, memories: json.memories.length, markdown: wroteMarkdown ? mdPath : null };
   },
   importBrain: async ({ projectId }) => {
     const result = await dialog.showOpenDialog(window, { title: 'Import project knowledge', properties: ['openFile'], filters: [{ name: 'Journal knowledge', extensions: ['json'] }] });
@@ -152,7 +156,12 @@ const actions = {
     return { revealed: false };
   },
   archiveSession: async ({ id }) => { await runtime.call('release', { id }).catch(() => {}); return store.archiveSession(id); },
-  start: input => runtime.call('start', input),
+  start: input => {
+    // A runtime from another build may not understand newer launch options;
+    // never let it silently run in the wrong workspace or mode.
+    if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.disabled?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, research mode or leave-out.');
+    return runtime.call('start', input);
+  },
   attach: ({ id }) => runtime.call('attach', { id }),
   detach: ({ id }) => runtime.call('detach', { id }),
   write: ({ id, data }) => runtime.call('write', { id, data }),

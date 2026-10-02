@@ -30,7 +30,7 @@ export default function App() {
   const [sessions, setSessions] = useState<Record<string, Session>>({}); const [selectedId, setSelectedId] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null); const [task, setTask] = useState('');
   const [panel, setPanel] = useState<Panel>('knowledge');
-  const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState<{ memory?: Memory; initialCategory?: string; draft?: StatusDraft } | null>(null);
+  const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState<{ memory?: Memory; supersedes?: Memory; initialCategory?: string; draft?: StatusDraft } | null>(null);
   const [knowledgeVersion, setKnowledgeVersion] = useState(0);
   const [runtime, setRuntime] = useState<{ state: string; warning?: string | null }>({ state: 'connecting' });
   const [liveEvents, setLiveEvents] = useState<TimelineEvent[]>([]);
@@ -172,7 +172,7 @@ export default function App() {
               <option value="">Current checkout · {state.project.branch ?? 'detached HEAD'}</option>
               {workspaces?.workspaces.filter(w => w.state === 'ready').map(w => <option key={w.id} value={w.id!}>{w.kind === 'managed' ? 'Worktree' : 'Imported'} · {w.branch ?? 'detached'}</option>)}
             </select></label><button className="text-button" onClick={() => setWorkspaceDialog(true)}>Workspaces…</button>
-              <label className="inline-check"><input type="checkbox" checked={research} onChange={e => setResearch(e.target.checked)} /> Research (read-only: Claude plan mode, Codex read-only sandbox)</label></div>
+              <label className="inline-check"><input type="checkbox" checked={research} onChange={e => setResearch(e.target.checked)} /> Research (starts in Claude plan mode or the Codex read-only sandbox; can be changed in the session)</label></div>
             <p className="provider-line">{bootstrap?.agents.map(a => <span key={a.provider} title={a.available ? `${a.path ?? ''}\nResume: ${a.capabilities?.exactResume}\nObserved: status ${a.capabilities?.status.join(', ')}; commands ${a.capabilities?.commands}` : 'Not found on PATH'}>{a.provider === 'claude' ? 'Claude Code' : 'Codex'} {a.available ? a.version ?? '' : '· not found'}</span>)}</p>
             {bootstrap?.agents.some(a => !a.available) && <p className="hint">{bootstrap.agents.filter(a => !a.available).map(a => a.provider).join(', ')} not found on PATH. Install the native CLI, then reopen Journal.</p>}
           </section>
@@ -210,6 +210,6 @@ export default function App() {
     </aside>}
     {dataDialog && <DataDialog project={state?.project ?? null} onClose={() => setDataDialog(false)} onChanged={() => { setKnowledgeVersion(v => v + 1); void refresh().catch(() => {}); }} />}
     {state && workspaceDialog && <WorkspaceDialog project={state.project} onClose={() => setWorkspaceDialog(false)} onChanged={() => void refresh().catch(failed)} />}
-    {state && form && <KnowledgeForm project={state.project} memory={form.memory} initialCategory={form.initialCategory} draft={form.draft} onClose={() => setForm(null)} onSaved={() => { setForm(null); setPanel('knowledge'); setKnowledgeVersion(v => v + 1); }} />}
+    {state && form && <KnowledgeForm project={state.project} memory={form.memory} supersedes={form.supersedes} initialCategory={form.initialCategory} draft={form.draft} onClose={() => setForm(null)} onSaved={() => { setForm(null); setPanel('knowledge'); setKnowledgeVersion(v => v + 1); }} />}
   </ResizableWorkspace>;
 }

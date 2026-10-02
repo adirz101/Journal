@@ -47,7 +47,7 @@ export function testCommandProposals(session, events) {
 
 // After a session that moved the branch, suggest reviewing its status.
 export function statusProposal(session, project, drift, hasUpdate) {
-  if (!project.branch || !session.head || session.head === project.head) return [];
+  if (!project.branch || project.branch !== session.branch || !session.head || session.head === project.head) return [];
   if (hasUpdate && !drift) return [];
   return [{ kind: 'branch-status', category: 'brief', scope: 'branch', statement: `Branch ${project.branch} has ${drift ? `${drift} commit${drift === 1 ? '' : 's'} since its last update` : 'no reviewed status update'}. Propose a branch update to record progress.`,
     source: null, fingerprint: fingerprint('branch-status', session.projectId, project.branch, project.head), evidence: { sessionId: session.id, head: project.head } }];

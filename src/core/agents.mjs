@@ -16,7 +16,8 @@ export function buildAgentLaunch(request) {
     ? (resume ? ['resume', nativeId] : [])
     : (resume ? ['--resume', nativeId] : nativeId ? ['--session-id', nativeId] : []);
   const settingsArgs = provider === 'claude' && settingsFile ? ['--settings', settingsFile] : [];
-  // Research mode uses each CLI's own stricter mode; it never loosens anything.
+  // Research mode starts each CLI in its own stricter mode. It is an intent,
+  // not enforcement: the user can leave plan mode or approve escalation natively.
   const researchArgs = !research ? [] : provider === 'claude' ? ['--permission-mode', 'plan'] : ['--sandbox', 'read-only'];
   return { executable: provider, argv: [...sessionArgs, ...researchArgs, ...settingsArgs, ...(prompt ? ['--', prompt] : [])] };
 }
