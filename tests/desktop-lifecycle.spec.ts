@@ -49,6 +49,12 @@ else console.log('ECHO '+command);
     await page.getByRole('button', { name: 'Start Claude' }).click();
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
     const firstArgs = launches()[0].argv; const nativeId = firstArgs[firstArgs.indexOf('--session-id') + 1];
+    // The terminal accepts input once its output is replayed; wait until a typed line echoes
+    // (on slower machines keys typed earlier are deliberately dropped, never queued).
+    await expect(async () => {
+      await page.locator('.xterm-helper-textarea').pressSequentially('ready'); await page.locator('.xterm-helper-textarea').press('Enter');
+      await expect(page.locator('.terminal-surface')).toContainText('ECHO ready', { timeout: 2000 });
+    }).toPass({ timeout: 20000 });
     const runChild = async () => {
       rmSync(childRecord, { force: true });
       await page.locator('.xterm-helper-textarea').pressSequentially('run');
