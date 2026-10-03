@@ -70,13 +70,15 @@ function launchRuntime() {
 
 function createWindow() {
   window = new BrowserWindow({ title: 'Journal', icon: displayIcon, width: 1440, height: 920, minWidth: 900, minHeight: 640, backgroundColor: '#101216',
-    // Hidden on a developer's machine; shown on CI runners (JOURNAL_CI=1), which have no
-    // user screen and where hidden windows get no real layout or font metrics.
-    show: !headless || process.env.JOURNAL_CI === '1',
+    show: !headless,
     // Hidden test windows keep their size on small CI screens (macOS clamps to the display otherwise).
     enableLargerThanScreen: headless,
     // Hidden test windows must keep timers, visibility and frames running like a visible one.
     webPreferences: { preload: resolve(here, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, backgroundThrottling: !headless } });
+  // Test runs: macOS clamps a new window to the screen (CI runners have a 1024x768
+  // virtual display) even with enableLargerThanScreen; resizing after creation keeps
+  // the requested size, so tests see the same layout everywhere.
+  if (headless) window.setSize(1440, 920);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('will-attach-webview', event => event.preventDefault());

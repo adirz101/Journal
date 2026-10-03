@@ -1,7 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, posix, resolve, sep as pathSep } from 'node:path';
+import { posix, resolve, sep as pathSep } from 'node:path';
 const join = posix.join; // macOS paths only
+const delimiter = ':'; // macOS PATH separator, whatever the host
 
 // Apps opened from Finder get a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin),
 // so CLIs installed by Homebrew, npm, the Claude/Cursor installers or a Node
