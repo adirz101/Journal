@@ -166,7 +166,7 @@ test('keep-running quit is rediscovered; stopping reports and cleans detached le
     expect(alive(daemon)).toBe(true);
     await page.getByRole('button', { name: /End 1 leftover process/ }).click();
     await expect.poll(() => alive(daemon)).toBe(false);
-    await page.getByRole('button', { name: 'Close', exact: true }).click();
+    await page.getByRole('button', { name: 'Archive', exact: true }).click();
     await expect(sessionButton(page, 'KEEP_RUNNING')).toHaveCount(0);
   } finally { await app.close(); f.cleanup(); }
 });

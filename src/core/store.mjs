@@ -8,6 +8,7 @@ import { branchDraft, commitsSince, overviewDraft, PLACEHOLDER } from './status.
 import { aliasesFor, areaMatches, isDuplicate, possibleConflict, queryTerms } from './retrieval.mjs';
 import { checkoutBaseline, fileDiff, openableFile, sessionChanges } from './changes.mjs';
 import { classifyFolder, folderStatus } from './projects.mjs';
+import { SESSION_USER_FIELDS, survivorScanPending } from './sessions.mjs';
 import { basename, relative, sep } from 'node:path';
 import { applyRetention, backupTo, checkpoint, exportBrain, importBrain, purgeSession, storageInfo } from './maintenance.mjs';
 import { ruleProposals, statusProposal, testCommandProposals } from './proposals.mjs';
@@ -60,6 +61,14 @@ export class JournalStore {
           const body = JSON.parse(row.body);
           // rowid preserves the previous most-recent-first order.
           update.run(JSON.stringify({ displayName: null, pinned: false, pinnedAt: null, roots: [], removed: false, openSeq: row.rowid, ...body, folderName: body.folderName ?? basename(row.root) }), row.id);
+        }
+      }],
+      // Sessions gain user-owned display names, pins and removal markers.
+      [7, () => {
+        const update = this.db.prepare('UPDATE sessions SET body=? WHERE id=?');
+        for (const row of this.db.prepare('SELECT id, body FROM sessions').all()) {
+          const body = JSON.parse(row.body);
+          update.run(JSON.stringify({ displayName: null, pinned: false, pinSeq: null, archived: false, removed: false, ...body }), row.id);
         }
       }],
     ];
@@ -446,9 +455,49 @@ export class JournalStore {
     this.db.prepare('UPDATE receipts SET body=? WHERE id=?').run(JSON.stringify(updated), id);
     return updated;
   }
+  // Runtime saves carry status; user-owned fields (name, pin, archive,
+  // removal) always come from the stored row, so a status save can never
+  // undo a rename. updateSessionUser is the only writer of those fields.
+  // One atomic statement each: the app and the runtime write sessions from
+  // separate processes, so read-then-write would let one undo the other.
   saveSession(session) {
-    this.db.prepare('INSERT INTO sessions VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(session.id, session.projectId, JSON.stringify(session));
-    return session;
+    // '->' keeps JSON types (true stays true); a missing field patches as null and is dropped.
+    const userFields = SESSION_USER_FIELDS.map(field => `'${field}', sessions.body -> '$.${field}'`).join(', ');
+    // A late runtime save (for example a leftover-process scan) never recreates a purged session.
+    this.db.prepare(`INSERT INTO sessions SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM audit WHERE action='session-purged' AND json_extract(body,'$.sessionId')=?) ON CONFLICT(id) DO UPDATE SET body=json_patch(excluded.body, json_object(${userFields}))`)
+      .run(session.id, session.projectId, JSON.stringify(session), session.id);
+    return this.db.prepare('SELECT 1 FROM sessions WHERE id=?').get(session.id) ? this.getSession(session.id) : null;
+  }
+  updateSessionUser(id, patch) {
+    const keys = Object.keys(patch);
+    if (!keys.length || keys.some(key => !SESSION_USER_FIELDS.includes(key))) throw new Error('Invalid session field');
+    const { changes } = this.db.prepare(`UPDATE sessions SET body=json_set(body, ${keys.map(key => `'$.${key}', json(?)`).join(', ')}) WHERE id=?`)
+      .run(...keys.map(key => JSON.stringify(patch[key] ?? null)), text(id, 'session ID', 100));
+    if (!changes) throw new Error('Unknown session');
+    return this.getSession(id);
+  }
+  renameSession(id, name) {
+    const displayName = name === null || name === '' ? null : text(name, 'session name', 120);
+    return this.updateSessionUser(id, { displayName });
+  }
+  setSessionPinned(id, pinned) {
+    if (typeof pinned !== 'boolean') throw new Error('Invalid pin');
+    const session = this.getSession(id);
+    const pinSeq = pinned ? session.pinned ? session.pinSeq : (this.db.prepare("SELECT max(coalesce(json_extract(body,'$.pinSeq'),0)) AS n FROM sessions").get().n ?? 0) + 1 : null;
+    return this.updateSessionUser(id, { pinned, pinSeq });
+  }
+  unarchiveSession(id) { return this.updateSessionUser(id, { archived: false, archivedAt: null }); }
+  // Hides the session everywhere and drops its timeline. Receipts stay:
+  // exact resume of the same native conversation relies on them. Never
+  // touches files, worktrees or the native CLI conversation.
+  removeSession(id) {
+    const session = this.getSession(id);
+    if (['starting', 'running', 'waiting', 'stopping', 'orphaned'].includes(session.status)) throw new Error('Stop the session before removing it');
+    if (session.survivors?.length) throw new Error('End or keep the leftover child processes first; removing would hide them');
+    if (survivorScanPending(session)) throw new Error('Journal is still checking for leftover child processes; try again in a moment, or archive the session instead');
+    this.db.prepare('DELETE FROM events WHERE session_id=?').run(id);
+    this.audit('session-removed', { id });
+    return this.updateSessionUser(id, { removed: true, removedAt: now(), pinned: false, pinSeq: null });
   }
   getSession(id) {
     const session = parse(this.db.prepare('SELECT body FROM sessions WHERE id=?').get(text(id, 'session ID', 100)));
@@ -464,6 +513,7 @@ export class JournalStore {
   // ----- Proposal inbox (deterministic extraction) -----
   generateProposals(sessionId) {
     const session = this.getSession(sessionId);
+    if (session.removed) return []; // removed by the user: nothing is derived from it
     const receipt = (() => { try { return this.getReceipt(session.receiptId); } catch { return null; } })();
     // Proposals describe the primary repository: use its view, never a folder's Git identity.
     const inFolder = String(session.workspaceId ?? '').startsWith('root:');
@@ -619,16 +669,14 @@ export class JournalStore {
 
   listSessions(projectId, includeArchived = false) {
     this.project(projectId);
-    return this.db.prepare(`SELECT body FROM sessions WHERE project_id=? AND (? OR coalesce(json_extract(body,'$.archived'),0)=0) ORDER BY rowid DESC LIMIT 100`).all(projectId, includeArchived ? 1 : 0).map(parse);
+    return this.db.prepare(`SELECT body FROM sessions WHERE project_id=? AND coalesce(json_extract(body,'$.removed'),0)=0 AND (? OR coalesce(json_extract(body,'$.archived'),0)=0) ORDER BY rowid DESC LIMIT 200`).all(projectId, includeArchived ? 1 : 0).map(parse);
   }
   liveSessions() { return this.db.prepare(`SELECT body FROM sessions WHERE json_extract(body,'$.status') IN ${LIVE} ORDER BY rowid LIMIT 100`).all().map(parse); }
   // Sessions needing attention across all projects: running, waiting or orphaned.
-  activeSessions() { return this.db.prepare(`SELECT body FROM sessions WHERE json_extract(body,'$.status') IN ('starting','running','waiting','stopping','orphaned') ORDER BY rowid DESC LIMIT 100`).all().map(parse); }
-  archiveSession(id) {
-    const session = this.getSession(id);
-    if (['starting', 'running', 'waiting', 'stopping', 'orphaned'].includes(session.status)) throw new Error('Stop the session before closing it');
-    return this.saveSession({ ...session, archived: true });
-  }
+  activeSessions() { return this.db.prepare(`SELECT body FROM sessions WHERE json_extract(body,'$.status') IN ('starting','running','waiting','stopping','orphaned') AND coalesce(json_extract(body,'$.removed'),0)=0 ORDER BY rowid DESC LIMIT 100`).all().map(parse); }
+  // Archiving moves a session out of Recent; a running one keeps running and
+  // stays in Active, marked archived, until it ends.
+  archiveSession(id) { return this.updateSessionUser(id, { archived: true, archivedAt: now() }); }
   // Bounded per-session timeline. Bodies are small metadata: no terminal
   // output, prompts or tool results.
   appendEvent(sessionId, kind, body) {
