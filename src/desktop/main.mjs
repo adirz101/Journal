@@ -29,6 +29,8 @@ app.setPath('userData', userData);
 if (!app.requestSingleInstanceLock()) app.quit();
 let window; let store; let runtime; let runtimeState = 'connecting'; let runtimeWarning = null;
 const devUrl = process.env.JOURNAL_DEV_URL;
+// Automated tests run without visible windows or a Dock icon.
+const headless = process.env.JOURNAL_HEADLESS === '1';
 if (devUrl && !/^http:\/\/127\.0\.0\.1:\d+\/$/.test(devUrl)) throw new Error('Development URL must be local');
 const LIVE = ['starting', 'running', 'waiting', 'stopping'];
 
@@ -55,8 +57,9 @@ function launchRuntime() {
 }
 
 function createWindow() {
-  window = new BrowserWindow({ title: 'Journal', icon: displayIcon, width: 1440, height: 920, minWidth: 900, minHeight: 640, backgroundColor: '#101216',
-    webPreferences: { preload: resolve(here, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
+  window = new BrowserWindow({ title: 'Journal', icon: displayIcon, width: 1440, height: 920, minWidth: 900, minHeight: 640, backgroundColor: '#101216', show: !headless,
+    // Hidden test windows must keep timers, visibility and frames running like a visible one.
+    webPreferences: { preload: resolve(here, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, backgroundThrottling: !headless } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('will-attach-webview', event => event.preventDefault());
@@ -70,7 +73,7 @@ function createWindow() {
 // Do not top-level-await readiness: Electron waits for its entry module to finish
 // evaluating before emitting ready (and automation loaders also defer that event).
 app.whenReady().then(async () => {
-if (process.platform === 'darwin') app.dock.setIcon(displayIcon);
+if (process.platform === 'darwin') { if (headless) app.dock.hide(); else app.dock.setIcon(displayIcon); }
 store = new StoreClient(resolve(userData, 'journal.sqlite'));
 await store.ready;
 runtime = new RuntimeClient({ dataDir: userData, launch: launchRuntime });

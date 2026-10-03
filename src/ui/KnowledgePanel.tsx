@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type Memory, type MemoryPage, type Project, type Proposal, type StatusDraft } from './types';
 
 const PAGE = 50;
@@ -9,20 +9,42 @@ export function KnowledgePanel({ project, version, busy, onEdit, onPropose, onCh
 }) {
   const [filter, setFilter] = useState('all'); const [search, setSearch] = useState(''); const [expanded, setExpanded] = useState<string | null>(null);
   const [page, setPage] = useState<MemoryPage | null>(null); const [items, setItems] = useState<Memory[]>([]); const [proposals, setProposals] = useState<Proposal[]>([]);
+  // Loads overlap (approvals, search, project switches). A response renders
+  // only if it was requested after the one on screen, so an older response
+  // can never replace newer data, and a newer one is never held back.
+  // A "Show more" page is appended only to the list it was requested against.
+  const issued = useRef(0); const applied = useRef(0); const resets = useRef(0); const [paging, setPaging] = useState(false);
   const load = useCallback(async (offset = 0) => {
+    const ticket = ++issued.current; const reset = offset === 0 ? ++resets.current : resets.current;
     const next = await api<MemoryPage>('memoryPage', { projectId: project.id, offset, limit: PAGE, filter, search });
+    if (ticket <= applied.current || (offset && reset !== resets.current)) return;
+    applied.current = ticket;
     setPage(next); setItems(current => offset ? [...current, ...next.items] : next.items);
   }, [project.id, filter, search]);
   useEffect(() => { const timer = setTimeout(() => void load(0).catch(onError), search ? 150 : 0); return () => clearTimeout(timer); }, [load, version, search, onError]);
-  useEffect(() => { void api<Proposal[]>('proposals', { projectId: project.id }).then(setProposals).catch(onError); }, [project.id, version, onError]);
-  const act = async (action: () => Promise<unknown>) => { try { await action(); onChanged(); } catch (error) { onError(error); } };
+  useEffect(() => { let current = true; void api<Proposal[]>('proposals', { projectId: project.id }).then(next => { if (current) setProposals(next); }).catch(onError); return () => { current = false; }; }, [project.id, version, onError]);
+  // While an action and its reload are in flight, every action button is
+  // disabled: the list on screen may be stale, and a second click on it
+  // would act on an outdated item.
+  const [pending, setPending] = useState(false);
+  // optimistic: the action returns the updated claim (approve, reject,
+  // withdraw, pin), whose new status is shown at once.
+  const act = async (action: () => Promise<unknown>, { optimistic = false } = {}) => {
+    setPending(true);
+    try {
+      const result = await action();
+      if (optimistic && result && typeof result === 'object') { const updated = result as Memory; setItems(current => current.map(item => item.id === updated.id ? { ...item, status: updated.status, pinned: updated.pinned } : item)); }
+      onChanged(); // the write succeeded; a failed reload below is reported separately
+      try { await load(0); } catch (error) { onError(error); }
+    } catch (error) { onError(error); } finally { setPending(false); }
+  };
   const counts = page?.counts ?? {};
   return <div className="panel-content"><div className="section-heading"><div><span className="eyebrow">A SHARED FOUNDATION</span><h2>Project knowledge</h2></div><button className="icon-button" aria-label="Add knowledge" onClick={() => onEdit({})}>＋</button></div><p className="muted panel-intro">A repo overview and current branch update orient every session. Relevant decisions and lessons add task context.</p>
     <div className="brief-actions"><button onClick={() => onEdit({ initialCategory: 'brief' })}>Add project brief</button><button disabled={busy || !project.branch} onClick={() => onPropose('branch')}>Propose branch update</button><button disabled={busy} onClick={() => onPropose('checkout')}>Propose overview</button></div>
     {proposals.length > 0 && <section className="proposal-inbox" aria-label="Proposals"><span className="eyebrow">INBOX · {proposals.length} PROPOSAL{proposals.length === 1 ? '' : 'S'} FROM OBSERVED EVIDENCE</span>
       {proposals.map(proposal => <article key={proposal.id} className="proposal"><p dir="auto">{proposal.statement}</p><small className="muted">{proposal.kind === 'rule' ? 'Rule line in a task' : proposal.kind === 'test-command' ? 'Observed passing test command' : 'Branch moved after a session'} · {proposal.category}{proposal.branch ? ` · ⑂ ${proposal.branch}` : ''}</small>
         <div className="memory-actions">{proposal.kind === 'branch-status' ? <button disabled={proposal.branch !== project.branch} title={proposal.branch !== project.branch ? `Switch to ${proposal.branch} to update it` : undefined} onClick={() => onPropose('branch')}>Propose branch update</button>
-          : <button className="approve" onClick={() => void act(() => api('acceptProposal', { id: proposal.id }))}>Add for review</button>}<button onClick={() => void act(() => api('dismissProposal', { id: proposal.id }))}>Dismiss</button></div></article>)}
+          : <button className="approve" disabled={pending} onClick={() => void act(() => api('acceptProposal', { id: proposal.id }))}>Add for review</button>}<button disabled={pending} onClick={() => void act(() => api('dismissProposal', { id: proposal.id }))}>Dismiss</button></div></article>)}
     </section>}
     <input className="knowledge-search" aria-label="Search knowledge" placeholder="Search knowledge…" value={search} onChange={e => setSearch(e.target.value)} maxLength={200} />
     <div className="filter-tabs"><button aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>Current</button><button aria-pressed={filter === 'review'} onClick={() => setFilter('review')}>Needs review <span>{counts.candidate ?? 0}</span></button><button aria-pressed={filter === 'active'} onClick={() => setFilter('active')}>Approved</button><button aria-pressed={filter === 'history'} onClick={() => setFilter('history')}>History</button></div>
@@ -31,8 +53,8 @@ export function KnowledgePanel({ project, version, busy, onEdit, onPropose, onCh
       {memory.status === 'candidate' && memory.conflicts?.length ? <div className="memory-conflict" role="note"><strong>Possible conflict</strong>{memory.conflicts.map(c => <span key={c.id}>r{c.revision}: {c.statement}</span>)}</div> : null}
       <button className="source-button" aria-expanded={expanded === memory.id} onClick={() => setExpanded(expanded === memory.id ? null : memory.id)}>{memory.source.kind === 'file' ? `↗ ${memory.source.rootId ? `${project.roots?.find(root => root.id === memory.source.rootId)?.name ?? '(removed folder)'}/` : ''}${memory.source.path}:${memory.source.startLine}` : memory.source.kind === 'git' ? `↗ Git ${memory.source.base ? `${memory.source.base.slice(0, 7)}..` : ''}${memory.source.head?.slice(0, 7)}` : '↗ Your statement'} <span>{expanded === memory.id ? '−' : '+'}</span></button>
       {expanded === memory.id && <div className="evidence-details"><pre dir="auto">{memory.source.kind === 'git' ? `Commits ${memory.source.base ?? 'up to'} → ${memory.source.head}${memory.source.commitCount != null ? ` (${memory.source.commitCount} at capture)` : ''}` : memory.source.excerpt ?? memory.source.note}</pre>{memory.source.contentHash && <small>Source fingerprint {memory.source.contentHash.slice(0, 12)}</small>}<small>Revision {memory.revisionId}</small></div>}
-      <div className="memory-actions">{memory.status === 'candidate' && <><button className="approve" disabled={memory.validation !== 'current' || busy} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'active' }))}>Approve</button><button disabled={busy} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'rejected' }))}>Reject</button></>}{memory.category === 'brief' && memory.status !== 'rejected' && memory.status !== 'archived' && (memory.scope === 'checkout' || memory.branch === project.branch) && <button disabled={busy} onClick={() => onPropose(memory.scope)}>Propose update</button>}{memory.status === 'active' && memory.category !== 'brief' && <button onClick={() => void act(() => api('setPinned', { id: memory.id, pinned: !memory.pinned }))}>{memory.pinned ? 'Unpin' : 'Pin'}</button>}{memory.status === 'active' && memory.scope === 'branch' && memory.category !== 'brief' && <button onClick={() => void act(() => api('proposePromotion', { id: memory.id }))}>Propose for all branches</button>}<button onClick={() => onEdit({ memory })}>Revise</button>{memory.status === 'active' && memory.category !== 'brief' && (memory.scope === 'checkout' || memory.branch === project.branch) && <button onClick={() => onEdit({ supersedes: memory })}>Replace…</button>}{memory.status === 'active' && <button onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'archived' }))}>Withdraw</button>}</div>
+      <div className="memory-actions">{memory.status === 'candidate' && <><button className="approve" disabled={memory.validation !== 'current' || busy || pending} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'active' }), { optimistic: true })}>Approve</button><button disabled={busy || pending} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'rejected' }), { optimistic: true })}>Reject</button></>}{memory.category === 'brief' && memory.status !== 'rejected' && memory.status !== 'archived' && (memory.scope === 'checkout' || memory.branch === project.branch) && <button disabled={busy} onClick={() => onPropose(memory.scope)}>Propose update</button>}{memory.status === 'active' && memory.category !== 'brief' && <button disabled={pending} onClick={() => void act(() => api('setPinned', { id: memory.id, pinned: !memory.pinned }), { optimistic: true })}>{memory.pinned ? 'Unpin' : 'Pin'}</button>}{memory.status === 'active' && memory.scope === 'branch' && memory.category !== 'brief' && <button disabled={pending} onClick={() => void act(() => api('proposePromotion', { id: memory.id }))}>Propose for all branches</button>}<button onClick={() => onEdit({ memory })}>Revise</button>{memory.status === 'active' && memory.category !== 'brief' && (memory.scope === 'checkout' || memory.branch === project.branch) && <button onClick={() => onEdit({ supersedes: memory })}>Replace…</button>}{memory.status === 'active' && <button disabled={pending} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'archived' }), { optimistic: true })}>Withdraw</button>}</div>
     </article>)}{page && !items.length && <div className="knowledge-empty"><span>◇</span><h3>{search ? 'No matching knowledge' : filter === 'review' ? 'Nothing waiting for review' : 'Keep the useful parts.'}</h3><p>Add a decision, a constraint, or a lesson.<br />It becomes shared knowledge after you approve it.</p>{!search && <button onClick={() => onEdit({})}>Add knowledge</button>}</div>}</div>
-    {page && items.length < page.total && <button className="load-more" onClick={() => void load(items.length).catch(onError)}>Show more ({page.total - items.length} remaining)</button>}
+    {page && items.length < page.total && <button className="load-more" disabled={paging || pending} onClick={() => { setPaging(true); void load(items.length).catch(onError).finally(() => setPaging(false)); }}>Show more ({page.total - items.length} remaining)</button>}
   </div>;
 }

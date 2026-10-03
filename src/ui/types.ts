@@ -27,9 +27,20 @@ export interface StatusDraft { scope: 'checkout' | 'branch'; memoryId: string | 
 declare global {
   interface Window { journal?: { request: (action: string, input?: object) => Promise<unknown>; onEvent: (callback: (event: TerminalEvent) => void) => () => void }; }
 }
+// Knowledge writes still in flight. A launch or context preview waits for
+// them, so what the agent receives always includes what the user just did
+// (the runtime reads the database from another process).
+// Only writes that change what a packet contains, and none that wait on a dialog.
+const KNOWLEDGE_WRITES = new Set(['proposeMemory', 'setMemoryStatus', 'setPinned', 'markIncorrect', 'proposePromotion', 'acceptProposal']);
+const READS_KNOWLEDGE = new Set(['start', 'prepareContext']);
+const pendingWrites = new Set<Promise<unknown>>();
 export async function api<T>(action: string, input: object = {}): Promise<T> {
   if (!window.journal) throw new Error('Open Journal as a desktop app with npm run dev');
-  return await window.journal.request(action, input) as T;
+  // Bounded: a stuck write never blocks launches for more than 10 s.
+  if (READS_KNOWLEDGE.has(action) && pendingWrites.size) await Promise.race([Promise.allSettled([...pendingWrites]), new Promise(resolve => setTimeout(resolve, 10000))]);
+  const request = window.journal.request(action, input);
+  if (KNOWLEDGE_WRITES.has(action)) { pendingWrites.add(request); void request.finally(() => pendingWrites.delete(request)).catch(() => {}); }
+  return await request as T;
 }
 export const LIVE_STATUSES: SessionStatus[] = ['starting', 'running', 'waiting', 'stopping'];
 export const isLive = (session: Session | null | undefined) => !!session && LIVE_STATUSES.includes(session.status);
