@@ -99,7 +99,7 @@ npm run smoke:agents
 npm run pilot:memory
 ```
 
-The [current implementation status](docs/IMPLEMENTATION-STATUS.md) records 144 passing core tests, a passing typecheck and production build, and fourteen passing desktop scenarios (run headless). Desktop checks use real Electron, the runtime process and node-pty with controlled fixture CLIs: they cover context delivery, resume, four concurrent sessions, reload, app and runtime crashes, process cleanup, worktrees, research mode, and the changes view. These fixtures do not establish authenticated provider behavior.
+The [current implementation status](docs/IMPLEMENTATION-STATUS.md) records 145 passing core tests, a passing typecheck and production build, and fourteen passing desktop scenarios (run headless). Desktop checks use real Electron, the runtime process and node-pty with controlled fixture CLIs: they cover context delivery, resume, four concurrent sessions, reload, app and runtime crashes, process cleanup, worktrees, research mode, and the changes view. These fixtures do not establish authenticated provider behavior.
 
 `smoke:agents` checks installed native CLI startup without submitting a task or accepting trust prompts. `pilot:memory` evaluates local retrieval against 28 frozen synthetic claims and 20 labelled tasks without provider requests; it measures scope/evidence exclusion and lexical relevance, not model quality or time savings.
 

@@ -17,3 +17,9 @@ export function generateTitle(task, prior = null) {
 
 // Fields the user owns. Runtime status saves never overwrite them.
 export const SESSION_USER_FIELDS = ['displayName', 'pinned', 'pinSeq', 'archived', 'archivedAt', 'removed', 'removedAt'];
+
+// A session that ended moments ago may still be scanning for leftover child
+// processes (survivors is null until the scan saves). A scan that could not run
+// leaves null for good, so the wait is bounded.
+export const SURVIVOR_SCAN_MS = 30_000;
+export const survivorScanPending = (session, at = Date.now()) => session.survivors === null && !!session.endedAt && at - Date.parse(session.endedAt) < SURVIVOR_SCAN_MS;

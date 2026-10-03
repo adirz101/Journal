@@ -16,7 +16,9 @@ export async function showMenu(items: (MenuItem | false | null | undefined)[], p
 // Pointer opens use the pointer; keyboard opens (menu key, Shift+F10, buttons)
 // report no pointer position, so the menu opens at the element instead.
 export function menuPosition(event: { clientX: number; clientY: number; currentTarget: EventTarget | null; detail?: number }) {
-  if (event.clientX || event.clientY) return undefined;
+  // Pointer and keyboard (Shift+F10, menu key) opens both report a point inside
+  // the element; only a synthetic event at 0,0 falls back to its rectangle.
+  if (event.clientX || event.clientY) return { x: Math.round(event.clientX), y: Math.round(event.clientY) };
   const rect = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect();
-  return rect ? { x: rect.left + 8, y: rect.bottom } : undefined;
+  return rect ? { x: Math.round(rect.left + 8), y: Math.round(rect.bottom) } : undefined;
 }

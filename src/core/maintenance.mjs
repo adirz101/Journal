@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, renameSync, rmSync, statfsSync, statSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import { isDuplicate } from './retrieval.mjs';
+import { survivorScanPending } from './sessions.mjs';
 import { redact, refuseCredentials, relativePath, text } from './validation.mjs';
 
 // Backups, storage accounting, Brain export/import, retention and purge.
@@ -115,6 +116,9 @@ export function importBrain(store, projectId, raw) {
 export function purgeSession(store, sessionId) {
   const session = store.getSession(sessionId);
   if (['starting', 'running', 'waiting', 'stopping', 'orphaned'].includes(session.status)) throw new Error('Stop the session before purging it');
+  // Purging must not erase the only record of processes the agent left behind.
+  if (session.survivors?.length) throw new Error('End or keep the leftover child processes first; purging would hide them');
+  if (survivorScanPending(session)) throw new Error('Journal is still checking for leftover child processes; try again in a moment');
   // Resume compares against the latest delivery in the same native
   // conversation; deleting one of several rows would hide what was delivered.
   if (session.nativeId && store.db.prepare(`SELECT 1 FROM sessions WHERE id<>? AND json_extract(body,'$.provider')=? AND json_extract(body,'$.nativeId')=?`).get(sessionId, session.provider, session.nativeId)) throw new Error('Other sessions continue this native conversation; purge cannot remove one of them without breaking resume history');

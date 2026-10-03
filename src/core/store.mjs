@@ -8,7 +8,7 @@ import { branchDraft, commitsSince, overviewDraft, PLACEHOLDER } from './status.
 import { aliasesFor, areaMatches, isDuplicate, possibleConflict, queryTerms } from './retrieval.mjs';
 import { checkoutBaseline, fileDiff, openableFile, sessionChanges } from './changes.mjs';
 import { classifyFolder, folderStatus } from './projects.mjs';
-import { SESSION_USER_FIELDS } from './sessions.mjs';
+import { SESSION_USER_FIELDS, survivorScanPending } from './sessions.mjs';
 import { basename, relative, sep } from 'node:path';
 import { applyRetention, backupTo, checkpoint, exportBrain, importBrain, purgeSession, storageInfo } from './maintenance.mjs';
 import { ruleProposals, statusProposal, testCommandProposals } from './proposals.mjs';
@@ -463,9 +463,10 @@ export class JournalStore {
   saveSession(session) {
     // '->' keeps JSON types (true stays true); a missing field patches as null and is dropped.
     const userFields = SESSION_USER_FIELDS.map(field => `'${field}', sessions.body -> '$.${field}'`).join(', ');
-    this.db.prepare(`INSERT INTO sessions VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=json_patch(excluded.body, json_object(${userFields}))`)
-      .run(session.id, session.projectId, JSON.stringify(session));
-    return this.getSession(session.id);
+    // A late runtime save (for example a leftover-process scan) never recreates a purged session.
+    this.db.prepare(`INSERT INTO sessions SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM audit WHERE action='session-purged' AND json_extract(body,'$.sessionId')=?) ON CONFLICT(id) DO UPDATE SET body=json_patch(excluded.body, json_object(${userFields}))`)
+      .run(session.id, session.projectId, JSON.stringify(session), session.id);
+    return this.db.prepare('SELECT 1 FROM sessions WHERE id=?').get(session.id) ? this.getSession(session.id) : null;
   }
   updateSessionUser(id, patch) {
     const keys = Object.keys(patch);
@@ -493,6 +494,7 @@ export class JournalStore {
     const session = this.getSession(id);
     if (['starting', 'running', 'waiting', 'stopping', 'orphaned'].includes(session.status)) throw new Error('Stop the session before removing it');
     if (session.survivors?.length) throw new Error('End or keep the leftover child processes first; removing would hide them');
+    if (survivorScanPending(session)) throw new Error('Journal is still checking for leftover child processes; try again in a moment, or archive the session instead');
     this.db.prepare('DELETE FROM events WHERE session_id=?').run(id);
     this.audit('session-removed', { id });
     return this.updateSessionUser(id, { removed: true, removedAt: now(), pinned: false, pinSeq: null });
@@ -672,8 +674,8 @@ export class JournalStore {
   liveSessions() { return this.db.prepare(`SELECT body FROM sessions WHERE json_extract(body,'$.status') IN ${LIVE} ORDER BY rowid LIMIT 100`).all().map(parse); }
   // Sessions needing attention across all projects: running, waiting or orphaned.
   activeSessions() { return this.db.prepare(`SELECT body FROM sessions WHERE json_extract(body,'$.status') IN ('starting','running','waiting','stopping','orphaned') AND coalesce(json_extract(body,'$.removed'),0)=0 ORDER BY rowid DESC LIMIT 100`).all().map(parse); }
-  // Archiving hides a session from the main lists; a running one keeps
-  // running and stays reachable from the Archived section.
+  // Archiving moves a session out of Recent; a running one keeps running and
+  // stays in Active, marked archived, until it ends.
   archiveSession(id) { return this.updateSessionUser(id, { archived: true, archivedAt: now() }); }
   // Bounded per-session timeline. Bodies are small metadata: no terminal
   // output, prompts or tool results.

@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { JournalStore } from '../src/core/store.mjs';
 import { TerminalManager } from '../src/core/terminal.mjs';
 import { generateTitle } from '../src/core/sessions.mjs';
+import { purgeSession } from '../src/core/maintenance.mjs';
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'sessions-')); const repo = join(root, 'repo');
@@ -114,6 +115,21 @@ test('removal refuses while leftover child processes are recorded', async t => {
   f.procs[0].exit({ exitCode: 0 });
   f.store.saveSession({ ...f.store.getSession(session.id), survivors: [{ pid: 4242, started: 'x', command: 'daemon' }] });
   assert.throws(() => f.store.removeSession(session.id), /leftover child processes/);
+});
+
+test('remove and purge wait for a pending leftover scan, and a purged session is never recreated', async t => {
+  const f = fixture(t); const { session } = await f.manager.start({ projectId: f.project.id, provider: 'claude', task: 'x' });
+  f.procs[0].exit({ exitCode: 0 });
+  const ended = f.store.getSession(session.id);
+  f.store.saveSession({ ...ended, survivors: null, endedAt: new Date().toISOString() });
+  assert.throws(() => f.store.removeSession(session.id), /still checking/);
+  assert.throws(() => purgeSession(f.store, session.id), /still checking/);
+  // A scan that could not run leaves null for good; removal is not blocked forever.
+  f.store.saveSession({ ...ended, survivors: null, endedAt: new Date(Date.now() - 60_000).toISOString() });
+  const late = f.store.getSession(session.id);
+  purgeSession(f.store, session.id);
+  assert.equal(f.store.saveSession({ ...late, survivors: [] }), null, 'A late scan save does not recreate a purged session');
+  assert.throws(() => f.store.getSession(session.id), /Unknown session/);
 });
 
 test('titles keep identifiers and whole characters, and never stack resume prefixes', () => {

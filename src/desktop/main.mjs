@@ -8,6 +8,7 @@ import { RuntimeClient } from './runtime-client.mjs';
 import { buildId } from '../runtime/protocol.mjs';
 import { detectAgents } from '../core/agents.mjs';
 import { relativePath, text } from '../core/validation.mjs';
+import { SESSION_USER_FIELDS, survivorScanPending } from '../core/sessions.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../..');
@@ -77,7 +78,10 @@ if (process.platform === 'darwin') { if (headless) app.dock.hide(); else app.doc
 store = new StoreClient(resolve(userData, 'journal.sqlite'));
 await store.ready;
 runtime = new RuntimeClient({ dataDir: userData, launch: launchRuntime });
-runtime.on('event', send);
+// The runtime's in-memory sessions carry status only: names, pins, archive and
+// removal belong to the store, so its copies of those fields never reach the UI.
+const fromRuntime = session => { const status = { ...session }; for (const field of SESSION_USER_FIELDS) delete status[field]; return status; };
+runtime.on('event', event => send(event?.type === 'status' && event.session ? { ...event, session: fromRuntime(event.session) } : event));
 runtime.on('warning', message => { runtimeWarning = message; send({ type: 'runtime', state: runtimeState, warning: message }); });
 runtime.on('disconnected', () => { runtimeState = 'disconnected'; send({ type: 'runtime', state: 'disconnected' }); });
 runtime.on('failed', message => { runtimeWarning = message; send({ type: 'runtime', state: 'disconnected', warning: message }); });
@@ -90,7 +94,7 @@ const actions = {
     window?.setBackgroundColor(appearance === 'light' ? '#fafbfe' : '#101216');
   },
   bootstrap: async () => ({ projects: await store.listProjects(), agents, platform: process.platform, runtime: { state: runtimeState, warning: runtimeWarning },
-    live: runtimeState === 'connected' ? await runtime.call('list') : [], active: await store.activeSessions() }),
+    live: runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [], active: await store.activeSessions() }),
   openProject: async () => {
     const result = await dialog.showOpenDialog(window, { title: 'Open a Git project', properties: ['openDirectory'] });
     return result.canceled ? null : store.openProject(result.filePaths[0]);
@@ -167,7 +171,7 @@ const actions = {
   proposePromotion: ({ id }) => store.proposePromotion(id),
   getMemory: ({ id }) => store.getMemory(id),
   getReceipt: ({ id }) => store.getReceipt(id),
-  sessions: async () => ({ live: await runtime.call('list'), active: await store.activeSessions() }),
+  sessions: async () => ({ live: (await runtime.call('list')).map(fromRuntime), active: await store.activeSessions() }),
   getSession: ({ id }) => store.getSession(id),
   sessionEvents: ({ id }) => store.listEvents(id, 500),
   sessionChanges: ({ id }) => store.sessionChanges(id),
@@ -194,7 +198,7 @@ const actions = {
     if (running) {
       const canStop = session.status !== 'orphaned';
       const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: canStop ? ['Stop and remove', 'Keep running and archive', 'Cancel'] : ['Keep running and archive', 'Cancel'], defaultId: canStop ? 2 : 1, cancelId: canStop ? 2 : 1,
-        message: `"${label}" is still running.`, detail: `${canStop ? 'Stopping ends the agent gracefully, then removes the session from Journal. ' : 'Journal cannot stop an orphaned process from here; end it from the session first. '}Archiving hides it and leaves it running. ${files}` });
+        message: `"${label}" is still running.`, detail: `${canStop ? 'Stopping ends the agent gracefully, then removes the session from Journal. ' : 'Journal cannot stop an orphaned process from here; end it from the session first. '}Archiving leaves it running, marked archived in Active, and moves it out of Recent once it ends. ${files}` });
       const choice = canStop ? ['stop', 'archive', null][response] : ['archive', null][response];
       if (choice === 'archive') return store.archiveSession(id);
       if (choice !== 'stop') return null;
@@ -204,6 +208,7 @@ const actions = {
       for (let i = 0; i < 150 && !settled(await store.getSession(id)); i++) await new Promise(r => setTimeout(r, 100));
       const after = await store.getSession(id);
       if (LIVE.includes(after.status)) throw new Error('The session did not stop; it was not removed');
+      if (survivorScanPending(after)) throw new Error('The agent stopped, but Journal is still checking for leftover child processes. The session was kept; try removing it again in a moment.');
       if (after.survivors?.length) throw new Error(`The agent stopped, but ${after.survivors.length} child process${after.survivors.length === 1 ? '' : 'es'} kept running. The session was kept so you can end them from its header.`);
     } else {
       const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Remove from Journal', 'Remove and delete history', 'Cancel'], defaultId: 2, cancelId: 2, message: `Remove "${label}" from Journal?`,
@@ -227,7 +232,7 @@ const actions = {
     const template = items.map(item => item?.separator ? { type: 'separator' } : { id: text(item?.id, 'menu item', 40), label: text(item?.label, 'menu label', 80), enabled: item.enabled !== false });
     if (headless && typeof globalThis.__journalMenuHook === 'function') {
       // Tests may only choose what a user could: an existing, enabled item.
-      const choice = globalThis.__journalMenuHook(template);
+      const choice = globalThis.__journalMenuHook(template) ?? null;
       if (choice !== null && !template.some(item => item.id === choice && item.enabled)) throw new Error(`Menu item ${choice} is missing or disabled`);
       return choice;
     }

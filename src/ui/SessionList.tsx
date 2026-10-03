@@ -42,7 +42,6 @@ export function SessionList({ sessions, projects, selectedId, currentProjectId, 
   const active = activeOrder(visible);
   const recent = visible.filter(s => !active.includes(s) && s.projectId === currentProjectId && !s.archived).sort(byPin);
   const archived = visible.filter(s => s.archived && !active.includes(s) && s.projectId === currentProjectId).sort(byPin);
-  const archivedRunning = 0;
   const projectName = (id: string) => projects.find(p => p.id === id)?.name ?? 'Unknown project';
   const row = (session: Session) => {
     const label = stateLabel(session, connected); const attention = needsAttention(session) || label === 'disconnected';

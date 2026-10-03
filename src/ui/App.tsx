@@ -109,11 +109,8 @@ export default function App() {
       if (event.type === 'timeline') { setLiveEvents(current => [...current.slice(-1999), event.event]); return; }
       if (event.type === 'proposals') { setKnowledgeVersion(v => v + 1); return; }
       if (event.type !== 'status') return;
-      // Runtime events carry status only; names, pins, archive and removal are
-      // owned by the store and never taken from the runtime's in-memory copy.
-      const status = { ...event.session } as Session & Record<string, unknown>;
-      for (const field of ['displayName', 'pinned', 'pinSeq', 'archived', 'archivedAt', 'removed', 'removedAt']) delete status[field];
-      merge([status]);
+      // Main strips user-owned fields (names, pins, archive, removal) from runtime sessions.
+      merge([event.session]);
     });
   }, [refresh, reloadSessions, merge, failed]);
   async function run(action: () => Promise<void>) { setBusy(true); setError(''); try { await action(); } catch (error) { failed(error); } finally { setBusy(false); } }
