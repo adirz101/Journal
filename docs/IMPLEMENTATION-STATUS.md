@@ -2,7 +2,7 @@
 
 2 October 2026. Merged to `main`: the terminal-first slice (PR #1), native validation (PR #2), orientation and licensing (PR #3), branding and layout (PR #4), and the durable multi-session runtime with the status helper and usefulness trial round 1 (PR #5). Branch `claude/roadmap-completion` adds worktrees, Brain completion, the proposal inbox, data maintenance, release groundwork and the benchmark harness. Alpha; no public release.
 
-Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI is written but staged in `ci/github-actions/`: **BLOCKED** until a GitHub token with the `workflow` scope can push it. CI never uses provider logins. Authenticated native trials and usefulness benchmarks are manual and local.
+Verification uses local checks on the user's Mac and fixture-only GitHub Actions (CI on macOS, Linux and experimental Windows; packaging and smoke tests on macOS and Windows). CI never uses provider logins. Authenticated native trials and usefulness benchmarks are manual and local.
 
 ## Implemented
 
@@ -29,6 +29,9 @@ Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI
 - Cursor Agent CLI (`agent`) as a third native provider: genuine-CLI detection (Cursor build version and help text; `cursor-agent` and the installers' locations when `PATH` has not caught up), not-installed, not-Cursor, unsupported-version and login-required states, and visible, confirmed installation and sign-in with Cursor's official commands. Journal never handles Cursor credentials.
 - Sessions use a chat created with `create-chat` and open it with `--resume=<UUID>` (exact identity at launch and exact resume); Research maps to `--mode=ask` and Plan to `--mode=plan`; context, receipts, worktrees, references (always copied, never typed) and up to four mixed-provider sessions work as for Claude and Codex. Hooks are not used, so Cursor activity is unknown.
 - Checked with an authenticated Cursor CLI 2026.10.01 on macOS: chat creation, first turn, exit hint and exact resume. **Manual validation remaining** in Journal's UI: the steps in [PROVIDERS.md](PROVIDERS.md#manual-validation-remaining-cursor-needs-the-users-cursor-login).
+
+**Packaging and releases** ([releasing](RELEASING.md))
+- macOS arm64 DMG (drag to Applications) and ZIP, Windows x64 per-user installer and portable EXE, from one version source (`package.json`, now `0.2.0-alpha`), with `SHA256SUMS.txt` and third-party notices. A package audit (allow-list) and a packaged smoke test (fixture CLIs) run on the built apps; the tag-triggered workflow creates a draft GitHub Release only. macOS packages are validated locally; Windows packages are built and smoke-tested by the release workflow on hosted Windows runners. Signing and notarization are pending certificates; builds are unsigned (macOS ad-hoc).
 
 **Workspaces**
 - Current checkout, Journal-managed worktrees from an explicit base, and imported worktrees, with intent persisted before Git side effects and reconciliation after crashes.
@@ -80,7 +83,6 @@ Earlier authenticated evidence ([native validation](NATIVE-VALIDATION.md), [life
 
 | Item | Status | Reason | Next human action |
 | --- | --- | --- | --- |
-| CI activation | BLOCKED | Token lacks the `workflow` scope | `gh auth refresh -h github.com -s workflow`, then move `ci/github-actions/*.yml` to `.github/workflows/` |
 | Windows validation, Job Objects | BLOCKED | No Windows hardware; Job Objects need a native module | Run the [Windows checklist](WINDOWS.md) on Windows 11 |
 | Signing and notarization | BLOCKED | Needs an Apple Developer ID and a Windows code-signing certificate | See [RELEASING](RELEASING.md) |
 | Usefulness round 2 | BLOCKED | Needs a chosen repository, tasks and paid runs | Create a suite from `benchmarks/TEMPLATE.md` |

@@ -5,13 +5,14 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { JournalStore } from '../src/core/store.mjs';
+import { removeLater } from './support/cleanup.mjs';
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'proposals-')); const repo = join(root, 'repo'); mkdirSync(repo);
   const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', encoding: 'utf8' }).trim();
   git('init', '-q', '-b', 'main'); writeFileSync(join(repo, 'a.txt'), 'a\n'); git('add', '.'); git('-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qm', 'init');
   const store = new JournalStore(join(root, 'j.sqlite')); const project = store.openProject(repo);
-  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { store.close(); removeLater(root); });
   const session = (query, extra = {}) => {
     const receipt = store.prepareContext(project.id, query);
     const s = { id: `s-${Math.random().toString(16).slice(2)}`, projectId: project.id, provider: 'claude', status: 'stopped', receiptId: receipt.id, createdAt: new Date().toISOString(), head: store.project(project.id).head, branch: 'main', ...extra };

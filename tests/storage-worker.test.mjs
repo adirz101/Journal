@@ -6,12 +6,13 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { StoreClient } from '../src/desktop/store-client.mjs';
+import { removeLater } from './support/cleanup.mjs';
 
 test('worker-backed storage persists approved knowledge and marks unfinished deliveries uncertain on restart', async t => {
   const root = mkdtempSync(resolve(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'storage-worker-'));
   execFileSync('git', ['init', '-b', 'main', root], { stdio: 'pipe' });
   const path = resolve(root, 'journal.sqlite'); let store = new StoreClient(path);
-  t.after(async () => { await store.close(); rmSync(root, { recursive: true, force: true }); });
+  t.after(async () => { await store.close(); removeLater(root); });
   const project = await store.openProject(root);
   await assert.rejects(store.getReceipt('not-a-receipt'), /Unknown receipt/);
   const memory = await store.proposeMemory(project.id, { statement: 'Docker tests require a local engine', category: 'constraint', scope: 'branch',

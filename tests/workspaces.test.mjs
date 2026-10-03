@@ -7,16 +7,17 @@ import { execFileSync } from 'node:child_process';
 import { JournalStore } from '../src/core/store.mjs';
 import { TerminalManager } from '../src/core/terminal.mjs';
 import { buildAgentLaunch } from '../src/core/agents.mjs';
+import { removeLater } from './support/cleanup.mjs';
 
 function fixture(t) {
-  const root = realpathSync(mkdtempSync(join(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'ws-')));
+  const root = realpathSync.native(mkdtempSync(join(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'ws-')));
   const repo = join(root, 'repo'); mkdirSync(repo);
   const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe', encoding: 'utf8' }).trim();
   git(repo, 'init', '-q', '-b', 'main'); writeFileSync(join(repo, 'README.md'), 'Ledger\n'); writeFileSync(join(repo, '.gitignore'), 'build/\n');
   git(repo, 'add', '.'); git(repo, '-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qm', 'init');
   const store = new JournalStore(join(root, 'journal.sqlite')); const project = store.openProject(repo);
   const worktreeRoot = join(root, 'worktrees');
-  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { store.close(); removeLater(root); });
   return { root, repo, git, store, project, worktreeRoot };
 }
 

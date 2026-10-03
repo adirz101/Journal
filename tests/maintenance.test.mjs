@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { JournalStore } from '../src/core/store.mjs';
 import { restore } from '../scripts/data-restore.mjs';
 import { createHash } from 'node:crypto';
+import { removeLater } from './support/cleanup.mjs';
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'maint-')); const repo = join(root, 'repo'); mkdirSync(repo);
@@ -14,7 +15,7 @@ function fixture(t) {
   execFileSync('git', ['-C', repo, 'add', '.']); execFileSync('git', ['-C', repo, '-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qm', 'init']);
   const data = join(root, 'data'); mkdirSync(data);
   const store = new JournalStore(join(data, 'journal.sqlite')); const project = store.openProject(repo);
-  t.after(() => { try { store.close(); } catch {} rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { try { store.close(); } catch {} removeLater(root); });
   const approve = (statement, extra = {}) => { const m = store.proposeMemory(project.id, { statement, category: 'constraint', scope: 'checkout', area: '', source: { kind: 'user', note: 'Team rule' }, ...extra }); store.setMemoryStatus(m.id, 'active'); return m; };
   return { root, repo, data, store, project, approve };
 }

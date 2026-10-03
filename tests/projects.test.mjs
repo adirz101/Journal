@@ -7,13 +7,14 @@ import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { JournalStore } from '../src/core/store.mjs';
 import { TerminalManager } from '../src/core/terminal.mjs';
+import { removeLater } from './support/cleanup.mjs';
 
 const gitInit = dir => { mkdirSync(dir, { recursive: true }); execFileSync('git', ['init', '-q', '-b', 'main', dir]); writeFileSync(join(dir, 'README.md'), `${dir}\n`); execFileSync('git', ['-C', dir, 'add', '.']); execFileSync('git', ['-C', dir, '-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qm', 'init']); return dir; };
 function fixture(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'projects-')));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'projects-')));
   const repo = gitInit(join(root, 'engineforge'));
   const store = new JournalStore(join(root, 'journal.sqlite')); const project = store.openProject(repo);
-  t.after(() => { try { store.close(); } catch {} rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { try { store.close(); } catch {} removeLater(root); });
   const approve = (statement, extra = {}) => { const m = store.proposeMemory(project.id, { statement, category: 'convention', scope: 'checkout', area: '', source: { kind: 'user', note: 'n' }, ...extra }); store.setMemoryStatus(m.id, 'active'); return m; };
   return { root, repo, store, project, approve };
 }
@@ -83,7 +84,7 @@ test('additional folders: other Git repos and plain folders are accepted; duplic
   assert.throws(() => f.store.addProjectRoot(f.project.id, worktree), /same repository/);
   mkdirSync(join(plugin, 'inner'));
   assert.throws(() => f.store.addProjectRoot(f.project.id, join(plugin, 'inner')), /overlaps/);
-  assert.equal(f.store.project(f.project.id).commonDir, realpathSync(join(f.repo, '.git')), 'Git identities are never merged');
+  assert.equal(f.store.project(f.project.id).commonDir, realpathSync.native(join(f.repo, '.git')), 'Git identities are never merged');
 });
 
 test('evidence keeps its folder identity; removing a folder excludes only its claims, re-adding restores them', t => {
@@ -133,7 +134,7 @@ test('sessions keep one explicit cwd: display names never change it, and a folde
 });
 
 test('an existing v5 project row migrates without losing data', t => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'mig6-'))); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'mig6-'))); t.after(() => removeLater(root));
   const repo = gitInit(join(root, 'legacy')); const path = join(root, 'j.sqlite');
   const first = new JournalStore(path); const project = first.openProject(repo); const newer = first.openProject(gitInit(join(root, 'newer'))); first.close();
   const raw = new DatabaseSync(path);

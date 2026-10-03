@@ -9,9 +9,10 @@ import { IDLE_SETTLE_MS, TerminalManager } from '../src/core/terminal.mjs';
 import { folderDecorations, gitStatus, parseStatusV2, scopeStatus } from '../src/core/git-status.mjs';
 import { fingerprintSync, headDiff, listDirectory, locate, previewFile, treePath } from '../src/core/files.mjs';
 import { formatReference, pathFromCwd, referenceEvent, referencesBlock } from '../src/core/references.mjs';
+import { removeLater } from './support/cleanup.mjs';
 
 function fixture(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'explorer-')));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'explorer-')));
   const repo = join(root, 'repo'); mkdirSync(repo);
   const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=a', '-c', 'user.email=a@a', ...args], { stdio: 'pipe', encoding: 'utf8' }).trim();
   git(repo, 'init', '-q', '-b', 'main');
@@ -20,7 +21,7 @@ function fixture(t) {
   writeFileSync(join(repo, 'README.md'), '# Fixture\n'); writeFileSync(join(repo, '.gitignore'), 'build/\nnode_modules/\n');
   git(repo, 'add', '.'); git(repo, 'commit', '-qm', 'init');
   const store = new JournalStore(join(root, 'journal.sqlite')); const project = store.openProject(repo);
-  t.after(() => { try { store.close(); } catch {} rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { try { store.close(); } catch {} removeLater(root); });
   return { root, repo, git, store, project };
 }
 
@@ -162,7 +163,7 @@ test('roots resolve from records only: checkout, ready worktrees and folders of 
   const roots = f.store.fileRoots(f.project.id);
   assert.deepEqual(roots.primary.map(r => r.key), ['checkout', ws.id]);
   assert.deepEqual(roots.folders.map(r => r.key), [`root:${folder.id}`]);
-  assert.equal(f.store.fileRoot(f.project.id, ws.id).path, realpathSync(ws.path));
+  assert.equal(f.store.fileRoot(f.project.id, ws.id).path, realpathSync.native(ws.path));
   assert.equal(f.store.fileRoot(f.project.id, `root:${folder.id}`).git, false);
   const otherRepo = join(f.root, 'other'); mkdirSync(otherRepo); f.git(otherRepo, 'init', '-q'); writeFileSync(join(otherRepo, 'x'), 'x'); f.git(otherRepo, 'add', '.'); f.git(otherRepo, 'commit', '-qm', 'x');
   const other = f.store.openProject(otherRepo);

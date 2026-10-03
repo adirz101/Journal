@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { realpathSync, statSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { basename, relative, sep } from 'node:path';
 import { git } from './project.mjs';
 import { text } from './validation.mjs';
+import { realPath } from './paths.mjs';
 
 // Additional project folders are context sources with their own identity.
 // Journal never merges Git identities: each folder keeps its own repository
@@ -17,7 +18,7 @@ export const rootId = (projectId, path) => createHash('sha256').update(`${projec
 
 export function classifyFolder(project, input) {
   let path;
-  try { path = realpathSync(text(input, 'folder path', 4096)); } catch { throw new Error('That folder does not exist'); }
+  try { path = realPath(text(input, 'folder path', 4096)); } catch { throw new Error('That folder does not exist'); }
   if (!statSync(path).isDirectory()) throw new Error('Choose a folder, not a file');
   // Git internals are never a context source (remote URLs, hooks, objects).
   if (path.split(sep).includes('.git') || quiet(() => git(path, ['rev-parse', '--is-inside-git-dir'])) === 'true') throw new Error('Git metadata folders (.git) cannot be added');
@@ -27,10 +28,10 @@ export function classifyFolder(project, input) {
     if (root.path === path) throw new Error('This folder is already part of the project');
     if (inside(root.path, path) || inside(path, root.path)) throw new Error(`This folder overlaps ${root.path}, which is already part of the project`);
   }
-  let toplevel = quiet(() => realpathSync(git(path, ['rev-parse', '--show-toplevel'])));
+  let toplevel = quiet(() => realPath(git(path, ['rev-parse', '--show-toplevel'])));
   // A folder its enclosing repository ignores is not part of that repository.
   if (toplevel && toplevel !== path && quiet(() => { git(toplevel, ['check-ignore', '-q', relative(toplevel, path)]); return true; })) toplevel = null;
-  const commonDir = toplevel ? quiet(() => realpathSync(git(path, ['rev-parse', '--path-format=absolute', '--git-common-dir']))) : null;
+  const commonDir = toplevel ? quiet(() => realPath(git(path, ['rev-parse', '--path-format=absolute', '--git-common-dir']))) : null;
   const nested = inside(project.root, path);
   if (toplevel && commonDir === project.commonDir) {
     throw new Error(nested ? 'This folder is already inside the primary repository' : 'This is another worktree of the same repository; import it under Workspaces instead');

@@ -58,7 +58,7 @@ jobs:
 
       - name: Desktop tests (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a npm run test:desktop
+        run: xvfb-run -a -s '-screen 0 1920x1080x24' npm run test:desktop
 
       # POSIX fixture CLIs skip on Windows, and Windows desktop support is
       # experimental, so failures here do not fail the run.

@@ -54,6 +54,14 @@ async function open(env: Record<string, string>, project: string): Promise<{ app
   await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
   const page = await app.firstWindow(); return { app, page };
 }
+// Bounded close: on Linux, Chromium helpers can keep Playwright's pipes open after a
+// forced kill or a keep-running quit, so close() may never resolve there.
+const closeApp = async (app: ElectronApplication) => {
+  if (process.platform !== 'linux') { await app.close().catch(() => {}); return; } // elsewhere a hang must fail the test
+  const pid = app.process().pid;
+  await Promise.race([app.close().catch(() => {}), new Promise(resolveWait => setTimeout(resolveWait, 15000))]);
+  try { if (pid) { process.kill(pid, 0); process.kill(pid, 'SIGKILL'); } } catch { /* already gone */ }
+};
 const typeLine = async (page: Page, text: string) => { await page.locator('.xterm-helper-textarea').pressSequentially(text); await page.locator('.xterm-helper-textarea').press('Enter'); };
 const sessionButton = (page: Page, task: string) => page.getByRole('button', { name: new RegExp(`: ${task}\\.`) });
 
@@ -94,7 +102,7 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     await page.getByRole('button', { name: 'Stop terminal' }).click();
     await expect(page.locator('.terminal-label')).toContainText('stopped');
     await expect(page.getByRole('button', { name: 'Start Claude', exact: true })).toBeEnabled();
-  } finally { await app.close(); f.cleanup(); }
+  } finally { await closeApp(app); f.cleanup(); }
 });
 
 test('an app crash leaves sessions running in the runtime; the next launch reconnects without relaunching', async () => {
@@ -107,7 +115,7 @@ test('an app crash leaves sessions running in the runtime; the next launch recon
     await typeLine(page, 'before-crash');
     await expect(page.locator('.terminal-surface')).toContainText('ECHO before-crash');
     const agent = f.launches()[0].pid;
-    app.process().kill('SIGKILL'); await app.close().catch(() => {});
+    app.process().kill('SIGKILL'); await closeApp(app);
     await expect.poll(() => alive(agent)).toBe(true);
     ({ app, page } = await open(f.env, f.project));
     await expect(sessionButton(page, 'SURVIVE_CRASH')).toBeVisible();
@@ -116,7 +124,7 @@ test('an app crash leaves sessions running in the runtime; the next launch recon
     await typeLine(page, 'after-crash');
     await expect(page.locator('.terminal-surface')).toContainText('ECHO after-crash');
     expect(f.launches()).toHaveLength(1);
-  } finally { await app.close(); f.cleanup(); }
+  } finally { await closeApp(app); f.cleanup(); }
 });
 
 test('a runtime crash is reported, recovered as interrupted, and never resends the prompt', async () => {
@@ -135,7 +143,7 @@ test('a runtime crash is reported, recovered as interrupted, and never resends t
     expect(f.launches()).toHaveLength(1);
     await page.getByRole('tab', { name: 'Activity' }).click();
     await expect(page.getByText(/Recovered after the runtime stopped/)).toBeVisible();
-  } finally { await app.close(); f.cleanup(); }
+  } finally { await closeApp(app); f.cleanup(); }
 });
 
 test('keep-running quit is rediscovered; stopping reports and cleans detached leftovers; changes are listed', async () => {
@@ -145,7 +153,7 @@ test('keep-running quit is rediscovered; stopping reports and cleans detached le
     await page.getByLabel('Initial task').fill('KEEP_RUNNING');
     await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('TASK KEEP_RUNNING');
-    await app.close();
+    await closeApp(app);
     expect(alive(f.launches()[0].pid)).toBe(true);
     ({ app, page } = await open(f.env, f.project));
     await sessionButton(page, 'KEEP_RUNNING').click();
@@ -168,7 +176,7 @@ test('keep-running quit is rediscovered; stopping reports and cleans detached le
     await expect.poll(() => alive(daemon)).toBe(false);
     await page.getByRole('button', { name: 'Archive', exact: true }).click();
     await expect(sessionButton(page, 'KEEP_RUNNING')).toHaveCount(0);
-  } finally { await app.close(); f.cleanup(); }
+  } finally { await closeApp(app); f.cleanup(); }
 });
 
 test('a managed worktree is created from the dialog, hosts a research session and refuses removal while in use', async () => {
@@ -201,7 +209,7 @@ test('a managed worktree is created from the dialog, hosts a research session an
     await page.getByRole('button', { name: 'Remove worktree' }).click();
     await expect(page.getByRole('list', { name: 'Workspaces' })).not.toContainText('journal/isolated');
     expect(existsSync(resolve(f.project, 'uncommitted.txt'))).toBe(true);
-  } finally { await app.close(); f.cleanup(); }
+  } finally { await closeApp(app); f.cleanup(); }
 });
 
 test('a branch switched outside Journal is picked up and live sessions say where they started', async () => {
@@ -217,5 +225,5 @@ test('a branch switched outside Journal is picked up and live sessions say where
     await expect(page.locator('.branch-badge')).toContainText('feat/elsewhere');
     await expect(page.locator('.terminal-label')).toContainText('started on ⑂ main');
     await expect(page.getByText(/The checkout is now on feat\/elsewhere; this session started on main/)).toBeVisible();
-  } finally { await app.close(); f.cleanup(); }
+  } finally { await closeApp(app); f.cleanup(); }
 });

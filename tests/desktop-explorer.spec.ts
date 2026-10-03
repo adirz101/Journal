@@ -45,6 +45,7 @@ console.log('PTY_READY');process.stdin.setRawMode(true);process.stdin.setEncodin
 }
 
 test('the explorer browses, decorates, previews and references files without editing anything', async () => {
+  test.setTimeout(120000); // one long end-to-end scenario; slower on Linux's virtual display
   const f = setup();
   const app = await electron.launch({ args: ['.'], env: f.env });
   try {
@@ -74,8 +75,11 @@ test('the explorer browses, decorates, previews and references files without edi
     await row(page, /^README\.md/).focus();
     await page.keyboard.press('Home');
     await expect(row(page, /^explorer project \(checkout\)/)).toBeFocused();
-    await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown');
-    await page.keyboard.type('src', { delay: 60 }); await page.keyboard.press('Enter');
+    // Each step waits for its effect: the tree moves DOM focus asynchronously.
+    await page.keyboard.press('ArrowDown'); await expect(row(page, /^big/)).toBeFocused();
+    await page.keyboard.press('s'); await expect(page.locator('.tree-search')).toBeFocused();
+    await page.keyboard.type('rc'); await expect(page.locator('.tree-search')).toHaveValue('src');
+    await page.keyboard.press('Enter');
     await expect(row(page, /^src/)).toBeFocused();
     await page.keyboard.press('ArrowRight'); await expect(row(page, /^a\.ts/)).toBeVisible();
     await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
@@ -99,6 +103,8 @@ test('the explorer browses, decorates, previews and references files without edi
     // Git state follows external changes through the watcher.
     writeFileSync(resolve(f.project, 'src', 'a.ts'), 'export const a = 1;\nexport const b = 22;\nexport const c = 3;\n');
     writeFileSync(resolve(f.project, 'fresh.ts'), 'new\n'); unlinkSync(resolve(f.project, 'gone.txt'));
+    // Linux does not watch files (no native recursive watching): status refreshes on request.
+    if (process.platform === 'linux') await page.getByRole('button', { name: 'Refresh files' }).click();
     await expect(row(page, /^a\.ts, modified/)).toBeVisible();
     await expect(row(page, /^fresh\.ts, untracked/)).toBeVisible();
     await expect(row(page, /^src, contains changes/)).toBeVisible();

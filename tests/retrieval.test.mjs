@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { JournalStore } from '../src/core/store.mjs';
 import { aliasesFor, areaMatches, identifierParts, possibleConflict, queryTerms } from '../src/core/retrieval.mjs';
 import { checkoutBaseline, sessionChanges, fileDiff } from '../src/core/changes.mjs';
+import { removeLater } from './support/cleanup.mjs';
 
 function fixture(t) {
   const root = mkdtempSync(join(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'retrieval-'));
@@ -18,7 +19,7 @@ function fixture(t) {
   writeFileSync(join(repo, 'README.md'), 'Fixture\n');
   git('add', '.'); git('-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qm', 'init');
   const path = join(root, 'journal.sqlite'); const store = new JournalStore(path); const project = store.openProject(repo);
-  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { store.close(); removeLater(root); });
   const approve = (statement, extra = {}) => { const m = store.proposeMemory(project.id, { statement, category: 'constraint', scope: 'checkout', area: '', source: { kind: 'user', note: 'Fixture rule' }, ...extra }); store.setMemoryStatus(m.id, 'active'); return m; };
   return { root, repo, git, store, project, approve, path };
 }
@@ -82,7 +83,7 @@ test('knowledge pages are bounded, filterable and searchable', t => {
 });
 
 test('a version 1 database migrates in place and keeps knowledge searchable', t => {
-  const root = mkdtempSync(join(tmpdir(), 'migrate-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = mkdtempSync(join(tmpdir(), 'migrate-')); t.after(() => removeLater(root));
   const repo = join(root, 'repo'); mkdirSync(repo); execFileSync('git', ['init', '-q', '-b', 'main', repo]);
   const path = join(root, 'old.sqlite'); const old = new DatabaseSync(path);
   old.exec(`CREATE TABLE projects(id TEXT PRIMARY KEY, root TEXT UNIQUE NOT NULL, body TEXT NOT NULL);
