@@ -27,12 +27,12 @@ test('packaging config: stable ID, platforms, per-user installer, data kept, not
   assert.equal(config.appId, 'io.github.adirz101.journal'); assert.equal(config.productName, 'Journal'); assert.equal(config.publish, null);
   assert.deepEqual(config.mac.target, [{ target: 'dmg', arch: ['arm64'] }, { target: 'zip', arch: ['arm64'] }]);
   assert.deepEqual(config.win.target, [{ target: 'nsis', arch: ['x64'] }, { target: 'portable', arch: ['x64'] }]);
-  assert.equal(config.nsis.perMachine, false); assert.equal(config.nsis.oneClick, false); assert.equal(config.nsis.allowElevation, false);
+  assert.equal(config.nsis.perMachine, false); assert.equal(config.nsis.oneClick, true, 'Per user without an all-users choice');
   assert.equal(config.nsis.createStartMenuShortcut, true); assert.equal(config.nsis.deleteAppDataOnUninstall, false);
   assert.ok(config.dmg.contents.some(item => item.type === 'link' && item.path === '/Applications'), 'Drag to Applications');
   assert.ok(config.asarUnpack.includes('node_modules/node-pty/**') && config.asarUnpack.includes('src/**'));
   assert.equal(config.afterPack, './scripts/after-pack.cjs');
-  for (const pattern of ['!src/ui/**', '!**/*.map', '!node_modules/node-pty/prebuilds/**']) assert.ok(config.files.includes(pattern), pattern);
+  for (const pattern of ['!src/ui/**', '!**/*.map', '!node_modules/node-pty/prebuilds/**', '!node_modules/node-pty/third_party/**', '!node_modules/node-pty/build/{deps,node_modules,node-addon-api}/**']) assert.ok(config.files.includes(pattern), pattern);
   assert.equal(config.mac.files, undefined, 'No platform-level file lists (an exclusion-only list would include everything)');
   assert.equal(config.win.files, undefined);
   // Unsigned: ad-hoc only, no hardened runtime, no notarization.
@@ -71,6 +71,9 @@ test('package audit: allow-list, forbidden files and leaks', () => {
   for (const bad of ['.env', 'src/core/.env.local', 'data/journal.sqlite', 'runtime-stderr.log', 'dist/assets/index.js.map', '.cache/tmp/x', 'tests/a.test.mjs', 'fixtures/x.json', 'docs/a.md', 'src/ui/App.tsx', 'certs/dev.p12'])
     assert.equal(auditEntries([bad]).length, 1, bad);
   assert.match(auditEntries(['node_modules/react/index.js'])[0], /not on the allow-list/);
+  // Windows node-pty files are allowed; generated build projects are not.
+  assert.deepEqual(auditEntries(['node_modules/node-pty/build/Release/conpty.node', 'node_modules/node-pty/build/Release/winpty-agent.exe', 'node_modules/node-pty/build/Release/conpty/OpenConsole.exe', 'node_modules/node-pty/lib/worker/conoutSocketWorker.js']), []);
+  assert.equal(auditEntries(['node_modules/node-pty/build/deps/winpty/src/winpty.vcxproj']).length, 1);
   assert.ok(LEAKS.some(leak => leak.test('"/Users/someone/Documents/GitHub/Journal/src"')));
   assert.ok(!LEAKS.some(leak => leak.test('"/home/runner/work/x"')), 'CI paths are not personal');
 });
@@ -90,6 +93,7 @@ test('packaged environment: GUI PATH, data folder and unpacked paths', () => {
   assert.deepEqual(entries, ['/Users/me/.local/bin', '/opt/homebrew/bin', '/Users/me/.nvm/versions/node/v22.3.0/bin']);
   assert.deepEqual(guiPathEntries({ platform: 'win32', home }), [], 'Windows GUI apps already get the user PATH');
   const env = withGuiPath({ PATH: '/opt/homebrew/bin:/usr/bin' }, { platform: 'darwin', home, exists: dir => present.has(dir), list: () => [] });
+  assert.deepEqual(withGuiPath({}, { platform: 'darwin', home, exists: () => false, list: () => [] }), {}, 'Nothing added: env unchanged (no "undefined" PATH)');
   assert.equal(env.PATH, '/opt/homebrew/bin:/usr/bin:/Users/me/.local/bin', 'Existing PATH first, no duplicates');
   assert.equal(dataDirectory({}, '/Users/me/Library/Application Support'), '/Users/me/Library/Application Support/journal-desktop');
   assert.equal(dataDirectory({ JOURNAL_DATA_DIR: '/tmp/j' }, '/x'), '/tmp/j');

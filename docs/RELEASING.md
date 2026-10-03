@@ -1,6 +1,6 @@
 # Releasing Journal
 
-Status, 4 October 2026: packaging and the release pipeline are implemented. macOS arm64 packages are built and validated locally. The workflows are staged in `ci/github-actions/` until a token with the `workflow` scope activates them, so Windows packages have not been built yet. Builds are unsigned (macOS ad-hoc). No release has been published.
+Status, 4 October 2026: packaging and the release pipeline are implemented and active (`.github/workflows/release.yml`; pull requests that change packaging also run it, without releasing). Builds are unsigned (macOS ad-hoc). No release has been published.
 
 ## Version: one source
 - `version` in `package.json` (for example `0.2.0-alpha`) is the only version. Electron reports it as the app version (`CFBundleShortVersionString` on macOS, file and product version on Windows), artifact names come from it, and the release tag must be exactly `v<version>`.
@@ -10,7 +10,7 @@ Status, 4 October 2026: packaging and the release pipeline are implemented. macO
 | Platform | Files | Notes |
 | --- | --- | --- |
 | macOS arm64 | `Journal-<version>-arm64.dmg`, `Journal-<version>-arm64.zip` | DMG shows Journal.app and an Applications link (drag to install); the ZIP holds the same app. Intel (x64) is not built yet: it needs node-pty compiled for x64 and its own smoke test. |
-| Windows x64 | `Journal-Setup-<version>-x64.exe`, `Journal-Portable-<version>-x64.exe` | NSIS installer: per user (`%LOCALAPPDATA%\Programs\Journal`), no administrator rights, Start Menu shortcut, uninstaller; Journal data is kept on uninstall. Portable: runs without installing and still stores data per user. |
+| Windows x64 | `Journal-Setup-<version>-x64.exe`, `Journal-Portable-<version>-x64.exe` | One-click NSIS installer: per user (`%LOCALAPPDATA%\Programs\journal-desktop`), no administrator rights and no all-users choice, Start Menu shortcut, uninstaller (Settings → Apps); Journal data is kept on uninstall. Portable: runs without installing and still stores data per user. |
 | All | `SHA256SUMS.txt`, `THIRD-PARTY-NOTICES.txt` | Checksums in `sha256sum` format; notices for every shipped package (runtime modules, the libraries bundled into the UI, Electron). |
 
 - Bundle identifier / AppUserModelID: **`io.github.adirz101.journal`**. Never change it after a release.
@@ -32,7 +32,7 @@ npm run release:check -- --artifacts release --platform mac
 npm run release:audit -- release/mac-arm64/Journal.app
 npm run smoke:packaged -- release/mac-arm64/Journal.app/Contents/MacOS/Journal
 ```
-Windows packages are built on a Windows machine or runner with `npm run dist:win`.
+Windows packages are built on a Windows machine or runner with `npm run dist:win` (the workflow does this on `windows-latest`).
 
 ## Release procedure
 1. Set `version` in `package.json` (and `package-lock.json` with `npm install --package-lock-only`), update `docs/IMPLEMENTATION-STATUS.md`, and merge to `main`.
@@ -53,4 +53,4 @@ No certificates are configured, so builds are unsigned. Nothing is faked: unsign
 | `WIN_CSC_LINK` | Authenticode code-signing certificate as a base64-encoded `.pfx` (optional) |
 | `WIN_CSC_KEY_PASSWORD` | Its password |
 
-With the macOS certificate, the app is signed with the hardened runtime and `assets/entitlements.mac.plist` (JIT, unsigned executable memory for V8, and library validation off for node-pty); with the API key it is also notarized and stapled, and the workflow checks `spctl` and `stapler validate`. Windows signing is not required for alpha releases and never blocks them. Auto-update is not implemented.
+Configure the macOS certificate together with the three App Store Connect secrets: a signed but not notarized app fails the workflow's Gatekeeper check (`spctl`). With the macOS certificate, the app is signed with the hardened runtime and `assets/entitlements.mac.plist` (JIT, unsigned executable memory for V8, and library validation off for node-pty); with the API key it is also notarized and stapled, and the workflow checks `spctl` and `stapler validate`. Windows signing is not required for alpha releases and never blocks them. Auto-update is not implemented.

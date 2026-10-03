@@ -58,7 +58,7 @@ export const ALLOWED = [
   /^src\/(?:core|desktop|runtime)\/[^/]+\.(?:mjs|cjs)$/,
   /^assets\/branding\/journal-app-icon\.png$/,
   /^(?:package\.json|LICENSE|NOTICE|THIRD_PARTY_NOTICES\.md)$/,
-  /^node_modules\/node-pty\/(?:package\.json|LICENSE|lib\/.+\.js|build\/Release\/(?:pty\.node|spawn-helper|conpty\.node|conpty_console_list\.node|winpty-agent\.exe|winpty\.dll|[^/]+\.(?:node|dll|exe))|third_party\/.+)$/,
+  /^node_modules\/node-pty\/(?:package\.json|LICENSE|lib\/.+\.js|build\/Release\/(?:pty\.node|spawn-helper|conpty\.node|conpty_console_list\.node|winpty-agent\.exe|winpty\.dll|[^/]+\.(?:node|dll|exe)|conpty\/(?:conpty\.dll|OpenConsole\.exe)))$/,
 ];
 export const FORBIDDEN = [/(?:^|\/)\.env(?:\.|$)/i, /\.(?:sqlite|db|log|map|pem|key|p12|pfx|cer|keychain|provisionprofile)$/i, /(?:^|\/)\.(?:cache|git|journal-data)\//, /(?:^|\/)(?:tests?|fixtures|docs|scripts|benchmarks|test-results)\//, /^src\/ui\//];
 

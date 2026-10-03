@@ -50,7 +50,7 @@ Download the latest build from [GitHub Releases](https://github.com/adirz101/Jou
 4. Open Journal from Applications. Alpha builds are not notarized: the first time, macOS says it cannot verify Journal. Click **Done**, then open **System Settings → Privacy & Security** and click **Open Anyway** (on older macOS, Control-click Journal and choose **Open**).
 
 **Windows (x64)**
-1. Download `Journal-Setup-<version>-x64.exe` (installs for your user, no administrator rights, Start Menu shortcut, uninstall from Settings → Apps) or `Journal-Portable-<version>-x64.exe` (runs without installing).
+1. Download `Journal-Setup-<version>-x64.exe` (installs for your user in one click, no administrator rights, Start Menu shortcut, uninstall from Settings → Apps) or `Journal-Portable-<version>-x64.exe` (runs without installing).
 2. Run it.
 3. Alpha builds are unsigned, so SmartScreen may warn ("Windows protected your PC"): choose **More info** → **Run anyway**.
 
@@ -107,7 +107,7 @@ Use **Light mode** / **Dark mode** in the sidebar to change appearance. Drag eit
 
 ## Development / verification
 
-Fixture-only GitHub Actions workflows for macOS, Linux and (experimentally) Windows are staged in `ci/github-actions/` and not yet active; they never use provider logins. Provider trials stay manual and local. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Fixture-only GitHub Actions run CI on macOS, Linux and (experimentally) Windows, and the release workflow packages and smoke-tests macOS and Windows builds; they never use provider logins. Provider trials stay manual and local. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```sh
 npm test

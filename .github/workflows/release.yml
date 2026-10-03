@@ -1,7 +1,8 @@
 # Release pipeline. A pushed v* tag builds, verifies and smoke-tests Journal on
 # native hosted runners and creates a DRAFT GitHub Release with the installers,
 # SHA256SUMS.txt and THIRD-PARTY-NOTICES.txt. A maintainer reviews and publishes
-# it by hand. Manual runs (workflow_dispatch) build and test without releasing.
+# it by hand. Manual runs and pull requests that change packaging build and
+# test without releasing.
 #
 # Signing is optional and never faked (see docs/RELEASING.md). Without secrets:
 # macOS builds are ad-hoc signed and not notarized; Windows builds are unsigned.
@@ -11,6 +12,8 @@ name: Release
 on:
   push:
     tags: ['v*']
+  pull_request:
+    paths: ['electron-builder.config.cjs', 'package.json', 'package-lock.json', 'scripts/**', 'src/desktop/**', 'src/runtime/**', 'assets/**', '.github/workflows/release.yml']
   workflow_dispatch:
 
 permissions:
@@ -23,19 +26,23 @@ concurrency:
 env:
   JOURNAL_CI: '1'
   JOURNAL_HEADLESS: '1'
+  # The tag only through the environment, never pasted into scripts.
+  TAG: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
 
 jobs:
   verify:
     name: verify (tests, tag and version)
     runs-on: macos-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with: { persist-credentials: false }
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: npm }
       - run: npm ci
       - name: Tag matches package.json
-        if: startsWith(github.ref, 'refs/tags/')
-        run: node scripts/release-check.mjs --tag "$GITHUB_REF_NAME"
+        if: env.TAG != ''
+        run: node scripts/release-check.mjs --tag "$TAG"
       - run: node scripts/release-check.mjs
       - run: npm test
       - run: npm run check
@@ -46,8 +53,10 @@ jobs:
     name: package macOS (arm64)
     needs: verify
     runs-on: macos-latest # Apple Silicon
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with: { persist-credentials: false }
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: npm }
       - run: npm ci
@@ -67,7 +76,7 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: npm run dist:mac
       - name: Expected artifacts only
-        run: node scripts/release-check.mjs --artifacts release --platform mac ${{ startsWith(github.ref, 'refs/tags/') && format('--tag {0}', github.ref_name) || '' }}
+        run: node scripts/release-check.mjs --artifacts release --platform mac ${TAG:+--tag "$TAG"}
       - name: Package audit
         run: node scripts/package-audit.mjs release/mac-arm64/Journal.app
       - name: Smoke test the app from the DMG
@@ -81,6 +90,9 @@ jobs:
           hdiutil detach "$mnt"
           codesign --verify --deep --strict "$RUNNER_TEMP/Install Dir/Journal.app"
           node scripts/smoke-packaged.mjs "$RUNNER_TEMP/Install Dir/Journal.app/Contents/MacOS/Journal"
+          # The ZIP holds the same, validly signed app.
+          mkdir -p "$RUNNER_TEMP/zip" && ditto -x -k "release/Journal-$version-arm64.zip" "$RUNNER_TEMP/zip"
+          codesign --verify --deep --strict "$RUNNER_TEMP/zip/Journal.app"
       - name: Gatekeeper and notarization (signed builds only)
         if: steps.signing.outputs.signed == 'true'
         run: |
@@ -99,6 +111,7 @@ jobs:
     name: package Windows (x64)
     needs: verify
     runs-on: windows-latest
+    timeout-minutes: 50
     env:
       # Git Bash would rewrite the installer's /S switch into a path.
       MSYS_NO_PATHCONV: '1'
@@ -107,6 +120,7 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with: { persist-credentials: false }
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: npm }
       - run: npm ci
@@ -117,7 +131,7 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: npm run dist:win
       - name: Expected artifacts only
-        run: node scripts/release-check.mjs --artifacts release --platform win ${{ startsWith(github.ref, 'refs/tags/') && format('--tag {0}', github.ref_name) || '' }}
+        run: node scripts/release-check.mjs --artifacts release --platform win ${TAG:+--tag "$TAG"}
       - name: Package audit
         run: node scripts/package-audit.mjs release/win-unpacked
       - name: Install per user without administrator rights, then smoke test
@@ -125,11 +139,28 @@ jobs:
           set -euo pipefail
           version=$(node -p "require('./package.json').version")
           ./release/"Journal-Setup-$version-x64.exe" /S
-          exe="$LOCALAPPDATA/Programs/Journal/Journal.exe"
+          exe="$LOCALAPPDATA/Programs/journal-desktop/Journal.exe"
           for i in $(seq 1 60); do [ -f "$exe" ] && break; sleep 2; done
           test -f "$exe"
           test -f "$APPDATA/Microsoft/Windows/Start Menu/Programs/Journal.lnk"
           node scripts/smoke-packaged.mjs "$exe"
+      - name: Installed app uses the per-user data folder
+        run: |
+          set -euo pipefail
+          marker="$RUNNER_TEMP/installed.json"
+          check() { node -e "const m=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));const v=require('./package.json').version;if(!m.packaged||m.version!==v||m.runtime!=='connected'||!/journal-desktop$/i.test(m.userData)||/Programs|Portable Test/i.test(m.userData)){console.error(m);process.exit(1)}" "$1"; }
+          JOURNAL_SMOKE_MARKER="$marker" JOURNAL_QUIT_POLICY=stop "$LOCALAPPDATA/Programs/journal-desktop/Journal.exe" > /dev/null 2>&1 &
+          for i in $(seq 1 90); do [ -s "$marker" ] && break; sleep 2; done
+          cat "$marker"; check "$marker"
+          test -d "$APPDATA/journal-desktop"
+      - name: Uninstall keeps Journal data
+        run: |
+          set -euo pipefail
+          taskkill //IM Journal.exe //F > /dev/null 2>&1 || true
+          "$LOCALAPPDATA/Programs/journal-desktop/Uninstall Journal.exe" /S
+          for i in $(seq 1 60); do [ ! -f "$LOCALAPPDATA/Programs/journal-desktop/Journal.exe" ] && break; sleep 2; done
+          test ! -f "$LOCALAPPDATA/Programs/journal-desktop/Journal.exe"
+          test -f "$APPDATA/journal-desktop/journal.sqlite"
       - name: Portable build runs from a folder with spaces and keeps data per user
         run: |
           set -euo pipefail
@@ -137,18 +168,15 @@ jobs:
           dir="$RUNNER_TEMP/Portable Test"; mkdir -p "$dir"
           cp release/"Journal-Portable-$version-x64.exe" "$dir/"
           marker="$RUNNER_TEMP/portable.json"
-          JOURNAL_SMOKE_MARKER="$marker" JOURNAL_QUIT_POLICY=stop JOURNAL_HEADLESS=1 "$dir/Journal-Portable-$version-x64.exe" &
+          JOURNAL_SMOKE_MARKER="$marker" JOURNAL_QUIT_POLICY=stop "$dir/Journal-Portable-$version-x64.exe" > /dev/null 2>&1 &
           for i in $(seq 1 90); do [ -s "$marker" ] && break; sleep 2; done
+          if [ ! -s "$marker" ]; then taskkill //IM Journal.exe //F || true; echo "The portable build did not report in time"; exit 1; fi
           cat "$marker"
-          node -e "const m=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));const v=require('./package.json').version;if(!m.packaged||m.version!==v||!/journal-desktop$/i.test(m.userData)||/Portable Test/.test(m.userData))process.exit(1)" "$marker"
-          test -d "$APPDATA/journal-desktop"
-      - name: Uninstall keeps Journal data
-        run: |
-          set -euo pipefail
-          "$LOCALAPPDATA/Programs/Journal/Uninstall Journal.exe" /S
-          for i in $(seq 1 60); do [ ! -f "$LOCALAPPDATA/Programs/Journal/Journal.exe" ] && break; sleep 2; done
-          test ! -f "$LOCALAPPDATA/Programs/Journal/Journal.exe"
-          test -d "$APPDATA/journal-desktop"
+          node -e "const m=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));const v=require('./package.json').version;if(!m.packaged||m.version!==v||m.runtime!=='connected'||!/journal-desktop$/i.test(m.userData)||/Portable Test/.test(m.userData)){console.error(m);process.exit(1)}" "$marker"
+          test ! -e "$dir/journal-desktop"
+      - name: Stop leftover processes
+        if: always()
+        run: taskkill //IM Journal.exe //F > /dev/null 2>&1 || true
       - uses: actions/upload-artifact@v4
         with:
           name: journal-windows
@@ -160,9 +188,10 @@ jobs:
 
   release:
     name: draft GitHub Release
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     needs: [macos, windows]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -171,17 +200,17 @@ jobs:
         with: { node-version: 24 }
       - uses: actions/download-artifact@v4
         with:
-          path: assets
+          path: dist-assets
           merge-multiple: true
       - name: Notices and checksums
         run: |
           set -euo pipefail
           version=$(node -p "require('./package.json').version")
-          node scripts/release-check.mjs --tag "$GITHUB_REF_NAME"
-          cp THIRD_PARTY_NOTICES.md assets/THIRD-PARTY-NOTICES.txt
-          node scripts/checksums.mjs assets "Journal-$version-arm64.dmg" "Journal-$version-arm64.zip" "Journal-Setup-$version-x64.exe" "Journal-Portable-$version-x64.exe" THIRD-PARTY-NOTICES.txt
-          (cd assets && sha256sum -c SHA256SUMS.txt)
-          ls -la assets
+          node scripts/release-check.mjs --tag "$TAG"
+          cp THIRD_PARTY_NOTICES.md dist-assets/THIRD-PARTY-NOTICES.txt
+          node scripts/checksums.mjs dist-assets "Journal-$version-arm64.dmg" "Journal-$version-arm64.zip" "Journal-Setup-$version-x64.exe" "Journal-Portable-$version-x64.exe" THIRD-PARTY-NOTICES.txt
+          (cd dist-assets && sha256sum -c SHA256SUMS.txt)
+          ls -la dist-assets
       - name: Create draft release (never published automatically)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -189,8 +218,9 @@ jobs:
           set -euo pipefail
           version=$(node -p "require('./package.json').version")
           prerelease=$(node -p "require('./package.json').version.includes('-') ? '--prerelease' : ''")
-          gh release create "$GITHUB_REF_NAME" --draft $prerelease --verify-tag \
-            --title "Journal $version" --notes-file .github/release-notes-template.md \
-            "assets/Journal-$version-arm64.dmg" "assets/Journal-$version-arm64.zip" \
-            "assets/Journal-Setup-$version-x64.exe" "assets/Journal-Portable-$version-x64.exe" \
-            assets/SHA256SUMS.txt assets/THIRD-PARTY-NOTICES.txt
+          sed "s/<version>/$version/g" .github/release-notes-template.md > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" --draft $prerelease --verify-tag \
+            --title "Journal $version" --notes-file "$RUNNER_TEMP/notes.md" \
+            "dist-assets/Journal-$version-arm64.dmg" "dist-assets/Journal-$version-arm64.zip" \
+            "dist-assets/Journal-Setup-$version-x64.exe" "dist-assets/Journal-Portable-$version-x64.exe" \
+            dist-assets/SHA256SUMS.txt dist-assets/THIRD-PARTY-NOTICES.txt

@@ -12,15 +12,18 @@ const target = process.argv[2]; if (!target) throw new Error('Usage: package-aud
 const resources = [join(target, 'Contents', 'Resources'), join(target, 'resources'), target].find(dir => existsSync(join(dir, 'app.asar')));
 if (!resources) throw new Error(`No app.asar under ${target}`);
 const archive = join(resources, 'app.asar');
+// The audit compares "/" paths; @electron/asar looks entries up with the
+// platform separator (\ on Windows). A failed lookup fails the audit.
+const native = entry => entry.split('/').join(sep);
 const packed = asar.listPackage(archive).map(entry => entry.replace(/^[\\/]/, '').split(sep).join('/'))
-  .filter(entry => { try { return !asar.statFile(archive, entry).files; } catch { return true; } });
+  .filter(entry => { const stat = asar.statFile(archive, native(entry)); if (!stat) throw new Error(`Cannot read ${entry} in app.asar`); return !stat.files; });
 const walk = dir => existsSync(dir) ? readdirSync(dir).flatMap(name => { const path = join(dir, name); return statSync(path).isDirectory() ? walk(path) : [path]; }) : [];
 const unpackedDir = join(resources, 'app.asar.unpacked');
 const unpacked = walk(unpackedDir).map(path => relative(unpackedDir, path).split(sep).join('/'));
 const problems = auditEntries([...new Set([...packed, ...unpacked])]);
 // Text files: no local absolute paths or private keys.
 for (const entry of packed.filter(name => /\.(?:mjs|cjs|js|json|html|css|md)$/.test(name))) {
-  const text = asar.extractFile(archive, entry).toString('utf8');
+  const text = asar.extractFile(archive, native(entry)).toString('utf8');
   for (const leak of LEAKS) if (leak.test(text)) problems.push(`leak (${leak}): ${entry}`);
 }
 if (problems.length) { console.error(problems.join('\n')); process.exit(1); }

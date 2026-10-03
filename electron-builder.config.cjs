@@ -20,13 +20,17 @@ const APP_ID = 'io.github.adirz101.journal';
 // node-pty ships sources, build intermediates and prebuilt binaries for every
 // platform; only its JavaScript and the module compiled for Journal's Electron
 // are needed at runtime.
-const ptyCommon = ['!node_modules/node-pty/{deps,src,scripts,typings,bin}/**', '!node_modules/node-pty/binding.gyp', '!node_modules/node-pty/build/{*.mk,Makefile,config.gypi,gyp-mac-tool,*.sln,*.vcxproj*}',
+const ptyCommon = ['!node_modules/node-pty/{deps,src,scripts,typings,bin}/**', '!node_modules/node-pty/binding.gyp',
+  // Generated build files (Makefiles, Visual Studio and winpty projects): only build/Release ships.
+  '!node_modules/node-pty/build/{deps,node_modules,node-addon-api}/**', '!node_modules/node-pty/build/*.*', '!node_modules/node-pty/build/Makefile',
   '!node_modules/node-pty/build/Release/{obj,obj.target,.deps}/**', '!node_modules/node-pty/build/Release/*.{pdb,lib,exp,iobj,ipdb,map}', '!node_modules/node-pty/node-addon-api/**', '!node_modules/node-pty/build/Release/node-addon-api/**',
   // The module is rebuilt for this Electron and architecture (npmRebuild), so the
   // multi-platform prebuilds are not shipped. Platform-level `files` lists are
   // deliberately not used: electron-builder would treat one made only of
   // exclusions as "everything" (scripts/package-audit.mjs checks the result).
   '!node_modules/node-pty/prebuilds/**',
+  // Bundled ConPTY DLLs are used only with useConptyDll (off): Windows' own ConPTY is used.
+  '!node_modules/node-pty/third_party/**',
   // Headers used only while compiling node-pty.
   '!node_modules/node-addon-api/**'];
 
@@ -81,11 +85,10 @@ module.exports = {
   },
   nsis: {
     artifactName: '${productName}-Setup-${version}-${arch}.${ext}',
-    // Per-user install in %LOCALAPPDATA%\Programs: no administrator rights.
-    oneClick: false,
+    // One-click, per user (%LOCALAPPDATA%\Programs\journal-desktop): no
+    // administrator rights and no "all users / only me" choice to get wrong.
+    oneClick: true,
     perMachine: false,
-    allowElevation: false,
-    allowToChangeInstallationDirectory: true,
     createStartMenuShortcut: true,
     createDesktopShortcut: false,
     shortcutName: 'Journal',

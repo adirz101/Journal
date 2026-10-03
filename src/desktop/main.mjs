@@ -33,7 +33,7 @@ const displayIcon = appIcon.crop({ x: iconInset, y: iconInset, width: iconSize.w
 app.setName('Journal');
 // A packaged app opened from Finder has a minimal PATH; add the usual CLI
 // install folders so Claude Code, Codex and Cursor are found (see environment.mjs).
-if (app.isPackaged) process.env.PATH = withGuiPath(process.env).PATH;
+if (app.isPackaged) { const next = withGuiPath(process.env).PATH; if (next) process.env.PATH = next; }
 // Keep the existing store when the displayed product name changes.
 const userData = dataDirectory(process.env, app.getPath('appData'));
 mkdirSync(userData, { recursive: true, mode: 0o700 });

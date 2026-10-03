@@ -81,4 +81,7 @@ try {
   await run(true);
   await run(false);
   console.log('Packaged smoke test passed.');
-} finally { rmSync(root, { recursive: true, force: true }); }
+} finally {
+  // The runtime and store worker may still hold files for a moment (Windows).
+  try { rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch (error) { console.warn(`Could not remove ${root}: ${error.message}`); }
+}

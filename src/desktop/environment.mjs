@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join, resolve, sep as pathSep } from 'node:path';
 
@@ -11,6 +11,8 @@ const semverDesc = (a, b) => b.replace(/^v/, '').split('.').map(Number).reduce((
 
 export function guiPathEntries({ platform = process.platform, home = homedir(), exists = existsSync, list = readdirSync } = {}) {
   if (platform !== 'darwin') return [];
+  // nvm: the version its default alias names, else the newest installed.
+  const nvmDefault = () => { try { const alias = readFileSync(join(home, '.nvm', 'alias', 'default'), 'utf8').trim().replace(/^v?/, 'v'); return exists(join(home, '.nvm', 'versions', 'node', alias, 'bin')) ? [join(home, '.nvm', 'versions', 'node', alias, 'bin')] : []; } catch { return []; } };
   const latest = (dir, suffix) => { try { const versions = list(dir).filter(name => /^v?\d+(\.\d+)*$/.test(name)).sort(semverDesc); return versions.length ? [join(dir, versions[0], suffix)] : []; } catch { return []; } };
   return [
     join(home, '.local', 'bin'), join(home, '.claude', 'local'),
@@ -18,14 +20,15 @@ export function guiPathEntries({ platform = process.platform, home = homedir(), 
     join(home, '.npm-global', 'bin'), join(home, '.bun', 'bin'), join(home, '.volta', 'bin'), join(home, 'Library', 'pnpm'),
     join(home, '.yarn', 'bin'), join(home, '.cargo', 'bin'), join(home, '.asdf', 'shims'), join(home, '.local', 'share', 'mise', 'shims'),
     join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin'),
-    ...latest(join(home, '.nvm', 'versions', 'node'), 'bin'),
+    ...nvmDefault(), ...latest(join(home, '.nvm', 'versions', 'node'), 'bin'),
   ].filter(dir => { try { return exists(dir); } catch { return false; } });
 }
 
 export function withGuiPath(env, options = {}) {
   const current = (env.PATH ?? '').split(delimiter).filter(Boolean);
   const added = guiPathEntries(options).filter(dir => !current.includes(dir));
-  return added.length ? { ...env, PATH: [...current, ...added].join(delimiter) } : env;
+  const unique = [...new Set(added)];
+  return unique.length ? { ...env, PATH: [...current, ...unique].join(delimiter) } : env;
 }
 
 // Journal's data folder: per user, the same for the installed app, the portable
