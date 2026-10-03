@@ -92,6 +92,33 @@ const actions = {
     const result = await dialog.showOpenDialog(window, { title: 'Open a Git project', properties: ['openDirectory'] });
     return result.canceled ? null : store.openProject(result.filePaths[0]);
   },
+  renameProject: ({ id, name }) => store.renameProject(id, name),
+  setProjectPinned: ({ id, pinned }) => store.setProjectPinned(id, pinned),
+  projectDetails: ({ id }) => store.projectDetails(id),
+  addProjectFolder: async ({ id }) => {
+    const result = await dialog.showOpenDialog(window, { title: 'Add a folder to this project', properties: ['openDirectory'] });
+    return result.canceled ? null : store.addProjectRoot(id, result.filePaths[0]);
+  },
+  removeProjectFolder: async ({ id, rootId }) => {
+    const details = await store.projectDetails(id); const root = details.roots.find(entry => entry.id === rootId);
+    if (!root) throw new Error('Unknown folder');
+    const { response } = await dialog.showMessageBox(window, { type: 'question', buttons: ['Remove folder from project', 'Cancel'], defaultId: 1, cancelId: 1,
+      message: `Remove ${root.name} from ${details.project.name}?`,
+      detail: `Your files will not be deleted. Journal stops using ${root.path} as part of this project.${root.knowledge ? ` ${root.knowledge} knowledge claim${root.knowledge === 1 ? '' : 's'} from this folder will be kept but excluded until you add the same folder again.` : ''}` });
+    return response === 0 ? store.removeProjectRoot(id, rootId) : null;
+  },
+  // Removing never deletes files; the second option deletes Journal's own records for the project.
+  removeProject: async ({ id }) => {
+    const { project, counts } = await store.projectDetails(id);
+    if (counts.liveSessions) throw new Error('Stop this project\'s running sessions first');
+    const data = [`${counts.knowledge} knowledge claim${counts.knowledge === 1 ? '' : 's'}`, `${counts.sessions} session record${counts.sessions === 1 ? '' : 's'}`, `${counts.receipts} context receipt${counts.receipts === 1 ? '' : 's'}`, `${counts.events} timeline event${counts.events === 1 ? '' : 's'}`, `${counts.proposals} open proposal${counts.proposals === 1 ? '' : 's'}`].join(', ');
+    const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Remove from Journal', 'Remove and delete Journal data', 'Cancel'], defaultId: 2, cancelId: 2,
+      message: `Remove ${project.name} from Journal?`,
+      detail: `Your files will not be deleted. Nothing in ${project.root} or its Git repository is touched.\n\nRemove from Journal: hides the project. Its Journal data (${data}) is kept, and opening the folder again restores everything.\n\nRemove and delete Journal data: permanently deletes that Journal data from this computer. This cannot be undone.${counts.worktrees ? `\n\nThis project has ${counts.worktrees} Journal worktree${counts.worktrees === 1 ? '' : 's'}; remove ${counts.worktrees === 1 ? 'it' : 'them'} under Workspaces before deleting data.` : ''}` });
+    if (response === 2) return null;
+    return store.removeProject(id, { deleteData: response === 1 });
+  },
+  projects: () => store.listProjects(),
   // Cheap branch/HEAD read so the UI notices checkouts switched outside Journal.
   checkout: async ({ projectId }) => { const project = await store.project(projectId); return { branch: project.branch, head: project.head }; },
   project: async ({ projectId }) => ({ project: await store.project(projectId), sessions: await store.listSessions(projectId), receipts: await store.listReceipts(projectId) }),

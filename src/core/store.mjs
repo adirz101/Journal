@@ -7,6 +7,8 @@ import { choice, relativePath, refuseCredentials, text } from './validation.mjs'
 import { branchDraft, commitsSince, overviewDraft, PLACEHOLDER } from './status.mjs';
 import { aliasesFor, areaMatches, isDuplicate, possibleConflict, queryTerms } from './retrieval.mjs';
 import { checkoutBaseline, fileDiff, openableFile, sessionChanges } from './changes.mjs';
+import { classifyFolder, folderStatus } from './projects.mjs';
+import { basename, relative, sep } from 'node:path';
 import { applyRetention, backupTo, checkpoint, exportBrain, importBrain, purgeSession, storageInfo } from './maintenance.mjs';
 import { ruleProposals, statusProposal, testCommandProposals } from './proposals.mjs';
 import { addWorktree, creationNotices, listGitWorktrees, plannedPath, registered, removalBlockers, removeWorktree, resolveBase, validateBranchName, workspaceView } from './workspaces.mjs';
@@ -51,6 +53,15 @@ export class JournalStore {
         CREATE TABLE IF NOT EXISTS proposals(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), fingerprint TEXT NOT NULL, body TEXT NOT NULL, UNIQUE(project_id, fingerprint));`)],
       // Pinning is a selection preference, not claim content: no new revision.
       [5, () => this.db.exec('ALTER TABLE memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0')],
+      // Projects become managed entities: display name, pin, extra folders.
+      [6, () => {
+        const update = this.db.prepare('UPDATE projects SET body=? WHERE id=?');
+        for (const row of this.db.prepare('SELECT rowid, id, root, body FROM projects').all()) {
+          const body = JSON.parse(row.body);
+          // rowid preserves the previous most-recent-first order.
+          update.run(JSON.stringify({ displayName: null, pinned: false, pinnedAt: null, roots: [], removed: false, openSeq: row.rowid, ...body, folderName: body.folderName ?? basename(row.root) }), row.id);
+        }
+      }],
     ];
     for (const [version, apply] of steps) {
       if (this.db.prepare('PRAGMA user_version').get().user_version >= version) continue;
@@ -74,20 +85,104 @@ export class JournalStore {
     // SQLite may already have rolled back (for example on a full disk); keep the original error.
     catch (error) { if (this.db.isTransaction !== false) { try { this.db.exec('ROLLBACK'); } catch { /* already rolled back */ } } throw error; }
   }
+  // Reopening keeps the project's name, pin, folders and data, and restores
+  // a project that was removed from Journal without deleting its data.
   openProject(root) {
     const info = inspectProject(root);
-    const prior = this.db.prepare('SELECT * FROM projects WHERE root=?').get(info.root);
-    const project = { ...info, id: prior?.id ?? randomUUID(), openedAt: now() };
+    const prior = parse(this.db.prepare('SELECT body FROM projects WHERE root=?').get(info.root));
+    // A monotonic open sequence orders projects deterministically, even within one millisecond.
+    const openSeq = (this.db.prepare("SELECT max(coalesce(json_extract(body,'$.openSeq'),0)) AS n FROM projects").get().n ?? 0) + 1;
+    const project = { displayName: null, pinned: false, pinnedAt: null, roots: [], ...prior, ...info, folderName: info.name, id: prior?.id ?? randomUUID(), openedAt: now(), openSeq, removed: false, removedAt: null };
     this.db.prepare('INSERT INTO projects(id,root,body) VALUES(?,?,?) ON CONFLICT(root) DO UPDATE SET body=excluded.body').run(project.id, project.root, JSON.stringify(project));
-    return project;
+    if (prior?.removed) this.audit('project-restored', { id: project.id });
+    return this.describe(project);
   }
-  listProjects() { return this.db.prepare('SELECT body FROM projects ORDER BY rowid DESC').all().map(parse); }
-  project(id) {
+  describe(stored) { return { ...stored, name: stored.displayName || stored.folderName || stored.name, roots: stored.roots ?? [] }; }
+  // Pinned first (in pin order), then most recently opened; ties by name and ID.
+  listProjects() {
+    return this.db.prepare('SELECT body FROM projects').all().map(row => this.describe(parse(row))).filter(project => !project.removed)
+      .sort((a, b) => (b.pinned - a.pinned) || (a.pinned ? String(a.pinnedAt).localeCompare(String(b.pinnedAt)) || (a.pinSeq ?? 0) - (b.pinSeq ?? 0) : (b.openSeq ?? 0) - (a.openSeq ?? 0))
+        || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  }
+  storedProject(id) {
     const stored = parse(this.db.prepare('SELECT body FROM projects WHERE id=?').get(text(id, 'project ID', 100)));
     if (!stored) throw new Error('Unknown project');
+    return stored;
+  }
+  saveProject(project) { this.db.prepare('UPDATE projects SET body=? WHERE id=?').run(JSON.stringify(project), project.id); return this.describe(project); }
+  project(id) {
+    const stored = this.storedProject(id);
+    if (stored.removed) throw new Error('This project was removed from Journal; open its folder again to restore it');
     const current = inspectProject(stored.root);
     if (current.root !== stored.root || current.commonDir !== stored.commonDir) throw new Error('Project checkout identity changed; reopen the project');
-    return { ...stored, ...current };
+    return this.describe({ ...stored, ...current, folderName: current.name });
+  }
+  renameProject(id, name) {
+    const stored = this.storedProject(id);
+    const displayName = name === null || name === '' ? null : text(name, 'project name', 120);
+    this.audit('project-renamed', { id }); return this.saveProject({ ...stored, displayName });
+  }
+  setProjectPinned(id, pinned) {
+    if (typeof pinned !== 'boolean') throw new Error('Invalid pin');
+    const stored = this.storedProject(id);
+    const pinSeq = pinned && !stored.pinned ? (this.db.prepare("SELECT max(coalesce(json_extract(body,'$.pinSeq'),0)) AS n FROM projects").get().n ?? 0) + 1 : stored.pinSeq;
+    return this.saveProject({ ...stored, pinned, pinnedAt: pinned ? (stored.pinned ? stored.pinnedAt : now()) : null, pinSeq: pinned ? pinSeq : null });
+  }
+  addProjectRoot(id, path) {
+    const project = this.project(id);
+    const root = classifyFolder(project, path);
+    this.audit('project-folder-added', { id, rootId: root.id, kind: root.kind });
+    return this.saveProject({ ...this.storedProject(id), roots: [...project.roots, root] });
+  }
+  // Knowledge from a removed folder is kept but excluded as stale until the
+  // folder is added again (same path, same identity).
+  removeProjectRoot(id, rootId) {
+    const stored = this.storedProject(id);
+    if (!(stored.roots ?? []).some(root => root.id === rootId)) throw new Error('Unknown folder');
+    if (this.activeSessions().some(session => session.projectId === id && session.workspaceId === `root:${rootId}`)) throw new Error('A session is still running in this folder');
+    this.audit('project-folder-removed', { id, rootId });
+    return this.saveProject({ ...stored, roots: stored.roots.filter(root => root.id !== rootId) });
+  }
+  // Works even when the primary folder was moved or deleted, so the project
+  // can still be inspected and removed from Journal.
+  projectDetails(id) {
+    let project; let missing = false;
+    try { project = this.project(id); } catch (error) { if (/removed from Journal/.test(error.message)) throw error; project = this.describe(this.storedProject(id)); missing = true; }
+    const count = (sql, ...args) => this.db.prepare(sql).get(...args).n;
+    const knowledgeBy = new Map(this.db.prepare(`SELECT json_extract(r.body,'$.source.rootId') AS root, count(*) AS n FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.project_id=? AND m.status IN ('active','candidate') GROUP BY root`).all(id).map(row => [row.root, row.n]));
+    return {
+      project, missing, roots: project.roots.map(root => ({ ...folderStatus(root), knowledge: knowledgeBy.get(root.id) ?? 0 })),
+      counts: {
+        knowledge: count(`SELECT count(*) AS n FROM memories WHERE project_id=? AND status IN ('active','candidate')`, id),
+        sessions: count('SELECT count(*) AS n FROM sessions WHERE project_id=?', id),
+        liveSessions: this.activeSessions().filter(session => session.projectId === id).length,
+        receipts: count('SELECT count(*) AS n FROM receipts WHERE project_id=?', id),
+        events: count('SELECT count(*) AS n FROM events WHERE session_id IN (SELECT id FROM sessions WHERE project_id=?)', id),
+        proposals: count(`SELECT count(*) AS n FROM proposals WHERE project_id=? AND json_extract(body,'$.state')='open'`, id),
+        worktrees: count(`SELECT count(*) AS n FROM workspaces WHERE project_id=? AND json_extract(body,'$.kind')='managed' AND json_extract(body,'$.state') IN ('ready','intent','missing')`, id),
+      },
+    };
+  }
+  // Removes Journal's registration, never files. With deleteData, also
+  // deletes this project's knowledge, sessions, receipts, timelines,
+  // proposals and workspace records from Journal's database.
+  removeProject(id, { deleteData = false } = {}) {
+    const stored = this.storedProject(id);
+    if (this.activeSessions().some(session => session.projectId === id)) throw new Error('Stop this project\'s running sessions first');
+    if (!deleteData) { this.audit('project-removed', { id, deleteData: false }); this.saveProject({ ...stored, removed: true, removedAt: now() }); return { removed: id, deletedData: false }; }
+    const worktrees = this.db.prepare(`SELECT body FROM workspaces WHERE project_id=? AND json_extract(body,'$.kind')='managed' AND json_extract(body,'$.state') IN ('ready','intent','missing')`).all(id).length;
+    if (worktrees) throw new Error('Remove this project\'s Journal worktrees first (Workspaces…). Journal never deletes worktree folders as part of removing a project.');
+    this.transaction(() => {
+      const revisionIds = this.db.prepare('SELECT r.id FROM revisions r JOIN memories m ON m.id=r.memory_id WHERE m.project_id=?').all(id).map(row => row.id);
+      const deleteFts = this.db.prepare('DELETE FROM memory_fts WHERE revision_id=?'); for (const revision of revisionIds) deleteFts.run(revision);
+      this.db.prepare('DELETE FROM revisions WHERE memory_id IN (SELECT id FROM memories WHERE project_id=?)').run(id);
+      this.db.prepare('DELETE FROM memories WHERE project_id=?').run(id);
+      this.db.prepare('DELETE FROM events WHERE session_id IN (SELECT id FROM sessions WHERE project_id=?)').run(id);
+      for (const table of ['sessions', 'receipts', 'proposals', 'workspaces']) this.db.prepare(`DELETE FROM ${table} WHERE project_id=?`).run(id);
+      this.db.prepare('DELETE FROM projects WHERE id=?').run(id);
+      this.audit('project-removed', { id, deleteData: true, knowledge: revisionIds.length });
+    });
+    return { removed: id, deletedData: true };
   }
   proposeMemory(projectId, input) {
     const project = this.project(projectId);
@@ -101,6 +196,7 @@ export class JournalStore {
     // A revision of a replacement keeps what it replaces unless told otherwise.
     const carried = !input.supersedes && input.memoryId ? (() => { try { return this.getMemory(input.memoryId).supersedes?.id ?? null; } catch { return null; } })() : null;
     const supersedes = input.supersedes || carried ? this.getMemory(input.supersedes || carried) : null;
+    if (input.source?.rootId && scope === 'branch') throw new Error('Branch scope applies to the primary repository; use project scope for knowledge from additional folders');
     if (supersedes && supersedes.projectId !== projectId) throw new Error('Superseded memory belongs to another project');
     if (supersedes && (supersedes.id === input.memoryId || (supersedes.status !== 'active' && !carried))) throw new Error('Only another approved claim can be superseded; revise a claim to change it');
     if (category === 'brief' && area) throw new Error('Project briefs apply to the whole checkout; leave the area empty');
@@ -141,6 +237,7 @@ export class JournalStore {
     return this.db.prepare('SELECT body FROM revisions WHERE memory_id=? ORDER BY number DESC').all(id).map(parse);
   }
   validation(project, memory, cache) {
+    if (memory.source?.rootId && !(project.roots ?? []).some(root => root.id === memory.source.rootId)) return 'folder-removed';
     if (memory.scope === 'branch' && project.branch !== memory.branch) return 'wrong-branch';
     if (!validateEvidence(project, memory.source, cache, memory.scope)) return 'stale';
     return 'current';
@@ -277,7 +374,7 @@ export class JournalStore {
     }
     const id = randomUUID(); const items = []; const excluded = []; let briefCount = 0; const perCategory = new Map();
     const disabledSet = new Set(disabled);
-    const header = `Journal project knowledge — checkout ${project.head ?? 'unborn'}, receipt ${id}\nProject: ${project.name}; branch ${project.branch ?? 'detached HEAD'}.\nThese are reviewed, scoped claims with evidence. Native project instructions take precedence. Validate against current code.\n`;
+    const header = `Journal project knowledge — checkout ${project.head ?? 'unborn'}, receipt ${id}\nProject: ${project.name}; branch ${project.branch ?? 'detached HEAD'}.\n${project.cwd ? `Working folder: ${project.cwd}. Evidence paths without a folder are relative to the primary repository at ${project.root}.\n` : ''}These are reviewed, scoped claims with evidence. Native project instructions take precedence. Validate against current code.\n`;
     let packet = header;
     for (const row of matches) {
       const memory = { ...parse(row), status: row.status };
@@ -292,7 +389,9 @@ export class JournalStore {
       }
       // Category diversity: at most four task claims of one kind.
       if (memory.category !== 'brief' && !row.pinned && (perCategory.get(memory.category) ?? 0) >= 4) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'category-limit' }); continue; }
-      const evidence = memory.source.kind === 'file' ? `${memory.source.path}:${memory.source.startLine} @ ${memory.source.commit ?? 'unborn'}`
+      // Folder evidence names its absolute folder so the agent can find it from any cwd.
+      const folder = memory.source.rootId ? `${(project.roots ?? []).find(root => root.id === memory.source.rootId)?.path ?? '(removed folder)'}/` : '';
+      const evidence = memory.source.kind === 'file' ? `${folder}${memory.source.path}:${memory.source.startLine} @ ${memory.source.commit ?? (memory.source.rootId ? 'untracked folder' : 'unborn')}`
         : memory.source.kind === 'git' ? `Git history ${memory.source.base ? `${memory.source.base.slice(0, 7)}..` : ''}${memory.source.head.slice(0, 7)}`
         : memory.source.kind === 'import' ? `Imported (reviewed here): ${memory.source.note}`
         : `User statement: ${memory.source.note}`;
@@ -366,13 +465,16 @@ export class JournalStore {
   generateProposals(sessionId) {
     const session = this.getSession(sessionId);
     const receipt = (() => { try { return this.getReceipt(session.receiptId); } catch { return null; } })();
-    let project; try { project = this.sessionView(session); } catch { return []; }
+    // Proposals describe the primary repository: use its view, never a folder's Git identity.
+    const inFolder = String(session.workspaceId ?? '').startsWith('root:');
+    let project; try { project = this.view(session.projectId, inFolder ? null : session.workspaceId ?? null); } catch { return []; }
     const existing = this.db.prepare(`SELECT r.body FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.project_id=? AND m.status IN ('active','candidate')`).all(session.projectId).map(row => parse(row).statement);
     const branchUpdate = this.db.prepare(`SELECT r.body FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.project_id=? AND m.status='active'
       AND json_extract(r.body,'$.category')='brief' AND json_extract(r.body,'$.scope')='branch' AND json_extract(r.body,'$.branch')=? ORDER BY r.rowid DESC LIMIT 1`).get(session.projectId, project.branch);
     const update = branchUpdate ? parse(branchUpdate) : null;
-    const candidates = [...ruleProposals(session, receipt), ...testCommandProposals(session, this.listEvents(sessionId, 2000)),
-      ...statusProposal(session, project, update ? this.drift(project, { ...update, category: 'brief', scope: 'branch' }, new Map()) : 0, !!update)];
+    // Commands and commits in an additional folder belong to that folder, not the primary branch.
+    const candidates = [...ruleProposals(session, receipt), ...(inFolder ? [] : [...testCommandProposals(session, this.listEvents(sessionId, 2000)),
+      ...statusProposal(session, project, update ? this.drift(project, { ...update, category: 'brief', scope: 'branch' }, new Map()) : 0, !!update)])];
     const created = [];
     for (const candidate of candidates.slice(0, 10)) {
       if (candidate.statement && candidate.kind !== 'branch-status' && existing.some(statement => isDuplicate(statement, candidate.statement))) continue;
@@ -502,6 +604,14 @@ export class JournalStore {
   view(projectId, workspaceId = null) {
     const project = this.project(projectId);
     if (!workspaceId) return project;
+    if (workspaceId.startsWith('root:')) {
+      // An additional folder as the session's working directory. Knowledge
+      // keeps the primary repository's branch; the folder keeps its own Git identity.
+      const root = project.roots.find(entry => entry.id === workspaceId.slice(5));
+      if (!root) throw new Error('That folder is no longer part of this project');
+      const status = folderStatus(root); if (!status.exists) throw new Error(`Folder ${root.path} no longer exists`);
+      return { ...project, cwd: root.path, cwdBranch: status.currentBranch, cwdHead: status.head, cwdIsGit: root.kind === 'git', cwdGitRoot: root.gitRoot ?? root.path, workspaceId };
+    }
     const workspace = this.getWorkspace(workspaceId);
     if (workspace.projectId !== projectId) throw new Error('Workspace belongs to another project');
     return workspaceView(project, workspace);
@@ -533,8 +643,16 @@ export class JournalStore {
     return this.db.prepare('SELECT * FROM (SELECT id,at,kind,body FROM events WHERE session_id=? ORDER BY id DESC LIMIT ?) ORDER BY id').all(sessionId, Math.min(Math.max(1, limit), EVENT_LIMIT))
       .map(row => ({ id: row.id, at: row.at, kind: row.kind, body: JSON.parse(row.body) }));
   }
-  checkoutBaseline(projectId, workspaceId = null) { return checkoutBaseline(this.view(projectId, workspaceId)); }
-  sessionView(session) { return this.view(session.projectId, session.workspaceId ?? null); }
+  // Git views (baselines, changes) of where the session actually runs.
+  cwdView(view) {
+    if (!view.cwd) return view;
+    if (!view.cwdIsGit) throw new Error('This folder is not a Git repository, so changes cannot be listed');
+    // Git runs at the repository root; a subfolder of another repository is listed by prefix.
+    const prefix = relative(view.cwdGitRoot, view.cwd).split(sep).join('/');
+    return { ...view, root: view.cwdGitRoot, head: view.cwdHead, branch: view.cwdBranch, pathPrefix: prefix ? `${prefix}/` : '' };
+  }
+  checkoutBaseline(projectId, workspaceId = null) { const view = this.view(projectId, workspaceId); return view.cwd && !view.cwdIsGit ? null : checkoutBaseline(this.cwdView(view)); }
+  sessionView(session) { return this.cwdView(this.view(session.projectId, session.workspaceId ?? null)); }
   sessionChanges(sessionId) {
     const session = this.getSession(sessionId); let view;
     try { view = this.sessionView(session); } catch (error) { return { base: session.head ?? '', available: false, reason: `${error.message}. Changes for this session are no longer available.`, files: [] }; }

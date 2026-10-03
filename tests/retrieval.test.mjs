@@ -95,7 +95,7 @@ test('a version 1 database migrates in place and keeps knowledge searchable', t 
   const store = new JournalStore(path); const project = store.openProject(repo);
   // Reopen the old file as v1, insert a memory with the old schema, then migrate again from scratch.
   store.close(); const raw = new DatabaseSync(path);
-  assert.equal(raw.prepare('PRAGMA user_version').get().user_version, 5);
+  assert.equal(raw.prepare('PRAGMA user_version').get().user_version, 6);
   raw.close();
   const reopened = new JournalStore(path); t.after(() => reopened.close());
   const memory = reopened.proposeMemory(project.id, { statement: 'Payments retry with backoff', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'x' } });

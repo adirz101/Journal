@@ -40,8 +40,10 @@ export function storageInfo(db, path) {
   return info;
 }
 
-function exportSource(source) {
-  const base = { kind: source.kind };
+function exportSource(source, roots = []) {
+  const folder = source.rootId ? roots.find(root => root.id === source.rootId) : null;
+  // Folder name only: exports are shareable and must not carry local absolute paths.
+  const base = { kind: source.kind, ...(source.rootId ? { folder: { name: folder?.name ?? '(removed folder)' } } : {}) };
   if (source.kind === 'file') return { ...base, path: source.path, startLine: source.startLine, endLine: source.endLine, commit: source.commit ?? null, contentHash: source.contentHash, excerpt: redact(source.excerpt ?? '', 4000) };
   if (source.kind === 'git') return { ...base, base: source.base ?? null, head: source.head };
   return { ...base, note: redact(source.note ?? '', 2000) };
@@ -55,7 +57,7 @@ export function exportBrain(store, projectId, { includeUnreviewed = false } = {}
   const memories = rows.map(row => ({
     id: row.id, status: row.status, pinned: !!row.pinned,
     revisions: store.memoryHistory(row.id).reverse().map(r => ({ revision: r.revision, statement: redact(r.statement, 2000), category: r.category, scope: r.scope, branch: r.branch ?? null,
-      area: r.area ?? '', environment: r.environment ? redact(r.environment, 200) : undefined, source: exportSource(r.source), createdAt: r.createdAt })),
+      area: r.area ?? '', environment: r.environment ? redact(r.environment, 200) : undefined, source: exportSource(r.source, project.roots), createdAt: r.createdAt })),
   }));
   const document = { format: BRAIN_FORMAT, version: BRAIN_VERSION, exportedAt: new Date().toISOString(), project: { name: project.name }, memories, checksum: checksum(memories) };
   return { json: document, markdown: brainMarkdown(document) };
@@ -70,7 +72,7 @@ export function brainMarkdown(document) {
       const r = memory.revisions.at(-1);
       lines.push(`- **${r.category}** (${r.scope === 'branch' ? `branch ${r.branch}` : 'all branches'}${r.area ? `, ${r.area}` : ''}${memory.pinned ? ', pinned' : ''}, r${r.revision}): ${r.statement.replace(/\n/g, ' ')}`);
       if (r.environment) lines.push(`  - Applies when: ${r.environment}`);
-      lines.push(`  - Evidence: ${r.source.kind === 'file' ? `${r.source.path}:${r.source.startLine}` : r.source.kind === 'git' ? `Git ${r.source.head?.slice(0, 7)}` : r.source.note}`);
+      lines.push(`  - Evidence: ${r.source.kind === 'file' ? `${r.source.folder ? `${r.source.folder.name}/` : ''}${r.source.path}:${r.source.startLine}` : r.source.kind === 'git' ? `Git ${r.source.head?.slice(0, 7)}` : r.source.note}`);
     }
     lines.push('');
   }
@@ -97,7 +99,7 @@ export function importBrain(store, projectId, raw) {
       if (!CATEGORIES.includes(latest.category) || !['checkout', 'branch'].includes(latest.scope)) throw new Error('invalid category or scope');
       const area = relativePath(latest.area ?? '', true);
       if (existing.some(other => isDuplicate(other, statement))) { skipped.push({ index, reason: 'duplicate' }); continue; }
-      const original = latest.source?.kind === 'file' ? `${latest.source.path}:${latest.source.startLine}` : latest.source?.kind === 'git' ? `Git ${String(latest.source.head ?? '').slice(0, 7)}` : String(latest.source?.note ?? '');
+      const original = latest.source?.kind === 'file' ? `${latest.source.folder ? `folder ${String(latest.source.folder.name)}: ` : ''}${latest.source.path}:${latest.source.startLine}` : latest.source?.kind === 'git' ? `Git ${String(latest.source.head ?? '').slice(0, 7)}` : String(latest.source?.note ?? '');
       // Branch claims become checkout candidates unless that branch is current; the reviewer decides.
       const scope = latest.scope === 'branch' && latest.branch !== project.branch ? 'checkout' : latest.scope;
       const created = store.proposeMemory(projectId, { statement, category: latest.category, scope, area: latest.category === 'brief' ? '' : area,

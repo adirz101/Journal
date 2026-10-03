@@ -137,3 +137,8 @@
 .small-print{font-size:10px;margin-top:12px}.sidebar-footer .theme-toggle+.theme-toggle{margin-top:6px}
 .provider-line{display:flex;gap:12px;font-size:9px;color:#727c89;margin:8px 0 0}
 .memory-card>.memory-age{font-size:9px;color:#8d97a3;margin:7px 0 0}
+.project-row{display:flex;align-items:center;gap:2px}.project-row .project-link{flex:1;min-width:0}.project-manage{flex-shrink:0;width:26px;height:26px;padding:0;border-color:transparent;background:transparent;color:#8992a0;font-size:14px;line-height:1}.pin-mark{margin-left:auto;font-size:10px;color:#7aafff}.project-link .pin-mark+.attention{margin-left:6px}
+.manage-dialog{width:620px}.manage-name{margin-top:10px}.manage-pin{margin:14px 0}.manage-section{margin-top:16px}.manage-danger{margin-top:20px;padding:12px;border:1px solid #624441;border-radius:7px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}.manage-danger strong{font-size:12px}
+:root[data-theme=light] .manage-danger{border-color:#ecc4c8}
+@media(hover:hover) and (pointer:fine){.project-manage:not(:disabled):hover{background:#262c33;color:#dceaff}}
+.project-link>.project-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}

@@ -91,7 +91,8 @@ export class TerminalManager extends EventEmitter {
     const session = { id: randomUUID(), projectId, provider, nativeId: prior?.nativeId ?? (provider === 'claude' ? randomUUID() : null),
       nativeIdConfirmed: provider === 'claude' || !!prior, title: task.slice(0, 80) || (prior ? 'Resume session' : 'Interactive session'),
       status: 'starting', receiptId: receipt.id, resumedFrom: prior?.id ?? null, createdAt: now, lastActivityAt: now,
-      branch: project.branch, head: project.head, cwd: project.root, workspaceId, research, baseline, runtimeId: this.runtimeId, activity: null, archived: false };
+      // An additional-folder session runs in that folder with its own Git identity (if any).
+      branch: project.cwd ? project.cwdBranch ?? null : project.branch, head: project.cwd ? project.cwdHead ?? null : project.head, cwd: project.cwd ?? project.root, workspaceId, research, baseline, runtimeId: this.runtimeId, activity: null, archived: false };
     let prompt = task;
     if (receipt.packet || (prior && (oldReceipt?.hadKnowledge || oldReceipt?.items.length))) {
       const withdrawn = oldReceipt?.items.filter(item => !receipt.items.some(current => current.revisionId === item.revisionId)) ?? [];
@@ -107,7 +108,7 @@ export class TerminalManager extends EventEmitter {
       const launch = buildAgentLaunch({ provider, nativeId: session.nativeId, resume: !!prior, prompt, settingsFile, research });
       const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', JOURNAL_SESSION_ID: session.id };
       delete env.ELECTRON_RUN_AS_NODE;
-      const proc = this.spawn(launch.executable, launch.argv, { cwd: project.root, env, name: 'xterm-256color', cols: 100, rows: 30 });
+      const proc = this.spawn(launch.executable, launch.argv, { cwd: session.cwd, env, name: 'xterm-256color', cols: 100, rows: 30 });
       entry = { session, proc, buffer: new OutputBuffer(), attached: false, sent: 0, acknowledged: 0, inflight: [], tail: '', exited: false,
         stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), lastPersist: 0 };
       this.entries.set(session.id, entry);

@@ -3,7 +3,7 @@ import { api, type Bootstrap, type Receipt, type Session } from './types';
 
 const reasons: Record<string, string> = {
   stale: 'evidence changed', 'wrong-branch': 'other branch', 'area-not-requested': 'area not in task', duplicate: 'duplicate of a selected claim',
-  'brief-limit': 'orientation limit', budget: 'context budget', 'category-limit': 'too many of one kind', 'left-out-for-task': 'left out by you',
+  'brief-limit': 'orientation limit', 'folder-removed': 'its folder was removed from the project', budget: 'context budget', 'category-limit': 'too many of one kind', 'left-out-for-task': 'left out by you',
 };
 
 // What the agent receives: the exact packet, why each claim is there, what

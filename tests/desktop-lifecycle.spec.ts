@@ -85,7 +85,7 @@ else console.log('ECHO '+command);
     await expect.poll(() => alive(quittingParent)).toBe(false);
     const count = launches().length;
     app = await electron.launch({ args: ['.'], env }); page = await app.firstWindow();
-    await page.getByRole('button', { name: /fixture project/ }).click();
+    await page.getByRole('button', { name: /^fixture project/ }).click();
     const after = await page.evaluate(async () => {
       const boot = await (window as any).journal.request('bootstrap');
       return { active: boot.live.filter((x: any) => ['starting', 'running', 'waiting', 'stopping'].includes(x.status)), project: await (window as any).journal.request('project', { projectId: boot.projects[0].id }) };
