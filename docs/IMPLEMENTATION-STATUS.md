@@ -20,6 +20,11 @@ Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI
 - Rename (with reset to a deterministic default title), pin, archive/unarchive (running sessions keep running and stay in Active with an archived badge) and remove from Journal (never files; a running session is stopped first or archived instead; "Remove and delete history" also deletes receipts unless other sessions continue the same native conversation). User fields are written atomically so app and runtime updates cannot overwrite each other. Native session IDs, workspaces, receipts and exact resume are unaffected.
 - Native right-click menus on projects (open, rename, pin, manage, add folder, reveal, copy path, remove) and sessions (open, rename, pin, archive, resume, interrupt, stop, reveal/copy workspace, copy native ID, remove), showing only actions that fit the current state.
 
+**File explorer** ([design](FILE-EXPLORER-DESIGN.md))
+- A collapsible right panel with a read-only Files tab that follows the session's workspace, with the project's additional folders as roots, Git decorations (including conflicts and folder summaries), a Changed filter, virtualized lazy listings, and keyboard navigation with type-ahead.
+- Read-only preview with line numbers, line selection and search; sensitive, binary, large and non-UTF-8 files are handled without reading what must not be read.
+- File and line references for the next task (recorded in receipts as paths and hashes) or a running session (typed only when Claude is known to be ready, otherwise copied), with change detection in the Context Inspector. No editing or file operations.
+
 **Workspaces**
 - Current checkout, Journal-managed worktrees from an explicit base, and imported worktrees, with intent persisted before Git side effects and reconciliation after crashes.
 - No force, no stash, no transfer of uncommitted work. Removal refuses dirty, untracked, ignored, locked or in-use worktrees and keeps the branch; imported worktrees are never deleted.
@@ -58,9 +63,9 @@ Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI
 
 | Check | Result |
 | --- | --- |
-| `npm test` | 145 passed |
+| `npm test` | 155 passed |
 | `npm run check`, `npm run build` | Passed (the existing ~545 KiB chunk warning remains) |
-| `npm run test:desktop` | 14 passed (headless): real Electron, runtime and node-pty with fixture CLIs, covering four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches, project management and right-click menus |
+| `npm run test:desktop` | 15 passed (headless): real Electron, runtime and node-pty with fixture CLIs, covering four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches, project management, right-click menus and the file explorer |
 | `npm run dist:dir` | Unsigned app builds; packaged runtime starts; notices bundled |
 | GitHub Actions | BLOCKED (workflow scope) |
 

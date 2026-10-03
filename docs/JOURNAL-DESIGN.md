@@ -70,7 +70,7 @@ For effectiveness, use paired tasks on frozen checkouts and report raw outcomes;
 
 ## 4. What Journal is not
 
-It is not a code editor, language server, issue tracker, Kanban system, Git staging client, replacement agent harness, credential proxy, terminal renderer, general personal memory store, or platform for inspecting proprietary reasoning. Open files in the user's editor. Use Git CLI and xterm.js. Keep approvals and native agent security intact. No automatic merge, push, branch deletion, or arbitrary repository setup execution.
+It is not a code editor, language server, issue tracker, Kanban system, Git staging client, replacement agent harness, credential proxy, terminal renderer, general personal memory store, or platform for inspecting proprietary reasoning. Open files in the user's editor. Use Git CLI and xterm.js. A read-only file explorer (browsing, Git status, text preview and file references for agents; see [FILE-EXPLORER-DESIGN.md](FILE-EXPLORER-DESIGN.md)) was approved by the user in October 2026; editing, file operations, editor tabs, language servers and source-control actions remain out of scope. Keep approvals and native agent security intact. No automatic merge, push, branch deletion, or arbitrary repository setup execution.
 
 ## 5. Smallest credible MVP and priorities
 
@@ -660,7 +660,7 @@ Secret detection is imperfect. The product cannot honestly promise that no unkno
 
 **Memory poisoning:** instructions in code/tool output are evidence data, never automatically promoted policy. New imported memories and MCP submissions enter quarantine/candidate status. Broad command directives need explicit policy admission. Extractor has no execution tools. Models cannot “verify” their own claims by asserting source IDs; check source contents. An on-topic malicious false memory is a real residual risk even without explicit prompt-injection text.
 
-**Desktop/IPC:** CSP, bundled assets/fonts, no remote scripts or arbitrary previews in privileged views; sanitize Markdown/links; deny renderer shell/filesystem APIs except scoped commands. Authenticate runtime peers, validate operation/session/workspace ownership, prevent cross-session approvals and enforce timeouts. Do not open unauthenticated loopback listeners. If HTTP is later necessary, origin validation and per-session capability tokens are mandatory; localhost is not an auth boundary.
+**Desktop/IPC:** CSP, bundled assets/fonts, no remote scripts; previews only as read-only text of non-sensitive files that the main process resolves from Journal's records (no HTML, Markdown or image rendering; amended October 2026 for the file explorer); sanitize Markdown/links; deny renderer shell/filesystem APIs except scoped commands. Authenticate runtime peers, validate operation/session/workspace ownership, prevent cross-session approvals and enforce timeouts. Do not open unauthenticated loopback listeners. If HTTP is later necessary, origin validation and per-session capability tokens are mandatory; localhost is not an auth boundary.
 
 **At rest:** user-only filesystem permissions plus OS disk encryption are the MVP baseline; do not claim SQLite is encrypted. Optional encrypted app storage/SQLCipher is V1 if demand warrants it. Credentials stay in provider/OS vault; API key material excluded from captures and exports. Do not share/move keys with future cloud sync.
 

@@ -3,17 +3,17 @@ import { api, type Memory, type Project, type StatusDraft } from './types';
 
 const placeholder = /\[describe[^\]]*\]/;
 
-export function KnowledgeForm({ project, memory: revising, supersedes, initialCategory, draft, onClose, onSaved }: { project: Project; memory?: Memory; supersedes?: Memory; initialCategory?: string; draft?: StatusDraft; onClose: () => void; onSaved: () => void }) {
+export function KnowledgeForm({ project, memory: revising, supersedes, initialCategory, draft, initialSource, onClose, onSaved }: { project: Project; memory?: Memory; supersedes?: Memory; initialCategory?: string; draft?: StatusDraft; initialSource?: { kind: 'file'; path: string; startLine: number; endLine: number; rootId?: string }; onClose: () => void; onSaved: () => void }) {
   // Replacing a claim starts from its content but saves a new claim that retires the old one on approval.
   const memory = revising ?? supersedes;
   const dialog = useRef<HTMLDialogElement>(null);
   const [statement, setStatement] = useState(draft?.statement ?? memory?.statement ?? ''); const [category, setCategory] = useState(draft ? 'brief' : memory?.category ?? initialCategory ?? 'constraint');
   const [scope, setScope] = useState(draft?.scope ?? memory?.scope ?? (initialCategory === 'brief' ? 'checkout' : project.branch ? 'branch' : 'checkout')); const [area, setArea] = useState(memory?.area ?? ''); const [environment, setEnvironment] = useState(memory?.environment ?? '');
-  const [kind, setKind] = useState(draft ? 'git' : memory?.source.kind ?? 'user');
+  const [kind, setKind] = useState(draft ? 'git' : memory?.source.kind ?? initialSource?.kind ?? 'user');
   // A proposal or an existing Git-backed update can keep its commit range as evidence.
   const gitBase = draft ? draft.source.base : memory?.source.kind === 'git' ? memory.source.base ?? null : undefined;
   const memoryId = draft ? draft.memoryId ?? undefined : supersedes ? undefined : memory?.id; const [note, setNote] = useState(memory?.source.note ?? '');
-  const [path, setPath] = useState(memory?.source.path ?? ''); const [rootId, setRootId] = useState((memory?.source as { rootId?: string } | undefined)?.rootId ?? ''); const [startLine, setStartLine] = useState(memory?.source.startLine ?? 1); const [endLine, setEndLine] = useState(memory?.source.endLine ?? 1);
+  const [path, setPath] = useState(memory?.source.path ?? initialSource?.path ?? ''); const [rootId, setRootId] = useState((memory?.source as { rootId?: string } | undefined)?.rootId ?? initialSource?.rootId ?? ''); const [startLine, setStartLine] = useState(memory?.source.startLine ?? initialSource?.startLine ?? 1); const [endLine, setEndLine] = useState(memory?.source.endLine ?? initialSource?.endLine ?? 1);
   const [error, setError] = useState(''); const [saving, setSaving] = useState(false);
   useEffect(() => { dialog.current?.showModal(); }, []);
   async function save(event: React.FormEvent) {

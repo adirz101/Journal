@@ -1,5 +1,37 @@
-import { useState } from 'react';
-import { api, type Bootstrap, type Receipt, type Session } from './types';
+import { useEffect, useMemo, useState } from 'react';
+import { api, type Bootstrap, type FileReference, type Receipt, type Session, type TimelineEvent } from './types';
+
+// Files the user referenced, with whether each still matches what was referenced.
+function References({ title, projectId, workspaceId, references }: { title: string; projectId: string; workspaceId: string | null; references: (FileReference & { note?: string })[] }) {
+  const [changed, setChanged] = useState<Record<number, 'same' | 'changed' | 'missing'>>({});
+  useEffect(() => {
+    let cancelled = false; setChanged({});
+    void Promise.all(references.map(async (ref, index) => {
+      if (!ref.contentHash) return [index, null] as const;
+      const current = await api<FileReference>('describeReference', { projectId, workspaceId, rootKey: ref.rootKey, path: ref.path, startLine: ref.startLine, endLine: ref.endLine }).catch(() => null);
+      const same = !current ? 'missing' : (ref.rangeHash ? current.rangeHash === ref.rangeHash : current.contentHash === ref.contentHash) ? 'same' : 'changed';
+      return [index, same] as const;
+    })).then(results => { if (!cancelled) setChanged(Object.fromEntries(results.filter(([, value]) => value)) as Record<number, 'same' | 'changed' | 'missing'>); });
+    return () => { cancelled = true; };
+  }, [projectId, workspaceId, references]);
+  if (!references.length) return null;
+  return <section className="reference-list" aria-label={title}><span className="eyebrow">{title}</span><ul>{references.map((ref, index) => <li key={index}>
+    <code>{ref.display ?? ref.path}{ref.startLine ? `:${ref.startLine}${ref.endLine !== ref.startLine ? `-${ref.endLine}` : ''}` : ''}{ref.kind === 'folder' ? '/' : ''}</code>
+    <small>{ref.note ? `${ref.note} · ` : ''}{ref.rootLabel ?? ref.rootKey}{ref.contentHash ? ` · sha256 ${ref.contentHash.slice(0, 8)}` : ''}{changed[index] === 'changed' ? ' · changed since referenced' : changed[index] === 'missing' ? ' · no longer available' : changed[index] === 'same' ? ' · unchanged' : ''}</small></li>)}</ul></section>;
+}
+
+function SessionReferences({ session, live }: { session: Session; live: TimelineEvent[] }) {
+  const [stored, setStored] = useState<TimelineEvent[]>([]);
+  const ownNow = live.filter(e => e.sessionId === session.id && e.kind === 'reference'); const ownKey = ownNow.map(e => e.at).join('|');
+  const own = useMemo(() => ownNow, [ownKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { let cancelled = false; void api<TimelineEvent[]>('sessionEvents', { id: session.id }).then(events => { if (!cancelled) setStored(events.filter(e => e.kind === 'reference')); }).catch(() => {}); return () => { cancelled = true; }; }, [session.id, own.length]);
+  // Stable until a reference is added, so files are not re-hashed on every render.
+  const references = useMemo(() => {
+    const seen = new Set(stored.map(e => e.at));
+    return [...stored, ...own.filter(e => !seen.has(e.at))].map(e => { const b = e.body as Record<string, any>; return { kind: b.kind, rootKey: b.rootKey, rootLabel: b.rootLabel, path: b.path, display: b.path, startLine: b.startLine, endLine: b.endLine, contentHash: b.contentHash, rangeHash: b.rangeHash, note: `${b.delivery === 'inserted' ? 'typed' : 'copied'} ${new Date(e.at).toLocaleTimeString()}` } as FileReference & { note: string }; });
+  }, [stored, own]);
+  return <References title="REFERENCED DURING THIS SESSION" projectId={session.projectId} workspaceId={session.workspaceId ?? null} references={references} />;
+}
 
 const reasons: Record<string, string> = {
   stale: 'evidence changed', 'wrong-branch': 'other branch', 'area-not-requested': 'area not in task', duplicate: 'duplicate of a selected claim',
@@ -8,8 +40,8 @@ const reasons: Record<string, string> = {
 
 // What the agent receives: the exact packet, why each claim is there, what
 // was left out and why, and what Journal cannot observe.
-export function ContextPanel({ receipt, session, bootstrap, history, disabled, onToggle, onSelectReceipt, onChanged, onError }: {
-  receipt: Receipt | null; session: Session | null; bootstrap: Bootstrap | null; history: Receipt[]; disabled: string[];
+export function ContextPanel({ receipt, session, bootstrap, history, disabled, live = [], onToggle, onSelectReceipt, onChanged, onError }: {
+  receipt: Receipt | null; session: Session | null; bootstrap: Bootstrap | null; history: Receipt[]; disabled: string[]; live?: TimelineEvent[];
   onToggle: (id: string) => void; onSelectReceipt: (receipt: Receipt) => void; onChanged: () => void; onError: (error: unknown) => void;
 }) {
   const [raw, setRaw] = useState(false); const [open, setOpen] = useState<string | null>(null);
@@ -35,6 +67,8 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, o
           <button onClick={() => void act(() => api('markIncorrect', { id: item.id }))}>Mark incorrect</button>
         </div>
       </li>)}</ol>
+      {receipt.references?.length ? <References title={`REFERENCED FOR THIS TASK · ${receipt.references.length}`} projectId={(receipt as any).projectId} workspaceId={receipt.workspaceId ?? null} references={receipt.references} /> : null}
+      {session && <SessionReferences session={session} live={live} />}
       {preview && disabled.length > 0 && <p className="hint">{disabled.length} claim{disabled.length === 1 ? '' : 's'} left out for the next start. <button className="text-button" onClick={() => disabled.forEach(onToggle)}>Restore all</button></p>}
       {receipt.excluded.length > 0 && <details><summary>{receipt.excluded.length} considered and excluded</summary>{receipt.excluded.map(x => <p key={x.id + x.reason} className="muted">{x.id.slice(0, 8)} · {reasons[x.reason] ?? x.reason}{x.reason === 'left-out-for-task' && preview ? <> · <button className="text-button" onClick={() => onToggle(x.id)}>restore</button></> : null}</p>)}</details>}
       {receipt.warnings?.map(warning => <p className="hint" key={warning}>{warning}</p>)}

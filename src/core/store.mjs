@@ -9,11 +9,13 @@ import { aliasesFor, areaMatches, isDuplicate, possibleConflict, queryTerms } fr
 import { checkoutBaseline, fileDiff, openableFile, sessionChanges } from './changes.mjs';
 import { classifyFolder, folderStatus } from './projects.mjs';
 import { SESSION_USER_FIELDS, survivorScanPending } from './sessions.mjs';
-import { basename, relative, sep } from 'node:path';
+import { basename, join, relative, sep } from 'node:path';
 import { applyRetention, backupTo, checkpoint, exportBrain, importBrain, purgeSession, storageInfo } from './maintenance.mjs';
 import { ruleProposals, statusProposal, testCommandProposals } from './proposals.mjs';
 import { addWorktree, creationNotices, listGitWorktrees, plannedPath, registered, removalBlockers, removeWorktree, resolveBase, validateBranchName, workspaceView } from './workspaces.mjs';
 import { redact } from './validation.mjs';
+import { fingerprintSync, treePath } from './files.mjs';
+import { MAX_REFERENCES, pathFromCwd, referencesBlock } from './references.mjs';
 
 const LIVE = "('starting','running','waiting','stopping')";
 const EVENT_LIMIT = 2000;
@@ -329,11 +331,15 @@ export class JournalStore {
     return this.proposeMemory(memory.projectId, { statement: memory.statement, category: memory.category, scope: 'checkout', area: memory.area, environment: memory.environment, source,
       promotedFrom: { id: memory.id, revision: memory.revision, branch: memory.branch } });
   }
-  prepareContext(projectId, query, { workspaceId = null, disabled = [] } = {}) {
+  prepareContext(projectId, query, { workspaceId = null, disabled = [], references = [] } = {}) {
     query = text(query, 'task', 4000, true); refuseCredentials(query);
     if (!Array.isArray(disabled) || disabled.length > 100 || disabled.some(x => typeof x !== 'string')) throw new Error('Invalid disabled claims');
     const project = this.view(projectId, workspaceId);
-    const terms = queryTerms(query);
+    const referenced = this.resolveReferences(projectId, workspaceId, project, references);
+    // Referenced paths also select knowledge: their words match claims, and
+    // area-scoped claims for a referenced area become eligible.
+    const areaQuery = [query, ...referenced.map(ref => ref.path)].join(' ');
+    const terms = queryTerms(areaQuery);
     let matches = []; const cache = new Map(); const warnings = []; const matchedIds = new Set();
     // Orientation is independent of task words. Current checkout identity and
     // current-branch updates alternate so neither silently crowds out the other.
@@ -354,6 +360,19 @@ export class JournalStore {
       AND (json_extract(r.body,'$.scope')='checkout' OR json_extract(r.body,'$.branch')=?) ORDER BY r.rowid DESC LIMIT 20`).all(projectId, project.branch)) {
       matches.push({ ...row, validation: this.validation(project, parse(row), cache), reason: 'pinned', pinned: true }); matchedIds.add(parse(row).id);
     }
+    // Claims scoped to an area the user referenced (a file or folder of the
+    // primary repository inside that area, or the area inside a referenced folder).
+    const referencedPaths = referenced.filter(ref => ref.family === 'primary').map(ref => ref.path);
+    if (referencedPaths.length) {
+      for (const row of this.db.prepare(`SELECT r.body,m.status FROM memories m JOIN revisions r ON r.id=m.current_revision
+        WHERE m.project_id=? AND m.status='active' AND coalesce(json_extract(r.body,'$.area'),'')<>'' AND json_extract(r.body,'$.category')!='brief'
+        AND (json_extract(r.body,'$.scope')='checkout' OR json_extract(r.body,'$.branch')=?) ORDER BY r.rowid DESC LIMIT 200`).all(projectId, project.branch)) {
+        const item = parse(row); if (matchedIds.has(item.id)) continue;
+        const area = item.area.replace(/\/+$/, '');
+        if (!referencedPaths.some(path => path === area || path.startsWith(`${area}/`) || area.startsWith(`${path}/`))) continue;
+        matches.push({ ...row, validation: this.validation(project, item, cache), reason: `referenced area ${area}` }); matchedIds.add(item.id);
+      }
+    }
     if (terms.length) {
       const fts = terms.map(term => `"${term.replaceAll('"', '""')}"`).join(' OR ');
       const select = this.db.prepare(`SELECT r.body,m.status,bm25(memory_fts, 0, 1.0, 0.6) AS rank FROM memory_fts
@@ -370,7 +389,7 @@ export class JournalStore {
         for (const row of page) {
           const item = parse(row);
           const validation = this.validation(project, item, cache);
-          const valid = validation === 'current' && areaMatches(item.area, query);
+          const valid = validation === 'current' && areaMatches(item.area, areaQuery);
           if (matchedIds.has(item.id)) continue; matchedIds.add(item.id);
           const lower = `${item.statement} ${aliasesFor(item)}`.toLocaleLowerCase();
           const hit = terms.filter(term => lower.includes(term.slice(0, Math.max(4, term.length - 2))));
@@ -390,7 +409,7 @@ export class JournalStore {
       const validation = row.validation;
       if (disabledSet.has(memory.id)) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'left-out-for-task' }); continue; }
       if (validation !== 'current') { if (excluded.length < 100) excluded.push({ id: memory.id, reason: validation }); continue; }
-      if (!areaMatches(memory.area, query)) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'area-not-requested' }); continue; }
+      if (!areaMatches(memory.area, areaQuery)) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'area-not-requested' }); continue; }
       if (items.some(item => isDuplicate(item.statement, memory.statement))) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'duplicate' }); continue; }
       if (memory.category === 'brief' && briefCount >= 4) {
         if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'brief-limit' });
@@ -421,9 +440,48 @@ export class JournalStore {
     if (matches.some(row => parse(row).category === 'brief' && excluded.some(item => item.id === parse(row).id && item.reason === 'budget'))) warnings.push('A project brief was excluded by the context budget. Shorten or consolidate the reviewed summaries.');
     if (!items.some(item => item.category === 'brief' && item.scope === 'checkout')) warnings.push('No current approved project brief is included. Add a checkout-scoped brief to orient every session.');
     if (!items.length) packet = '';
-    const receipt = { id, projectId, query, packet, items, excluded, warnings, disabled: [...disabledSet], workspaceId, checkout: { root: project.root, branch: project.branch, head: project.head }, state: 'prepared', estimatedTokens: Math.ceil(Buffer.byteLength(packet) / 3), createdAt: now() };
+    // References carry paths, ranges and hashes, never contents.
+    packet += referencesBlock(referenced);
+    const receipt = { id, projectId, query, packet, items, excluded, warnings, disabled: [...disabledSet], workspaceId, references: referenced, checkout: { root: project.root, branch: project.branch, head: project.head }, state: 'prepared', estimatedTokens: Math.ceil(Buffer.byteLength(packet) / 3), createdAt: now() };
     this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(id, projectId, JSON.stringify(receipt));
     return receipt;
+  }
+  // Files and folders the user chose for the next task, recorded with what
+  // they were at selection time. A primary-repository path must come from the
+  // same checkout or worktree the session runs in, so the agent never edits
+  // the wrong copy.
+  resolveReferences(projectId, workspaceId, view, references) {
+    if (!Array.isArray(references) || references.length > MAX_REFERENCES) throw new Error(`Reference up to ${MAX_REFERENCES} files or folders per task`);
+    if (!references.length) return [];
+    const sessionKey = workspaceId ?? 'checkout'; const sessionRoot = this.fileRoot(projectId, sessionKey);
+    const cwd = view.cwd ?? view.root; const seen = new Set();
+    return references.map(input => {
+      if (!input || typeof input !== 'object') throw new Error('Invalid reference');
+      // A reference chosen in one project never resolves against another one's paths.
+      if (input.projectId !== undefined && input.projectId !== projectId) throw new Error(`${input.path} was chosen in another project; add it again from this project`);
+      const root = this.fileRoot(projectId, text(input.rootKey, 'reference root', 100));
+      if (root.family === 'primary' && sessionRoot.family === 'primary' && root.key !== sessionRoot.key) throw new Error(`${input.path} is in ${root.label}, but this session runs in ${sessionRoot.label}. Reference it from the session's own copy.`);
+      const path = treePath(input.path);
+      const startLine = input.startLine ?? null; const endLine = input.endLine ?? startLine;
+      const print = fingerprintSync(root.path, path, startLine, endLine);
+      const absolute = join(root.path, ...path.split('/'));
+      const display = pathFromCwd(cwd, absolute) ?? absolute;
+      const key = `${root.key}\u0000${path}\u0000${startLine}-${endLine}`; if (seen.has(key)) return null; seen.add(key);
+      return { kind: print.kind, source: 'user-reference', projectId, rootKey: root.key, rootLabel: root.label, family: root.family, path, display, startLine: print.kind === 'lines' ? startLine : null, endLine: print.kind === 'lines' ? endLine : null,
+        contentHash: print.contentHash, rangeHash: print.rangeHash, head: root.head ?? null, createdAt: now() };
+    }).filter(Boolean);
+  }
+  // A reference chosen for the next task, validated without recording anything.
+  describeReference(projectId, workspaceId, input) {
+    return this.resolveReferences(projectId, workspaceId ?? null, this.view(projectId, workspaceId ?? null), [input])[0];
+  }
+  // One reference for a running session, relative to where that session runs.
+  referenceFor(sessionId, input) {
+    const session = this.getSession(sessionId);
+    if (input?.projectId && input.projectId !== session.projectId) throw new Error('That file belongs to another project');
+    const workspaceId = session.workspaceId ?? null;
+    const [reference] = this.resolveReferences(session.projectId, workspaceId, { ...this.view(session.projectId, workspaceId), cwd: session.cwd }, [input]);
+    return { ...reference, provider: session.provider };
   }
   getReceipt(id) {
     const receipt = parse(this.db.prepare('SELECT body FROM receipts WHERE id=?').get(text(id, 'receipt ID', 100)));
@@ -650,6 +708,33 @@ export class JournalStore {
     this.audit('workspace-forgotten', { id, path: workspace.path });
     return this.saveWorkspace({ ...workspace, state: 'removed', removedAt: now() });
   }
+  // Browsable roots: the primary repository as its checkout or any ready
+  // worktree (alternatives, never shown together), plus additional folders.
+  fileRoots(projectId) {
+    const { checkout, workspaces } = this.listWorkspaces(projectId); const project = this.project(projectId);
+    const primary = [{ key: 'checkout', family: 'primary', kind: 'checkout', label: `${project.name} (checkout)`, path: checkout.path, branch: checkout.branch, git: true },
+      ...workspaces.filter(w => w.state === 'ready').map(w => ({ key: w.id, family: 'primary', kind: w.kind, label: `${project.name} (${w.kind === 'managed' ? 'worktree' : 'imported worktree'} ${w.branch ?? basename(w.path)})`, path: w.path, branch: w.branch ?? null, git: true }))];
+    const folders = (project.roots ?? []).map(root => { const status = folderStatus(root); return { key: `root:${root.id}`, family: 'folder', kind: root.kind, label: root.name, path: root.path, branch: status.currentBranch, git: root.kind === 'git', exists: status.exists }; });
+    return { primary, folders };
+  }
+  // Resolves a root key from Journal's records: the checkout, a ready worktree
+  // of this project, or one of its folders. Never a path from the renderer.
+  fileRoot(projectId, key) {
+    const project = this.project(projectId);
+    if (key === 'checkout') return { key, family: 'primary', label: `${project.name} (checkout)`, path: project.root, gitRoot: project.root, prefix: '', head: project.head, git: true };
+    if (typeof key === 'string' && key.startsWith('root:')) {
+      const root = (project.roots ?? []).find(entry => `root:${entry.id}` === key); if (!root) throw new Error('That folder is no longer part of this project');
+      const status = folderStatus(root); if (!status.exists) throw new Error(`Folder ${root.path} no longer exists`);
+      const gitRoot = root.kind === 'git' ? root.gitRoot ?? root.path : null;
+      const prefix = gitRoot ? relative(gitRoot, root.path).split(sep).join('/') : '';
+      return { key, family: 'folder', label: root.name, path: root.path, gitRoot, prefix: prefix ? `${prefix}/` : '', head: status.head, git: !!gitRoot };
+    }
+    const workspace = this.getWorkspace(text(key, 'root', 100));
+    if (workspace.projectId !== projectId) throw new Error('Workspace belongs to another project');
+    if (workspace.state !== 'ready' || !existsSync(workspace.path)) throw new Error('This worktree is not available');
+    const view = workspaceView(project, workspace);
+    return { key, family: 'primary', label: `${project.name} (worktree ${view.branch ?? basename(workspace.path)})`, path: view.root, gitRoot: view.root, prefix: '', head: view.head, git: true };
+  }
   // The project as seen from a workspace (or its own checkout when null).
   view(projectId, workspaceId = null) {
     const project = this.project(projectId);
@@ -682,7 +767,7 @@ export class JournalStore {
   appendEvent(sessionId, kind, body) {
     const text = JSON.stringify(body ?? {});
     if (text.length > 4000) throw new Error('Timeline event is too large');
-    this.db.prepare('INSERT INTO events(session_id,at,kind,body) VALUES(?,?,?,?)').run(sessionId, now(), choice(kind, ['start', 'resume', 'context', 'prompt', 'permission', 'turn-end', 'command-start', 'command-end', 'file', 'interrupt', 'stop', 'exit', 'error', 'recovered', 'cleanup', 'disconnected'], 'event kind'), text);
+    this.db.prepare('INSERT INTO events(session_id,at,kind,body) VALUES(?,?,?,?)').run(sessionId, now(), choice(kind, ['start', 'resume', 'context', 'prompt', 'permission', 'turn-end', 'command-start', 'command-end', 'file', 'interrupt', 'stop', 'exit', 'error', 'recovered', 'cleanup', 'disconnected', 'reference'], 'event kind'), text);
     this.eventCounts ??= new Map(); const count = (this.eventCounts.get(sessionId) ?? 0) + 1; this.eventCounts.set(sessionId, count);
     if (count % 50 === 0) this.db.prepare(`DELETE FROM events WHERE session_id=? AND id <= (SELECT id FROM events WHERE session_id=? ORDER BY id DESC LIMIT 1 OFFSET ${EVENT_LIMIT})`).run(sessionId, sessionId);
   }

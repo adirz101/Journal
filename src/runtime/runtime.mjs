@@ -13,7 +13,7 @@ import { redact } from '../core/validation.mjs';
 import { Observers } from './observers.mjs';
 import { buildId, frame, lineReader, nonce, proof, proofMatches, PROTOCOL, socketPath } from './protocol.mjs';
 
-const METHODS = new Set(['list', 'start', 'attach', 'detach', 'acknowledge', 'write', 'resize', 'interrupt', 'stop', 'terminateSurvivors', 'terminateOrphan', 'confirmNativeId', 'release', 'shutdown', 'ping']);
+const METHODS = new Set(['list', 'start', 'attach', 'detach', 'acknowledge', 'write', 'resize', 'interrupt', 'stop', 'terminateSurvivors', 'terminateOrphan', 'confirmNativeId', 'paste', 'release', 'shutdown', 'ping']);
 
 export function canConnect(path, timeoutMs = 500) {
   return new Promise(resolvePromise => {
@@ -92,6 +92,7 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
     detach: ({ id } = {}) => manager.detach(id),
     acknowledge: ({ id, sequence }) => manager.acknowledge(id, sequence),
     write: ({ id, data }) => manager.write(id, data),
+    paste: ({ id, text, reference }) => manager.paste(id, text, reference),
     resize: ({ id, cols, rows }) => manager.resize(id, cols, rows),
     interrupt: ({ id }) => manager.interrupt(id),
     stop: ({ id }) => manager.stop(id),

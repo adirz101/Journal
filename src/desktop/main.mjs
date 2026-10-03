@@ -9,6 +9,12 @@ import { buildId } from '../runtime/protocol.mjs';
 import { detectAgents } from '../core/agents.mjs';
 import { relativePath, text } from '../core/validation.mjs';
 import { SESSION_USER_FIELDS, survivorScanPending } from '../core/sessions.mjs';
+import { headDiff, listDirectory, locate, previewFile, treePath } from '../core/files.mjs';
+import { gitStatus } from '../core/git-status.mjs';
+import { formatReference, referenceEvent } from '../core/references.mjs';
+import { isSensitivePath } from '../core/evidence.mjs';
+import { launchTarget, resolveExecutable } from '../core/process.mjs';
+import { RootWatcher } from './watch.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../..');
@@ -82,6 +88,28 @@ runtime = new RuntimeClient({ dataDir: userData, launch: launchRuntime });
 // removal belong to the store, so its copies of those fields never reach the UI.
 const fromRuntime = session => { const status = { ...session }; for (const field of SESSION_USER_FIELDS) delete status[field]; return status; };
 runtime.on('event', event => send(event?.type === 'status' && event.session ? { ...event, session: fromRuntime(event.session) } : event));
+// Explorer: one watched root, the status call per root shared while it runs,
+// and an external editor found on PATH (or named by JOURNAL_EDITOR).
+const watcher = new RootWatcher(change => send({ type: 'files', ...change }));
+const statusCalls = new Map();
+// Resolved roots are cached briefly so browsing does not run Git in the store
+// worker for every request; any workspace or folder change clears the cache.
+const rootCache = new Map();
+const fileRoot = async (projectId, rootKey) => {
+  const key = `${text(projectId, 'project ID', 100)}\u0000${text(rootKey, 'root', 100)}`; const cached = rootCache.get(key);
+  if (cached && Date.now() - cached.at < 5000) return cached.root;
+  const root = await store.fileRoot(projectId, rootKey); rootCache.set(key, { root, at: Date.now() }); return root;
+};
+const ROOT_CHANGES = new Set(['addProjectFolder', 'removeProjectFolder', 'removeProject', 'openProject', 'createWorkspace', 'importWorkspace', 'removeWorkspace', 'forgetWorkspace']);
+const EDITORS = { code: line => file => ['--goto', `${file}:${line}`], cursor: line => file => ['--goto', `${file}:${line}`], zed: line => file => [`${file}:${line}`], subl: line => file => [`${file}:${line}`] };
+let editor;
+const findEditor = () => {
+  if (editor !== undefined) return editor;
+  const names = process.env.JOURNAL_EDITOR && Object.hasOwn(EDITORS, process.env.JOURNAL_EDITOR) ? [process.env.JOURNAL_EDITOR] : Object.keys(EDITORS);
+  // Windows command shims would route the path through cmd.exe; those fall back to revealing.
+  for (const name of names) { const path = resolveExecutable(name); if (path && !/\.(?:cmd|bat)$/i.test(path)) return (editor = { name, path }); }
+  return (editor = null);
+};
 runtime.on('warning', message => { runtimeWarning = message; send({ type: 'runtime', state: runtimeState, warning: message }); });
 runtime.on('disconnected', () => { runtimeState = 'disconnected'; send({ type: 'runtime', state: 'disconnected' }); });
 runtime.on('failed', message => { runtimeWarning = message; send({ type: 'runtime', state: 'disconnected', warning: message }); });
@@ -141,7 +169,69 @@ const actions = {
   setMemoryStatus: ({ id, status }) => store.setMemoryStatus(id, status, { reason: status === 'archived' ? 'withdrawn' : null }),
   proposeStatusUpdate: ({ projectId, scope }) => store.proposeStatusUpdate(projectId, scope),
   memoryHistory: ({ id }) => store.memoryHistory(id),
-  prepareContext: ({ projectId, task, workspaceId, disabled }) => store.prepareContext(projectId, task, { workspaceId: workspaceId ?? null, disabled: disabled ?? [] }),
+  prepareContext: ({ projectId, task, workspaceId, disabled, references }) => store.prepareContext(projectId, task, { workspaceId: workspaceId ?? null, disabled: disabled ?? [], references: references ?? [] }),
+  // ----- Explorer (read-only). Roots resolve from Journal's records; the
+  // renderer only names a root key and a relative path. -----
+  fileRoots: ({ projectId }) => store.fileRoots(text(projectId, 'project ID', 100)),
+  listDirectory: async ({ projectId, rootKey, path }) => listDirectory((await fileRoot(projectId, rootKey)).path, path ?? ''),
+  fileStatus: async ({ projectId, rootKey }) => {
+    const root = await fileRoot(projectId, rootKey);
+    if (!root.git) return { available: false, entries: [], folders: {}, truncated: false };
+    const key = `${projectId}\u0000${rootKey}`;
+    if (!statusCalls.has(key)) statusCalls.set(key, gitStatus(root.gitRoot, { prefix: root.prefix }).then(status => ({ available: true, ...status }), error => ({ available: false, reason: error.message, entries: [], folders: {}, truncated: false })).finally(() => statusCalls.delete(key)));
+    return statusCalls.get(key);
+  },
+  previewFile: async ({ projectId, rootKey, path }) => previewFile((await fileRoot(projectId, rootKey)).path, path),
+  fileDiff: async ({ projectId, rootKey, path }) => {
+    const root = await fileRoot(projectId, rootKey);
+    if (!root.git) throw new Error('This folder is not a Git repository');
+    return headDiff(root.path, root.gitRoot, root.prefix, path);
+  },
+  revealFile: async ({ projectId, rootKey, path }) => { shell.showItemInFolder((await locate((await fileRoot(projectId, rootKey)).path, path)).full); },
+  copyFilePath: async ({ projectId, rootKey, path, absolute }) => {
+    const root = await fileRoot(projectId, rootKey); const rel = treePath(path, true);
+    clipboard.writeText(absolute ? (await locate(root.path, rel)).full : rel || '.');
+  },
+  // An editor found on PATH, launched without a shell. Without one, passive
+  // documents open with their default app and everything else is revealed.
+  openInEditor: async ({ projectId, rootKey, path, line }) => {
+    const root = await fileRoot(projectId, rootKey); const rel = treePath(path);
+    const { full, stat } = await locate(root.path, rel);
+    if (isSensitivePath(rel) || stat.isSymbolicLink()) { shell.showItemInFolder(full); return { opened: 'revealed' }; }
+    const found = findEditor();
+    if (found) {
+      const target = launchTarget(found.path, EDITORS[found.name](Number.isInteger(line) && line > 0 ? line : 1)(full));
+      spawn(target.file, target.args, { detached: true, stdio: 'ignore', windowsHide: true }).on('error', () => shell.showItemInFolder(full)).unref();
+      return { opened: found.name };
+    }
+    const passive = /\.(?:md|markdown|txt|text|log|json|jsonc|ya?ml|toml|ini|cfg|conf|csv|tsv|diff|patch|png|jpe?g|gif|webp|bmp|pdf)$/i.test(rel);
+    if (stat.isFile() && !(stat.mode & 0o111) && passive) { const error = await shell.openPath(full); if (!error) return { opened: 'default' }; }
+    shell.showItemInFolder(full); return { opened: 'revealed' };
+  },
+  watchRoot: async ({ projectId, rootKey }) => { const root = await fileRoot(projectId, rootKey); watcher.watch(`${projectId}\u0000${rootKey}`, root.path); return { key: `${projectId}\u0000${rootKey}` }; },
+  unwatchRoot: () => { watcher.close(); },
+  // Types a reference into a running session's input (never submitted) when
+  // the agent is known to be ready; otherwise copies it for the user to paste.
+  referenceInSession: async ({ sessionId, projectId, rootKey, path, startLine, endLine }) => {
+    const id = text(sessionId, 'session ID', 100);
+    const reference = await store.referenceFor(id, { projectId, rootKey, path, startLine, endLine });
+    const textValue = formatReference(reference.provider, { path: reference.display, kind: reference.kind, startLine: reference.startLine, endLine: reference.endLine });
+    const record = { ...reference, text: textValue };
+    let result;
+    try { result = await runtime.call('paste', { id, text: textValue, reference: record }); }
+    catch (error) { result = { inserted: false, reason: /Unknown|method/i.test(error.message) ? 'The running Journal runtime is from another build' : error.message }; }
+    if (result.inserted) return { inserted: true, text: textValue };
+    clipboard.writeText(textValue);
+    const event = referenceEvent(record, 'copied');
+    await store.appendEvent(id, 'reference', event).catch(() => {});
+    send({ type: 'timeline', event: { sessionId: id, kind: 'reference', at: new Date().toISOString(), body: event } });
+    return { inserted: false, copied: true, reason: result.reason, text: textValue };
+  },
+  // A reference chosen for the next task: validated and fingerprinted now,
+  // recorded again in the receipt when the task starts.
+  describeReference: async ({ projectId, rootKey, path, startLine, endLine, workspaceId }) => {
+    return store.describeReference(text(projectId, 'project ID', 100), workspaceId ?? null, { rootKey, path, startLine, endLine });
+  },
   setPinned: ({ id, pinned }) => store.setPinned(id, pinned),
   proposals: ({ projectId }) => store.listProposals(projectId, 'open'),
   storageInfo: () => store.storageInfo(),
@@ -247,7 +337,7 @@ const actions = {
   start: input => {
     // A runtime from another build may not understand newer launch options;
     // never let it silently run in the wrong workspace or mode.
-    if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.disabled?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, research mode or leave-out.');
+    if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.disabled?.length || input.references?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, research mode or leave-out.');
     return runtime.call('start', input);
   },
   attach: ({ id }) => runtime.call('attach', { id }),
@@ -265,7 +355,8 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
   try {
     if (!validSender(event)) throw new Error('Untrusted desktop caller');
     if (!Object.hasOwn(actions, action) || !input || typeof input !== 'object' || Array.isArray(input) || JSON.stringify(input).length > 100000) throw new Error('Invalid desktop request');
-    return { ok: true, value: await actions[action](input) };
+    if (ROOT_CHANGES.has(action)) rootCache.clear();
+    try { return { ok: true, value: await actions[action](input) }; } finally { if (ROOT_CHANGES.has(action)) rootCache.clear(); }
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Operation failed' }; }
 });
 try { await runtime.connect(); runtimeState = 'connected'; }
