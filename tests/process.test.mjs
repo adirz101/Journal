@@ -60,9 +60,10 @@ test('identity start times are reported in UTC regardless of the caller time zon
 test('executables resolve from PATH, including Windows PATHEXT shims', t => {
   const dir = mkdtempSync(join(tmpdir(), 'exe-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, 'claude'), '#!/bin/sh\n'); chmodSync(join(dir, 'claude'), 0o755);
-  writeFileSync(join(dir, 'codex.cmd'), '@ECHO off\r\n"%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n');
+  // Named as PATHEXT spells it: Linux file systems are case-sensitive (Windows is not).
+  writeFileSync(join(dir, 'codex.CMD'), '@ECHO off\r\n"%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n');
   assert.equal(resolveExecutable('claude', { PATH: dir }, 'darwin'), join(dir, 'claude'));
-  assert.equal(resolveExecutable('codex', { PATH: dir, PATHEXT: '.EXE;.CMD' }, 'win32')?.toLowerCase(), join(dir, 'codex.cmd').toLowerCase());
+  assert.equal(resolveExecutable('codex', { PATH: dir, PATHEXT: '.EXE;.CMD' }, 'win32')?.toLowerCase(), join(dir, 'codex.CMD').toLowerCase());
   assert.equal(resolveExecutable('missing', { PATH: dir }, 'linux'), null);
 });
 

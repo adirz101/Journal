@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // One version source: package.json. Tags, artifact names and the app version
 // derive from it; anything that disagrees fails the release.
@@ -35,7 +36,7 @@ export function configArtifacts(config, version) {
     win: [fill(config.nsis.artifactName, 'x64', 'exe'), fill(config.portable.artifactName, 'x64', 'exe')],
   };
 }
-export const loadConfig = (path = new URL('../electron-builder.config.cjs', import.meta.url).pathname) => { delete require.cache[require.resolve(path)]; return require(path); };
+export const loadConfig = (path = fileURLToPath(new URL('../electron-builder.config.cjs', import.meta.url))) => { delete require.cache[require.resolve(path)]; return require(path); };
 
 export function sha256File(path) {
   return new Promise((resolve, reject) => {

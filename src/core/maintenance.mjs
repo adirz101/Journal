@@ -24,8 +24,9 @@ export async function backupTo(db, destination) {
   if (!isAbsolute(destination)) throw new Error('Backup path must be absolute');
   const temporary = `${destination}.partial-${randomUUID().slice(0, 8)}`;
   try {
-    // One step: a stepped backup restarts whenever the runtime writes.
-    await sqliteBackup(db, temporary, { rate: -1 });
+    // One step: a stepped backup restarts whenever the runtime writes. Node 24
+    // (Electron's) requires a positive page count, so pass the int32 maximum.
+    await sqliteBackup(db, temporary, { rate: 2147483647 });
     const copy = new DatabaseSync(temporary, { readOnly: true });
     let integrity; try { integrity = copy.prepare('PRAGMA integrity_check').get().integrity_check; } finally { copy.close(); }
     if (integrity !== 'ok') throw new Error(`Backup failed its integrity check: ${integrity}`);

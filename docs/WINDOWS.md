@@ -22,3 +22,11 @@ Before advertising Windows support:
 1. Install, build and run on Windows 11 with the npm-installed and native-installer versions of both CLIs.
 2. Run the desktop scenarios with Windows fixture CLIs (`.cmd` and `.exe`).
 3. Manually check ConPTY input (IME, Ctrl+C, resize), runtime survival after closing the app window, runtime crash recovery, and named-pipe access by another local user (it must be refused).
+
+## First Windows CI run (4 October 2026)
+The unit tests ran on a hosted `windows-latest` runner for the first time: 127 of 172 passed and 37 failed. They are experimental in CI (they report without failing the run) until fixed. The failures group into:
+- **Worktree and folder path handling** (real defects): Git reports `D:/…` paths while Node uses `D:\…`, so registered worktrees are not recognized (workspaces become "failed" or "missing"), and additional-folder checks misjudge paths.
+- **Test cleanup on Windows**: temporary folders are removed while SQLite or the runtime still hold files (`EPERM`), and a test runtime's named pipe is reused (`EADDRINUSE`).
+- **POSIX-only test fixtures**: executable shell scripts and `chmod` do not apply on Windows.
+
+Packaging is validated separately by the release workflow on Windows (installer, smoke test with fixture CLIs, portable build, uninstall).
