@@ -195,6 +195,8 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
     try {
       const result = await api<{ inserted: boolean; copied?: boolean; reason?: string; text: string }>('referenceInSession', { sessionId: liveSession.id, projectId: project.id, rootKey: reference.rootKey, path: reference.path, startLine: reference.startLine, endLine: reference.endLine });
       setNote(result.inserted ? `Typed ${result.text} into the agent's input. Review it and press Enter to send.` : `Copied ${result.text}. Paste it into the terminal (${result.reason ?? 'Journal could not type it'}).`);
+      // Hand focus to the session's terminal so the user can paste right away.
+      if (!result.inserted) window.dispatchEvent(new CustomEvent('journal:focus-terminal', { detail: liveSession.id }));
     } catch (error) { setNote(''); onError(error); }
   }
   async function addToTask(reference: FileReference) {

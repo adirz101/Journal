@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, type Bootstrap, type FileReference, type Receipt, type Session, type TimelineEvent } from './types';
+import { api, PROVIDER_NAMES, type Bootstrap, type FileReference, type Receipt, type Session, type TimelineEvent } from './types';
 
 // Files the user referenced, with whether each still matches what was referenced.
 function References({ title, projectId, workspaceId, references }: { title: string; projectId: string; workspaceId: string | null; references: (FileReference & { note?: string })[] }) {
@@ -53,7 +53,7 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, l
       <div className="receipt-meta"><span>{receipt.items.length} claim{receipt.items.length === 1 ? '' : 's'}</span><span>{new TextEncoder().encode(receipt.packet).length} bytes · ≈{receipt.estimatedTokens} tokens</span><span className="receipt-state">{receipt.state}</span></div>
       <dl className="receipt-facts"><dt>Task</dt><dd>{receipt.query || <em>none (orientation only)</em>}</dd>
         <dt>Checkout</dt><dd>⑂ {(receipt as any).checkout?.branch ?? 'detached'} @ {String((receipt as any).checkout?.head ?? '').slice(0, 7) || 'unborn'}{receipt.workspaceId ? ' · worktree' : ''}</dd>
-        {session && <><dt>Route</dt><dd>{session.provider === 'claude' ? 'Claude Code' : 'Codex'} {agent?.version ?? ''} · initial CLI prompt{session.research ? ' · research mode' : ''}</dd>
+        {session && <><dt>Route</dt><dd>{PROVIDER_NAMES[session.provider]} {agent?.version ?? ''} · initial CLI prompt{session.plan ? ' · plan mode' : ''}{session.research ? ' · research mode' : ''}</dd>
           <dt>Not observable</dt><dd>{session.provider === 'claude' ? 'Whether the model read or used each claim; tool output; hidden reasoning.' : 'Whether the model read or used each claim; commands and test results; tool output; hidden reasoning.'}</dd></>}</dl>
       <ol className="receipt-items">{receipt.items.map(item => <li key={item.id}>
         <div className="memory-meta"><span>{item.category}{item.pinned ? ' · pinned' : ''}</span><span>{item.selection?.reason ?? 'selected'} · {item.selection?.bytes ?? 0} B</span></div>

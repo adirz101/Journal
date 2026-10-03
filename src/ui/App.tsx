@@ -9,6 +9,8 @@ import { ActivityPanel } from './ActivityPanel';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import { ContextPanel } from './ContextPanel';
 import { ExplorerPanel } from './ExplorerPanel';
+import { CursorStatus } from './ProviderStatus';
+import { ProcessDialog } from './ProcessDialog';
 import { DataDialog } from './DataDialog';
 import { ManageProjectDialog } from './ManageProjectDialog';
 import { RenameDialog } from './RenameDialog';
@@ -17,7 +19,7 @@ import journalMarkWhite from '../../assets/branding/journal-mark-white.png';
 import journalMarkDark from '../../assets/branding/journal-mark.png';
 import journalWordmark from '../../assets/branding/journal-wordmark.png';
 import { storedAppearance, type Appearance } from './theme';
-import { api, isLive, type Bootstrap, type FileReference, type Memory, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
+import { api, isLive, PROVIDER_NAMES, type Bootstrap, type FileReference, type Memory, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
 
 const MAX_SESSIONS = 4;
 type Panel = 'files' | 'knowledge' | 'context' | 'changes' | 'activity';
@@ -40,7 +42,8 @@ export default function App() {
   const [runtime, setRuntime] = useState<{ state: string; warning?: string | null }>({ state: 'connecting' });
   const [liveEvents, setLiveEvents] = useState<TimelineEvent[]>([]);
   const [now, setNow] = useState(Date.now());
-  const [workspaces, setWorkspaces] = useState<WorkspaceList | null>(null); const [workspaceId, setWorkspaceId] = useState<string>(''); const [research, setResearch] = useState(false);
+  const [workspaces, setWorkspaces] = useState<WorkspaceList | null>(null); const [workspaceId, setWorkspaceId] = useState<string>(''); const [research, setResearch] = useState(false); const [plan, setPlan] = useState(false);
+  const [processView, setProcessView] = useState<{ id: string; title: string; command?: string; kind: 'install' | 'login' } | null>(null); const [providerNote, setProviderNote] = useState(''); const [checkingProvider, setCheckingProvider] = useState(false);
   const [workspaceDialog, setWorkspaceDialog] = useState(false); const [disabled, setDisabled] = useState<string[]>([]); const [dataDialog, setDataDialog] = useState(false); const [manageId, setManageId] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ kind: 'project'; project: Project } | { kind: 'session'; session: Session } | null>(null);
   // Right panel: collapsible, wider while previewing a file; references chosen for the next task.
@@ -117,6 +120,7 @@ export default function App() {
       }
       if (event.type === 'timeline') { setLiveEvents(current => [...current.slice(-1999), event.event]); return; }
       if (event.type === 'proposals') { setKnowledgeVersion(v => v + 1); return; }
+      if (event.type === 'providers') { setBootstrap(current => current ? { ...current, agents: event.agents } : current); return; }
       if (event.type !== 'status') return;
       // Main strips user-owned fields (names, pins, archive, removal) from runtime sessions.
       merge([event.session]);
@@ -167,7 +171,7 @@ export default function App() {
     const submitted = resumeFrom ? '' : task; if (!resumeFrom) setTask('');
     await run(async () => {
       try {
-        const result = await api<{ session: Session; receipt: Receipt }>('start', { projectId, provider, task: submitted, resumeId: resumeFrom?.id, ...(resumeFrom ? {} : { workspaceId: workspaceId || null, research, disabled, references: referenceInputs }) });
+        const result = await api<{ session: Session; receipt: Receipt }>('start', { projectId, provider, task: submitted, resumeId: resumeFrom?.id, ...(resumeFrom ? {} : { workspaceId: workspaceId || null, research, plan: plan && !research, disabled, references: referenceInputs }) });
         merge([result.session]); setSelectedId(result.session.id); setReceipt(result.receipt); setDisabled([]); if (!resumeFrom) setReferences([]); setPanel('context'); await refresh(projectId);
       } catch (error) { if (submitted) setTask(current => current || submitted); throw error; }
     });
@@ -232,7 +236,19 @@ export default function App() {
     if (!state) return;
     await run(async () => { setForm({ draft: await api<StatusDraft>('proposeStatusUpdate', { projectId: state.project.id, scope }) }); });
   }
-  const available = (provider: Provider) => bootstrap?.agents.some(a => a.provider === provider && a.available);
+  const available = (provider: Provider) => bootstrap?.agents.some(a => a.provider === provider && a.available && (a.state ?? 'ready') === 'ready');
+  const cursorAgent = bootstrap?.agents.find(a => a.provider === 'cursor');
+  async function checkCursor(after?: string) {
+    setCheckingProvider(true);
+    try {
+      const next = await api<NonNullable<typeof cursorAgent>>('providerStatus', { provider: 'cursor' });
+      setBootstrap(current => current ? { ...current, agents: current.agents.map(a => a.provider === 'cursor' ? next : a) } : current);
+      if (after === 'install') setProviderNote(next.available ? `Cursor CLI ${next.version} is installed${next.state === 'login-required' ? '. Sign in to continue.' : '.'}` : next.state === 'not-cursor' ? 'The installer finished, but the agent command Journal finds is not the Cursor CLI.' : 'The installer finished, but Journal cannot find the agent command yet. Check the installer output; if it asks you to update PATH, do so and restart Journal.');
+      if (after === 'login') setProviderNote(next.auth === 'signed-in' ? 'Signed in to Cursor.' : next.auth === 'signed-out' ? 'Cursor still reports that you are not signed in.' : 'Journal could not confirm the sign-in. Try starting a Cursor session.');
+    } catch (error) { failed(error); } finally { setCheckingProvider(false); }
+  }
+  async function installCursor() { setProviderNote(''); try { const result = await api<{ id: string; command: string } | null>('installCursor'); if (result) setProcessView({ id: result.id, command: result.command, title: 'Install Cursor CLI', kind: 'install' }); } catch (error) { failed(error); } }
+  async function loginCursor() { setProviderNote(''); try { const result = await api<{ id: string }>('cursorLogin'); setProcessView({ id: result.id, command: 'agent login', title: 'Sign in to Cursor', kind: 'login' }); } catch (error) { failed(error); } }
   const label = session ? stateLabel(session, connected) : '';
   const projectBranchChanged = session && state && !session.workspaceId && session.projectId === state.project.id && isLive(session) && session.branch !== undefined && session.branch !== state.project.branch;
 
@@ -258,17 +274,19 @@ export default function App() {
               <span title={`${ref.rootLabel ?? ''} · ${ref.path}${ref.contentHash ? ` · sha256 ${ref.contentHash.slice(0, 12)}` : ''}`}>{ref.kind === 'folder' ? '▸ ' : ''}{ref.display ?? ref.path}{ref.startLine ? `:${ref.startLine}${ref.endLine !== ref.startLine ? `-${ref.endLine}` : ''}` : ''}</span>
               <button aria-label={`Remove ${ref.path} from the next task`} onClick={() => setReferences(current => current.filter((_, i) => i !== index))}>×</button></li>)}
               <li className="muted">Paths and lines only; the agent reads the files itself.</li></ul>}
-            <div className="launch-actions"><div><button className="primary" disabled={busy || !canStart || !available('claude')} onClick={() => void start('claude')}>Start Claude</button><button disabled={busy || !canStart || !available('codex')} onClick={() => void start('codex')}>Start Codex</button>{liveCount >= MAX_SESSIONS && <span className="hint inline">{MAX_SESSIONS} sessions are running. Stop one to start another.</span>}</div><button className="text-button" disabled={busy} onClick={() => void run(async () => { setReceipt(await api<Receipt>('prepareContext', { projectId: state.project.id, task, workspaceId: workspaceId || null, disabled, references: referenceInputs })); setCollapsed(false); setPanel('context'); })}>Preview context ↗</button></div>
+            <div className="launch-actions"><div><button className="primary" disabled={busy || !canStart || !available('claude')} onClick={() => void start('claude')}>Start Claude</button><button disabled={busy || !canStart || !available('codex') || (plan && !research)} title={plan && !research ? 'Codex has no plan mode' : undefined} onClick={() => void start('codex')}>Start Codex</button><button disabled={busy || !canStart || !available('cursor') || ((research || plan) && !cursorAgent?.supports?.mode)} onClick={() => void start('cursor')}>Start Cursor</button>{liveCount >= MAX_SESSIONS && <span className="hint inline">{MAX_SESSIONS} sessions are running. Stop one to start another.</span>}</div><button className="text-button" disabled={busy} onClick={() => void run(async () => { setReceipt(await api<Receipt>('prepareContext', { projectId: state.project.id, task, workspaceId: workspaceId || null, disabled, references: referenceInputs })); setCollapsed(false); setPanel('context'); })}>Preview context ↗</button></div>
             <div className="launch-options"><label className="inline-label">Workspace<select value={workspaceId} onChange={e => setWorkspaceId(e.target.value)} aria-label="Workspace">
               <option value="">Current checkout · {state.project.branch ?? 'detached HEAD'}</option>
               {workspaces?.workspaces.filter(w => w.state === 'ready').map(w => <option key={w.id} value={w.id!}>{w.kind === 'managed' ? 'Worktree' : 'Imported'} · {w.branch ?? 'detached'}</option>)}
               {state.project.roots?.map(root => <option key={root.id} value={`root:${root.id}`}>Folder · {root.name}</option>)}
             </select></label><button className="text-button" onClick={() => setWorkspaceDialog(true)}>Workspaces…</button>
-              <label className="inline-check"><input type="checkbox" checked={research} onChange={e => setResearch(e.target.checked)} /> Research (starts in Claude plan mode or the Codex read-only sandbox; can be changed in the session)</label></div>
-            <p className="provider-line">{bootstrap?.agents.map(a => <span key={a.provider} title={a.available ? `${a.path ?? ''}\nResume: ${a.capabilities?.exactResume}\nObserved: status ${a.capabilities?.status.join(', ')}; commands ${a.capabilities?.commands}` : 'Not found on PATH'}>{a.provider === 'claude' ? 'Claude Code' : 'Codex'} {a.available ? a.version ?? '' : '· not found'}</span>)}</p>
-            {bootstrap?.agents.some(a => !a.available) && <p className="hint">{bootstrap.agents.filter(a => !a.available).map(a => a.provider).join(', ')} not found on PATH. Install the native CLI, then reopen Journal.</p>}
+              <label className="inline-check"><input type="checkbox" checked={research} onChange={e => { setResearch(e.target.checked); if (e.target.checked) setPlan(false); }} /> Research (starts in Claude plan mode, the Codex read-only sandbox or Cursor Ask mode; can be changed in the session)</label>
+              <label className="inline-check"><input type="checkbox" checked={plan} onChange={e => { setPlan(e.target.checked); if (e.target.checked) setResearch(false); }} /> Plan (Claude plan mode or Cursor Plan mode)</label></div>
+            <p className="provider-line">{bootstrap?.agents.map(a => <span key={a.provider} title={a.available ? `${a.path ?? ''}\nResume: ${a.capabilities?.exactResume}\nObserved: status ${a.capabilities?.status.join(', ')}; commands ${a.capabilities?.commands}${a.capabilities?.modes ? `\nModes: ${a.capabilities.modes}` : ''}` : 'Not found on PATH'}>{PROVIDER_NAMES[a.provider]} {a.available ? `${a.version ?? ''}${a.state === 'login-required' ? ' · login required' : ''}` : a.state === 'unsupported' ? '· unsupported version' : a.state === 'not-cursor' ? '· not the Cursor CLI' : '· not found'}</span>)}</p>
+            <CursorStatus agent={cursorAgent} checking={checkingProvider} note={providerNote} onInstall={() => void installCursor()} onLogin={() => void loginCursor()} onCheck={() => void checkCursor()} />
+            {bootstrap?.agents.some(a => !a.available && a.provider !== 'cursor') && <p className="hint">{bootstrap.agents.filter(a => !a.available && a.provider !== 'cursor').map(a => PROVIDER_NAMES[a.provider]).join(', ')} not found on PATH. Install the native CLI, then reopen Journal.</p>}
           </section>
-          <section className="terminal-panel"><div className="terminal-heading"><div><span className={`status-dot ${session?.status ?? ''}`} /><strong>{session ? session.provider === 'claude' ? 'Claude Code' : 'Codex' : 'Terminal'}</strong><span className="terminal-label">{session ? `${label}${session.branch ? ` · ${projectBranchChanged ? 'started on ' : ''}⑂ ${session.branch}` : ''}${session.workspaceId ? session.workspaceId.startsWith('root:') ? ' · folder' : ' · worktree' : ''}${session.research ? ' · research' : ''}` : 'Ready to start'}</span>{session && <span className="terminal-title" title={session.displayName || session.title}>{session.displayName || session.title}</span>}</div>
+          <section className="terminal-panel"><div className="terminal-heading"><div><span className={`status-dot ${session?.status ?? ''}`} /><strong>{session ? PROVIDER_NAMES[session.provider] : 'Terminal'}</strong><span className="terminal-label">{session ? `${label}${session.branch ? ` · ${projectBranchChanged ? 'started on ' : ''}⑂ ${session.branch}` : ''}${session.workspaceId ? session.workspaceId.startsWith('root:') ? ' · folder' : ' · worktree' : ''}${session.research ? ' · research' : session.plan ? ' · plan' : ''}` : 'Ready to start'}</span>{session && <span className="terminal-title" title={session.displayName || session.title}>{session.displayName || session.title}</span>}</div>
             {session && <div className="terminal-actions">
               {isLive(session) && connected && <><button onClick={() => void sessionAction('interrupt')}>Interrupt <kbd>^C</kbd></button><button onClick={() => void sessionAction('stop')} disabled={session.status === 'stopping'}>Stop terminal</button></>}
               {resumable(session) && <button disabled={busy || !canStart} onClick={() => void start(session.provider, session)}>Resume</button>}
@@ -320,8 +338,9 @@ export default function App() {
       note="Only Journal's label changes. The folder on disk keeps its name." onClose={() => setRenameTarget(null)}
       onSave={async name => { await api('renameProject', { id: renameTarget.project.id, name }); await reloadProjects(); if (state?.project.id === renameTarget.project.id) await refresh(); }} />}
     {renameTarget?.kind === 'session' && <RenameDialog title="Rename session" label="Session name" value={renameTarget.session.displayName} fallback={renameTarget.session.title}
-      note="Only Journal's label changes. The native Claude/Codex session ID and exact resume are unaffected." onClose={() => setRenameTarget(null)}
+      note="Only Journal's label changes. The native Claude, Codex or Cursor session ID and exact resume are unaffected." onClose={() => setRenameTarget(null)}
       onSave={async name => { merge([await api<Session>('renameSession', { id: renameTarget.session.id, name })]); }} />}
+    {processView && <ProcessDialog id={processView.id} title={processView.title} command={processView.command} appearance={appearance} onClose={() => setProcessView(null)} onExit={() => void checkCursor(processView.kind)} />}
     {dataDialog && <DataDialog project={state?.project ?? null} onClose={() => setDataDialog(false)} onChanged={() => { setKnowledgeVersion(v => v + 1); void refresh().catch(() => {}); }} />}
     {state && workspaceDialog && <WorkspaceDialog project={state.project} onClose={() => setWorkspaceDialog(false)} onChanged={() => void refresh().catch(failed)} />}
     {state && evidenceSource && <KnowledgeForm project={state.project} initialSource={evidenceSource} onClose={() => setEvidenceSource(null)} onSaved={() => { setEvidenceSource(null); setPanel('knowledge'); setKnowledgeVersion(v => v + 1); }} />}

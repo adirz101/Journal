@@ -6,7 +6,10 @@ import { existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync 
 import { StoreClient } from './store-client.mjs';
 import { RuntimeClient } from './runtime-client.mjs';
 import { buildId } from '../runtime/protocol.mjs';
-import { detectAgents } from '../core/agents.mjs';
+import { detectAgents, detectCursor } from '../core/agents.mjs';
+import { cursorAuth, findCursor, installCommand, installEnv } from '../core/cursor.mjs';
+import { ProcessRunner } from './processes.mjs';
+import { homedir } from 'node:os';
 import { relativePath, text } from '../core/validation.mjs';
 import { SESSION_USER_FIELDS, survivorScanPending } from '../core/sessions.mjs';
 import { headDiff, listDirectory, locate, previewFile, treePath } from '../core/files.mjs';
@@ -114,7 +117,27 @@ runtime.on('warning', message => { runtimeWarning = message; send({ type: 'runti
 runtime.on('disconnected', () => { runtimeState = 'disconnected'; send({ type: 'runtime', state: 'disconnected' }); });
 runtime.on('failed', message => { runtimeWarning = message; send({ type: 'runtime', state: 'disconnected', warning: message }); });
 runtime.on('reconnected', () => { runtimeState = 'connected'; send({ type: 'runtime', state: 'connected', recovered: true }); });
-const agents = detectAgents();
+let agents = detectAgents();
+// Cursor's sign-in state is checked off the startup path, again after install
+// or sign-in, and on request. Only signed in / signed out is kept.
+let cursorCheck = null;
+const refreshCursor = () => {
+  // One check at a time; the slot is cleared only after it is set (the check may finish synchronously).
+  if (cursorCheck) return cursorCheck;
+  const check = (async () => {
+    const row = detectCursor(process.env);
+    const auth = row.available ? await cursorAuth(row.path, process.env) : 'unchecked';
+    const next = { ...row, auth, state: row.available && auth === 'signed-out' ? 'login-required' : row.state };
+    agents = agents.map(agent => agent.provider === 'cursor' ? next : agent);
+    send({ type: 'providers', agents });
+    return next;
+  })();
+  cursorCheck = check; void check.finally(() => { if (cursorCheck === check) cursorCheck = null; }).catch(() => {});
+  return check;
+};
+void refreshCursor().catch(() => {});
+const processes = new ProcessRunner(send, async (file, args, options) => (await import('node-pty')).spawn(file, args, options));
+const runnable = env => { const next = { ...env }; delete next.ELECTRON_RUN_AS_NODE; return next; };
 const actions = {
   setAppearance: ({ appearance }) => {
     if (appearance !== 'light' && appearance !== 'dark') throw new Error('Invalid appearance');
@@ -337,9 +360,30 @@ const actions = {
   start: input => {
     // A runtime from another build may not understand newer launch options;
     // never let it silently run in the wrong workspace or mode.
-    if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.disabled?.length || input.references?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, research mode or leave-out.');
+    if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.plan || input.provider === 'cursor' || input.disabled?.length || input.references?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, research mode or leave-out.');
     return runtime.call('start', input);
   },
+  // ----- Cursor CLI: install and sign in run visibly, only after the user asks. -----
+  providerStatus: ({ provider }) => { if (provider !== 'cursor') throw new Error('Only Cursor needs a status check'); return refreshCursor(); },
+  installCursor: async () => {
+    const command = installCommand(process.platform, process.env);
+    const { response } = await dialog.showMessageBox(window, { type: 'question', buttons: ['Install', 'Cancel'], defaultId: 1, cancelId: 1, message: 'Install Cursor CLI?',
+      detail: `Journal will run Cursor's official installation command:\n\n${command.display}\n\nThis downloads and installs the Cursor Agent CLI on your computer from cursor.com. It runs as you, without administrator rights, in a window where you can watch its output. Journal will not receive or store your Cursor credentials.` });
+    if (response !== 0) return null;
+    // Automated tests substitute a local fixture installer; nothing else can.
+    const run = headless && globalThis.__journalCursorInstall ? globalThis.__journalCursorInstall : command;
+    return { ...(await processes.start('install', { file: run.file, args: run.args, env: installEnv(process.env), cwd: homedir() })), command: command.display };
+  },
+  cursorLogin: async () => {
+    const found = findCursor(process.env);
+    if (!found.path) throw new Error('Install the Cursor CLI first');
+    const target = launchTarget(found.path, ['login'], { env: process.env });
+    return processes.start('login', { file: target.file, args: target.args, env: runnable(process.env), cwd: homedir() });
+  },
+  processInput: ({ id, data }) => processes.write(text(id, 'process', 40), data),
+  processResize: ({ id, cols, rows }) => processes.resize(text(id, 'process', 40), cols, rows),
+  processStop: ({ id }) => processes.stop(text(id, 'process', 40)),
+  processSnapshot: ({ id }) => processes.snapshot(text(id, 'process', 40)),
   attach: ({ id }) => runtime.call('attach', { id }),
   detach: ({ id }) => runtime.call('detach', { id }),
   write: ({ id, data }) => runtime.call('write', { id, data }),
@@ -383,6 +427,7 @@ app.on('before-quit', event => {
       if (response === 2) { closing = false; if (!window) createWindow(); return; }
       policy = response === 0 ? 'stop' : 'keep';
     }
+    processes.stopAll();
     await runtime.close({ shutdown: policy !== 'keep' && !!runtime.socket, stopSessions: true });
     await store.close().catch(() => {});
     closed = true; app.quit();

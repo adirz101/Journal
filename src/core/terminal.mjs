@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { realpathSync } from 'node:fs';
-import { buildAgentLaunch, captureCodexId, CODEX_RESUME_MARKER, UUID } from './agents.mjs';
+import { buildAgentLaunch, captureCodexId, CODEX_RESUME_MARKER, PROVIDER_NAMES, PROVIDERS, UUID } from './agents.mjs';
+import { captureCursorId, createChat, CURSOR_RESUME_MARKER, findCursor } from './cursor.mjs';
 import { descendants, isAlive, processIdentity, processTable, sameIdentity, signalVerified, survivors } from './process.mjs';
 import { redact, text } from './validation.mjs';
 import { generateTitle } from './sessions.mjs';
@@ -53,8 +54,9 @@ export class OutputBuffer {
 // signals. Output stays in bounded memory; nothing raw is persisted.
 export class TerminalManager extends EventEmitter {
   constructor({ store, spawn, makeSettings = () => null, runtimeId = randomUUID(), platform = process.platform,
-    identify = processIdentity, table = processTable, verifiedSignal = signalVerified, alive = isAlive, stopGraceMs = 3000, trackMs = 5000 }) {
-    super(); this.store = store; this.spawn = spawn; this.makeSettings = makeSettings; this.runtimeId = runtimeId; this.platform = platform;
+    identify = processIdentity, table = processTable, verifiedSignal = signalVerified, alive = isAlive, stopGraceMs = 3000, trackMs = 5000,
+    cursor = { find: () => findCursor(process.env), createChat: (path, cwd) => createChat(path, cwd, process.env) } }) {
+    super(); this.cursor = cursor; this.store = store; this.spawn = spawn; this.makeSettings = makeSettings; this.runtimeId = runtimeId; this.platform = platform;
     this.identify = identify; this.table = table; this.verifiedSignal = verifiedSignal; this.alive = alive; this.stopGraceMs = stopGraceMs;
     this.entries = new Map(); this.pending = 0; this.flushPending = false; this.disposed = false;
     this.tracker = trackMs ? setInterval(() => { void this.trackDescendants().catch(() => {}); void this.recheckOrphans().catch(() => {}); }, trackMs) : null; this.tracker?.unref?.();
@@ -68,16 +70,18 @@ export class TerminalManager extends EventEmitter {
     this.pending++;
     try { return await this.launch(request); } finally { this.pending--; }
   }
-  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, disabled = [], references = [] }) {
-    if (provider !== 'claude' && provider !== 'codex') throw new Error('Unknown agent provider');
-    if (typeof research !== 'boolean') throw new Error('Invalid research option');
+  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, plan = false, disabled = [], references = [] }) {
+    if (!PROVIDERS.includes(provider)) throw new Error('Unknown agent provider');
+    if (typeof research !== 'boolean' || typeof plan !== 'boolean') throw new Error('Invalid mode option');
+    if (plan && provider === 'codex') throw new Error('Codex has no plan mode; use Research for its read-only sandbox');
+    if (research) plan = false;
     task = text(task, 'task', 4000, true);
     let prior = null;
     if (resumeId) {
       prior = await this.store.getSession(resumeId);
       if (prior.projectId !== projectId || prior.provider !== provider) throw new Error('Session belongs to another project or provider');
       // Native conversations are tied to their working directory: resume in place.
-      workspaceId = prior.workspaceId ?? null; research = !!prior.research;
+      workspaceId = prior.workspaceId ?? null; research = !!prior.research; plan = !research && !!prior.plan;
       if (!prior.nativeIdConfirmed || !UUID.test(prior.nativeId ?? '')) throw new Error('Confirm the exact native session ID before resuming');
       if (this.liveEntries().some(entry => entry.session.provider === provider && entry.session.nativeId === prior.nativeId)) throw new Error('This native conversation is already open in another session');
       // An orphan may still be writing to the same conversation outside Journal.
@@ -86,16 +90,28 @@ export class TerminalManager extends EventEmitter {
     }
     // The cwd is a registered worktree of this project (or its checkout), never another session's.
     const project = await (this.store.view ? this.store.view(projectId, workspaceId) : this.store.project(projectId));
+    // Cursor: the genuine CLI (found again now, never assumed), with the modes this build documents.
+    let cursor = null;
+    if (provider === 'cursor') {
+      cursor = await this.cursor.find();
+      if (!cursor?.path || !cursor.cursor) throw new Error('Cursor CLI is not installed. Install it from the Cursor provider row, then try again.');
+      if (!cursor.supports?.resume || !cursor.supports?.createChat) throw new Error('This Cursor CLI version cannot open a chat by its exact ID. Update it with "agent update".');
+      if ((research || plan) && !cursor.supports?.mode) throw new Error(`This Cursor CLI version has no ${research ? 'Ask' : 'Plan'} mode. Update it with "agent update", or start without ${research ? 'Research' : 'Plan'}.`);
+    }
     // Always reselect and revalidate here; a stale preview never authorizes delivery.
     const oldReceipt = prior ? await this.store.latestNativeReceipt(projectId, provider, prior.nativeId) : null;
     const receipt = await this.store.prepareContext(projectId, task || oldReceipt?.query || '', { workspaceId, disabled, references: prior ? [] : references });
     const baseline = await this.store.checkoutBaseline?.(projectId, workspaceId) ?? null;
     const now = new Date().toISOString();
-    const session = { id: randomUUID(), projectId, provider, nativeId: prior?.nativeId ?? (provider === 'claude' ? randomUUID() : null),
-      nativeIdConfirmed: provider === 'claude' || !!prior, title: generateTitle(task, prior),
+    const cwd = project.cwd ?? project.root;
+    // Exact identity at launch: Claude takes a preassigned ID; Cursor's chat is created
+    // first in the same folder (documented create-chat). Codex is confirmed after exit.
+    const nativeId = prior?.nativeId ?? (provider === 'claude' ? randomUUID() : provider === 'cursor' ? await this.cursor.createChat(cursor.path, cwd) : null);
+    const session = { id: randomUUID(), projectId, provider, nativeId,
+      nativeIdConfirmed: provider === 'claude' || !!prior || (provider === 'cursor' && !!nativeId), title: generateTitle(task, prior),
       status: 'starting', receiptId: receipt.id, resumedFrom: prior?.id ?? null, createdAt: now, lastActivityAt: now,
       // An additional-folder session runs in that folder with its own Git identity (if any).
-      branch: project.cwd ? project.cwdBranch ?? null : project.branch, head: project.cwd ? project.cwdHead ?? null : project.head, cwd: project.cwd ?? project.root, workspaceId, research, baseline, runtimeId: this.runtimeId, activity: null };
+      branch: project.cwd ? project.cwdBranch ?? null : project.branch, head: project.cwd ? project.cwdHead ?? null : project.head, cwd, workspaceId, research, plan, baseline, runtimeId: this.runtimeId, activity: null };
     let prompt = task;
     if (receipt.packet || (prior && (oldReceipt?.hadKnowledge || oldReceipt?.items.length))) {
       const withdrawn = oldReceipt?.items.filter(item => !receipt.items.some(current => current.revisionId === item.revisionId)) ?? [];
@@ -108,7 +124,7 @@ export class TerminalManager extends EventEmitter {
     try {
       if (this.disposed) throw new Error('Journal is shutting down');
       const settingsFile = provider === 'claude' ? this.makeSettings(session, project) : null;
-      const launch = buildAgentLaunch({ provider, nativeId: session.nativeId, resume: !!prior, prompt, settingsFile, research });
+      const launch = buildAgentLaunch({ provider, nativeId: session.nativeId, resume: !!prior, prompt, settingsFile, research, plan, executable: cursor?.path });
       const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', JOURNAL_SESSION_ID: session.id };
       delete env.ELECTRON_RUN_AS_NODE;
       const proc = this.spawn(launch.executable, launch.argv, { cwd: session.cwd, env, name: 'xterm-256color', cols: 100, rows: 30 });
@@ -152,11 +168,12 @@ export class TerminalManager extends EventEmitter {
     const on = entry.tail.lastIndexOf('\x1b[?2004h'); const off = entry.tail.lastIndexOf('\x1b[?2004l');
     if (on >= 0 || off >= 0) entry.bracketedPaste = on > off;
     session.lastActivityAt = new Date().toISOString();
-    if (session.provider === 'codex' && !session.nativeIdConfirmed) {
-      const captured = captureCodexId(entry.tail);
+    if ((session.provider === 'codex' || session.provider === 'cursor') && !session.nativeIdConfirmed) {
+      const [marker, capture] = session.provider === 'codex' ? [CODEX_RESUME_MARKER, captureCodexId] : [CURSOR_RESUME_MARKER, captureCursorId];
+      const captured = capture(entry.tail);
       // A newly printed incomplete/invalid banner revokes an earlier hint.
       // Do not clear hints merely because unrelated output evicted the banner.
-      if (entry.tail.includes(CODEX_RESUME_MARKER) && session.nativeId !== captured) {
+      if (entry.tail.includes(marker) && session.nativeId !== captured) {
         session.nativeId = captured; this.persist(session, true); this.emitStatus(session);
       }
     }
@@ -199,7 +216,7 @@ export class TerminalManager extends EventEmitter {
   paste(id, text, reference = {}) {
     const entry = this.owned(id); const { session } = entry;
     if (typeof text !== 'string' || !text || text.length > 2048 || /[\x00-\x1f\x7f]/.test(text)) throw new Error('This reference cannot be typed into the terminal');
-    const reason = session.provider !== 'claude' ? 'Journal cannot see when Codex is ready for input'
+    const reason = session.provider !== 'claude' ? `Journal cannot see when ${PROVIDER_NAMES[session.provider]} is ready for input`
       : session.activity === 'permission' || session.status === 'waiting' ? 'The agent is waiting for a permission answer'
       : session.status !== 'running' || entry.stopping ? 'The agent is not ready for input'
       : session.activity === 'working' ? 'The agent is working and could ask for permission at any moment'

@@ -1,4 +1,5 @@
-export type Provider = 'claude' | 'codex';
+export type Provider = 'claude' | 'codex' | 'cursor';
+export const PROVIDER_NAMES: Record<Provider, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
 export interface ProjectRoot { id: string; path: string; name: string; kind: 'git' | 'folder'; nested: boolean; gitRoot: string | null; branch: string | null; exists?: boolean; currentBranch?: string | null; knowledge?: number; }
 export interface Project { id: string; name: string; root: string; branch: string | null; head: string | null; displayName?: string | null; folderName?: string; pinned?: boolean; roots?: ProjectRoot[]; }
 export interface ProjectDetails { missing?: boolean; project: Project; roots: ProjectRoot[]; counts: { knowledge: number; sessions: number; liveSessions: number; receipts: number; events: number; proposals: number; worktrees: number }; }
@@ -10,11 +11,12 @@ export interface Receipt { references?: FileReference[]; disabled?: string[]; wo
 export type SessionStatus = 'starting' | 'running' | 'waiting' | 'stopping' | 'stopped' | 'exited' | 'failed' | 'interrupted' | 'orphaned';
 export interface Survivor { pid: number; started: string; command: string; }
 export interface Session { id: string; projectId: string; provider: Provider; nativeId: string | null; nativeIdConfirmed: boolean; title: string; status: SessionStatus; receiptId: string; createdAt: string;
-  lastActivityAt?: string; endedAt?: string | null; exitCode?: number | null; branch?: string | null; head?: string | null; activity?: 'idle' | 'working' | 'permission' | null; archived?: boolean; survivors?: Survivor[] | null; resumedFrom?: string | null; displayName?: string | null; pinned?: boolean; pinSeq?: number | null; removed?: boolean; version?: number; workspaceId?: string | null; research?: boolean; cwd?: string; identityVerified?: boolean; }
+  lastActivityAt?: string; endedAt?: string | null; exitCode?: number | null; branch?: string | null; head?: string | null; activity?: 'idle' | 'working' | 'permission' | null; archived?: boolean; survivors?: Survivor[] | null; resumedFrom?: string | null; displayName?: string | null; pinned?: boolean; pinSeq?: number | null; removed?: boolean; version?: number; workspaceId?: string | null; research?: boolean; plan?: boolean; cwd?: string; identityVerified?: boolean; }
 export interface TimelineEvent { id?: number; sessionId?: string; at: string; kind: string; body: Record<string, unknown>; }
 export type TerminalEvent = { type: 'output'; sessionId: string; sequence: number; data: string } | { type: 'gap'; sessionId: string } | { type: 'status'; session: Session } | { type: 'error'; message: string; sessionId?: string }
   | { type: 'timeline'; event: TimelineEvent } | { type: 'proposals'; projectId: string; count: number } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; recovered?: boolean }
-  | { type: 'files'; key: string; folders: string[]; overflow: boolean; stopped?: boolean };
+  | { type: 'files'; key: string; folders: string[]; overflow: boolean; stopped?: boolean }
+  | { type: 'providers'; agents: AgentInfo[] } | { type: 'process-output'; id: string; data: string; offset: number } | { type: 'process-exit'; id: string; kind: string; code: number | null };
 export interface OutputSnapshot { gap: boolean; chunks: { sequence: number; data: string }[]; lastSequence: number; }
 export interface Workspace { id: string | null; projectId?: string; kind: 'checkout' | 'managed' | 'imported'; path: string; branch: string | null; head?: string | null; base?: string; baseLabel?: string; state: 'intent' | 'ready' | 'failed' | 'missing' | 'removed'; error?: string | null; notices?: string[]; detached?: boolean; }
 export interface WorkspaceList { checkout: Workspace; workspaces: Workspace[]; importable: { path: string; branch: string | null; head: string | null; detached: boolean }[]; }
@@ -30,7 +32,8 @@ export interface FileReference { projectId?: string; kind: 'file' | 'lines' | 'f
 export interface ProjectState { project: Project; sessions: Session[]; receipts: Receipt[]; }
 export interface ChangedFile { path: string; from: string | null; additions: number | null; deletions: number | null; binary: boolean; untracked: boolean; preexisting: boolean; sensitive: boolean; }
 export interface Changes { base: string; available: boolean; reason?: string; head?: string; branch?: string; headMoved?: boolean; commitsSince?: number; files: ChangedFile[]; truncated?: boolean; additions?: number; deletions?: number; preexistingCount?: number; }
-export interface Bootstrap { projects: Project[]; agents: { provider: Provider; available: boolean; version: string | null; path?: string | null; capabilities?: { exactResume: string; status: string[]; commands: string; fileEdits: boolean } }[]; platform: string; runtime: { state: 'connected' | 'disconnected' | 'connecting'; warning: string | null }; live: Session[]; active: Session[]; }
+export interface AgentInfo { provider: Provider; available: boolean; version: string | null; path?: string | null; state?: 'ready' | 'missing' | 'not-cursor' | 'unsupported' | 'login-required'; auth?: 'unchecked' | 'signed-in' | 'signed-out' | 'unknown'; onPath?: boolean; impostor?: string | null; supports?: { resume?: boolean; createChat?: boolean; mode?: boolean; login?: boolean }; capabilities?: { exactResume: string; status: string[]; commands: string; fileEdits: boolean; modes?: string } }
+export interface Bootstrap { projects: Project[]; agents: AgentInfo[]; platform: string; runtime: { state: 'connected' | 'disconnected' | 'connecting'; warning: string | null }; live: Session[]; active: Session[]; }
 export interface StatusDraft { scope: 'checkout' | 'branch'; memoryId: string | null; previousRevision: number | null; previousStatement: string | null; statement: string; source: { kind: 'git'; base: string | null };
   basis: { label: string; base: string | null; head: string; commitCount?: number; changedFiles?: number; uncommitted?: number; carried?: string[]; structureChanges?: string[]; unchanged?: boolean; notes: string[] }; }
 declare global {
