@@ -7,7 +7,7 @@ Journal runs the user's installed `claude`, `codex` and Cursor `agent` CLIs in a
 | --- | --- | --- |
 | Claude Code | 2.1.284–2.1.286 (macOS) | `PATH` lookup (`PATHEXT` on Windows), `claude --version` |
 | Codex CLI | 0.154.0 (macOS) | `PATH` lookup, `codex --version`; Windows npm shims run their Node script directly |
-| Cursor Agent CLI | Fixture-tested only; authenticated validation is manual (below) | `agent`, then `cursor-agent`, on `PATH`, then the installers' locations (`~/.local/bin`, `%LOCALAPPDATA%\cursor-agent`). Accepted only when `--version` is a Cursor build (`YYYY.MM.DD-hash`) and `--help` names Cursor; builds without `create-chat` and `--resume` are unsupported |
+| Cursor Agent CLI | 2026.10.01-e373342 (macOS): authenticated launch, first turn and exact resume checked (3 October 2026); the rest of the manual list below remains | `agent`, then `cursor-agent`, on `PATH`, then the installers' locations (`~/.local/bin`, `%LOCALAPPDATA%\cursor-agent`). Accepted only when `--version` is a Cursor build (`YYYY.MM.DD-hash`) and `--help` names Cursor; builds without `create-chat` and `--resume` are unsupported |
 
 Other versions may work. The launch bar shows the detected version and what Journal can observe.
 
@@ -36,11 +36,15 @@ Hooks are added per launch through `--settings`; existing user and project hooks
 - Hidden reasoning and full model context are never shown.
 - Codex interactive allow/deny under an approval-capable profile and cancelling a running foreground tool remain manual validation gaps (see [native validation](NATIVE-VALIDATION.md)).
 - Windows behavior is unverified (see [Windows audit](WINDOWS.md)).
-- Cursor: whether a prompt passed with `--resume=<id>` after `create-chat` starts the first turn, whether `--` ends options, Ask-mode strictness, and Ctrl+C behavior are unverified without an authenticated run.
+- Cursor on Windows is unverified: Journal prefers `agent.exe` and reports a launcher it cannot start safely (for example a non-npm `.cmd`) as "cannot be started" rather than guessing; the real layout of `%LOCALAPPDATA%\cursor-agent` still needs a Windows check.
+- Cursor: an empty chat created by `create-chat` stays in Cursor's history if the CLI then fails to start.
+- Cursor, checked with an authenticated 2026.10.01 CLI on macOS (3 October 2026): `create-chat` prints the new ID at once but keeps running, so Journal takes the ID and ends it; `agent --resume=<id> -- <prompt>` submits the prompt as the first turn (so `--` ends options); exiting prints `To resume this session: agent --resume=<id>` with the same ID; `--resume=<id>` reopens that exact chat with its history; an idle session exits on the second Ctrl+C ("Press Ctrl+C again to exit"); `status --format json` reports `isAuthenticated` (Journal keeps only that). A new folder first shows Cursor's own **Workspace Trust** prompt in the terminal, which the user answers; Journal never answers it. Cursor accounts on the free plan reject named default models ("Free plans can only use Auto") — choose Auto in Cursor; Journal never passes `--model`.
+- Cursor, still unverified: Ask-mode strictness, allow/deny of a command prompt, and the steps below that need Journal's UI.
 
 ## Manual validation remaining: Cursor (needs the user's Cursor login)
+Already checked outside Journal's UI with the same arguments Journal uses: chat creation, first turn, exit hint, exact resume and Ctrl+C. Still to do in Journal:
 1. Install or update the CLI from Journal's Cursor row and sign in with **Sign in to Cursor**.
-2. Start Cursor from Journal with a harmless task (for example "List the files in the repo root"); confirm the task and Journal's context reached the first turn.
+2. Start Cursor from Journal with a harmless task (for example "List the files in the repo root"), answer the workspace-trust prompt, and confirm the task and Journal's context reached the first turn.
 3. Ask for a shell command; deny it once and approve it once in Cursor's own prompt.
 4. Interrupt with Ctrl+C or the Interrupt button.
 5. Stop, then Resume, and confirm it is the same chat (same conversation history).

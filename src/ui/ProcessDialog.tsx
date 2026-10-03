@@ -11,11 +11,13 @@ export function ProcessDialog({ id, title, command, appearance, onClose, onExit 
 }) {
   const dialog = useRef<HTMLDialogElement>(null); const host = useRef<HTMLDivElement>(null);
   const [code, setCode] = useState<number | null | undefined>(undefined);
-  const exitRef = useRef(onExit); exitRef.current = onExit;
+  const exitRef = useRef(onExit); exitRef.current = onExit; const terminalRef = useRef<Terminal | null>(null); const appearanceRef = useRef(appearance);
+  // Theme changes restyle the terminal in place; they never restart it.
+  useEffect(() => { appearanceRef.current = appearance; if (terminalRef.current) terminalRef.current.options.theme = terminalThemes[appearance]; }, [appearance]);
   useEffect(() => { dialog.current?.showModal(); }, []);
   useEffect(() => {
-    const terminal = new Terminal({ fontSize: 12, lineHeight: 1.3, scrollback: 2000, convertEol: false, theme: terminalThemes[appearance], fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace' });
-    const fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(host.current!);
+    const terminal = new Terminal({ fontSize: 12, lineHeight: 1.3, scrollback: 2000, convertEol: false, theme: terminalThemes[appearanceRef.current], fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace' });
+    const fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(host.current!); terminalRef.current = terminal;
     terminal.parser.registerOscHandler(52, () => true); // no clipboard writes from the process
     requestAnimationFrame(() => { fit.fit(); void api('processResize', { id, cols: terminal.cols, rows: terminal.rows }).catch(() => {}); terminal.focus(); });
     const input = terminal.onData(data => void api('processInput', { id, data }).catch(() => {}));
@@ -32,9 +34,9 @@ export function ProcessDialog({ id, title, command, appearance, onClose, onExit 
       terminal.write(snapshot.data); written = snapshot.length;
       for (const event of queued) write(event.data, event.offset);
       if (snapshot.done) finish(snapshot.code);
-    }).catch(() => { written = 0; });
-    return () => { off?.(); input.dispose(); terminal.dispose(); };
-  }, [id, appearance]);
+    }).catch(() => { written = 0; for (const event of queued) write(event.data, event.offset); });
+    return () => { off?.(); input.dispose(); terminalRef.current = null; terminal.dispose(); };
+  }, [id]);
   const running = code === undefined;
   return <dialog ref={dialog} className="knowledge-dialog process-dialog" aria-labelledby="process-title" onCancel={event => { if (running) event.preventDefault(); else onClose(); }}>
     <div className="dialog-heading"><div><span className="eyebrow">VISIBLE PROCESS</span><h2 id="process-title">{title}</h2></div></div>

@@ -121,11 +121,14 @@ let agents = detectAgents();
 // Cursor's sign-in state is checked off the startup path, again after install
 // or sign-in, and on request. Only signed in / signed out is kept.
 let cursorCheck = null;
-const refreshCursor = () => {
-  // One check at a time; the slot is cleared only after it is set (the check may finish synchronously).
+const refreshCursor = async ({ fresh = false } = {}) => {
+  // One check at a time. After an install or sign-in a running (older) check
+  // is waited for and a new one started, so the result reflects the change.
+  if (cursorCheck && !fresh) return cursorCheck;
+  if (cursorCheck) await cursorCheck.catch(() => {});
   if (cursorCheck) return cursorCheck;
   const check = (async () => {
-    const row = detectCursor(process.env);
+    const row = await detectCursor(process.env);
     const auth = row.available ? await cursorAuth(row.path, process.env) : 'unchecked';
     const next = { ...row, auth, state: row.available && auth === 'signed-out' ? 'login-required' : row.state };
     agents = agents.map(agent => agent.provider === 'cursor' ? next : agent);
@@ -360,22 +363,22 @@ const actions = {
   start: input => {
     // A runtime from another build may not understand newer launch options;
     // never let it silently run in the wrong workspace or mode.
-    if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.plan || input.provider === 'cursor' || input.disabled?.length || input.references?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, research mode or leave-out.');
+    if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.plan || input.provider === 'cursor' || input.disabled?.length || input.references?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, research or plan mode, Cursor, leave-out or file references.');
     return runtime.call('start', input);
   },
   // ----- Cursor CLI: install and sign in run visibly, only after the user asks. -----
-  providerStatus: ({ provider }) => { if (provider !== 'cursor') throw new Error('Only Cursor needs a status check'); return refreshCursor(); },
+  providerStatus: ({ provider, fresh }) => { if (provider !== 'cursor') throw new Error('Only Cursor needs a status check'); return refreshCursor({ fresh: fresh === true }); },
   installCursor: async () => {
     const command = installCommand(process.platform, process.env);
     const { response } = await dialog.showMessageBox(window, { type: 'question', buttons: ['Install', 'Cancel'], defaultId: 1, cancelId: 1, message: 'Install Cursor CLI?',
-      detail: `Journal will run Cursor's official installation command:\n\n${command.display}\n\nThis downloads and installs the Cursor Agent CLI on your computer from cursor.com. It runs as you, without administrator rights, in a window where you can watch its output. Journal will not receive or store your Cursor credentials.` });
+      detail: `Journal will run Cursor's official installation command:\n\n${command.display}\n\nThis downloads and installs the Cursor Agent CLI on your computer from cursor.com.${process.platform === 'win32' ? ' The installer also adds its folder to your user PATH.' : ''} It runs as you, without administrator rights, in a window where you can watch its output. Journal will not receive or store your Cursor credentials.` });
     if (response !== 0) return null;
     // Automated tests substitute a local fixture installer; nothing else can.
     const run = headless && globalThis.__journalCursorInstall ? globalThis.__journalCursorInstall : command;
     return { ...(await processes.start('install', { file: run.file, args: run.args, env: installEnv(process.env), cwd: homedir() })), command: command.display };
   },
   cursorLogin: async () => {
-    const found = findCursor(process.env);
+    const found = await findCursor(process.env);
     if (!found.path) throw new Error('Install the Cursor CLI first');
     const target = launchTarget(found.path, ['login'], { env: process.env });
     return processes.start('login', { file: target.file, args: target.args, env: runnable(process.env), cwd: homedir() });
@@ -419,6 +422,14 @@ app.on('before-quit', event => {
     let live = [];
     // Never start a runtime while quitting: only ask a connected one.
     if (runtime.socket) { try { live = (await runtime.call('list')).filter(session => LIVE.includes(session.status)); } catch { /* runtime unavailable */ } }
+    // A half-finished Cursor install could leave a broken CLI behind: ask first.
+    const running = processes.running();
+    if (running.length && !headless) {
+      const { response } = await dialog.showMessageBox({ type: 'warning', buttons: ['Stop it and quit', 'Cancel'], defaultId: 1, cancelId: 1,
+        message: running.includes('install') ? 'The Cursor CLI installation is still running.' : 'Cursor sign-in is still running.',
+        detail: running.includes('install') ? 'Quitting now stops the installer and may leave an incomplete installation. You can run the installer again afterwards.' : 'Quitting now cancels the sign-in.' });
+      if (response === 1) { closing = false; if (!window) createWindow(); return; }
+    }
     let policy = process.env.JOURNAL_QUIT_POLICY;
     if (live.length && policy !== 'stop' && policy !== 'keep') {
       const { response } = await dialog.showMessageBox({ type: 'question', buttons: ['Stop sessions and quit', 'Keep running in background', 'Cancel'], defaultId: 0, cancelId: 2,

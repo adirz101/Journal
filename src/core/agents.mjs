@@ -56,7 +56,8 @@ export const CAPABILITIES = {
     observer: 'none', status: ['running', 'exited'], commands: 'unknown', fileEdits: false, interrupt: 'Ctrl+C to the PTY', modes: 'Research: --mode=ask (read-only); Plan: --mode=plan' },
 };
 
-export function detectAgents(env = process.env, options = {}) {
+export function detectAgents(env = process.env) {
+  // Cursor is checked asynchronously (detectCursor) and starts as "checking".
   return [...['claude', 'codex'].map(provider => {
     const path = resolveExecutable(provider, env);
     try {
@@ -65,13 +66,13 @@ export function detectAgents(env = process.env, options = {}) {
       const version = execFileSync(target.file, target.args, { timeout: 4000, encoding: 'utf8', windowsHide: true, maxBuffer: 16384, stdio: 'pipe' });
       return { provider, available: true, version: version.trim().split('\n').at(-1), path, capabilities: CAPABILITIES[provider] };
     } catch { return { provider, available: false, version: null, path, capabilities: CAPABILITIES[provider] }; }
-  }), detectCursor(env, options)];
+  }), { provider: 'cursor', state: 'checking', available: false, version: null, path: null, auth: 'unchecked', capabilities: CAPABILITIES.cursor }];
 }
 
 // Cursor's row: installed and genuine, which documented features it has, and
-// (after cursorAuth) whether it is signed in. Login is checked asynchronously.
-export function detectCursor(env = process.env, options = {}) {
-  const found = findCursor(env, options);
+// (after cursorAuth) whether it is signed in.
+export async function detectCursor(env = process.env, options = {}) {
+  const found = await findCursor(env, options);
   return { provider: 'cursor', ...cursorState(found), version: found.version, path: found.path, onPath: found.onPath, impostor: found.impostor ?? null,
-    supports: found.supports, auth: 'unchecked', capabilities: CAPABILITIES.cursor };
+    unlaunchable: found.unlaunchable ?? null, supports: found.supports, auth: 'unchecked', capabilities: CAPABILITIES.cursor };
 }

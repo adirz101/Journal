@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, win32 } from 'node:path';
@@ -38,45 +38,56 @@ export function knownLocations(platform = process.platform, env = process.env, h
   return [join(home, '.local', 'bin', 'agent'), join(home, '.local', 'bin', 'cursor-agent')];
 }
 
-const runSync = (path, args, env) => {
-  const target = launchTarget(path, args, { env });
-  return execFileSync(target.file, target.args, { timeout: 8000, encoding: 'utf8', windowsHide: true, maxBuffer: 256 * 1024, stdio: ['ignore', 'pipe', 'pipe'], env: { ...env, NO_OPEN_BROWSER: '1' } });
-};
+// Child processes never inherit Electron's Node mode, and never open a browser.
+const childEnv = env => { const next = { ...env, NO_OPEN_BROWSER: '1' }; delete next.ELECTRON_RUN_AS_NODE; return next; };
+// Asynchronous, so detection never stalls the runtime's terminals or the UI.
+const run = (path, args, env, { platform = process.platform, cwd, timeout = 8000 } = {}) => new Promise((resolve, reject) => {
+  let target;
+  try { target = launchTarget(path, args, { env, platform }); } catch (error) { error.unlaunchable = true; reject(error); return; }
+  execFile(target.file, target.args, { cwd, timeout, encoding: 'utf8', windowsHide: true, maxBuffer: 256 * 1024, env: childEnv(env) },
+    (error, stdout, stderr) => error ? reject(Object.assign(error, { stdout, stderr })) : resolve(`${stdout}`));
+});
 
 // What one executable is: Cursor (and which documented features it has) or not.
 // Any program called "agent" could be on PATH, so a Cursor build version and
 // Cursor's own help text are both required.
+// Cached per file and modification time for a minute (a Windows launcher's
+// time may not change on update, so the cache also expires).
 const inspected = new Map();
-export function inspectCursor(path, env = process.env, run = runSync) {
+export async function inspectCursor(path, env = process.env, { platform = process.platform, runner = run } = {}) {
   let mtime = 0; try { mtime = statSync(path).mtimeMs; } catch { /* checked below */ }
-  const key = `${path}\u0000${mtime}`; if (inspected.has(key)) return inspected.get(key);
+  const key = `${path}\u0000${mtime}`; const cached = inspected.get(key);
+  if (cached && Date.now() - cached.at < 60000) return cached.result;
   let result;
   try {
-    const version = String(run(path, ['--version'], env)).trim().match(VERSION)?.[1] ?? null;
-    const help = String(run(path, ['--help'], env));
+    const version = String(await runner(path, ['--version'], env, { platform })).trim().match(VERSION)?.[1] ?? null;
+    const help = String(await runner(path, ['--help'], env, { platform }));
     const cursor = !!version && /\bcursor\b/i.test(help);
     result = { path, version, cursor, supports: { resume: /--resume\b/.test(help), createChat: /\bcreate-chat\b/.test(help), mode: /--mode\b/.test(help), login: /\blogin\b/.test(help) } };
-  } catch { result = { path, version: null, cursor: false, supports: {} }; }
+  } catch (error) {
+    // "Cannot be started" is not "not Cursor": say which, with the reason.
+    result = { path, version: null, cursor: false, supports: {}, unlaunchable: error.unlaunchable ? String(error.message).slice(0, 300) : null };
+  }
   if (inspected.size > 50) inspected.clear();
-  inspected.set(key, result); return result;
+  inspected.set(key, { result, at: Date.now() }); return result;
 }
 
 // PATH first (agent, then cursor-agent), then the documented install locations.
-export function findCursor(env = process.env, { platform = process.platform, home = homedir(), run = runSync } = {}) {
+export async function findCursor(env = process.env, { platform = process.platform, home = homedir(), runner = run } = {}) {
   const onPath = ['agent', 'cursor-agent'].map(name => resolveExecutable(name, env, platform)).filter(Boolean);
   const candidates = [...new Set([...onPath, ...knownLocations(platform, env, home).filter(path => existsSync(path))])];
-  let impostor = null;
+  let impostor = null; let unlaunchable = null;
   for (const path of candidates) {
-    const info = inspectCursor(path, env, run);
+    const info = await inspectCursor(path, env, { platform, runner });
     if (info.cursor) return { ...info, onPath: onPath.includes(path) };
-    impostor ??= path;
+    if (info.unlaunchable) unlaunchable ??= { path, reason: info.unlaunchable }; else impostor ??= path;
   }
-  return { path: null, version: null, cursor: false, supports: {}, onPath: false, impostor };
+  return { path: null, version: null, cursor: false, supports: {}, onPath: false, impostor, unlaunchable };
 }
 
 // The provider row shown in Journal. Login state is added by cursorAuth.
 export function cursorState(found) {
-  if (!found.path) return { state: found.impostor ? 'not-cursor' : 'missing', available: false };
+  if (!found.path) return { state: found.unlaunchable ? 'unlaunchable' : found.impostor ? 'not-cursor' : 'missing', available: false };
   if (!found.supports.resume || !found.supports.createChat) return { state: 'unsupported', available: false };
   return { state: 'ready', available: true };
 }
@@ -91,28 +102,35 @@ export function parseAuth(output) {
     if (flags.length) return flags[0] ? 'signed-in' : 'signed-out';
     if (typeof data?.status === 'string') return parseAuth(data.status);
   } catch { /* plain text */ }
-  if (/not\s+(?:logged|signed)\s+in|partially authenticated|unauthenticated|login required/i.test(text)) return 'signed-out';
-  if (/(?:logged|signed)\s+in\b|authenticated as/i.test(text)) return 'signed-in';
+  if (/not\s+(?:logged|signed)\s+in|not\s+authenticated|partially authenticated|unauthenticated|login required|logged out/i.test(text)) return 'signed-out';
+  if (/(?:logged|signed)\s+in\b|authenticated as|^\s*authenticated\s*$/im.test(text)) return 'signed-in';
   return 'unknown';
 }
 export function cursorAuth(path, env = process.env, timeout = 20000) {
-  const once = args => new Promise(resolve => {
-    const target = launchTarget(path, args, { env });
-    execFile(target.file, target.args, { timeout, encoding: 'utf8', windowsHide: true, maxBuffer: 256 * 1024, env: { ...env, NO_OPEN_BROWSER: '1' } },
-      (error, stdout, stderr) => resolve(error && !stdout ? null : `${stdout}\n${stderr}`));
-  });
+  const once = args => run(path, args, env, { timeout }).catch(error => error.stdout ? `${error.stdout}\n${error.stderr ?? ''}` : null);
   return once(['status', '--format', 'json']).then(json => { const state = json === null ? 'unknown' : parseAuth(json); return state !== 'unknown' ? state : once(['status']).then(parseAuth); });
 }
 
 // A new, empty chat whose ID is known before launch (documented `create-chat`),
 // created in the session's working directory. Null when it cannot be created.
-export function createChat(path, cwd, env = process.env, timeout = 20000) {
+// Current builds print the ID and then keep running, so the ID is taken as soon
+// as it appears and the process (and its children) is then ended.
+export function createChat(path, cwd, env = process.env, timeout = 20000, platform = process.platform) {
   return new Promise(resolve => {
-    const target = launchTarget(path, ['create-chat'], { env });
-    execFile(target.file, target.args, { cwd, timeout, encoding: 'utf8', windowsHide: true, maxBuffer: 16384, env: { ...env, NO_OPEN_BROWSER: '1' } }, (error, stdout) => {
-      const id = String(stdout ?? '').trim().split(/\s+/).at(-1);
-      resolve(!error && UUID.test(id) ? id.toLowerCase() : null);
+    let target; try { target = launchTarget(path, ['create-chat'], { env, platform }); } catch { resolve(null); return; }
+    let child; try { child = spawn(target.file, target.args, { cwd, env: childEnv(env), stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, detached: platform !== 'win32' }); } catch { resolve(null); return; }
+    let output = ''; let done = false;
+    const end = () => { try { if (platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGTERM'); else child.kill(); } catch { /* already gone */ } };
+    const finish = id => { if (done) return; done = true; clearTimeout(timer); resolve(id); if (child.exitCode === null) end(); };
+    const timer = setTimeout(() => finish(null), timeout);
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', data => {
+      output = (output + data).slice(-4096);
+      const id = output.split(/\s+/).find(word => UUID.test(word));
+      if (id) finish(id.toLowerCase());
     });
+    child.on('error', () => finish(null));
+    child.on('exit', () => setImmediate(() => { const id = output.split(/\s+/).find(word => UUID.test(word)); finish(id ? id.toLowerCase() : null); }));
   });
 }
 

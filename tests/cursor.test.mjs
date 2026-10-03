@@ -7,7 +7,8 @@ import { execFileSync } from 'node:child_process';
 import { JournalStore } from '../src/core/store.mjs';
 import { TerminalManager } from '../src/core/terminal.mjs';
 import { buildAgentLaunch, detectCursor } from '../src/core/agents.mjs';
-import { captureCursorId, createChat, cursorAuth, cursorState, findCursor, installCommand, installEnv, knownLocations, parseAuth } from '../src/core/cursor.mjs';
+import { captureCursorId, createChat, cursorAuth, cursorState, findCursor, inspectCursor, installCommand, installEnv, knownLocations, parseAuth } from '../src/core/cursor.mjs';
+import { ProcessRunner } from '../src/desktop/processes.mjs';
 import { formatReference } from '../src/core/references.mjs';
 
 const CHAT = '11111111-2222-4333-8444-555555555555';
@@ -19,7 +20,7 @@ function fakeCursor(dir, { version = '2026.10.01-e373342', help = 'Usage: agent 
 const fs=require('node:fs');const path=require('node:path');const a=process.argv.slice(2);const here=${JSON.stringify(dir)};
 if(a[0]==='--version'){console.log(${JSON.stringify(version)});process.exit(0)}
 if(a[0]==='--help'){console.log(${JSON.stringify(help)});process.exit(0)}
-if(a[0]==='create-chat'){fs.writeFileSync(path.join(here,'chat-cwd'),process.cwd());if(fs.existsSync(path.join(here,'fail-chat')))process.exit(1);console.log(${JSON.stringify(CHAT)});process.exit(0)}
+if(a[0]==='create-chat'){fs.writeFileSync(path.join(here,'chat-cwd'),process.cwd());if(fs.existsSync(path.join(here,'fail-chat')))process.exit(1);const hang=fs.existsSync(path.join(here,'hang-chat'));if(hang)fs.writeFileSync(path.join(here,'chat-pid'),String(process.pid));console.log(${JSON.stringify(CHAT)});if(hang){setInterval(()=>{},1000);return}process.exit(0)}
 if(a[0]==='status'){const ok=fs.existsSync(path.join(here,'logged-in'));if(a.includes('--format')){if(fs.existsSync(path.join(here,'no-json'))){console.error('unknown option --format');process.exit(1)}console.log(JSON.stringify({authenticated:ok,email:ok?'person@example.com':null}));process.exit(0)}console.log(ok?'Logged in as person@example.com':'Not logged in');process.exit(0)}
 console.log('RAN '+JSON.stringify(a));`);
   chmodSync(path, 0o755);
@@ -50,28 +51,32 @@ test('install commands are the official ones, run without shell startup files or
   assert.match(knownLocations('win32', { LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local' }, 'C:\\Users\\me')[0], /cursor-agent\\agent\.exe$/);
 });
 
-test('detection requires the genuine Cursor CLI: missing, impostor, on PATH, known location, unsupported', t => {
+test('detection requires the genuine Cursor CLI: missing, impostor, on PATH, known location, unsupported', async t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'cursor-detect-'))); t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, 'home'); const bin = join(root, 'bin'); mkdirSync(home); mkdirSync(bin);
   const options = { platform: process.platform, home };
-  assert.equal(cursorState(findCursor({ PATH: bin }, options)).state, 'missing');
+  assert.equal(cursorState(await findCursor({ PATH: bin }, options)).state, 'missing');
   // Some other program called "agent".
   fakeCursor(bin, { version: 'agent 3.1.4', help: 'Usage: agent - a build agent' });
-  const impostor = findCursor({ PATH: bin }, options);
+  const impostor = await findCursor({ PATH: bin }, options);
   assert.equal(impostor.path, null); assert.equal(impostor.impostor, join(bin, 'agent')); assert.equal(cursorState(impostor).state, 'not-cursor');
   // Installed to ~/.local/bin while Journal's PATH has not caught up.
   const known = fakeCursor(join(home, '.local', 'bin'));
-  const found = findCursor({ PATH: bin }, options);
+  const found = await findCursor({ PATH: bin }, options);
   assert.equal(found.path, known); assert.equal(found.onPath, false); assert.equal(found.version, '2026.10.01-e373342'); assert.equal(cursorState(found).state, 'ready');
   // On PATH wins.
   const bin2 = join(root, 'bin2'); const onPath = fakeCursor(bin2);
-  assert.equal(findCursor({ PATH: `${bin2}${delimiter}${bin}` }, options).path, onPath);
-  assert.equal(findCursor({ PATH: `${bin2}${delimiter}${bin}` }, options).onPath, true);
+  assert.equal((await findCursor({ PATH: `${bin2}${delimiter}${bin}` }, options)).path, onPath);
+  assert.equal((await findCursor({ PATH: `${bin2}${delimiter}${bin}` }, options)).onPath, true);
   // A build without exact-ID chats is unsupported.
   const old = join(root, 'old'); fakeCursor(old, { version: '2025.01.01-abcdef0', help: 'Start the Cursor Agent\n  --resume [chatId]' });
-  assert.equal(cursorState(findCursor({ PATH: old }, { ...options, home: join(root, 'nohome') })).state, 'unsupported');
-  const row = detectCursor({ PATH: bin2 }, options);
+  assert.equal(cursorState(await findCursor({ PATH: old }, { ...options, home: join(root, 'nohome') })).state, 'unsupported');
+  const row = await detectCursor({ PATH: bin2 }, options);
   assert.equal(row.provider, 'cursor'); assert.equal(row.available, true); assert.equal(row.supports.mode, true); assert.equal(row.auth, 'unchecked');
+  // A Windows launcher Journal cannot start safely is reported as such, not as "not Cursor".
+  const shim = join(root, 'win', 'agent.cmd'); mkdirSync(join(root, 'win')); writeFileSync(shim, '@echo off\r\n"%~dp0versions\\node.exe" index.js %*\r\n');
+  const winInfo = await inspectCursor(shim, {}, { platform: 'win32' });
+  assert.equal(winInfo.cursor, false); assert.match(winInfo.unlaunchable, /cmd\.exe launcher|recognizable/);
 });
 
 test('sign-in state is read without keeping any account details', async t => {
@@ -85,6 +90,7 @@ test('sign-in state is read without keeping any account details', async t => {
   assert.equal(parseAuth('Not logged in'), 'signed-out'); assert.equal(parseAuth('Partially authenticated (missing refresh token)'), 'signed-out');
   assert.equal(parseAuth('Logged in as a@b.c'), 'signed-in'); assert.equal(parseAuth('{"isAuthenticated":false}'), 'signed-out');
   assert.equal(parseAuth('something else'), 'unknown');
+  assert.equal(parseAuth('{"status":"authenticated"}'), 'signed-in'); assert.equal(parseAuth('{"status":"unauthenticated"}'), 'signed-out'); assert.equal(parseAuth('Not authenticated'), 'signed-out');
 });
 
 test('a chat is created in the session folder; exit hints are captured but never trusted alone', async t => {
@@ -92,6 +98,12 @@ test('a chat is created in the session folder; exit hints are captured but never
   const path = fakeCursor(join(root, 'bin')); const cwd = join(root, 'work'); mkdirSync(cwd);
   assert.equal(await createChat(path, cwd, { PATH: '' }), CHAT);
   assert.equal(readFileSync(join(root, 'bin', 'chat-cwd'), 'utf8'), cwd);
+  // Current builds print the ID and keep running: the ID is taken at once and the process ended.
+  writeFileSync(join(root, 'bin', 'hang-chat'), ''); const started = Date.now();
+  assert.equal(await createChat(path, cwd, { PATH: '' }), CHAT); assert.ok(Date.now() - started < 5000, 'Does not wait for exit');
+  const pid = Number(readFileSync(join(root, 'bin', 'chat-pid'), 'utf8'));
+  await new Promise(r => setTimeout(r, 300)); assert.throws(() => process.kill(pid, 0), /ESRCH/, 'The lingering process is ended');
+  rmSync(join(root, 'bin', 'hang-chat'));
   writeFileSync(join(root, 'bin', 'fail-chat'), ''); assert.equal(await createChat(path, cwd, { PATH: '' }), null);
   assert.equal(captureCursorId(`bye\n\x1b[2mTo resume this session: cursor-agent --resume=${CHAT}\x1b[0m`), CHAT);
   assert.equal(captureCursorId(`To resume this session: agent --resume="${CHAT.toUpperCase()}"`), CHAT);
@@ -191,4 +203,23 @@ test('Journal never stores Cursor account details', async t => {
   const { m } = manager(f, t); await m.start({ projectId: f.project.id, provider: 'cursor', task: 'x' });
   f.store.checkpoint?.();
   for (const file of ['j.sqlite', 'j.sqlite-wal']) if (existsSync(join(f.root, file))) assert.ok(!readFileSync(join(f.root, file)).includes('person@example.com'));
+});
+
+test('visible processes: one per kind, catch-up snapshots, and no input after exit', async () => {
+  const events = []; let resolveSpawn; const procs = [];
+  const runner = new ProcessRunner(event => events.push(event), () => new Promise(resolve => { resolveSpawn = () => { const proc = { pid: undefined, writes: [], onData(cb) { this.data = cb; }, onExit(cb) { this.exit = cb; }, write(d) { this.writes.push(d); }, resize() {}, kill() { this.killed = true; } }; procs.push(proc); resolve(proc); }; }));
+  const first = runner.start('login', { file: 'x', args: [] });
+  await assert.rejects(runner.start('login', { file: 'x', args: [] }), /already running/, 'A double click starts one process');
+  resolveSpawn(); const { id } = await first;
+  procs[0].data('hello '); procs[0].data('world');
+  assert.deepEqual(runner.snapshot(id), { data: 'hello world', length: 11, done: false, code: null });
+  assert.deepEqual(events.map(e => e.offset), [0, 6]);
+  runner.write(id, 'y'); assert.deepEqual(procs[0].writes, ['y']);
+  assert.deepEqual(runner.running(), ['login']);
+  procs[0].exit({ exitCode: 0 });
+  assert.throws(() => runner.write(id, 'late'), /finished/); assert.equal(runner.snapshot(id).done, true);
+  runner.stop(id); assert.equal(procs[0].killed, undefined, 'A finished process is not signalled');
+  const failing = new ProcessRunner(() => {}, async () => { throw new Error('spawn failed'); });
+  await assert.rejects(failing.start('install', { file: 'x', args: [] }), /spawn failed/);
+  assert.deepEqual(failing.running(), [], 'A failed start frees its slot');
 });
