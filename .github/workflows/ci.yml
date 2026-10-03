@@ -49,15 +49,6 @@ jobs:
       # On Windows this uses the Visual Studio toolchain on windows-latest.
       - run: npm ci
       - run: npm test
-        if: runner.os != 'Windows'
-      # Windows unit tests are experimental: 37 of 172 failed on their first run
-      # (4 October 2026: worktree and folder path handling, file locks in test
-      # cleanup, named-pipe reuse). Tracked in docs/WINDOWS.md; they report
-      # without failing the run until fixed.
-      - name: Unit tests (Windows, experimental)
-        if: runner.os == 'Windows'
-        continue-on-error: true
-        run: npm test
       - run: npm run check
       - run: npm run build
 

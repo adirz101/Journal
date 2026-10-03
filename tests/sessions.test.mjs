@@ -9,6 +9,7 @@ import { JournalStore } from '../src/core/store.mjs';
 import { TerminalManager } from '../src/core/terminal.mjs';
 import { generateTitle } from '../src/core/sessions.mjs';
 import { purgeSession } from '../src/core/maintenance.mjs';
+import { removeLater } from './support/cleanup.mjs';
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'sessions-')); const repo = join(root, 'repo');
@@ -19,7 +20,7 @@ function fixture(t) {
   const manager = new TerminalManager({ store, trackMs: 0, identify: () => null, table: () => null, spawn: (executable, argv) => {
     launches.push(argv); const proc = { onData() {}, onExit(f) { this.exit = f; }, write() {}, resize() {}, kill() {} }; procs.push(proc); return proc;
   } });
-  t.after(() => { manager.disposed = true; try { store.close(); } catch {} rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { manager.disposed = true; try { store.close(); } catch {} removeLater(root); });
   return { root, repo, store, project, manager, procs, launches };
 }
 
@@ -80,7 +81,7 @@ test('removing hides a stopped session and its timeline, keeps receipts, and exa
 });
 
 test('migration v7 keeps existing sessions and gives them user fields', t => {
-  const root = mkdtempSync(join(tmpdir(), 'mig7-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = mkdtempSync(join(tmpdir(), 'mig7-')); t.after(() => removeLater(root));
   const repo = join(root, 'r'); execFileSync('git', ['init', '-q', '-b', 'main', repo]);
   const path = join(root, 'j.sqlite'); const store = new JournalStore(path); const project = store.openProject(repo);
   store.saveSession({ id: 'old', projectId: project.id, provider: 'codex', status: 'exited', nativeId: '55555555-5555-4555-8555-555555555555', nativeIdConfirmed: true, title: 'Old task', receiptId: 'r', createdAt: '2026-01-01T00:00:00Z' });

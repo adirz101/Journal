@@ -10,6 +10,7 @@ import { startRuntime } from '../src/runtime/runtime.mjs';
 import { RuntimeClient } from '../src/desktop/runtime-client.mjs';
 import { frame } from '../src/runtime/protocol.mjs';
 import { processIdentity, isAlive } from '../src/core/process.mjs';
+import { removeLater } from './support/cleanup.mjs';
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 async function until(check, timeout = 3000) {
@@ -44,7 +45,7 @@ function fixture(t, { dataDir } = {}) {
     const runtime = await startRuntime({ dataDir, store, spawn: fake.spawn, hookScript: '/dev/null', identify: () => null, table: () => null, observerMs: 20, idleMs: 3_600_000, ...extra });
     runtimes.push(runtime); return { runtime, fake };
   };
-  t.after(async () => { for (const r of runtimes) { r.server.close(); r.manager.disposed = true; clearInterval(r.manager.tracker); } store.close(); rmSync(root, { recursive: true, force: true }); });
+  t.after(async () => { for (const r of runtimes) { r.server.close(); r.manager.disposed = true; clearInterval(r.manager.tracker); } store.close(); removeLater(root); });
   return { root, repo, dataDir, store, project, boot };
 }
 
@@ -150,7 +151,8 @@ test('a runtime crash leaves interrupted sessions with uncertain delivery and no
   const { session, receipt } = await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'Do not resend me' });
   assert.equal(f.store.getReceipt(receipt.id).state, 'submitted');
   // Simulated crash: the process is gone without any shutdown bookkeeping.
-  first.runtime.server.close(); first.runtime.manager.disposed = true; await wait(50);
+  // A crash also drops its clients; waiting for the pipe to close lets Windows reuse its name.
+  c.close(); first.runtime.manager.disposed = true; await Promise.race([new Promise(resolve => first.runtime.server.close(resolve)), wait(2000)]); await wait(50);
   const second = await f.boot();
   assert.equal(second.fake.procs.length, 0);
   const recovered = f.store.getSession(session.id);
@@ -185,7 +187,7 @@ test('Claude hook observations become redacted commands, exit codes and file eve
   const settings = JSON.parse(readFileSync(observer.proc.argv[observer.proc.argv.indexOf('--settings') + 1], 'utf8'));
   for (const event of ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest']) assert.ok(settings.hooks[event], event);
   const target = join(f.dataDir, 'observers', `${session.id}.events.jsonl`);
-  const token = settings.hooks.Stop[0].hooks[0].command.match(/'([0-9a-f]{48})'/)[1];
+  const token = settings.hooks.Stop[0].hooks[0].command.match(/['"]([0-9a-f]{48})['"]/)[1];
   const line = extra => appendFileSync(target, JSON.stringify({ token, id: session.id, nativeId: session.nativeId, cwd: f.repo, at: Date.now(), ...extra }) + '\n');
   line({ event: 'PreToolUse', tool: 'Bash', toolUseId: 't1', command: 'API_KEY=abcd1234 npm test' });
   line({ event: 'PostToolUseFailure', tool: 'Bash', toolUseId: 't1', exit: 3, durationMs: 1200 });
@@ -334,14 +336,14 @@ test('a real process gets a start-time identity, and stop escalates from SIGTERM
 
 test('observer files rotate after consumption and report lost observation at the size cap', async t => {
   const { Observers } = await import('../src/runtime/observers.mjs');
-  const dir = mkdtempSync(join(tmpdir(), 'obs-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = mkdtempSync(join(tmpdir(), 'obs-')); t.after(() => removeLater(dir));
   const repo = join(dir, 'repo'); mkdirSync(repo);
   writeFileSync(join(dir, 'stale.events.jsonl'), 'old'); mkdirSync(join(dir, 'observers'), { recursive: true }); writeFileSync(join(dir, 'observers', 'old.events.jsonl'), 'x');
   const seen = []; const lost = [];
   const observers = new Observers({ dataDir: dir, hookScript: 'hook.mjs', execPath: 'node', ingest: (id, e) => seen.push(e.n), lost: id => lost.push(id) });
   assert.deepEqual((await import('node:fs')).readdirSync(join(dir, 'observers')), [], 'Files from a previous runtime are swept');
   const settings = observers.settings({ id: 's1' }, { root: repo });
-  const token = JSON.parse(readFileSync(settings, 'utf8')).hooks.Stop[0].hooks[0].command.match(/'([0-9a-f]{48})'/)[1];
+  const token = JSON.parse(readFileSync(settings, 'utf8')).hooks.Stop[0].hooks[0].command.match(/['"]([0-9a-f]{48})['"]/)[1];
   const target = join(dir, 'observers', 's1.events.jsonl');
   const line = n => JSON.stringify({ token, id: 's1', cwd: repo, event: 'Stop', n, pad: 'p'.repeat(900) }) + '\n';
   let text = ''; for (let n = 0; n < 400; n++) text += line(n); writeFileSync(target, text);

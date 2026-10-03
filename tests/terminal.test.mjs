@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { JournalStore } from '../src/core/store.mjs';
+import { removeLater } from './support/cleanup.mjs';
 const { OutputBuffer, TerminalManager } = await import('../src/core/terminal.mjs').catch(() => ({}));
 
 test('terminal runtime exists', () => assert.equal(typeof TerminalManager, 'function'));
@@ -41,7 +42,7 @@ function runtime(t) {
     launches.push({ executable, argv });
     return { onData: f => { callbacks.data = f; }, onExit: f => { callbacks.exit = f; }, write: data => inputs.push(data), resize() {}, kill() {} };
   }});
-  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { store.close(); removeLater(root); });
   return { store, project, manager, callbacks, inputs, launches };
 }
 

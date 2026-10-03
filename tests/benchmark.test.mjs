@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
@@ -5,6 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { agentsMarkdown, evaluate, materialize, parseTranscript, validateSuite, wilson } from '../scripts/benchmark.mjs';
 import suite from '../benchmarks/ledger-round1/suite.mjs';
+import { removeLater } from './support/cleanup.mjs';
 
 const rows = (spec) => Object.entries(spec).flatMap(([key, passes]) => { const [condition, task] = key.split('/'); return passes.map((pass, i) => ({ condition, task, rep: i + 1, grade: { pass } })); });
 
@@ -28,7 +30,7 @@ test('Wilson intervals and GO/MODIFY/ABANDON follow the frozen criteria', () => 
 });
 
 test('the round-1 suite materializes with knowledge recorded at the right point in history', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'bench-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = mkdtempSync(join(tmpdir(), 'bench-')); t.after(() => removeLater(dir));
   const labels = [];
   const heads = await materialize(suite, join(dir, 'repo'), async (label, git) => { labels.push([label, git('rev-parse', '--abbrev-ref', 'HEAD')]); });
   assert.deepEqual(labels, [['main', 'main'], ['refunds', 'feature/refunds'], ['sqlite', 'experiment/sqlite']]);
@@ -47,7 +49,7 @@ test('transcript metrics read the result event and tool uses', () => {
 
 test('freezing covers the evaluated suite, including imported tasks and graders', async () => {
   const { suiteHash } = await import('../scripts/benchmark.mjs');
-  const dir = new URL('../benchmarks/ledger-round1', import.meta.url).pathname;
+  const dir = fileURLToPath(new URL('../benchmarks/ledger-round1', import.meta.url));
   const before = suiteHash(dir, suite);
   const changed = { ...suite, tasks: suite.tasks.map((t, i) => i ? t : { ...t, grader: t.grader + '\n// edited' }) };
   assert.notEqual(suiteHash(dir, changed)['(evaluated suite)'], before['(evaluated suite)']);

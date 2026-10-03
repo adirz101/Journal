@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { auditEntries, checkTag, checksumLines, configArtifacts, expectedArtifacts, LEAKS, loadConfig, readVersion, tagFor } from '../scripts/release-lib.mjs';
 import { dataDirectory, guiPathEntries, unpackedPath, withGuiPath } from '../src/desktop/environment.mjs';
+import { removeLater } from './support/cleanup.mjs';
 
 const require = createRequire(import.meta.url);
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
@@ -53,7 +54,7 @@ test('notices cover everything that ships', () => {
 
 test('the node-pty spawn-helper path fix is applied once and fails closed on change', t => {
   const { patchUnixTerminal, ORIGINAL, FIXED } = require('../scripts/after-pack.cjs');
-  const dir = mkdtempSync(join(tmpdir(), 'afterpack-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = mkdtempSync(join(tmpdir(), 'afterpack-')); t.after(() => removeLater(dir));
   const file = join(dir, 'unixTerminal.js'); writeFileSync(file, `var a = 1;\n${ORIGINAL}\n`);
   assert.equal(patchUnixTerminal(file), true); assert.match(readFileSync(file, 'utf8'), /patched by Journal/);
   assert.equal(patchUnixTerminal(file), false, 'Idempotent');
@@ -79,7 +80,7 @@ test('package audit: allow-list, forbidden files and leaks', () => {
 });
 
 test('checksums use the sha256sum format, sorted, and match the system tool', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'sums-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = mkdtempSync(join(tmpdir(), 'sums-')); t.after(() => removeLater(dir));
   writeFileSync(join(dir, 'b.exe'), 'bbb'); writeFileSync(join(dir, 'a.dmg'), 'aaa');
   const text = await checksumLines([join(dir, 'b.exe'), join(dir, 'a.dmg')]);
   assert.match(text, /^[0-9a-f]{64} {2}a\.dmg\n[0-9a-f]{64} {2}b\.exe\n$/);

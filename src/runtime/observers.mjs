@@ -1,6 +1,7 @@
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join, sep } from 'node:path';
+import { realPath } from '../core/paths.mjs';
 
 // Per-launch Claude observer hooks. Each session gets its own settings file and
 // an append-only, size-bounded events file; existing user/project hooks stay
@@ -26,7 +27,7 @@ export class Observers {
     const settingsFile = join(this.dir, `${session.id}.settings.json`);
     writeFileSync(settingsFile, JSON.stringify({ hooks }), { mode: 0o600 });
     // Observations must come from where the session runs (checkout, worktree or folder).
-    const cwd = session.cwd ?? project.root; let root = cwd; try { root = realpathSync(cwd); } catch { /* keep recorded root */ }
+    const cwd = session.cwd ?? project.root; let root = cwd; try { root = realPath(cwd); } catch { /* keep recorded root */ }
     this.sessions.set(session.id, { token, target, settingsFile, root, offset: 0, partial: '' });
     return settingsFile;
   }
@@ -62,7 +63,7 @@ export class Observers {
   accept(id, observer, line) {
     let data; try { data = JSON.parse(line); } catch { return; }
     if (data.id !== id || data.token !== observer.token || typeof data.cwd !== 'string') return;
-    let cwd; try { cwd = realpathSync(data.cwd); } catch { return; }
+    let cwd; try { cwd = realPath(data.cwd); } catch { return; }
     if (cwd !== observer.root && !cwd.startsWith(observer.root + sep)) return;
     this.ingest(id, data);
   }

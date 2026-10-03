@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, win32 } from 'node:path';
+import { join, posix, win32 } from 'node:path';
 import { launchTarget, resolveExecutable } from './process.mjs';
 
 // Cursor Agent CLI ("agent", legacy alias "cursor-agent") as a native provider.
@@ -35,7 +35,7 @@ export function knownLocations(platform = process.platform, env = process.env, h
     const base = win32.join(env.LOCALAPPDATA ?? win32.join(home, 'AppData', 'Local'), 'cursor-agent');
     return ['agent.exe', 'cursor-agent.exe', 'agent.cmd', 'cursor-agent.cmd'].map(name => win32.join(base, name));
   }
-  return [join(home, '.local', 'bin', 'agent'), join(home, '.local', 'bin', 'cursor-agent')];
+  return [posix.join(home, '.local', 'bin', 'agent'), posix.join(home, '.local', 'bin', 'cursor-agent')];
 }
 
 // Child processes never inherit Electron's Node mode, and never open a browser.

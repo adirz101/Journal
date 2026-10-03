@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { JournalStore } from '../src/core/store.mjs';
+import { removeLater } from './support/cleanup.mjs';
 
 function fixture(t) {
   const root = mkdtempSync(resolve(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'journal-status-'));
@@ -18,7 +19,7 @@ function fixture(t) {
   commit('README.md', '# Ledger\n\nLedger records invoices and refunds for small shops.\n', 'Initial ledger');
   commit('src/invoices/create.mjs', 'export const create = () => 1;\n', 'Add invoice creation');
   const store = new JournalStore(resolve(root, 'journal.sqlite')); const project = store.openProject(repo);
-  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { store.close(); removeLater(root); });
   const save = (draft, statement = draft.statement.replaceAll(/\[describe[^\]]*\]/g, 'Reviewed by operator')) =>
     store.proposeMemory(project.id, { memoryId: draft.memoryId ?? undefined, statement, category: 'brief', scope: draft.scope, area: '', source: draft.source });
   return { repo, git, commit, store, project, save };

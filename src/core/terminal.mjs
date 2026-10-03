@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { realpathSync } from 'node:fs';
 import { buildAgentLaunch, captureCodexId, CODEX_RESUME_MARKER, PROVIDER_NAMES, PROVIDERS, UUID } from './agents.mjs';
 import { captureCursorId, createChat, CURSOR_RESUME_MARKER, findCursor } from './cursor.mjs';
 import { descendants, isAlive, processIdentity, processTable, sameIdentity, signalVerified, survivors } from './process.mjs';
 import { redact, text } from './validation.mjs';
 import { generateTitle } from './sessions.mjs';
 import { referenceEvent } from './references.mjs';
+import { realPath } from './paths.mjs';
 
 export const MAX_SESSIONS = 4;
 export const IDLE_SETTLE_MS = 750;
@@ -19,7 +19,7 @@ const TEST_COMMAND = /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|node\s+--test
 function canonical(path) {
   const rest = [];
   for (let current = path; ; current = dirname(current)) {
-    try { return join(realpathSync(current), ...rest.reverse()); } catch { if (dirname(current) === current) return path; rest.push(basename(current)); }
+    try { return join(realPath(current), ...rest.reverse()); } catch { if (dirname(current) === current) return path; rest.push(basename(current)); }
   }
 }
 export const isTestCommand = command => TEST_COMMAND.test(command ?? '');

@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { constants, closeSync, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { isSensitivePath } from './evidence.mjs';
+import { realPath } from './paths.mjs';
 
 // Read-only file access for the explorer. Roots are absolute paths resolved
 // from Journal's records (never from the renderer); everything below takes a
@@ -45,7 +46,7 @@ async function resolveInside(root, path, { sensitive = false } = {}) {
 function resolveInsideSync(root, path) {
   let current = root;
   for (const part of parts(path)) { current = join(current, part); if (lstatSync(current).isSymbolicLink()) throw new Error('Links are not followed'); }
-  const realRoot = realpathSync(root); const real = realpathSync(current);
+  const realRoot = realPath(root); const real = realPath(current);
   if (!inside(realRoot, real)) throw new Error('Path escapes its folder');
   if (sensitiveCanonical(realRoot, real)) throw new Error('Sensitive files cannot be referenced');
   return current;

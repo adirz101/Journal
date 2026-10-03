@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { relative, resolve, sep } from 'node:path';
 import { isSensitivePath } from './evidence.mjs';
 import { relativePath } from './validation.mjs';
+import { realPath } from './paths.mjs';
 
 // Read-only Git views for a session: what changed in the checkout since the
 // session started. Concurrent sessions in one checkout share a working tree,
@@ -30,7 +31,7 @@ export function checkoutBaseline(project) {
 function safeFile(root, path) {
   let current = root;
   for (const part of path.split('/')) { current = resolve(current, part); if (lstatSync(current).isSymbolicLink()) return null; }
-  const canonical = realpathSync(current); const rel = relative(realpathSync(root), canonical);
+  const canonical = realPath(current); const rel = relative(realPath(root), canonical);
   return rel && !rel.startsWith(`..${sep}`) && rel !== '..' && !rel.startsWith(sep) ? canonical : null;
 }
 

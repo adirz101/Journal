@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { lstatSync, realpathSync, openSync, closeSync, fstatSync, readSync, constants } from 'node:fs';
+import { lstatSync, openSync, closeSync, fstatSync, readSync, constants } from 'node:fs';
 import { resolve, relative, sep } from 'node:path';
 import { git } from './project.mjs';
 import { commitsSince, isAncestor, isCommit } from './status.mjs';
 import { relativePath, refuseCredentials, text } from './validation.mjs';
+import { realPath } from './paths.mjs';
 
 export const isSensitivePath = path => path.split('/').some(p => p === '.git' || /^\.(?:ssh|aws|gnupg|kube|docker)$/i.test(p) || /\.(?:tfvars|tfstate)$/i.test(p) || /^service[-_]?account.*\.json$/i.test(p) || /^\.env(?:\.|$)/i.test(p) || /^auth\./i.test(p) || /^(?:credentials|secrets?)(?:\.|$)/i.test(p) || /\.(?:pem|p12|pfx|key|kdbx|keystore|jks)$/i.test(p) || /^(?:id_rsa|id_ed25519|id_ecdsa|id_dsa|\.npmrc|\.netrc|\.pypirc|\.pgpass|\.htpasswd|\.git-credentials|\.dockercfg)$/i.test(p));
 
@@ -22,7 +23,7 @@ function sourceFile(root, path, { tracked = true } = {}) {
     throw new Error('Sensitive files cannot be used as evidence');
   }
   const full = resolve(root, path);
-  const canonical = realpathSync(full);
+  const canonical = realPath(full);
   const rel = relative(root, canonical);
   if (rel.startsWith(`..${sep}`) || rel === '..' || rel.startsWith(sep)) throw new Error('Source escapes checkout');
   // Reject every symlink component, not just the leaf.
@@ -41,14 +42,14 @@ function sourceFile(root, path, { tracked = true } = {}) {
     // Non-Git folders cannot prove a file is tracked; the other checks still apply.
     if (tracked) { try { git(root, ['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', path]); }
     catch { throw new Error('Evidence must be a tracked project file'); } }
-    if (realpathSync(full) !== canonical || lstatSync(full).isSymbolicLink()) throw new Error('Source changed during validation');
+    if (realPath(full) !== canonical || lstatSync(full).isSymbolicLink()) throw new Error('Source changed during validation');
     const buffer = Buffer.alloc(1024 * 1024 + 1); let length = 0;
     while (length < buffer.length) {
       const count = readSync(fd, buffer, length, buffer.length - length, length); if (!count) break; length += count;
     }
     const after = fstatSync(fd);
     const current = lstatSync(full);
-    if (length > 1024 * 1024 || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs || current.dev !== opened.dev || current.ino !== opened.ino || realpathSync(full) !== canonical) throw new Error('Source changed or grew during capture');
+    if (length > 1024 * 1024 || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs || current.dev !== opened.dev || current.ino !== opened.ino || realPath(full) !== canonical) throw new Error('Source changed or grew during capture');
     bytes = buffer.subarray(0, length);
   } finally { closeSync(fd); }
   if (bytes.includes(0)) throw new Error('Binary evidence is not supported');

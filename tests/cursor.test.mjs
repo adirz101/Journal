@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, realpathSync, readFileSync, existsSync } from 'node:fs';
-import { join, delimiter } from 'node:path';
+import { join, delimiter, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { JournalStore } from '../src/core/store.mjs';
@@ -10,30 +10,39 @@ import { buildAgentLaunch, detectCursor } from '../src/core/agents.mjs';
 import { captureCursorId, createChat, cursorAuth, cursorState, findCursor, inspectCursor, installCommand, installEnv, knownLocations, parseAuth } from '../src/core/cursor.mjs';
 import { ProcessRunner } from '../src/desktop/processes.mjs';
 import { formatReference } from '../src/core/references.mjs';
+import { removeLater } from './support/cleanup.mjs';
 
 const CHAT = '11111111-2222-4333-8444-555555555555';
+const WIN = process.platform === 'win32';
+// The fake CLIs need Node on PATH on Windows (their .cmd shim runs node); nothing else is on it.
+const pathOf = (...dirs) => [...dirs, ...(WIN ? [dirname(process.execPath)] : [])].join(delimiter);
+const EMPTY = { PATH: pathOf() };
+const samePath = (a, b) => assert.equal(WIN ? a?.toLowerCase() : a, WIN ? b?.toLowerCase() : b);
 // A fake Cursor CLI: documented commands only, state in files next to it.
 function fakeCursor(dir, { version = '2026.10.01-e373342', help = 'Usage: agent [options] [command] [prompt...]\n\nStart the Cursor Agent\n\n  --resume [chatId]\n  --mode <mode>\nCommands:\n  login\n  status|whoami\n  create-chat  Create a new empty chat and return its ID', name = 'agent' } = {}) {
   mkdirSync(dir, { recursive: true });
-  const path = join(dir, name);
-  writeFileSync(path, `#!${process.execPath}
-const fs=require('node:fs');const path=require('node:path');const a=process.argv.slice(2);const here=${JSON.stringify(dir)};
+  // POSIX: an executable script. Windows: a Node script behind an npm-style .cmd
+  // shim, the form Journal launches through its Node script (src/core/process.mjs).
+  const path = WIN ? join(dir, `${name}.cmd`) : join(dir, name);
+  const script = WIN ? join(dir, `${name}.js`) : path;
+  if (WIN) writeFileSync(path, `@ECHO off\r\nnode "%~dp0\\${name}.js" %*\r\n`);
+  writeFileSync(script, `${WIN ? '' : `#!${process.execPath}\n`}const fs=require('node:fs');const path=require('node:path');const a=process.argv.slice(2);const here=${JSON.stringify(dir)};
 if(a[0]==='--version'){console.log(${JSON.stringify(version)});process.exit(0)}
 if(a[0]==='--help'){console.log(${JSON.stringify(help)});process.exit(0)}
 if(a[0]==='create-chat'){fs.writeFileSync(path.join(here,'chat-cwd'),process.cwd());if(fs.existsSync(path.join(here,'fail-chat')))process.exit(1);const hang=fs.existsSync(path.join(here,'hang-chat'));if(hang)fs.writeFileSync(path.join(here,'chat-pid'),String(process.pid));console.log(${JSON.stringify(CHAT)});if(hang){setInterval(()=>{},1000);return}process.exit(0)}
 if(a[0]==='status'){const ok=fs.existsSync(path.join(here,'logged-in'));if(a.includes('--format')){if(fs.existsSync(path.join(here,'no-json'))){console.error('unknown option --format');process.exit(1)}console.log(JSON.stringify({authenticated:ok,email:ok?'person@example.com':null}));process.exit(0)}console.log(ok?'Logged in as person@example.com':'Not logged in');process.exit(0)}
 console.log('RAN '+JSON.stringify(a));`);
-  chmodSync(path, 0o755);
+  if (!WIN) chmodSync(path, 0o755);
   return path;
 }
 
 function fixture(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'cursor-')));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'cursor-')));
   const repo = join(root, 'repo'); mkdirSync(repo);
   const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.name=a', '-c', 'user.email=a@a', ...args], { stdio: 'pipe' });
   git('init', '-q', '-b', 'main'); writeFileSync(join(repo, 'README.md'), '# Repo\n'); git('add', '.'); git('commit', '-qm', 'init');
   const store = new JournalStore(join(root, 'j.sqlite')); const project = store.openProject(repo);
-  t.after(() => { try { store.close(); } catch {} rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { try { store.close(); } catch {} removeLater(root); });
   return { root, repo, store, project };
 }
 
@@ -52,26 +61,29 @@ test('install commands are the official ones, run without shell startup files or
 });
 
 test('detection requires the genuine Cursor CLI: missing, impostor, on PATH, known location, unsupported', async t => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'cursor-detect-'))); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'cursor-detect-'))); t.after(() => removeLater(root));
   const home = join(root, 'home'); const bin = join(root, 'bin'); mkdirSync(home); mkdirSync(bin);
   const options = { platform: process.platform, home };
-  assert.equal(cursorState(await findCursor({ PATH: bin }, options)).state, 'missing');
+  const local = join(root, 'local'); const env = (...dirs) => ({ PATH: pathOf(...dirs), LOCALAPPDATA: local });
+  // Where the official installer puts the CLI on this platform.
+  const knownDir = WIN ? join(local, 'cursor-agent') : join(home, '.local', 'bin');
+  assert.equal(cursorState(await findCursor(env(bin), options)).state, 'missing');
   // Some other program called "agent".
   fakeCursor(bin, { version: 'agent 3.1.4', help: 'Usage: agent - a build agent' });
-  const impostor = await findCursor({ PATH: bin }, options);
-  assert.equal(impostor.path, null); assert.equal(impostor.impostor, join(bin, 'agent')); assert.equal(cursorState(impostor).state, 'not-cursor');
+  const impostor = await findCursor(env(bin), options);
+  assert.equal(impostor.path, null); samePath(impostor.impostor, WIN ? join(bin, 'agent.cmd') : join(bin, 'agent')); assert.equal(cursorState(impostor).state, 'not-cursor');
   // Installed to ~/.local/bin while Journal's PATH has not caught up.
-  const known = fakeCursor(join(home, '.local', 'bin'));
-  const found = await findCursor({ PATH: bin }, options);
-  assert.equal(found.path, known); assert.equal(found.onPath, false); assert.equal(found.version, '2026.10.01-e373342'); assert.equal(cursorState(found).state, 'ready');
+  const known = fakeCursor(knownDir);
+  const found = await findCursor(env(bin), options);
+  samePath(found.path, known); assert.equal(found.onPath, false); assert.equal(found.version, '2026.10.01-e373342'); assert.equal(cursorState(found).state, 'ready');
   // On PATH wins.
   const bin2 = join(root, 'bin2'); const onPath = fakeCursor(bin2);
-  assert.equal((await findCursor({ PATH: `${bin2}${delimiter}${bin}` }, options)).path, onPath);
-  assert.equal((await findCursor({ PATH: `${bin2}${delimiter}${bin}` }, options)).onPath, true);
+  samePath((await findCursor(env(bin2, bin), options)).path, onPath);
+  assert.equal((await findCursor(env(bin2, bin), options)).onPath, true);
   // A build without exact-ID chats is unsupported.
   const old = join(root, 'old'); fakeCursor(old, { version: '2025.01.01-abcdef0', help: 'Start the Cursor Agent\n  --resume [chatId]' });
-  assert.equal(cursorState(await findCursor({ PATH: old }, { ...options, home: join(root, 'nohome') })).state, 'unsupported');
-  const row = await detectCursor({ PATH: bin2 }, options);
+  assert.equal(cursorState(await findCursor({ PATH: pathOf(old) }, { ...options, home: join(root, 'nohome') })).state, 'unsupported');
+  const row = await detectCursor(env(bin2), options);
   assert.equal(row.provider, 'cursor'); assert.equal(row.available, true); assert.equal(row.supports.mode, true); assert.equal(row.auth, 'unchecked');
   // A Windows launcher Journal cannot start safely is reported as such, not as "not Cursor".
   const shim = join(root, 'win', 'agent.cmd'); mkdirSync(join(root, 'win')); writeFileSync(shim, '@echo off\r\n"%~dp0versions\\node.exe" index.js %*\r\n');
@@ -80,13 +92,13 @@ test('detection requires the genuine Cursor CLI: missing, impostor, on PATH, kno
 });
 
 test('sign-in state is read without keeping any account details', async t => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'cursor-auth-'))); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'cursor-auth-'))); t.after(() => removeLater(root));
   const path = fakeCursor(root);
-  assert.equal(await cursorAuth(path, { PATH: '' }), 'signed-out');
+  assert.equal(await cursorAuth(path, EMPTY), 'signed-out');
   writeFileSync(join(root, 'logged-in'), '');
-  const state = await cursorAuth(path, { PATH: '' });
+  const state = await cursorAuth(path, EMPTY);
   assert.equal(state, 'signed-in'); assert.equal(typeof state, 'string');
-  writeFileSync(join(root, 'no-json'), ''); assert.equal(await cursorAuth(path, { PATH: '' }), 'signed-in', 'Falls back to text status');
+  writeFileSync(join(root, 'no-json'), ''); assert.equal(await cursorAuth(path, EMPTY), 'signed-in', 'Falls back to text status');
   assert.equal(parseAuth('Not logged in'), 'signed-out'); assert.equal(parseAuth('Partially authenticated (missing refresh token)'), 'signed-out');
   assert.equal(parseAuth('Logged in as a@b.c'), 'signed-in'); assert.equal(parseAuth('{"isAuthenticated":false}'), 'signed-out');
   assert.equal(parseAuth('something else'), 'unknown');
@@ -94,17 +106,17 @@ test('sign-in state is read without keeping any account details', async t => {
 });
 
 test('a chat is created in the session folder; exit hints are captured but never trusted alone', async t => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'cursor-chat-'))); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'cursor-chat-'))); t.after(() => removeLater(root));
   const path = fakeCursor(join(root, 'bin')); const cwd = join(root, 'work'); mkdirSync(cwd);
-  assert.equal(await createChat(path, cwd, { PATH: '' }), CHAT);
+  assert.equal(await createChat(path, cwd, EMPTY), CHAT);
   assert.equal(readFileSync(join(root, 'bin', 'chat-cwd'), 'utf8'), cwd);
   // Current builds print the ID and keep running: the ID is taken at once and the process ended.
   writeFileSync(join(root, 'bin', 'hang-chat'), ''); const started = Date.now();
-  assert.equal(await createChat(path, cwd, { PATH: '' }), CHAT); assert.ok(Date.now() - started < 5000, 'Does not wait for exit');
+  assert.equal(await createChat(path, cwd, EMPTY), CHAT); assert.ok(Date.now() - started < 5000, 'Does not wait for exit');
   const pid = Number(readFileSync(join(root, 'bin', 'chat-pid'), 'utf8'));
   await new Promise(r => setTimeout(r, 300)); assert.throws(() => process.kill(pid, 0), /ESRCH/, 'The lingering process is ended');
   rmSync(join(root, 'bin', 'hang-chat'));
-  writeFileSync(join(root, 'bin', 'fail-chat'), ''); assert.equal(await createChat(path, cwd, { PATH: '' }), null);
+  writeFileSync(join(root, 'bin', 'fail-chat'), ''); assert.equal(await createChat(path, cwd, EMPTY), null);
   assert.equal(captureCursorId(`bye\n\x1b[2mTo resume this session: cursor-agent --resume=${CHAT}\x1b[0m`), CHAT);
   assert.equal(captureCursorId(`To resume this session: agent --resume="${CHAT.toUpperCase()}"`), CHAT);
   assert.equal(captureCursorId('To resume this session: agent --resume=not-a-uuid'), null);
@@ -143,7 +155,7 @@ test('Cursor sessions launch with an exact chat ID, context and references, in t
   f.store.setMemoryStatus(claim.id, 'active');
   const { session, receipt } = await m.start({ projectId: f.project.id, provider: 'cursor', task: 'Fix the parser', workspaceId: ws.id, references: [{ rootKey: ws.id, path: 'README.md' }] });
   assert.equal(session.provider, 'cursor'); assert.equal(session.nativeId, CHAT); assert.equal(session.nativeIdConfirmed, true);
-  assert.equal(spawned[0].executable, '/fake/agent'); assert.equal(spawned[0].cwd, realpathSync(ws.path)); assert.equal(created[0], realpathSync(ws.path), 'The chat is created where the session runs');
+  assert.equal(spawned[0].executable, '/fake/agent'); assert.equal(spawned[0].cwd, realpathSync.native(ws.path)); assert.equal(created[0], realpathSync.native(ws.path), 'The chat is created where the session runs');
   assert.equal(spawned[0].argv[0], `--resume=${CHAT}`); assert.equal(spawned[0].argv[1], '--');
   const prompt = spawned[0].argv.at(-1);
   assert.match(prompt, /CURSOR_BRIEF/); assert.match(prompt, /Referenced by the user/); assert.match(prompt, /Task:\nFix the parser/);
@@ -156,7 +168,7 @@ test('Cursor sessions launch with an exact chat ID, context and references, in t
   spawned[0].exit({ exitCode: 0 }); await new Promise(r => setTimeout(r, 20));
   // Exact resume reopens the same chat in the same worktree, without creating another.
   const resumed = await m.start({ projectId: f.project.id, provider: 'cursor', resumeId: session.id });
-  assert.equal(resumed.session.nativeId, CHAT); assert.equal(spawned[1].argv[0], `--resume=${CHAT}`); assert.equal(spawned[1].cwd, realpathSync(ws.path));
+  assert.equal(resumed.session.nativeId, CHAT); assert.equal(spawned[1].argv[0], `--resume=${CHAT}`); assert.equal(spawned[1].cwd, realpathSync.native(ws.path));
   assert.equal(created.length, 1, 'Resume never creates a new chat');
 });
 
@@ -199,7 +211,7 @@ test('Cursor, Claude and Codex sessions run side by side without mixing input or
 
 test('Journal never stores Cursor account details', async t => {
   const f = fixture(t); const path = fakeCursor(join(f.root, 'bin')); writeFileSync(join(f.root, 'bin', 'logged-in'), '');
-  assert.equal(await cursorAuth(path, { PATH: '' }), 'signed-in');
+  assert.equal(await cursorAuth(path, EMPTY), 'signed-in');
   const { m } = manager(f, t); await m.start({ projectId: f.project.id, provider: 'cursor', task: 'x' });
   f.store.checkpoint?.();
   for (const file of ['j.sqlite', 'j.sqlite-wal']) if (existsSync(join(f.root, file))) assert.ok(!readFileSync(join(f.root, file)).includes('person@example.com'));

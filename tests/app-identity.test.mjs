@@ -17,7 +17,7 @@ test('the macOS local launcher presents Journal to the operating system', { skip
   assert.equal(read('CFBundleIdentifier'), 'com.adirzak.journal.local');
   assert.ok(bundle.endsWith('/Journal.app'));
   const framework = resolve(bundle, 'Contents/Frameworks/Electron Framework.framework/Electron Framework');
-  assert.ok(realpathSync(framework).startsWith(`${bundle}/`), 'Framework links must remain inside the Journal runtime');
+  assert.ok(realpathSync.native(framework).startsWith(`${bundle}/`), 'Framework links must remain inside the Journal runtime');
   // The shared dependency must retain its original identity.
   const original = resolve(electron, '../../Info.plist');
   assert.equal(execFileSync('/usr/bin/plutil', ['-extract', 'CFBundleDisplayName', 'raw', original], { encoding: 'utf8' }).trim(), 'Electron');

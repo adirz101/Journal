@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { inspectProject } from './project.mjs';
 import { text } from './validation.mjs';
+import { realPath } from './paths.mjs';
 
 // Workspaces: the project's own checkout, Journal-managed Git worktrees, and
 // imported existing worktrees. Rules:
@@ -17,7 +18,7 @@ const run = (cwd, args, { timeout = 30000, allowFail = false } = {}) => {
       env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1' } });
   } catch (error) { if (allowFail) return null; throw new Error(String(error.stderr || error.message).trim().split('\n').slice(-2).join(' ').slice(0, 400)); }
 };
-const canonical = path => { try { return realpathSync(path); } catch { return resolve(path); } };
+const canonical = path => { try { return realPath(path); } catch { return resolve(path); } };
 
 export function listGitWorktrees(root) {
   const entries = []; let current = null;

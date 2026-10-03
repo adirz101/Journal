@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, chmodSync }
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import { removeLater } from './support/cleanup.mjs';
 const { JournalStore } = await import('../src/core/store.mjs').catch(() => ({}));
 
 function fixture(t) {
@@ -15,7 +16,7 @@ function fixture(t) {
   git('add', 'tests.md'); git('-c', 'user.name=Fixture', '-c', 'user.email=test@example.test', 'commit', '-m', 'fixture');
   const path = resolve(root, 'journal.sqlite');
   const store = new JournalStore(path); const project = store.openProject(repo);
-  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { store.close(); removeLater(root); });
   const propose = (extra = {}) => store.proposeMemory(project.id, {
     statement: 'Integration tests require Docker', category: 'constraint', scope: 'branch', area: '',
     source: { kind: 'file', path: 'tests.md', startLine: 1, endLine: 1 }, ...extra,
