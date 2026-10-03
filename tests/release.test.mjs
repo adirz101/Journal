@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -96,8 +96,8 @@ test('packaged environment: GUI PATH, data folder and unpacked paths', () => {
   const env = withGuiPath({ PATH: '/opt/homebrew/bin:/usr/bin' }, { platform: 'darwin', home, exists: dir => present.has(dir), list: () => [] });
   assert.deepEqual(withGuiPath({}, { platform: 'darwin', home, exists: () => false, list: () => [] }), {}, 'Nothing added: env unchanged (no "undefined" PATH)');
   assert.equal(env.PATH, '/opt/homebrew/bin:/usr/bin:/Users/me/.local/bin', 'Existing PATH first, no duplicates');
-  assert.equal(dataDirectory({}, '/Users/me/Library/Application Support'), '/Users/me/Library/Application Support/journal-desktop');
-  assert.equal(dataDirectory({ JOURNAL_DATA_DIR: '/tmp/j' }, '/x'), '/tmp/j');
+  assert.equal(dataDirectory({}, '/Users/me/Library/Application Support'), resolve('/Users/me/Library/Application Support', 'journal-desktop'));
+  assert.equal(dataDirectory({ JOURNAL_DATA_DIR: '/tmp/j' }, '/x'), resolve('/tmp/j'));
   assert.equal(unpackedPath('/A/Journal.app/Contents/Resources/app.asar/src/runtime/runtime.mjs', '/'), '/A/Journal.app/Contents/Resources/app.asar.unpacked/src/runtime/runtime.mjs');
   assert.equal(unpackedPath('C:\\J\\resources\\app.asar\\src\\desktop\\hook.mjs', '\\'), 'C:\\J\\resources\\app.asar.unpacked\\src\\desktop\\hook.mjs');
   assert.equal(unpackedPath('/dev/src/runtime/runtime.mjs', '/'), '/dev/src/runtime/runtime.mjs', 'Development paths are unchanged');

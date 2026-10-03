@@ -77,7 +77,9 @@ jobs:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
           MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
         run: |
-          if [ -n "$MAC_CSC_LINK" ]; then echo "signed=true" >> "$GITHUB_OUTPUT"; else echo "signed=false" >> "$GITHUB_OUTPUT"; echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"; fi
+          if [ -n "$MAC_CSC_LINK" ]; then echo "signed=true" >> "$GITHUB_OUTPUT"; else echo "signed=false" >> "$GITHUB_OUTPUT"; echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"; echo "CSC_FOR_PULL_REQUEST=true" >> "$GITHUB_ENV"; fi
+          # Without a certificate the app is only ad-hoc signed; electron-builder would skip even
+          # that for pull requests, leaving a broken signature (CSC_FOR_PULL_REQUEST keeps it).
           if [ -n "$APPLE_API_KEY_P8" ]; then printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"; echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"; fi
       - name: Package
         env:
