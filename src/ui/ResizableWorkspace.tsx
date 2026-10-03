@@ -15,7 +15,9 @@ function storedWidths(): Widths {
   } catch { return { project: null, knowledge: null }; }
 }
 
-export function ResizableWorkspace({ hasKnowledge, children }: { hasKnowledge: boolean; children: ReactNode }) {
+export const RAIL_WIDTH = 34;
+// collapsed: the right panel shrinks to a rail; wide: it widens while a file is previewed (not saved).
+export function ResizableWorkspace({ hasKnowledge, collapsed = false, wide = false, children }: { hasKnowledge: boolean; collapsed?: boolean; wide?: boolean; children: ReactNode }) {
   const shell = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(window.innerWidth);
   const [requested, setRequested] = useState<Widths>(storedWidths);
@@ -32,8 +34,10 @@ export function ResizableWorkspace({ hasKnowledge, children }: { hasKnowledge: b
   const workspaceMin = compact ? 340 : 390;
   let project = requested.project ?? defaults.project;
   let knowledge = hasKnowledge ? requested.knowledge ?? defaults.knowledge : 0;
+  if (hasKnowledge && wide && !collapsed) knowledge = Math.max(knowledge, Math.min(720, Math.round(containerWidth * 0.5), limits.knowledge.max + 120));
   // Constrain the displayed widths, preserving the saved preference for larger windows.
-  if (hasKnowledge && project + knowledge > containerWidth - workspaceMin) {
+  if (hasKnowledge && collapsed) { project = Math.min(project, containerWidth - workspaceMin - RAIL_WIDTH); knowledge = RAIL_WIDTH; }
+  else if (hasKnowledge && project + knowledge > containerWidth - workspaceMin) {
     const extra = project - limits.project.min + knowledge - limits.knowledge.min;
     const available = Math.max(0, containerWidth - workspaceMin - limits.project.min - limits.knowledge.min);
     const ratio = extra > 0 ? Math.min(1, available / extra) : 0;
@@ -57,7 +61,7 @@ export function ResizableWorkspace({ hasKnowledge, children }: { hasKnowledge: b
   return <div ref={shell} className="app-shell" style={style}>
     {children}
     <ResizeHandle side="project" value={widths.project} max={max.project} onChange={change} onCommit={persist} />
-    {hasKnowledge && <ResizeHandle side="knowledge" value={widths.knowledge} max={max.knowledge} onChange={change} onCommit={persist} />}
+    {hasKnowledge && !collapsed && !wide && <ResizeHandle side="knowledge" value={widths.knowledge} max={max.knowledge} onChange={change} onCommit={persist} />}
   </div>;
 }
 

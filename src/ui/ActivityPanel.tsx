@@ -21,6 +21,7 @@ const describe = (event: TimelineEvent) => {
     case 'error': return `Error: ${b.message}`;
     case 'recovered': return `Recovered after the runtime stopped: ${b.status}`;
     case 'cleanup': return 'Process cleanup requested';
+    case 'reference': return `${b.delivery === 'inserted' ? 'Typed' : 'Copied'} reference ${b.text ?? b.path}`;
     default: return event.kind;
   }
 };
