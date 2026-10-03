@@ -16,6 +16,10 @@ Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI
 - Display names (folders are never renamed), pinning with deterministic order, Remove from Journal (keep data, restorable) or Remove and delete Journal data, with explicit confirmation that files are not deleted.
 - Additional folders per project (other Git repositories, subfolders of other repositories, plain folders) with their own identity; folder-aware evidence and validation; a folder can be a session's explicit workspace.
 
+**Session management and menus**
+- Rename (with reset to a deterministic default title), pin, archive/unarchive (running sessions keep running) and remove from Journal (never files; a running session must be stopped or archived first). Native session IDs, workspaces, receipts and exact resume are unaffected.
+- Native right-click menus on projects (open, rename, pin, manage, add folder, reveal, copy path, remove) and sessions (open, rename, pin, archive, resume, interrupt, stop, reveal/copy workspace, copy native ID, remove), showing only actions that fit the current state.
+
 **Workspaces**
 - Current checkout, Journal-managed worktrees from an explicit base, and imported worktrees, with intent persisted before Git side effects and reconciliation after crashes.
 - No force, no stash, no transfer of uncommitted work. Removal refuses dirty, untracked, ignored, locked or in-use worktrees and keeps the branch; imported worktrees are never deleted.
@@ -34,7 +38,7 @@ Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI
 - Proposal inbox from explicit rule lines, passing test commands and moved branches. Deterministic, idempotent and review-gated.
 
 **Data and security**
-- SQLite (migrations v6): workspaces, proposals, audit, events, pinned claims and project settings.
+- SQLite (migrations v7): workspaces, proposals, audit, events, pinned claims, project settings and session user fields.
 - Integrity-checked online backups, an offline restore script that keeps the previous database, storage and free-space reporting, a clear disk-full error, and a transaction fix that preserves the original SQLite error.
 - Versioned Brain export of approved claims (JSON plus Markdown, checksum, redaction) and import (size and schema limits, checksum, candidates only, no automatic branch matching).
 - Explicit session purge (refused when other sessions continue the same native conversation, so resume history stays correct) and 90-day timeline retention; knowledge is never pruned.
@@ -54,9 +58,9 @@ Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI
 
 | Check | Result |
 | --- | --- |
-| `npm test` | 136 passed |
+| `npm test` | 141 passed |
 | `npm run check`, `npm run build` | Passed (the existing ~545 KiB chunk warning remains) |
-| `npm run test:desktop` | 13 passed: real Electron, runtime and node-pty with fixture CLIs, covering four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches and project management |
+| `npm run test:desktop` | 14 passed (headless): real Electron, runtime and node-pty with fixture CLIs, covering four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches, project management and right-click menus |
 | `npm run dist:dir` | Unsigned app builds; packaged runtime starts; notices bundled |
 | GitHub Actions | BLOCKED (workflow scope) |
 

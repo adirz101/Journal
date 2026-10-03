@@ -10,6 +10,8 @@ import { WorkspaceDialog } from './WorkspaceDialog';
 import { ContextPanel } from './ContextPanel';
 import { DataDialog } from './DataDialog';
 import { ManageProjectDialog } from './ManageProjectDialog';
+import { RenameDialog } from './RenameDialog';
+import { showMenu } from './menu';
 import journalMarkWhite from '../../assets/branding/journal-mark-white.png';
 import journalMarkDark from '../../assets/branding/journal-mark.png';
 import journalWordmark from '../../assets/branding/journal-wordmark.png';
@@ -38,6 +40,7 @@ export default function App() {
   const [now, setNow] = useState(Date.now());
   const [workspaces, setWorkspaces] = useState<WorkspaceList | null>(null); const [workspaceId, setWorkspaceId] = useState<string>(''); const [research, setResearch] = useState(false);
   const [workspaceDialog, setWorkspaceDialog] = useState(false); const [disabled, setDisabled] = useState<string[]>([]); const [dataDialog, setDataDialog] = useState(false); const [manageId, setManageId] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{ kind: 'project'; project: Project } | { kind: 'session'; session: Session } | null>(null);
   const [resumeDraft, setResumeDraft] = useState<{ sessionId: string; value: string } | null>(null);
   const session = selectedId ? sessions[selectedId] ?? null : null;
   // A confirmation draft belongs to one launch, never to another conversation.
@@ -155,9 +158,60 @@ export default function App() {
     });
   }
   const sessionAction = (action: string, extra: object = {}) => session && run(async () => { await api(action, { id: session.id, ...extra }); });
-  async function closeSession() {
-    if (!session) return;
-    await run(async () => { const closed = await api<Session>('archiveSession', { id: session.id }); merge([closed]); setSelectedId(null); });
+  // Session actions shared by the right-click menu and the session header.
+  const sessionActions = {
+    rename: (target: Session) => setRenameTarget({ kind: 'session', session: target }),
+    pin: (target: Session) => run(async () => { merge([await api<Session>('setSessionPinned', { id: target.id, pinned: !target.pinned })]); }),
+    archive: (target: Session) => run(async () => { merge([await api<Session>('archiveSession', { id: target.id })]); }),
+    unarchive: (target: Session) => run(async () => { merge([await api<Session>('unarchiveSession', { id: target.id })]); }),
+    remove: (target: Session) => run(async () => {
+      const result = await api<Session | null>('removeSession', { id: target.id }); if (!result) return;
+      if (result.removed) { setSessions(current => { const next = { ...current }; delete next[target.id]; return next; }); if (selectedId === target.id) setSelectedId(null); await refresh(); }
+      else merge([result]);
+    }),
+    resume: (target: Session) => start(target.provider, target),
+    interrupt: (target: Session) => run(async () => { await api('interrupt', { id: target.id }); }),
+    stop: (target: Session) => run(async () => { await api('stop', { id: target.id }); }),
+    endOrphan: (target: Session) => run(async () => { await api('terminateOrphan', { id: target.id }); }),
+    reveal: (target: Session) => run(async () => { await api('revealSession', { id: target.id }); }),
+    copyPath: (target: Session) => run(async () => { await api('copySessionPath', { id: target.id }); }),
+    copyNativeId: (target: Session) => run(async () => { await api('copySessionNativeId', { id: target.id }); }),
+  };
+  const revealLabel = bootstrap?.platform === 'darwin' ? 'Finder' : bootstrap?.platform === 'win32' ? 'File Explorer' : 'file manager';
+  async function sessionMenu(target: Session) {
+    const live = isLive(target); const orphan = target.status === 'orphaned';
+    const choice = await showMenu([
+      { id: 'open', label: 'Open' }, { id: 'rename', label: 'Rename…' },
+      { id: 'pin', label: target.pinned ? 'Unpin' : 'Pin' }, { id: target.archived ? 'unarchive' : 'archive', label: target.archived ? 'Unarchive' : 'Archive' },
+      { separator: true },
+      resumable(target) && { id: 'resume', label: 'Resume', enabled: canStart && !busy },
+      live && { id: 'interrupt', label: 'Interrupt (Ctrl+C)', enabled: connected }, live && { id: 'stop', label: 'Stop', enabled: connected && target.status !== 'stopping' },
+      orphan && target.identityVerified !== false && { id: 'endOrphan', label: 'End orphaned process' },
+      { separator: true },
+      { id: 'reveal', label: `Reveal Workspace in ${revealLabel}`, enabled: !!target.cwd }, { id: 'copyPath', label: 'Copy Workspace Path', enabled: !!target.cwd },
+      { id: 'copyNativeId', label: 'Copy Native Session ID', enabled: !!target.nativeId },
+      { separator: true }, { id: 'remove', label: 'Remove from Journal…' },
+    ]);
+    if (choice === 'open') await selectSession(target);
+    else if (choice && choice in sessionActions) await sessionActions[choice as keyof typeof sessionActions](target);
+  }
+  // Project actions shared by the right-click menu and Manage Project.
+  const removedProject = (id: string) => { setProjects(items => items.filter(p => p.id !== id)); if (state?.project.id === id) { setState(null); setSelectedId(null); setReceipt(null); } void reloadProjects().catch(failed); };
+  async function projectMenu(target: Project) {
+    const choice = await showMenu([
+      { id: 'open', label: 'Open' }, { id: 'rename', label: 'Rename…' }, { id: 'pin', label: target.pinned ? 'Unpin' : 'Pin' },
+      { id: 'manage', label: 'Manage Project…' }, { id: 'addFolder', label: 'Add Folder…' },
+      { separator: true }, { id: 'reveal', label: `Reveal in ${revealLabel}` }, { id: 'copyPath', label: 'Copy Path' },
+      { separator: true }, { id: 'remove', label: 'Remove from Journal…' },
+    ]);
+    if (choice === 'open') await chooseProject(target);
+    else if (choice === 'rename') setRenameTarget({ kind: 'project', project: target });
+    else if (choice === 'pin') await run(async () => { await api('setProjectPinned', { id: target.id, pinned: !target.pinned }); await reloadProjects(); });
+    else if (choice === 'manage') setManageId(target.id);
+    else if (choice === 'addFolder') await run(async () => { await api('addProjectFolder', { id: target.id }); await reloadProjects(); if (state?.project.id === target.id) await refresh(); });
+    else if (choice === 'reveal') await run(async () => { await api('revealProject', { id: target.id }); });
+    else if (choice === 'copyPath') await run(async () => { await api('copyProjectPath', { id: target.id }); });
+    else if (choice === 'remove') await run(async () => { if (await api('removeProject', { id: target.id })) removedProject(target.id); });
   }
   async function proposeUpdate(scope: 'checkout' | 'branch') {
     if (!state) return;
@@ -172,8 +226,8 @@ export default function App() {
       <div className="brand"><img className="brand-icon" src={journalMark} alt="" width={32} height={32} /><div>Journal<small>PROJECT MEMORY</small></div><span className="local-tag">LOCAL</span></div>
       <button className="open-project" onClick={() => void openProject()} disabled={busy}><span>＋</span> Open project <kbd>{bootstrap?.platform === 'darwin' ? '⌘' : 'Ctrl'} O</kbd></button>
       <div className="nav-caption">PROJECTS <span>{projects.length}</span></div>
-      <nav aria-label="Projects">{projects.map(project => <div key={project.id} className="project-row"><button className={`project-link ${state?.project.id === project.id ? 'selected' : ''}`} onClick={() => void chooseProject(project)} title={project.root}><svg className="folder-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 11h18" /></svg><span className="project-name">{project.name}</span>{project.pinned && <span className="pin-mark"><span aria-hidden="true">⚲</span><span className="visually-hidden">pinned</span></span>}{ordered.some(s => s.projectId === project.id && needsAttention(s)) && <span className="attention" aria-label="needs attention">●</span>}</button><button className="project-manage" aria-label={`Manage ${project.name}`} onClick={() => setManageId(project.id)}>⋯</button></div>)}</nav>
-      <SessionList sessions={ordered} projects={projects} selectedId={selectedId} currentProjectId={state?.project.id ?? null} connected={connected} now={now} onSelect={next => void selectSession(next)} onNew={newSession} canStart={!!state && canStart} />
+      <nav aria-label="Projects">{projects.map(project => <div key={project.id} className="project-row"><button className={`project-link ${state?.project.id === project.id ? 'selected' : ''}`} onClick={() => void chooseProject(project)} onContextMenu={event => { event.preventDefault(); void projectMenu(project); }} title={project.root}><svg className="folder-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 11h18" /></svg><span className="project-name">{project.name}</span>{project.pinned && <span className="pin-mark"><span aria-hidden="true">⚲</span><span className="visually-hidden">pinned</span></span>}{ordered.some(s => s.projectId === project.id && needsAttention(s)) && <span className="attention" aria-label="needs attention">●</span>}</button><button className="project-manage" aria-label={`Manage ${project.name}`} onClick={() => setManageId(project.id)}>⋯</button></div>)}</nav>
+      <SessionList sessions={ordered} projects={projects} selectedId={selectedId} currentProjectId={state?.project.id ?? null} connected={connected} now={now} onSelect={next => void selectSession(next)} onMenu={next => void sessionMenu(next)} onNew={newSession} canStart={!!state && canStart} />
       <div className="sidebar-footer"><button className="theme-toggle" aria-label={`Switch to ${appearance === 'dark' ? 'light' : 'dark'} mode`} onClick={() => setAppearance(value => value === 'dark' ? 'light' : 'dark')}><span aria-hidden="true">{appearance === 'dark' ? '☀' : '◐'}</span> {appearance === 'dark' ? 'Light mode' : 'Dark mode'}</button><button className="theme-toggle" onClick={() => setDataDialog(true)}><span aria-hidden="true">⛁</span> Data and backups</button><span className={`status-dot ${connected ? 'running' : 'waiting'}`} /> {connected ? 'Runtime connected' : runtime.state === 'connecting' ? 'Starting runtime…' : 'Runtime disconnected'}<small>No terminal transcripts saved</small></div>
     </aside>
 
@@ -195,14 +249,14 @@ export default function App() {
             <p className="provider-line">{bootstrap?.agents.map(a => <span key={a.provider} title={a.available ? `${a.path ?? ''}\nResume: ${a.capabilities?.exactResume}\nObserved: status ${a.capabilities?.status.join(', ')}; commands ${a.capabilities?.commands}` : 'Not found on PATH'}>{a.provider === 'claude' ? 'Claude Code' : 'Codex'} {a.available ? a.version ?? '' : '· not found'}</span>)}</p>
             {bootstrap?.agents.some(a => !a.available) && <p className="hint">{bootstrap.agents.filter(a => !a.available).map(a => a.provider).join(', ')} not found on PATH. Install the native CLI, then reopen Journal.</p>}
           </section>
-          <section className="terminal-panel"><div className="terminal-heading"><div><span className={`status-dot ${session?.status ?? ''}`} /><strong>{session ? session.provider === 'claude' ? 'Claude Code' : 'Codex' : 'Terminal'}</strong><span className="terminal-label">{session ? `${label}${session.branch ? ` · ${projectBranchChanged ? 'started on ' : ''}⑂ ${session.branch}` : ''}${session.workspaceId ? session.workspaceId.startsWith('root:') ? ' · folder' : ' · worktree' : ''}${session.research ? ' · research' : ''}` : 'Ready to start'}</span>{session && <span className="terminal-title" title={session.title}>{session.title}</span>}</div>
+          <section className="terminal-panel"><div className="terminal-heading"><div><span className={`status-dot ${session?.status ?? ''}`} /><strong>{session ? session.provider === 'claude' ? 'Claude Code' : 'Codex' : 'Terminal'}</strong><span className="terminal-label">{session ? `${label}${session.branch ? ` · ${projectBranchChanged ? 'started on ' : ''}⑂ ${session.branch}` : ''}${session.workspaceId ? session.workspaceId.startsWith('root:') ? ' · folder' : ' · worktree' : ''}${session.research ? ' · research' : ''}` : 'Ready to start'}</span>{session && <span className="terminal-title" title={session.displayName || session.title}>{session.displayName || session.title}</span>}</div>
             {session && <div className="terminal-actions">
               {isLive(session) && connected && <><button onClick={() => void sessionAction('interrupt')}>Interrupt <kbd>^C</kbd></button><button onClick={() => void sessionAction('stop')} disabled={session.status === 'stopping'}>Stop terminal</button></>}
               {resumable(session) && <button disabled={busy || !canStart} onClick={() => void start(session.provider, session)}>Resume</button>}
               {session.status === 'orphaned' && session.identityVerified !== false && <button onClick={() => void sessionAction('terminateOrphan')}>End orphaned process</button>}
               {!!session.survivors?.length && <button onClick={() => void sessionAction('terminateSurvivors')}>End {session.survivors.length} leftover process{session.survivors.length === 1 ? '' : 'es'}</button>}
-              {!isLive(session) && session.status !== 'orphaned' && <button onClick={() => void closeSession()}>Close</button>}
-              {!isLive(session) && session.status !== 'orphaned' && <button onClick={() => void run(async () => { const purged = await api('purgeSession', { id: session.id }); if (purged) { setSessions(current => { const next = { ...current }; delete next[session.id]; return next; }); setSelectedId(null); await refresh(); } })}>Delete history</button>}
+              <button onClick={() => void (session.archived ? sessionActions.unarchive(session) : sessionActions.archive(session))}>{session.archived ? 'Unarchive' : 'Archive'}</button>
+              <button onClick={() => void sessionMenu(session)} aria-label="More session actions">⋯</button>
             </div>}</div>
             {projectBranchChanged && <p className="hint session-hint">The checkout is now on {state.project.branch ?? 'a detached HEAD'}; this session started on {session.branch ?? 'a detached HEAD'}.</p>}
             {session?.status === 'orphaned' && <p className="hint session-hint">{session.identityVerified === false ? `A process with this session's PID (${(session as { pid?: number }).pid ?? 'unknown'}) is still running, but Journal cannot verify it is the original agent, so it will not signal it. Resume stays blocked until it ends; check it outside Journal.` : 'The runtime that owned this terminal stopped while its process kept running. Journal cannot reattach to it. End it here, or leave it running; resuming this conversation stays blocked while it runs.'}</p>}
@@ -228,7 +282,13 @@ export default function App() {
         onSelectReceipt={setReceipt} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />}
     </aside>}
     {manageId && <ManageProjectDialog projectId={manageId} onClose={() => setManageId(null)} onChanged={() => { void reloadProjects().catch(failed); if (state?.project.id === manageId) void refresh().catch(failed); }}
-      onRemoved={() => { const removed = manageId; setManageId(null); setProjects(items => items.filter(p => p.id !== removed)); if (state?.project.id === removed) { setState(null); setSelectedId(null); setReceipt(null); } void reloadProjects().catch(failed); }} />}
+      onRemoved={() => { const removed = manageId; setManageId(null); removedProject(removed); }} />}
+    {renameTarget?.kind === 'project' && <RenameDialog title={`Rename ${renameTarget.project.name}`} label="Display name" value={renameTarget.project.displayName} fallback={renameTarget.project.folderName ?? renameTarget.project.name}
+      note="Only Journal's label changes. The folder on disk keeps its name." onClose={() => setRenameTarget(null)}
+      onSave={async name => { await api('renameProject', { id: renameTarget.project.id, name }); await reloadProjects(); if (state?.project.id === renameTarget.project.id) await refresh(); }} />}
+    {renameTarget?.kind === 'session' && <RenameDialog title="Rename session" label="Session name" value={renameTarget.session.displayName} fallback={renameTarget.session.title}
+      note="Only Journal's label changes. The native Claude/Codex session ID and exact resume are unaffected." onClose={() => setRenameTarget(null)}
+      onSave={async name => { merge([await api<Session>('renameSession', { id: renameTarget.session.id, name })]); }} />}
     {dataDialog && <DataDialog project={state?.project ?? null} onClose={() => setDataDialog(false)} onChanged={() => { setKnowledgeVersion(v => v + 1); void refresh().catch(() => {}); }} />}
     {state && workspaceDialog && <WorkspaceDialog project={state.project} onClose={() => setWorkspaceDialog(false)} onChanged={() => void refresh().catch(failed)} />}
     {state && form && <KnowledgeForm project={state.project} memory={form.memory} supersedes={form.supersedes} initialCategory={form.initialCategory} draft={form.draft} onClose={() => setForm(null)} onSaved={() => { setForm(null); setPanel('knowledge'); setKnowledgeVersion(v => v + 1); }} />}

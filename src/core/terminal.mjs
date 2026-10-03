@@ -5,6 +5,7 @@ import { realpathSync } from 'node:fs';
 import { buildAgentLaunch, captureCodexId, CODEX_RESUME_MARKER, UUID } from './agents.mjs';
 import { descendants, isAlive, processIdentity, processTable, sameIdentity, signalVerified, survivors } from './process.mjs';
 import { redact, text } from './validation.mjs';
+import { generateTitle } from './sessions.mjs';
 
 export const MAX_SESSIONS = 4;
 export const LIVE_STATES = ['starting', 'running', 'waiting', 'stopping'];
@@ -89,10 +90,10 @@ export class TerminalManager extends EventEmitter {
     const baseline = await this.store.checkoutBaseline?.(projectId, workspaceId) ?? null;
     const now = new Date().toISOString();
     const session = { id: randomUUID(), projectId, provider, nativeId: prior?.nativeId ?? (provider === 'claude' ? randomUUID() : null),
-      nativeIdConfirmed: provider === 'claude' || !!prior, title: task.slice(0, 80) || (prior ? 'Resume session' : 'Interactive session'),
+      nativeIdConfirmed: provider === 'claude' || !!prior, title: generateTitle(task, prior),
       status: 'starting', receiptId: receipt.id, resumedFrom: prior?.id ?? null, createdAt: now, lastActivityAt: now,
       // An additional-folder session runs in that folder with its own Git identity (if any).
-      branch: project.cwd ? project.cwdBranch ?? null : project.branch, head: project.cwd ? project.cwdHead ?? null : project.head, cwd: project.cwd ?? project.root, workspaceId, research, baseline, runtimeId: this.runtimeId, activity: null, archived: false };
+      branch: project.cwd ? project.cwdBranch ?? null : project.branch, head: project.cwd ? project.cwdHead ?? null : project.head, cwd: project.cwd ?? project.root, workspaceId, research, baseline, runtimeId: this.runtimeId, activity: null };
     let prompt = task;
     if (receipt.packet || (prior && (oldReceipt?.hadKnowledge || oldReceipt?.items.length))) {
       const withdrawn = oldReceipt?.items.filter(item => !receipt.items.some(current => current.revisionId === item.revisionId)) ?? [];

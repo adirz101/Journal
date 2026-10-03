@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { resolve, dirname, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -124,7 +124,7 @@ const actions = {
   projects: () => store.listProjects(),
   // Cheap branch/HEAD read so the UI notices checkouts switched outside Journal.
   checkout: async ({ projectId }) => { const project = await store.project(projectId); return { branch: project.branch, head: project.head }; },
-  project: async ({ projectId }) => ({ project: await store.project(projectId), sessions: await store.listSessions(projectId), receipts: await store.listReceipts(projectId) }),
+  project: async ({ projectId }) => ({ project: await store.project(projectId), sessions: await store.listSessions(projectId, true), receipts: await store.listReceipts(projectId) }),
   workspaces: ({ projectId }) => store.listWorkspaces(projectId),
   planWorkspace: ({ projectId, branch, base }) => store.planWorkspace(projectId, { branch, base }, join(userData, 'worktrees')),
   createWorkspace: ({ projectId, branch, base, baseCommit, planId }) => store.createWorkspace(projectId, { branch, base, baseCommit, planId }, join(userData, 'worktrees')),
@@ -161,13 +161,6 @@ const actions = {
     if (statSync(result.filePaths[0]).size > 5 * 1024 * 1024) throw new Error('Import file is larger than 5 MiB');
     return store.importBrain(projectId, readFileSync(result.filePaths[0], 'utf8'));
   },
-  purgeSession: async ({ id }) => {
-    const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Delete history', 'Cancel'], defaultId: 1, cancelId: 1, message: 'Delete this session\'s history?',
-      detail: 'Removes its timeline, context receipts and metadata from Journal. Project knowledge, your files and the native CLI conversation are not affected.' });
-    if (response !== 0) return null;
-    await runtime.call('release', { id }).catch(() => {});
-    return store.purgeSession(id);
-  },
   acceptProposal: ({ id }) => store.acceptProposal(id),
   dismissProposal: ({ id }) => store.dismissProposal(id),
   markIncorrect: ({ id }) => store.setMemoryStatus(id, 'archived', { reason: 'incorrect' }),
@@ -188,6 +181,51 @@ const actions = {
     return { revealed: false };
   },
   archiveSession: async ({ id }) => { await runtime.call('release', { id }).catch(() => {}); return store.archiveSession(id); },
+  unarchiveSession: ({ id }) => store.unarchiveSession(id),
+  renameSession: ({ id, name }) => store.renameSession(id, name),
+  setSessionPinned: ({ id, pinned }) => store.setSessionPinned(id, pinned),
+  // Never kills silently: a running session asks whether to stop it first or
+  // keep it running and hide it. Files, worktrees and the native conversation
+  // are never affected.
+  removeSession: async ({ id }) => {
+    const session = await store.getSession(id); const label = session.displayName || session.title;
+    const running = LIVE.includes(session.status) || session.status === 'orphaned';
+    const files = 'Your files, worktree and the native Claude/Codex conversation are not affected.';
+    if (running) {
+      const canStop = session.status !== 'orphaned';
+      const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: canStop ? ['Stop and remove', 'Keep running and archive', 'Cancel'] : ['Keep running and archive', 'Cancel'], defaultId: canStop ? 2 : 1, cancelId: canStop ? 2 : 1,
+        message: `"${label}" is still running.`, detail: `${canStop ? 'Stopping ends the agent gracefully, then removes the session from Journal. ' : 'Journal cannot stop an orphaned process from here; end it from the session first. '}Archiving hides it and leaves it running. ${files}` });
+      const choice = canStop ? ['stop', 'archive', null][response] : ['archive', null][response];
+      if (choice === 'archive') return store.archiveSession(id);
+      if (choice !== 'stop') return null;
+      await runtime.call('stop', { id });
+      for (let i = 0; i < 100 && LIVE.includes((await store.getSession(id)).status); i++) await new Promise(r => setTimeout(r, 100));
+      if (LIVE.includes((await store.getSession(id)).status)) throw new Error('The session did not stop; it was not removed');
+    } else {
+      const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Remove from Journal', 'Cancel'], defaultId: 1, cancelId: 1, message: `Remove "${label}" from Journal?`,
+        detail: `Removes it from Journal's session lists and deletes its timeline. Context receipts are kept so the native conversation can still be resumed exactly. ${files}` });
+      if (response !== 0) return null;
+    }
+    await runtime.call('release', { id }).catch(() => {});
+    return store.removeSession(id);
+  },
+  // Paths and IDs come from Journal's records, never from the renderer.
+  revealProject: async ({ id }) => { const project = await store.storedProject(text(id, 'project ID', 100)); shell.showItemInFolder(project.root); },
+  copyProjectPath: async ({ id }) => { clipboard.writeText((await store.storedProject(text(id, 'project ID', 100))).root); },
+  revealSession: async ({ id }) => { const session = await store.getSession(id); if (session.cwd) shell.showItemInFolder(session.cwd); },
+  copySessionPath: async ({ id }) => { const session = await store.getSession(id); if (session.cwd) clipboard.writeText(session.cwd); },
+  copySessionNativeId: async ({ id }) => { const session = await store.getSession(id); if (!session.nativeId) throw new Error('No native session ID is known for this session'); clipboard.writeText(session.nativeId); },
+  // A native context menu built from labels the renderer chose; returns only
+  // the chosen item ID, and the renderer runs its existing action for it.
+  contextMenu: ({ items }) => {
+    if (!Array.isArray(items) || !items.length || items.length > 40) throw new Error('Invalid menu');
+    const template = items.map(item => item?.separator ? { type: 'separator' } : { id: text(item?.id, 'menu item', 40), label: text(item?.label, 'menu label', 80), enabled: item.enabled !== false });
+    if (headless && typeof globalThis.__journalMenuHook === 'function') return globalThis.__journalMenuHook(template);
+    return new Promise(resolve => {
+      const menu = Menu.buildFromTemplate(template.map(item => item.type ? item : { ...item, click: () => resolve(item.id) }));
+      menu.popup({ window, callback: () => setTimeout(() => resolve(null), 100) });
+    });
+  },
   start: input => {
     // A runtime from another build may not understand newer launch options;
     // never let it silently run in the wrong workspace or mode.

@@ -8,7 +8,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SUPPORTED_VERSION = 6; // keep in step with the store migrations
+const SUPPORTED_VERSION = 7; // keep in step with the store migrations
 
 export function defaultDataDir() {
   if (process.env.JOURNAL_DATA_DIR) return resolve(process.env.JOURNAL_DATA_DIR);

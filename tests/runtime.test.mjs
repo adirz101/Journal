@@ -205,10 +205,12 @@ test('Claude hook observations become redacted commands, exit codes and file eve
   assert.ok(!events.some(e => e.kind === 'turn-end'), 'Forged observations are ignored');
 });
 
-test('a session cannot be closed while live, and closing hides it from the project list', async t => {
+test('archiving a live session hides it but keeps it running; releasing still needs a stop', async t => {
   const f = fixture(t); const { fake } = await f.boot(); const c = client(f, t); await c.connect();
   const { session } = await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'close me' });
-  assert.throws(() => f.store.archiveSession(session.id), /Stop the session/);
+  f.store.archiveSession(session.id);
+  assert.equal(f.store.getSession(session.id).status, 'running', 'Archiving never stops the agent');
+  assert.throws(() => f.store.removeSession(session.id), /Stop the session/);
   await assert.rejects(c.call('release', { id: session.id }), /Stop the session/);
   fake.procs[0].exit({ exitCode: 0 });
   await until(() => f.store.getSession(session.id).status === 'exited');

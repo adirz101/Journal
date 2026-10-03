@@ -2,6 +2,7 @@
 // and its client so they cannot drift apart.
 export const STORE_METHODS = [
   'openProject',
+  'storedProject',
   'renameProject',
   'setProjectPinned',
   'addProjectRoot',
@@ -35,6 +36,11 @@ export const STORE_METHODS = [
   'liveSessions',
   'activeSessions',
   'archiveSession',
+  'unarchiveSession',
+  'renameSession',
+  'setSessionPinned',
+  'removeSession',
+  'updateSessionUser',
   'appendEvent',
   'listEvents',
   'checkoutBaseline',

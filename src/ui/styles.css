@@ -142,3 +142,5 @@
 :root[data-theme=light] .manage-danger{border-color:#ecc4c8}
 @media(hover:hover) and (pointer:fine){.project-manage:not(:disabled):hover{background:#262c33;color:#dceaff}}
 .project-link>.project-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.archived-toggle{display:block;width:100%;text-align:left;border:0;background:transparent;border-radius:0;cursor:pointer;color:#6f7987}.session-text .pin-mark{margin-left:0;font-size:9px}
+.rename-dialog{width:440px}
