@@ -22,7 +22,7 @@ export function ChangesPanel({ session, fileEvents = 0 }: { session: Session; fi
     {error && <p className="form-error" role="alert">{error}</p>}
     {changes && !changes.available && <p className="hint">{changes.reason}</p>}
     {changes?.available && <>
-      <div className="receipt-meta"><span>{changes.files.length} file{changes.files.length === 1 ? '' : 's'}</span><span className="additions">+{changes.additions}</span><span className="deletions">−{changes.deletions}</span>{changes.commitsSince ? <span>{changes.commitsSince} new commit{changes.commitsSince === 1 ? '' : 's'}</span> : null}</div>
+      <div className="receipt-meta"><span>{changes.files.length} file{changes.files.length === 1 ? '' : 's'}</span><span className="additions">+{changes.additions}</span><span className="deletions">−{changes.deletions}</span>{changes.commitsSince ? <span>{changes.commitsSince} new commit{changes.commitsSince === 1 ? '' : 's'}{(changes as { folderPrefix?: string | null }).folderPrefix ? ' in the repository' : ''}</span> : null}</div>
       {!!changes.preexistingCount && <p className="hint">{changes.preexistingCount} file{changes.preexistingCount === 1 ? ' was' : 's were'} already modified when the session started; they are marked “before”.</p>}
       {changes.truncated && <p className="hint">Showing the first 500 files.</p>}
       <ul className="change-list">{changes.files.map(file => <li key={file.path}>

@@ -15,7 +15,9 @@ const quiet = (action, fallback) => { try { return action(); } catch { return fa
 
 // Paths with uncommitted changes, so pre-existing edits are labelled later.
 export function checkoutBaseline(project) {
-  const entries = quiet(() => raw(project.root, ['status', '--porcelain=v1', '-z', '--untracked-files=normal']).split('\0').filter(Boolean), []);
+  // A folder inside a larger repository is limited by pathspec before any cap applies.
+  const scope = project.pathPrefix ? ['--', project.pathPrefix] : [];
+  const entries = quiet(() => raw(project.root, ['status', '--porcelain=v1', '-z', '--untracked-files=normal', ...scope]).split('\0').filter(Boolean), []);
   const dirty = [];
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i]; dirty.push(entry.slice(3));
@@ -49,7 +51,8 @@ export function sessionChanges(project, session) {
   }
   const preexisting = new Set(session.baseline?.dirty ?? []);
   const files = [];
-  const numstat = quiet(() => raw(project.root, ['diff', '--numstat', '-z', '-M', base]), '').split('\0');
+  const scope = project.pathPrefix ? ['--', project.pathPrefix] : [];
+  const numstat = quiet(() => raw(project.root, ['diff', '--numstat', '-z', '-M', base, ...scope]), '').split('\0');
   for (let i = 0; i < numstat.length && files.length < MAX_FILES; i++) {
     const record = numstat[i]; if (!record) continue;
     const [added, deleted, path] = record.split('\t');
@@ -58,7 +61,7 @@ export function sessionChanges(project, session) {
     if (!name) continue;
     files.push({ path: name, from, additions: added === '-' ? null : Number(added), deletions: deleted === '-' ? null : Number(deleted), binary: added === '-', untracked: false });
   }
-  for (const path of quiet(() => raw(project.root, ['ls-files', '--others', '--exclude-standard', '-z']).split('\0').filter(Boolean), [])) {
+  for (const path of quiet(() => raw(project.root, ['ls-files', '--others', '--exclude-standard', '-z', ...scope]).split('\0').filter(Boolean), [])) {
     if (files.length >= MAX_FILES) break;
     const lines = untrackedLines(project.root, path);
     files.push({ path, from: null, additions: lines, deletions: 0, binary: lines === null, untracked: true });
@@ -72,7 +75,7 @@ export function sessionChanges(project, session) {
     commitsSince: base !== EMPTY_TREE && head ? Number(quiet(() => raw(project.root, ['rev-list', '--count', `${base}..HEAD`]).trim(), 0)) : 0,
     files, truncated: files.length >= MAX_FILES,
     additions: files.reduce((sum, f) => sum + (f.additions ?? 0), 0), deletions: files.reduce((sum, f) => sum + (f.deletions ?? 0), 0),
-    preexistingCount: session.baseline?.dirtyCount ?? 0, sharedCheckout: true,
+    preexistingCount: session.baseline?.dirtyCount ?? 0, sharedCheckout: true, folderPrefix: project.pathPrefix || null,
   };
 }
 

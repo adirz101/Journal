@@ -181,7 +181,7 @@ test('review fixes: folder sessions never create primary-branch proposals; subfo
   const kinds = f.store.generateProposals(session.id).map(p => p.kind);
   assert.deepEqual(kinds, ['rule'], 'Folder test commands and commits are not primary-branch knowledge');
   const changes = f.store.sessionChanges(session.id);
-  assert.deepEqual(changes.files.map(file => file.path), ['docs/a.md']);
+  assert.deepEqual(changes.files.map(file => file.path), ['docs/a.md']); assert.equal(changes.folderPrefix, 'docs/');
   assert.match(f.store.sessionFileDiff(session.id, 'docs/a.md').text, /\+changed/);
   assert.throws(() => f.store.sessionFileDiff(session.id, 'top.md'));
   manager.disposed = true;
@@ -194,8 +194,9 @@ test('review fixes: packets name the working folder and absolute folder evidence
   const packet = f.store.prepareContext(f.project.id, 'deployment guide', { workspaceId: `root:${root.id}` }).packet;
   assert.match(packet, new RegExp(`Working folder: ${docs.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)); assert.ok(packet.includes(`${docs}/g.md:1`));
   const exported = f.store.exportBrain(f.project.id).json;
-  assert.equal(exported.memories[0].revisions[0].source.folder.path, docs);
+  assert.deepEqual(exported.memories[0].revisions[0].source.folder, { name: 'docs' }, 'No local absolute paths in exports');
+  assert.ok(!JSON.stringify(exported).includes(f.root));
   const other = f.store.openProject(gitInit(join(f.root, 'other')));
   f.store.importBrain(other.id, JSON.stringify(exported));
-  assert.match(f.store.listMemories(other.id)[0].source.note, /folder .*docs: g\.md:1/);
+  assert.match(f.store.listMemories(other.id)[0].source.note, /folder docs: g\.md:1/);
 });
