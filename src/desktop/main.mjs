@@ -18,22 +18,24 @@ import { formatReference, referenceEvent } from '../core/references.mjs';
 import { isSensitivePath } from '../core/evidence.mjs';
 import { launchTarget, resolveExecutable } from '../core/process.mjs';
 import { RootWatcher } from './watch.mjs';
+import { dataDirectory, unpackedPath, withGuiPath } from './environment.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../..');
 // Scripts executed by a separate Node-mode process must come from the unpacked
 // copy when Journal runs from a packaged archive.
-const unpacked = path => path.replace(`app.asar${sep}`, `app.asar.unpacked${sep}`);
+const unpacked = path => unpackedPath(path, sep);
 const appIcon = nativeImage.createFromPath(resolve(root, 'assets/branding/journal-app-icon.png'));
 // Trim a small part of the supplied transparent padding for a fuller Dock icon.
 // Preserve the rounded artwork and its remaining safety margin at every scale.
 const iconSize = appIcon.getSize(); const iconInset = Math.round(Math.min(iconSize.width, iconSize.height) * 0.05);
 const displayIcon = appIcon.crop({ x: iconInset, y: iconInset, width: iconSize.width - 2 * iconInset, height: iconSize.height - 2 * iconInset });
 app.setName('Journal');
+// A packaged app opened from Finder has a minimal PATH; add the usual CLI
+// install folders so Claude Code, Codex and Cursor are found (see environment.mjs).
+if (app.isPackaged) process.env.PATH = withGuiPath(process.env).PATH;
 // Keep the existing store when the displayed product name changes.
-const userData = process.env.JOURNAL_DATA_DIR
-  ? resolve(process.env.JOURNAL_DATA_DIR)
-  : resolve(app.getPath('appData'), 'journal-desktop');
+const userData = dataDirectory(process.env, app.getPath('appData'));
 mkdirSync(userData, { recursive: true, mode: 0o700 });
 app.setPath('userData', userData);
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -409,6 +411,16 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
 try { await runtime.connect(); runtimeState = 'connected'; }
 catch (error) { runtimeState = 'disconnected'; console.error('Journal runtime unavailable:', error.message); void runtime.reconnect(); }
 createWindow();
+// Release smoke checks of builds that cannot be driven by automation (the
+// Windows portable EXE relaunches itself): report basic health, then quit.
+// Packaged builds only; contains no project or user content.
+if (app.isPackaged && process.env.JOURNAL_SMOKE_MARKER) {
+  window.webContents.once('did-finish-load', () => setTimeout(() => {
+    writeFileSync(process.env.JOURNAL_SMOKE_MARKER, JSON.stringify({ version: app.getVersion(), packaged: app.isPackaged, userData, runtime: runtimeState,
+      exe: process.execPath, providers: agents.map(agent => ({ provider: agent.provider, state: agent.state ?? (agent.available ? 'ready' : 'missing') })) }));
+    app.quit();
+  }, 1500));
+}
 app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
 app.on('activate', () => { if (!window) createWindow(); });
 app.on('window-all-closed', () => app.quit());

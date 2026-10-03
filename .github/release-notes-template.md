@@ -1,17 +1,37 @@
-# Journal vX.Y.Z (unsigned alpha)
+Journal is a local-first workspace for Claude Code, Codex and Cursor that carries reviewed project knowledge across agent sessions. This is an **alpha pre-release**.
 
-> Pre-release. Builds are **unsigned**: macOS will require right-click → Open (Gatekeeper), and Windows SmartScreen will warn. Verify downloads against `SHA256SUMS-*.txt`.
+## Download
+
+| Platform | File |
+| --- | --- |
+| macOS (Apple Silicon) | `Journal-<version>-arm64.dmg` (or `.zip`) |
+| Windows x64 installer | `Journal-Setup-<version>-x64.exe` |
+| Windows x64 portable | `Journal-Portable-<version>-x64.exe` |
+
+Journal does not include Claude Code, Codex or Cursor: install the ones you use (Journal shows which it found, and can install the Cursor CLI for you with Cursor's official installer after you confirm).
+
+## Unsigned alpha builds
+
+- **macOS:** not signed with an Apple Developer ID and not notarized. Open the DMG and drag Journal to Applications. The first time you open it, macOS says it cannot verify Journal: click **Done**, then open **System Settings → Privacy & Security** and click **Open Anyway** next to the Journal message (on older macOS versions, Control-click Journal and choose **Open**).
+- **Windows:** not code-signed. SmartScreen may show "Windows protected your PC": click **More info**, then **Run anyway**. The installer installs for your user only and needs no administrator rights.
+
+Only open builds downloaded from this release page, and check them against `SHA256SUMS.txt`:
+
+```sh
+# macOS
+shasum -a 256 -c SHA256SUMS.txt --ignore-missing
+```
+```powershell
+# Windows (PowerShell): compare with the line for the file in SHA256SUMS.txt
+Get-FileHash .\Journal-Setup-<version>-x64.exe -Algorithm SHA256
+```
 
 ## Highlights
 - …
 
-## Changes
-- …
-
 ## Known limitations
-- Real Claude Code / Codex behavior is verified manually on macOS only; Windows is unverified (see docs/WINDOWS.md).
-- Journal runs your installed CLIs with their own login, settings and permissions; it does not bundle them.
+- Real Claude Code, Codex and Cursor behavior is verified manually on macOS; Windows provider behavior is unverified (see docs/WINDOWS.md).
+- No automatic updates: download new versions from this page.
 
-## Verification
-- `npm test`: N passed · `npm run test:desktop`: N passed (fixture CLIs) · CI: link
-- Third-party notices: THIRD_PARTY_NOTICES.md (also inside the app)
+## Third-party notices
+`THIRD-PARTY-NOTICES.txt` (also inside the app).

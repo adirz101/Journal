@@ -39,17 +39,34 @@ Switching agents should not mean rediscovering architecture decisions, constrain
 - **Desktop controls:** blue-accented light/dark themes, keyboard shortcuts, and resizable sidebars retain the live terminal when appearance or layout changes.
 - **Apache-2.0 licensing:** Journal's code is licensed under the [Apache License 2.0](LICENSE).
 
+## Download and install
+
+Download the latest build from [GitHub Releases](https://github.com/adirz101/Journal/releases). No Node.js, npm or source checkout is needed. Journal does not include the agent CLIs: install Claude Code, Codex and/or the Cursor Agent CLI with their own installers and logins (Journal shows which it found, and can run Cursor's official installer for you after you confirm).
+
+**macOS (Apple Silicon)**
+1. Download `Journal-<version>-arm64.dmg`.
+2. Open it.
+3. Drag **Journal** to **Applications**.
+4. Open Journal from Applications. Alpha builds are not notarized: the first time, macOS says it cannot verify Journal. Click **Done**, then open **System Settings → Privacy & Security** and click **Open Anyway** (on older macOS, Control-click Journal and choose **Open**).
+
+**Windows (x64)**
+1. Download `Journal-Setup-<version>-x64.exe` (installs for your user, no administrator rights, Start Menu shortcut, uninstall from Settings → Apps) or `Journal-Portable-<version>-x64.exe` (runs without installing).
+2. Run it.
+3. Alpha builds are unsigned, so SmartScreen may warn ("Windows protected your PC"): choose **More info** → **Run anyway**.
+
+Journal keeps its data per user (macOS `~/Library/Application Support/journal-desktop`, Windows `%APPDATA%\journal-desktop`), also for the portable build; uninstalling keeps it. Verify a download against the release's `SHA256SUMS.txt` (macOS: `shasum -a 256 -c SHA256SUMS.txt --ignore-missing`; Windows: `Get-FileHash <file> -Algorithm SHA256`). Intel Macs are not built yet. See [releasing](docs/RELEASING.md) for signing status.
+
 ## Current limitations
 
-- Alpha software with no signed release, installer verification, or automatic updates. Sessions in the same checkout share its working tree; use a worktree for isolation.
+- Alpha software: release builds are unsigned (macOS ad-hoc signed, not notarized; Windows unsigned) and there are no automatic updates. Sessions in the same checkout share its working tree; use a worktree for isolation.
 - Local validation is on macOS. Native Windows operation is unverified; see the [Windows audit](docs/WINDOWS.md).
 - Knowledge and status updates require manual review. Automatic extraction, cloud sync, background agent orchestration, and cross-worktree knowledge promotion are not implemented.
 - Retrieval is lexical (stemmed, with identifier and path aliases), with finite context limits. Source fingerprints detect changes; they do not establish whether a claim is true. Journal does not inject context into conversations launched outside the app.
 - Observability depends on what the native CLI exposes. Interactive Codex approvals, broader running-tool cancellation, crash cleanup, and detached child processes remain validation gaps.
 
-## Quick start
+## Run from source
 
-Requirements:
+Requirements (development only; release builds need none of these):
 
 - Node.js **24 or newer** and Git.
 - An installed `claude` and/or `codex` CLI on `PATH`, with its native login configured.

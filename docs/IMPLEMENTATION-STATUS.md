@@ -30,6 +30,9 @@ Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI
 - Sessions use a chat created with `create-chat` and open it with `--resume=<UUID>` (exact identity at launch and exact resume); Research maps to `--mode=ask` and Plan to `--mode=plan`; context, receipts, worktrees, references (always copied, never typed) and up to four mixed-provider sessions work as for Claude and Codex. Hooks are not used, so Cursor activity is unknown.
 - Checked with an authenticated Cursor CLI 2026.10.01 on macOS: chat creation, first turn, exit hint and exact resume. **Manual validation remaining** in Journal's UI: the steps in [PROVIDERS.md](PROVIDERS.md#manual-validation-remaining-cursor-needs-the-users-cursor-login).
 
+**Packaging and releases** ([releasing](RELEASING.md))
+- macOS arm64 DMG (drag to Applications) and ZIP, Windows x64 per-user installer and portable EXE, from one version source (`package.json`, now `0.2.0-alpha`), with `SHA256SUMS.txt` and third-party notices. A package audit (allow-list) and a packaged smoke test (fixture CLIs) run on the built apps; the tag-triggered workflow creates a draft GitHub Release only. macOS packages are validated locally; Windows packages need the staged workflow (**BLOCKED** on the `workflow` token scope). Signing and notarization are pending certificates; builds are unsigned (macOS ad-hoc).
+
 **Workspaces**
 - Current checkout, Journal-managed worktrees from an explicit base, and imported worktrees, with intent persisted before Git side effects and reconciliation after crashes.
 - No force, no stash, no transfer of uncommitted work. Removal refuses dirty, untracked, ignored, locked or in-use worktrees and keeps the branch; imported worktrees are never deleted.
