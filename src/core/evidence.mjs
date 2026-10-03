@@ -25,6 +25,8 @@ function sourceFile(root, path, { tracked = true } = {}) {
   const full = resolve(root, path);
   const canonical = realPath(full);
   const rel = relative(root, canonical);
+  // The name on disk counts too (case-insensitive file systems: .GIT, .ENV).
+  if (isSensitivePath(relative(realPath(root), canonical).split(sep).join('/'))) throw new Error('Sensitive files cannot be used as evidence');
   if (rel.startsWith(`..${sep}`) || rel === '..' || rel.startsWith(sep)) throw new Error('Source escapes checkout');
   // Reject every symlink component, not just the leaf.
   let current = root;

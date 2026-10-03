@@ -23,10 +23,10 @@ Before advertising Windows support:
 2. Run the desktop scenarios with Windows fixture CLIs (`.cmd` and `.exe`).
 3. Manually check ConPTY input (IME, Ctrl+C, resize), runtime survival after closing the app window, runtime crash recovery, and named-pipe access by another local user (it must be refused).
 
-## First Windows CI run (4 October 2026)
-The unit tests ran on a hosted `windows-latest` runner for the first time: 127 of 172 passed and 37 failed. They are experimental in CI (they report without failing the run) until fixed. The failures group into:
-- **Worktree and folder path handling** (real defects): Git reports `D:/…` paths while Node uses `D:\…`, so registered worktrees are not recognized (workspaces become "failed" or "missing"), and additional-folder checks misjudge paths.
-- **Test cleanup on Windows**: temporary folders are removed while SQLite or the runtime still hold files (`EPERM`), and a test runtime's named pipe is reused (`EADDRINUSE`).
-- **POSIX-only test fixtures**: executable shell scripts and `chmod` do not apply on Windows.
+## Windows on CI (4 October 2026)
+The unit tests run on hosted `windows-latest` runners and are required. Their first run found 37 failures, now fixed:
+- **Path identity** (real defects): Windows can name one folder two ways (`C:\Users\RUNNER~1` and `C:\Users\runneradmin`, `\` or `/`). Journal now compares paths through the native resolver (`src/core/paths.mjs`), so projects, additional folders and worktrees match the paths Git reports; worktrees had been marked failed.
+- **Backups**: Node 24 (Electron's) rejects `rate: -1`, which broke online backups; a positive page count is used.
+- **Test portability**: temporary folders are removed after stores close, fake CLIs are npm-style `.cmd` shims, and tests no longer assume POSIX quoting or separators.
 
-Packaging is validated separately by the release workflow on Windows (installer, smoke test with fixture CLIs, portable build, uninstall).
+On Windows 164 of 172 unit tests pass and 8 skip because they exercise macOS- or POSIX-only behavior: the macOS app launcher, symlink races (two), PID-reuse-safe signalling, UTC start times from `ps`, orphan termination, SIGTERM-to-SIGKILL escalation and the runtime lock's POSIX identity. Their Windows counterparts (Job Objects, Windows process identity) remain open items in this audit. The desktop scenarios use POSIX fixture CLIs and skip on Windows; the packaged Windows app is covered by the release workflow instead: per-user installation, a smoke test of the installed app with fixture CLIs (project, provider detection, a terminal through ConPTY, the file explorer, restart), the portable build and uninstalling.

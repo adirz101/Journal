@@ -34,6 +34,10 @@ npm run smoke:packaged -- release/mac-arm64/Journal.app/Contents/MacOS/Journal
 ```
 Windows packages are built on a Windows machine or runner with `npm run dist:win` (the workflow does this on `windows-latest`).
 
+## CI notes
+- Hosted macOS runners have a 1024×768 virtual display; test runs (`JOURNAL_HEADLESS=1`) size Journal's window after creation so layouts match a normal screen. `scripts/ci-diagnose.mjs` prints the window and terminal geometry on a runner when this needs checking again.
+- electron-builder skips all signing for pull-request builds; unsigned builds set `CSC_FOR_PULL_REQUEST=true` so the ad-hoc signature (which the app needs) is still applied, and empty signing secrets are unset before packaging.
+
 ## Release procedure
 1. Set `version` in `package.json` (and `package-lock.json` with `npm install --package-lock-only`), update `docs/IMPLEMENTATION-STATUS.md`, and merge to `main`.
 2. Run the local suite and, on macOS, the manual native trials that cover changed areas (`docs/NATIVE-VALIDATION.md`, `docs/PROVIDERS.md`).

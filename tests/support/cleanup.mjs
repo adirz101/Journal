@@ -5,7 +5,8 @@ import { rmSync } from 'node:fs';
 // they were added, so a fixture's cleanup would otherwise run before a test's
 // own `store.close()`; Windows refuses to delete files that are still open.
 const pending = new Set();
-export function removeLater(path) { pending.add(path); }
+// Only Windows defers: elsewhere deleting at once still surfaces leaked handles.
+export function removeLater(path) { if (process.platform === 'win32') pending.add(path); else rmSync(path, { recursive: true, force: true }); }
 process.on('exit', () => {
   for (const path of pending) { try { rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* leave it for the OS */ } }
 });

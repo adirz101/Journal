@@ -57,6 +57,7 @@ async function open(env: Record<string, string>, project: string): Promise<{ app
 // Bounded close: on Linux, Chromium helpers can keep Playwright's pipes open after a
 // forced kill or a keep-running quit, so close() may never resolve there.
 const closeApp = async (app: ElectronApplication) => {
+  if (process.platform !== 'linux') { await app.close().catch(() => {}); return; } // elsewhere a hang must fail the test
   const pid = app.process().pid;
   await Promise.race([app.close().catch(() => {}), new Promise(resolveWait => setTimeout(resolveWait, 15000))]);
   try { if (pid) { process.kill(pid, 0); process.kill(pid, 'SIGKILL'); } } catch { /* already gone */ }
