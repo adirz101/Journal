@@ -301,7 +301,9 @@ export default function App() {
       <button className="panel-collapse" aria-label="Hide side panel" title={`Hide side panel (${bootstrap?.platform === 'darwin' ? '⌥⌘B' : 'Ctrl+Alt+B'})`} onClick={() => setCollapsed(true)}>›</button></div>
       {panel === 'files' && <ExplorerPanel key={state.project.id} project={state.project} session={session} rootsVersion={workspaces?.workspaces.map(w => `${w.id}:${w.state}`).join(',') ?? ''} revealLabel={`Reveal in ${revealLabel}`} focusSignal={explorerFocus} onPreviewing={setPreviewing} onError={failed}
         onAddReference={async ref => {
-          const described = await api<FileReference>('describeReference', { projectId: state.project.id, workspaceId: workspaceId || null, rootKey: ref.rootKey, path: ref.path, startLine: ref.startLine, endLine: ref.endLine });
+          const projectId = state.project.id;
+          const described = await api<FileReference>('describeReference', { projectId, workspaceId: workspaceId || null, rootKey: ref.rootKey, path: ref.path, startLine: ref.startLine, endLine: ref.endLine });
+          if (projectRef.current?.id !== projectId) return; // switched projects meanwhile
           setReferences(current => current.some(r => r.rootKey === described.rootKey && r.path === described.path && r.startLine === described.startLine && r.endLine === described.endLine) ? current : [...current, described].slice(-20));
         }}
         onSaveEvidence={source => setEvidenceSource({ kind: 'file', path: source.path, startLine: source.startLine, endLine: source.endLine, ...(source.rootKey.startsWith('root:') ? { rootId: source.rootKey.slice(5) } : {}) })} />}

@@ -128,6 +128,11 @@ test('diffs against HEAD cover tracked, untracked and sensitive files', async t 
   writeFileSync(join(f.repo, 'config', '.env'), 'SECRET=new\n');
   await assert.rejects(headDiff(f.repo, f.repo, '', 'config'), /single files/);
   await assert.rejects(headDiff(f.repo, f.repo, '', 'nothing-here'), /no longer exists/);
+  // A staged deletion is no longer in the index but still diffs against HEAD.
+  f.git(f.repo, 'rm', '-q', 'README.md'); assert.match((await headDiff(f.repo, f.repo, '', 'README.md')).text, /-# Fixture/);
+  assert.equal((await listDirectory(f.repo, '')).entries.find(e => e.name === 'src').sensitive, false);
+  mkdirSync(join(f.repo, 'auth')); writeFileSync(join(f.repo, 'auth', 'login.ts'), 'x\n'); assert.equal((await previewFile(f.repo, 'auth/login.ts')).kind, 'text', 'An auth folder holds code, not credentials');
+  writeFileSync(join(f.repo, 'auth.json'), '{}'); assert.equal((await previewFile(f.repo, 'auth.json')).kind, 'sensitive');
   // Case differences cannot reach a sensitive file on case-insensitive file systems.
   assert.equal((await previewFile(f.repo, 'config/.ENV')).kind, 'sensitive');
 });

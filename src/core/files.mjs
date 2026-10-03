@@ -164,10 +164,12 @@ export async function headDiff(root, gitRoot, prefix, path) {
   const full = await resolveInside(root, path).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
   if (full) { if (!(await lstat(full)).isFile()) throw new Error('Diffs are shown for single files only'); }
   else {
-    // A deleted file: Git must know exactly this one path.
+    // A deleted file: the index or HEAD must know exactly this one path (a staged deletion is only in HEAD).
     await resolveInside(root, path.split('/').slice(0, -1).join('/')).catch(error => { if (error.code !== 'ENOENT') throw error; });
-    const known = await git(gitRoot, ['ls-files', '-z', '--', `${prefix}${path}`]).catch(() => '');
-    if (known.split('\0').filter(Boolean).join('\0') !== `${prefix}${path}`) throw new Error('This file no longer exists');
+    const exact = output => output.split('\0').filter(Boolean).join('\0') === `${prefix}${path}`;
+    const known = exact(await git(gitRoot, ['ls-files', '-z', '--', `${prefix}${path}`]).catch(() => ''))
+      || exact(await git(gitRoot, ['ls-tree', '-z', '--name-only', 'HEAD', '--', `${prefix}${path}`]).catch(() => ''));
+    if (!known) throw new Error('This file no longer exists');
   }
   const head = await git(gitRoot, ['rev-parse', '--verify', '--quiet', 'HEAD']).then(out => out.trim(), () => '');
   let text = await git(gitRoot, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '-M', head || EMPTY_TREE, '--', `${prefix}${path}`]).catch(() => '');

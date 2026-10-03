@@ -299,7 +299,7 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
       {changedRows.slice(0, 500).map(({ root, entry }) => {
         const name = entry.path.split('/').pop() || root.label; const dir = entry.path.split('/').slice(0, -1).join('/');
         const item: Item = { id: idOf(root.key, entry.path), rootKey: root.key, path: entry.path, name, type: entry.directory ? 'directory' : 'file', sensitive: !!entry.sensitive };
-        return <li key={item.id}><button className="changed-row" disabled={entry.directory && entry.kind !== 'untracked'} onClick={() => { if (entry.directory) { setFilter('all'); return; } void openPreview(root.key, entry.path, entry.kind === 'deleted' ? 'diff' : 'file'); }}
+        return <li key={item.id}><button className="changed-row" disabled={(entry.directory && entry.kind !== 'untracked') || !!entry.submodule} onClick={() => { if (entry.directory) { setFilter('all'); return; } void openPreview(root.key, entry.path, entry.kind === 'deleted' ? 'diff' : 'file'); }}
           onContextMenu={event => { event.preventDefault(); void itemMenu(item, menuPosition(event)); }} title={`${DESCRIBE[entry.kind]}${entry.from ? ` from ${entry.from}` : ''}${entry.staged ? ' · staged' : ''}${entry.unstaged ? ' · unstaged' : ''}`}>
           <span className={`tree-name git-${entry.kind}`}>{name}{entry.directory ? '/' : ''}</span><span className="tree-dir">{visible.length > 1 ? `${root.label}${dir ? ' / ' : ''}` : ''}{dir}</span>
           <span className={`git-letter git-${entry.kind}`} aria-label={DESCRIBE[entry.kind]}>{LETTER[entry.kind]}</span></button></li>;
