@@ -69,7 +69,10 @@ function launchRuntime() {
 }
 
 function createWindow() {
-  window = new BrowserWindow({ title: 'Journal', icon: displayIcon, width: 1440, height: 920, minWidth: 900, minHeight: 640, backgroundColor: '#101216', show: !headless,
+  window = new BrowserWindow({ title: 'Journal', icon: displayIcon, width: 1440, height: 920, minWidth: 900, minHeight: 640, backgroundColor: '#101216',
+    // Hidden on a developer's machine; shown on CI runners (JOURNAL_CI=1), which have no
+    // user screen and where hidden windows get no real layout or font metrics.
+    show: !headless || process.env.JOURNAL_CI === '1',
     // Hidden test windows keep their size on small CI screens (macOS clamps to the display otherwise).
     enableLargerThanScreen: headless,
     // Hidden test windows must keep timers, visibility and frames running like a visible one.
