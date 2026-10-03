@@ -27,9 +27,18 @@ export interface StatusDraft { scope: 'checkout' | 'branch'; memoryId: string | 
 declare global {
   interface Window { journal?: { request: (action: string, input?: object) => Promise<unknown>; onEvent: (callback: (event: TerminalEvent) => void) => () => void }; }
 }
+// Knowledge writes still in flight. A launch or context preview waits for
+// them, so what the agent receives always includes what the user just did
+// (the runtime reads the database from another process).
+const KNOWLEDGE_WRITES = new Set(['proposeMemory', 'setMemoryStatus', 'setPinned', 'markIncorrect', 'proposePromotion', 'acceptProposal', 'dismissProposal', 'importBrain', 'renameProject', 'addProjectFolder', 'removeProjectFolder']);
+const READS_KNOWLEDGE = new Set(['start', 'prepareContext']);
+const pendingWrites = new Set<Promise<unknown>>();
 export async function api<T>(action: string, input: object = {}): Promise<T> {
   if (!window.journal) throw new Error('Open Journal as a desktop app with npm run dev');
-  return await window.journal.request(action, input) as T;
+  if (READS_KNOWLEDGE.has(action) && pendingWrites.size) await Promise.allSettled([...pendingWrites]);
+  const request = window.journal.request(action, input);
+  if (KNOWLEDGE_WRITES.has(action)) { pendingWrites.add(request); void request.finally(() => pendingWrites.delete(request)).catch(() => {}); }
+  return await request as T;
 }
 export const LIVE_STATUSES: SessionStatus[] = ['starting', 'running', 'waiting', 'stopping'];
 export const isLive = (session: Session | null | undefined) => !!session && LIVE_STATUSES.includes(session.status);
