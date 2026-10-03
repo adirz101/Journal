@@ -30,12 +30,14 @@ declare global {
 // Knowledge writes still in flight. A launch or context preview waits for
 // them, so what the agent receives always includes what the user just did
 // (the runtime reads the database from another process).
-const KNOWLEDGE_WRITES = new Set(['proposeMemory', 'setMemoryStatus', 'setPinned', 'markIncorrect', 'proposePromotion', 'acceptProposal', 'dismissProposal', 'importBrain', 'renameProject', 'addProjectFolder', 'removeProjectFolder']);
+// Only writes that change what a packet contains, and none that wait on a dialog.
+const KNOWLEDGE_WRITES = new Set(['proposeMemory', 'setMemoryStatus', 'setPinned', 'markIncorrect', 'proposePromotion', 'acceptProposal']);
 const READS_KNOWLEDGE = new Set(['start', 'prepareContext']);
 const pendingWrites = new Set<Promise<unknown>>();
 export async function api<T>(action: string, input: object = {}): Promise<T> {
   if (!window.journal) throw new Error('Open Journal as a desktop app with npm run dev');
-  if (READS_KNOWLEDGE.has(action) && pendingWrites.size) await Promise.allSettled([...pendingWrites]);
+  // Bounded: a stuck write never blocks launches for more than 10 s.
+  if (READS_KNOWLEDGE.has(action) && pendingWrites.size) await Promise.race([Promise.allSettled([...pendingWrites]), new Promise(resolve => setTimeout(resolve, 10000))]);
   const request = window.journal.request(action, input);
   if (KNOWLEDGE_WRITES.has(action)) { pendingWrites.add(request); void request.finally(() => pendingWrites.delete(request)).catch(() => {}); }
   return await request as T;

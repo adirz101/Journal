@@ -12,11 +12,12 @@ export function KnowledgePanel({ project, version, busy, onEdit, onPropose, onCh
   // Loads overlap (approvals, search, project switches). A response renders
   // only if it was requested after the one on screen, so an older response
   // can never replace newer data, and a newer one is never held back.
-  const issued = useRef(0); const applied = useRef(0);
+  // A "Show more" page is appended only to the list it was requested against.
+  const issued = useRef(0); const applied = useRef(0); const resets = useRef(0); const [paging, setPaging] = useState(false);
   const load = useCallback(async (offset = 0) => {
-    const ticket = ++issued.current;
+    const ticket = ++issued.current; const reset = offset === 0 ? ++resets.current : resets.current;
     const next = await api<MemoryPage>('memoryPage', { projectId: project.id, offset, limit: PAGE, filter, search });
-    if (ticket <= applied.current) return;
+    if (ticket <= applied.current || (offset && reset !== resets.current)) return;
     applied.current = ticket;
     setPage(next); setItems(current => offset ? [...current, ...next.items] : next.items);
   }, [project.id, filter, search]);
@@ -26,14 +27,15 @@ export function KnowledgePanel({ project, version, busy, onEdit, onPropose, onCh
   // disabled: the list on screen may be stale, and a second click on it
   // would act on an outdated item.
   const [pending, setPending] = useState(false);
-  const act = async (action: () => Promise<unknown>) => {
+  // optimistic: the action returns the updated claim (approve, reject,
+  // withdraw, pin), whose new status is shown at once.
+  const act = async (action: () => Promise<unknown>, { optimistic = false } = {}) => {
     setPending(true);
     try {
       const result = await action();
-      // Show the new status at once; the reload below then confirms it.
-      const updated = result as Memory | null;
-      if (updated && typeof updated === 'object' && 'id' in updated && 'status' in updated) setItems(current => current.map(item => item.id === updated.id ? { ...item, status: updated.status, pinned: updated.pinned } : item));
-      await load(0); onChanged();
+      if (optimistic && result && typeof result === 'object') { const updated = result as Memory; setItems(current => current.map(item => item.id === updated.id ? { ...item, status: updated.status, pinned: updated.pinned } : item)); }
+      onChanged(); // the write succeeded; a failed reload below is reported separately
+      try { await load(0); } catch (error) { onError(error); }
     } catch (error) { onError(error); } finally { setPending(false); }
   };
   const counts = page?.counts ?? {};
@@ -51,8 +53,8 @@ export function KnowledgePanel({ project, version, busy, onEdit, onPropose, onCh
       {memory.status === 'candidate' && memory.conflicts?.length ? <div className="memory-conflict" role="note"><strong>Possible conflict</strong>{memory.conflicts.map(c => <span key={c.id}>r{c.revision}: {c.statement}</span>)}</div> : null}
       <button className="source-button" aria-expanded={expanded === memory.id} onClick={() => setExpanded(expanded === memory.id ? null : memory.id)}>{memory.source.kind === 'file' ? `↗ ${memory.source.rootId ? `${project.roots?.find(root => root.id === memory.source.rootId)?.name ?? '(removed folder)'}/` : ''}${memory.source.path}:${memory.source.startLine}` : memory.source.kind === 'git' ? `↗ Git ${memory.source.base ? `${memory.source.base.slice(0, 7)}..` : ''}${memory.source.head?.slice(0, 7)}` : '↗ Your statement'} <span>{expanded === memory.id ? '−' : '+'}</span></button>
       {expanded === memory.id && <div className="evidence-details"><pre dir="auto">{memory.source.kind === 'git' ? `Commits ${memory.source.base ?? 'up to'} → ${memory.source.head}${memory.source.commitCount != null ? ` (${memory.source.commitCount} at capture)` : ''}` : memory.source.excerpt ?? memory.source.note}</pre>{memory.source.contentHash && <small>Source fingerprint {memory.source.contentHash.slice(0, 12)}</small>}<small>Revision {memory.revisionId}</small></div>}
-      <div className="memory-actions">{memory.status === 'candidate' && <><button className="approve" disabled={memory.validation !== 'current' || busy || pending} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'active' }))}>Approve</button><button disabled={busy || pending} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'rejected' }))}>Reject</button></>}{memory.category === 'brief' && memory.status !== 'rejected' && memory.status !== 'archived' && (memory.scope === 'checkout' || memory.branch === project.branch) && <button disabled={busy} onClick={() => onPropose(memory.scope)}>Propose update</button>}{memory.status === 'active' && memory.category !== 'brief' && <button disabled={pending} onClick={() => void act(() => api('setPinned', { id: memory.id, pinned: !memory.pinned }))}>{memory.pinned ? 'Unpin' : 'Pin'}</button>}{memory.status === 'active' && memory.scope === 'branch' && memory.category !== 'brief' && <button disabled={pending} onClick={() => void act(() => api('proposePromotion', { id: memory.id }))}>Propose for all branches</button>}<button onClick={() => onEdit({ memory })}>Revise</button>{memory.status === 'active' && memory.category !== 'brief' && (memory.scope === 'checkout' || memory.branch === project.branch) && <button onClick={() => onEdit({ supersedes: memory })}>Replace…</button>}{memory.status === 'active' && <button disabled={pending} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'archived' }))}>Withdraw</button>}</div>
+      <div className="memory-actions">{memory.status === 'candidate' && <><button className="approve" disabled={memory.validation !== 'current' || busy || pending} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'active' }), { optimistic: true })}>Approve</button><button disabled={busy || pending} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'rejected' }), { optimistic: true })}>Reject</button></>}{memory.category === 'brief' && memory.status !== 'rejected' && memory.status !== 'archived' && (memory.scope === 'checkout' || memory.branch === project.branch) && <button disabled={busy} onClick={() => onPropose(memory.scope)}>Propose update</button>}{memory.status === 'active' && memory.category !== 'brief' && <button disabled={pending} onClick={() => void act(() => api('setPinned', { id: memory.id, pinned: !memory.pinned }), { optimistic: true })}>{memory.pinned ? 'Unpin' : 'Pin'}</button>}{memory.status === 'active' && memory.scope === 'branch' && memory.category !== 'brief' && <button disabled={pending} onClick={() => void act(() => api('proposePromotion', { id: memory.id }))}>Propose for all branches</button>}<button onClick={() => onEdit({ memory })}>Revise</button>{memory.status === 'active' && memory.category !== 'brief' && (memory.scope === 'checkout' || memory.branch === project.branch) && <button onClick={() => onEdit({ supersedes: memory })}>Replace…</button>}{memory.status === 'active' && <button disabled={pending} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'archived' }), { optimistic: true })}>Withdraw</button>}</div>
     </article>)}{page && !items.length && <div className="knowledge-empty"><span>◇</span><h3>{search ? 'No matching knowledge' : filter === 'review' ? 'Nothing waiting for review' : 'Keep the useful parts.'}</h3><p>Add a decision, a constraint, or a lesson.<br />It becomes shared knowledge after you approve it.</p>{!search && <button onClick={() => onEdit({})}>Add knowledge</button>}</div>}</div>
-    {page && items.length < page.total && <button className="load-more" onClick={() => void load(items.length).catch(onError)}>Show more ({page.total - items.length} remaining)</button>}
+    {page && items.length < page.total && <button className="load-more" disabled={paging || pending} onClick={() => { setPaging(true); void load(items.length).catch(onError).finally(() => setPaging(false)); }}>Show more ({page.total - items.length} remaining)</button>}
   </div>;
 }
