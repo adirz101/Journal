@@ -45,6 +45,7 @@ console.log('PTY_READY');process.stdin.setRawMode(true);process.stdin.setEncodin
 }
 
 test('the explorer browses, decorates, previews and references files without editing anything', async () => {
+  test.setTimeout(120000); // one long end-to-end scenario; slower on Linux's virtual display
   const f = setup();
   const app = await electron.launch({ args: ['.'], env: f.env });
   try {
