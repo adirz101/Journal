@@ -457,6 +457,8 @@ export class JournalStore {
     const cwd = view.cwd ?? view.root; const seen = new Set();
     return references.map(input => {
       if (!input || typeof input !== 'object') throw new Error('Invalid reference');
+      // A reference chosen in one project never resolves against another one's paths.
+      if (input.projectId !== undefined && input.projectId !== projectId) throw new Error(`${input.path} was chosen in another project; add it again from this project`);
       const root = this.fileRoot(projectId, text(input.rootKey, 'reference root', 100));
       if (root.family === 'primary' && sessionRoot.family === 'primary' && root.key !== sessionRoot.key) throw new Error(`${input.path} is in ${root.label}, but this session runs in ${sessionRoot.label}. Reference it from the session's own copy.`);
       const path = treePath(input.path);
@@ -465,7 +467,7 @@ export class JournalStore {
       const absolute = join(root.path, ...path.split('/'));
       const display = pathFromCwd(cwd, absolute) ?? absolute;
       const key = `${root.key}\u0000${path}\u0000${startLine}-${endLine}`; if (seen.has(key)) return null; seen.add(key);
-      return { kind: print.kind, source: 'user-reference', rootKey: root.key, rootLabel: root.label, family: root.family, path, display, startLine: print.kind === 'lines' ? startLine : null, endLine: print.kind === 'lines' ? endLine : null,
+      return { kind: print.kind, source: 'user-reference', projectId, rootKey: root.key, rootLabel: root.label, family: root.family, path, display, startLine: print.kind === 'lines' ? startLine : null, endLine: print.kind === 'lines' ? endLine : null,
         contentHash: print.contentHash, rangeHash: print.rangeHash, head: root.head ?? null, createdAt: now() };
     }).filter(Boolean);
   }

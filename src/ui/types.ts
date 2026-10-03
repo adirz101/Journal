@@ -23,10 +23,10 @@ export interface FileRoot { key: string; family: 'primary' | 'folder'; kind: str
 export interface FileEntry { name: string; path: string; type: 'directory' | 'file' | 'symlink' | 'other'; sensitive: boolean; }
 export interface DirectoryListing { path: string; entries: FileEntry[]; total: number; truncated: boolean; }
 export type GitKind = 'conflict' | 'deleted' | 'modified' | 'renamed' | 'typechange' | 'added' | 'untracked' | 'submodule' | 'ignored';
-export interface StatusEntry { path: string; kind: GitKind; directory: boolean; staged: boolean; unstaged: boolean; from?: string | null; submodule?: boolean; }
+export interface StatusEntry { path: string; sensitive?: boolean; kind: GitKind; directory: boolean; staged: boolean; unstaged: boolean; from?: string | null; submodule?: boolean; }
 export interface FileStatus { available: boolean; reason?: string; entries: StatusEntry[]; folders: Record<string, GitKind>; truncated: boolean; branch?: string | null; }
 export interface FilePreviewData { path: string; kind: 'text' | 'binary' | 'sensitive' | 'too-large'; size?: number; contentHash?: string; text?: string; invalidUtf8?: boolean; highlight?: boolean; eol?: string; lineCount?: number; }
-export interface FileReference { kind: 'file' | 'lines' | 'folder'; rootKey: string; rootLabel?: string; path: string; display?: string; startLine: number | null; endLine: number | null; contentHash?: string | null; rangeHash?: string | null; }
+export interface FileReference { projectId?: string; kind: 'file' | 'lines' | 'folder'; rootKey: string; rootLabel?: string; path: string; display?: string; startLine: number | null; endLine: number | null; contentHash?: string | null; rangeHash?: string | null; }
 export interface ProjectState { project: Project; sessions: Session[]; receipts: Receipt[]; }
 export interface ChangedFile { path: string; from: string | null; additions: number | null; deletions: number | null; binary: boolean; untracked: boolean; preexisting: boolean; sensitive: boolean; }
 export interface Changes { base: string; available: boolean; reason?: string; head?: string; branch?: string; headMoved?: boolean; commitsSince?: number; files: ChangedFile[]; truncated?: boolean; additions?: number; deletions?: number; preexistingCount?: number; }

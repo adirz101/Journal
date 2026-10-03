@@ -153,8 +153,13 @@ test('the explorer browses, decorates, previews and references files without edi
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+KeyE' : 'Control+Shift+KeyE');
     await expect(page.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true');
 
-    // Another project shows only its own files.
+    // Another project shows only its own files: no stale tree, preview or reference carries over.
+    await menu(app, 'refNext'); await row(page, /^README\.md/).click({ button: 'right' });
+    await expect(page.getByRole('list', { name: 'Files referenced for the next task' })).toContainText('README.md');
+    await row(page, /^README\.md/).click(); await expect(page.locator('.preview-path')).toHaveText('README.md');
     await choose(f.other); await page.locator('.open-project').click();
+    await expect(page.locator('.file-preview')).toHaveCount(0);
+    await expect(page.getByRole('list', { name: 'Files referenced for the next task' })).toHaveCount(0);
     await expect(row(page, /^OTHER_SECRET_FILE\.md/)).toBeVisible();
     await expect(page.getByRole('treeitem', { name: /^README\.md/ })).toHaveCount(0);
     await page.locator('.project-link', { hasText: 'explorer project' }).click();

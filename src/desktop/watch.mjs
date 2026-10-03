@@ -4,9 +4,11 @@ import { sep } from 'node:path';
 // Watches the one root the explorer shows, recursively (FSEvents on macOS,
 // ReadDirectoryChangesW on Windows). Changes are batched: the explorer gets the
 // folders whose listings changed, and refreshes Git status once per batch.
-// Git metadata and dependency folders never trigger work.
+// Dependency folders never trigger work; Git metadata only refreshes status.
 
 const QUIET = new Set(['.git', 'node_modules']);
+// Git metadata that changes status without touching the working tree (commit, add, checkout).
+const GIT_STATE = /^\.git\/(?:index|HEAD|refs\/)/;
 const BATCH_MS = 150; const MAX_FOLDERS = 200;
 
 export class RootWatcher {
@@ -14,6 +16,9 @@ export class RootWatcher {
   watch(key, path) {
     if (this.current?.key === key && this.current.path === path) return;
     this.close();
+    // Linux has no native recursive watching (Node would add a watch per folder,
+    // dependencies included); there the explorer refreshes on focus and on request.
+    if (process.platform === 'linux') return;
     const state = { key, path, folders: new Set(), overflow: false, timer: null, watcher: null };
     const flush = () => {
       state.timer = null; if (this.current !== state) return;
@@ -26,7 +31,8 @@ export class RootWatcher {
       state.watcher = watch(path, { recursive: true }, (_event, filename) => {
         // No name (or a platform overflow) means "something changed": rescan.
         if (!filename) { state.overflow = true; schedule(); return; }
-        const parts = String(filename).split(sep).join('/').split('/');
+        const name = String(filename).split(sep).join('/'); const parts = name.split('/');
+        if (GIT_STATE.test(name)) { schedule(); return; } // status only
         if (parts.some(part => QUIET.has(part))) return;
         state.folders.add(parts.slice(0, -1).join('/'));
         schedule();

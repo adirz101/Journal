@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { JournalStore } from '../src/core/store.mjs';
-import { TerminalManager } from '../src/core/terminal.mjs';
+import { IDLE_SETTLE_MS, TerminalManager } from '../src/core/terminal.mjs';
 import { folderDecorations, gitStatus, parseStatusV2, scopeStatus } from '../src/core/git-status.mjs';
 import { fingerprintSync, headDiff, listDirectory, locate, previewFile, treePath } from '../src/core/files.mjs';
 import { formatReference, pathFromCwd, referenceEvent, referencesBlock } from '../src/core/references.mjs';
@@ -41,6 +41,8 @@ test('porcelain v2 records become explorer states, scoped to a folder and summar
   assert.deepEqual(scoped.entries.map(e => e.path).sort(), ['a.ts', 'new file.ts', 'renamed.ts']);
   assert.equal(scoped.entries.find(e => e.path === 'renamed.ts').from, 'old.ts');
   assert.equal(parseStatusV2(out, 2).truncated, true);
+  const nested = scopeStatus(parseStatusV2(['2 R. N... 100644 100644 100644 h h R100 a/b/new.ts', 'x/old.ts', ''].join('\0')), 'a/b/');
+  assert.equal(nested.entries[0].from, '../../x/old.ts');
 });
 
 test('git status reports real working-tree states, including conflicts, without walking ignored folders', async t => {
@@ -121,6 +123,13 @@ test('diffs against HEAD cover tracked, untracked and sensitive files', async t 
   writeFileSync(join(f.repo, 'fresh.txt'), 'one\ntwo\n'); assert.match((await headDiff(f.repo, f.repo, '', 'fresh.txt')).text, /\+one/);
   unlinkSync(join(f.repo, 'gone.txt')); assert.match((await headDiff(f.repo, f.repo, '', 'gone.txt')).text, /-bye/);
   assert.equal((await headDiff(f.repo, f.repo, '', '.env')).hidden, true);
+  // A folder path never diffs its contents (it could include sensitive files).
+  mkdirSync(join(f.repo, 'config')); writeFileSync(join(f.repo, 'config', '.env'), 'SECRET=old\n'); f.git(f.repo, 'add', '-f', 'config/.env'); f.git(f.repo, 'commit', '-qm', 'cfg');
+  writeFileSync(join(f.repo, 'config', '.env'), 'SECRET=new\n');
+  await assert.rejects(headDiff(f.repo, f.repo, '', 'config'), /single files/);
+  await assert.rejects(headDiff(f.repo, f.repo, '', 'nothing-here'), /no longer exists/);
+  // Case differences cannot reach a sensitive file on case-insensitive file systems.
+  assert.equal((await previewFile(f.repo, 'config/.ENV')).kind, 'sensitive');
 });
 
 test('references use each CLI\'s own syntax and refuse control characters', () => {
@@ -174,6 +183,7 @@ test('next-task references are recorded in the receipt as paths and hashes, neve
   const inWorktree = f.store.prepareContext(f.project.id, 'x', { workspaceId: ws.id, references: [{ rootKey: ws.id, path: 'README.md' }] });
   assert.equal(inWorktree.references[0].display, 'README.md');
   assert.equal(f.store.describeReference(f.project.id, null, { rootKey: 'checkout', path: 'README.md' }).kind, 'file');
+  assert.throws(() => f.store.prepareContext(f.project.id, 'x', { references: [{ projectId: 'another-project', rootKey: 'checkout', path: 'README.md' }] }), /another project/);
   assert.equal(f.store.listReceipts(f.project.id).filter(r => r.references?.length).length, 2, 'Describing a reference records nothing');
   // Referenced folders select area-scoped knowledge.
   const claim = f.store.proposeMemory(f.project.id, { statement: 'Billing amounts are integer cents', category: 'convention', scope: 'checkout', area: 'src', source: { kind: 'user', note: 'team rule' } });
@@ -192,13 +202,18 @@ test('references are typed into a running Claude session only when it is known t
   assert.equal(manager.paste(session.id, '@src/a.ts').inserted, false, 'Unknown readiness: not typed');
   manager.ingest(session.id, { event: 'SessionStart', nativeId: session.nativeId });
   entry.proc.data('\x1b[?2004h');
+  assert.match(manager.paste(session.id, '@src/a.ts').reason, /does not know yet/, 'Just turned idle: a prompt could still be on its way');
+  await new Promise(r => setTimeout(r, IDLE_SETTLE_MS + 50));
   assert.deepEqual(manager.paste(session.id, '@src/a.ts#L2-3', { kind: 'lines', path: 'src/a.ts', startLine: 2, endLine: 3 }), { inserted: true });
   assert.equal(writes.at(-1), '\x1b[200~@src/a.ts#L2-3 \x1b[201~', 'Bracketed paste, never Enter');
+  manager.ingest(session.id, { event: 'UserPromptSubmit', nativeId: session.nativeId });
+  assert.match(manager.paste(session.id, '@src/a.ts').reason, /working/, 'Never while the agent works: a permission prompt can open before its hook is seen');
   manager.ingest(session.id, { event: 'PermissionRequest', nativeId: session.nativeId, tool: 'Bash' });
   const refused = manager.paste(session.id, '@src/a.ts');
   assert.equal(refused.inserted, false); assert.match(refused.reason, /permission/);
   assert.throws(() => manager.paste(session.id, 'a\rb'), /cannot be typed/);
   manager.ingest(session.id, { event: 'Stop', nativeId: session.nativeId }); entry.proc.data('\x1b[?2004l');
+  await new Promise(r => setTimeout(r, IDLE_SETTLE_MS + 50));
   manager.paste(session.id, '@README.md'); assert.equal(writes.at(-1), '@README.md ');
   await new Promise(r => setTimeout(r, 20));
   assert.ok(f.store.listEvents(session.id).some(e => e.kind === 'reference' && e.body.delivery === 'inserted' && e.body.path === 'src/a.ts'));

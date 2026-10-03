@@ -9,6 +9,7 @@ import { generateTitle } from './sessions.mjs';
 import { referenceEvent } from './references.mjs';
 
 export const MAX_SESSIONS = 4;
+export const IDLE_SETTLE_MS = 750;
 export const LIVE_STATES = ['starting', 'running', 'waiting', 'stopping'];
 const isLive = status => LIVE_STATES.includes(status);
 const TEST_COMMAND = /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|node\s+--test|npx\s+(?:jest|vitest|playwright\s+test|mocha)|pytest|jest|vitest|go\s+test|cargo\s+test|playwright\s+test|mocha|rspec|dotnet\s+test|gradle\w*\s+test|mvn\s+test)\b/;
@@ -191,17 +192,20 @@ export class TerminalManager extends EventEmitter {
     if (typeof data !== 'string' || Buffer.byteLength(data) > 64 * 1024) throw new Error('Terminal input is too large');
     this.owned(id).proc.write(data);
   }
-  // Types a file reference into the agent's input without submitting it. Only
-  // when Journal knows the agent is at its prompt or working (Claude hooks), never
-  // during a permission request, so pasted text cannot answer a prompt. Otherwise
-  // the caller copies the reference for the user to paste.
+  // Types a file reference into the agent's input without submitting it, only
+  // when Claude's hooks report it idle at its prompt (never while working or
+  // during a permission request), so pasted text cannot answer a prompt.
+  // Otherwise the caller copies the reference for the user to paste.
   paste(id, text, reference = {}) {
     const entry = this.owned(id); const { session } = entry;
     if (typeof text !== 'string' || !text || text.length > 2048 || /[\x00-\x1f\x7f]/.test(text)) throw new Error('This reference cannot be typed into the terminal');
     const reason = session.provider !== 'claude' ? 'Journal cannot see when Codex is ready for input'
       : session.activity === 'permission' || session.status === 'waiting' ? 'The agent is waiting for a permission answer'
       : session.status !== 'running' || entry.stopping ? 'The agent is not ready for input'
-      : !['idle', 'working'].includes(session.activity) ? 'Journal does not know yet whether the agent is ready for input' : null;
+      : session.activity === 'working' ? 'The agent is working and could ask for permission at any moment'
+      // A permission prompt can appear just before its hook is observed, so
+      // only a turn that has been idle for a moment counts as ready.
+      : session.activity !== 'idle' || Date.now() - (entry.activitySince ?? 0) < IDLE_SETTLE_MS ? 'Journal does not know yet whether the agent is ready for input' : null;
     if (reason) return { inserted: false, reason };
     entry.proc.write(entry.bracketedPaste ? `\x1b[200~${text} \x1b[201~` : `${text} `);
     this.record(id, 'reference', referenceEvent(reference, 'inserted'));
@@ -279,7 +283,7 @@ export class TerminalManager extends EventEmitter {
     }
     session.nativeIdConfirmed = !entry.identityAmbiguous;
     if (!entry.stopping && status) session.status = status;
-    if (activity !== undefined) session.activity = activity;
+    if (activity !== undefined) { if (activity !== session.activity) entry.activitySince = Date.now(); session.activity = activity; }
     this.persist(session, true); this.emitStatus(session);
   }
   // Claude hook observations: lifecycle, Bash commands with exit status when

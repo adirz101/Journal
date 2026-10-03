@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, type Bootstrap, type FileReference, type Receipt, type Session, type TimelineEvent } from './types';
 
 // Files the user referenced, with whether each still matches what was referenced.
@@ -22,10 +22,14 @@ function References({ title, projectId, workspaceId, references }: { title: stri
 
 function SessionReferences({ session, live }: { session: Session; live: TimelineEvent[] }) {
   const [stored, setStored] = useState<TimelineEvent[]>([]);
-  useEffect(() => { let cancelled = false; void api<TimelineEvent[]>('sessionEvents', { id: session.id }).then(events => { if (!cancelled) setStored(events.filter(e => e.kind === 'reference')); }).catch(() => {}); return () => { cancelled = true; }; }, [session.id, live.length]);
-  const seen = new Set(stored.map(e => e.at));
-  const events = [...stored, ...live.filter(e => e.sessionId === session.id && e.kind === 'reference' && !seen.has(e.at))];
-  const references = events.map(e => { const b = e.body as Record<string, any>; return { kind: b.kind, rootKey: b.rootKey, rootLabel: b.rootLabel, path: b.path, display: b.path, startLine: b.startLine, endLine: b.endLine, contentHash: b.contentHash, rangeHash: b.rangeHash, note: `${b.delivery === 'inserted' ? 'typed' : 'copied'} ${new Date(e.at).toLocaleTimeString()}` } as FileReference & { note: string }; });
+  const ownNow = live.filter(e => e.sessionId === session.id && e.kind === 'reference'); const ownKey = ownNow.map(e => e.at).join('|');
+  const own = useMemo(() => ownNow, [ownKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { let cancelled = false; void api<TimelineEvent[]>('sessionEvents', { id: session.id }).then(events => { if (!cancelled) setStored(events.filter(e => e.kind === 'reference')); }).catch(() => {}); return () => { cancelled = true; }; }, [session.id, own.length]);
+  // Stable until a reference is added, so files are not re-hashed on every render.
+  const references = useMemo(() => {
+    const seen = new Set(stored.map(e => e.at));
+    return [...stored, ...own.filter(e => !seen.has(e.at))].map(e => { const b = e.body as Record<string, any>; return { kind: b.kind, rootKey: b.rootKey, rootLabel: b.rootLabel, path: b.path, display: b.path, startLine: b.startLine, endLine: b.endLine, contentHash: b.contentHash, rangeHash: b.rangeHash, note: `${b.delivery === 'inserted' ? 'typed' : 'copied'} ${new Date(e.at).toLocaleTimeString()}` } as FileReference & { note: string }; });
+  }, [stored, own]);
   return <References title="REFERENCED DURING THIS SESSION" projectId={session.projectId} workspaceId={session.workspaceId ?? null} references={references} />;
 }
 

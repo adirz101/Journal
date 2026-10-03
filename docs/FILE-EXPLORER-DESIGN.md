@@ -27,7 +27,7 @@ Non-goals: editing; creating, deleting or renaming files; editor tabs; language 
 - **Preview:** read-only text with line numbers, selection (click or Shift-click line numbers), search (⌘F / Ctrl+F) and a File/Diff toggle for changed files (diff against HEAD). Limits: no read for sensitive files or files over 5 MB; plain text over 1 MB; binary detection; invalid UTF-8 shown with replacement characters and a notice; BOM removed; CRLF reported.
 - **References:** paths, ranges and hashes, never contents; the agent reads files itself.
   - *Add to next task*: a chip under the task; the receipt records `references` (root, path, range, content and range hashes, HEAD) and the packet lists them. Referenced folders and files also make area-scoped knowledge for that area eligible.
-  - *Reference in session*: Claude Code gets `@path`, `@path#L10-20` or `@folder/` typed as a bracketed paste without Enter, only when its hooks report it idle or working. During a permission request, before readiness is known, or for Codex (`path (lines 10-20)`), the reference is copied for the user to paste. A `reference` timeline event records it.
+  - *Reference in session*: Claude Code gets `@path`, `@path#L10-20` or `@folder/` typed as a bracketed paste without Enter, only when its hooks report it idle at its prompt (for at least 750 ms). While it works (a permission prompt can open before its hook is observed), during a permission request, before readiness is known, or for Codex (`path (lines 10-20)`), the reference is copied for the user to paste. A `reference` timeline event records it.
   - The Context Inspector lists references for the task and during the session, and whether each file or range changed since.
   - A primary-repository reference must come from the session's own checkout or worktree, so the agent never edits the wrong copy.
   - *Save as knowledge…* prefills the knowledge form with the selected lines (checkout and folder roots, up to 30 lines).
@@ -41,7 +41,7 @@ Roots resolve from records (checkout, a ready worktree of the same project, or a
 
 - **No separate files worker:** listing, status and preview use asynchronous `fs` and `execFile` in the main process, which never blocks it; the store worker only resolves roots and fingerprints references.
 - **Small windows:** instead of an overlay drawer, the existing width constraints keep the terminal at its minimum width and the panel can be collapsed to a rail.
-- **Watching** covers the shown primary root; additional folders refresh on focus, on Refresh and on reopening.
+- **Watching** covers the shown primary root on macOS and Windows; additional folders (and Linux) refresh on focus, after agent turns and commands, on Refresh and on reopening.
 - **Editor:** detected on PATH or named by `JOURNAL_EDITOR`; a settings screen is deferred.
 
 ## Deferred

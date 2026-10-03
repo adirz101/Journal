@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { posix } from 'node:path';
+import { isSensitivePath } from './evidence.mjs';
 
 // Working-tree status for the file explorer: one `git status --porcelain=v2 -z`
 // call per refresh. Untracked and ignored directories come back collapsed
@@ -55,7 +57,7 @@ export function scopeStatus(status, prefix) {
   for (const entry of status.entries) {
     if (entry.path === prefix.slice(0, -1) && entry.directory) { entries.push({ ...entry, path: '', directory: true }); continue; }
     if (!entry.path.startsWith(prefix)) continue;
-    entries.push({ ...entry, path: entry.path.slice(prefix.length), ...(entry.from ? { from: entry.from.startsWith(prefix) ? entry.from.slice(prefix.length) : `../${entry.from}` } : {}) });
+    entries.push({ ...entry, path: entry.path.slice(prefix.length), ...(entry.from ? { from: entry.from.startsWith(prefix) ? entry.from.slice(prefix.length) : posix.relative(prefix.slice(0, -1), entry.from) } : {}) });
   }
   return { ...status, entries };
 }
@@ -86,6 +88,7 @@ export function gitStatus(gitRoot, { prefix = '', signal, timeout = 8000 } = {})
       env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1' } }, (error, stdout) => {
       if (error) { reject(error.name === 'AbortError' ? error : new Error('Git status is unavailable for this folder')); return; }
       const status = scopeStatus(parseStatusV2(stdout), prefix);
+      for (const entry of status.entries) entry.sensitive = isSensitivePath(entry.path);
       resolve({ ...status, folders: folderDecorations(status.entries) });
     });
   });

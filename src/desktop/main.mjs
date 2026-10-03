@@ -92,7 +92,15 @@ runtime.on('event', event => send(event?.type === 'status' && event.session ? { 
 // and an external editor found on PATH (or named by JOURNAL_EDITOR).
 const watcher = new RootWatcher(change => send({ type: 'files', ...change }));
 const statusCalls = new Map();
-const fileRoot = (projectId, rootKey) => store.fileRoot(text(projectId, 'project ID', 100), text(rootKey, 'root', 100));
+// Resolved roots are cached briefly so browsing does not run Git in the store
+// worker for every request; any workspace or folder change clears the cache.
+const rootCache = new Map();
+const fileRoot = async (projectId, rootKey) => {
+  const key = `${text(projectId, 'project ID', 100)}\u0000${text(rootKey, 'root', 100)}`; const cached = rootCache.get(key);
+  if (cached && Date.now() - cached.at < 5000) return cached.root;
+  const root = await store.fileRoot(projectId, rootKey); rootCache.set(key, { root, at: Date.now() }); return root;
+};
+const ROOT_CHANGES = new Set(['addProjectFolder', 'removeProjectFolder', 'removeProject', 'openProject', 'createWorkspace', 'importWorkspace', 'removeWorkspace', 'forgetWorkspace']);
 const EDITORS = { code: line => file => ['--goto', `${file}:${line}`], cursor: line => file => ['--goto', `${file}:${line}`], zed: line => file => [`${file}:${line}`], subl: line => file => [`${file}:${line}`] };
 let editor;
 const findEditor = () => {
@@ -347,7 +355,8 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
   try {
     if (!validSender(event)) throw new Error('Untrusted desktop caller');
     if (!Object.hasOwn(actions, action) || !input || typeof input !== 'object' || Array.isArray(input) || JSON.stringify(input).length > 100000) throw new Error('Invalid desktop request');
-    return { ok: true, value: await actions[action](input) };
+    if (ROOT_CHANGES.has(action)) rootCache.clear();
+    try { return { ok: true, value: await actions[action](input) }; } finally { if (ROOT_CHANGES.has(action)) rootCache.clear(); }
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Operation failed' }; }
 });
 try { await runtime.connect(); runtimeState = 'connected'; }

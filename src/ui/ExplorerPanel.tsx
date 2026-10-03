@@ -134,7 +134,13 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
   useEffect(() => { void refreshStatus(); }, [refreshStatus, project.head]);
 
   // Watch the primary root; changed folders reload, Git status refreshes once per burst.
-  const statusTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const statusTimer = useRef<ReturnType<typeof setTimeout>>(undefined); const statusPendingSince = useRef(0);
+  // Trailing debounce with a maximum wait, so a continuous build still refreshes every 3 s.
+  const scheduleStatus = useCallback(() => {
+    const now = Date.now(); if (!statusPendingSince.current) statusPendingSince.current = now;
+    clearTimeout(statusTimer.current);
+    statusTimer.current = setTimeout(() => { statusPendingSince.current = 0; void refreshStatus(); }, now - statusPendingSince.current > 3000 ? 0 : 750);
+  }, [refreshStatus]);
   useEffect(() => {
     if (!primary) return;
     const key = `${project.id}\u0000${primary.key}`;
@@ -145,12 +151,14 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
       if (event.overflow) { for (const id of [...children.current.keys()]) if (items.current.get(id)?.rootKey === primary.key) reload(id); }
       else for (const folder of event.folders) reload(idOf(primary.key, folder));
       tree.rebuildTree(); setVersion(v => v + 1);
-      clearTimeout(statusTimer.current); statusTimer.current = setTimeout(() => void refreshStatus(), 750);
+      scheduleStatus();
     });
+    // Agents commit, stage and edit in worktrees too: their turns and commands refresh status.
+    const offTimeline = window.journal?.onEvent(event => { if (event.type === 'timeline' && ['turn-end', 'command-end', 'file', 'stop', 'exit'].includes(event.event.kind)) scheduleStatus(); });
     const focus = () => void refreshStatus();
     window.addEventListener('focus', focus);
-    return () => { off?.(); window.removeEventListener('focus', focus); clearTimeout(statusTimer.current); void api('unwatchRoot', {}).catch(() => {}); };
-  }, [primary, project.id, load, refreshStatus, tree]);
+    return () => { off?.(); offTimeline?.(); window.removeEventListener('focus', focus); clearTimeout(statusTimer.current); void api('unwatchRoot', {}).catch(() => {}); };
+  }, [primary, project.id, load, refreshStatus, scheduleStatus, tree]);
 
   useEffect(() => { onPreviewing(!!preview); }, [preview, onPreviewing]);
   useEffect(() => () => onPreviewing(false), [onPreviewing]);
@@ -159,23 +167,26 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
   const stateOf = (item: Item) => item.type === 'root' ? null : lookups[item.rootKey]?.(item.path) ?? null;
   const folderKind = (item: Item) => item.type === 'root' || item.type === 'directory' ? statuses[item.rootKey]?.folders[item.path] ?? null : null;
 
+  // Only the latest request may fill the preview (a slow read never lands in a newer one).
+  const previewToken = useRef(0);
   async function openPreview(rootKey: string, path: string, mode: 'file' | 'diff' = 'file', line?: number) {
+    const token = ++previewToken.current; const current = () => token === previewToken.current;
     setRange(null); setNote('');
     setPreview({ rootKey, path, mode, line });
     try {
       if (mode === 'diff') {
         const diff = await api<{ text: string; truncated: boolean; hidden: boolean }>('fileDiff', { projectId: project.id, rootKey, path });
-        setPreview(current => current?.rootKey === rootKey && current.path === path ? { ...current, mode, diff } : current);
+        if (current()) setPreview(value => value ? { ...value, mode, diff } : value);
       } else {
         const data = await api<FilePreviewData>('previewFile', { projectId: project.id, rootKey, path });
-        setPreview(current => current?.rootKey === rootKey && current.path === path ? { ...current, mode, data } : current);
+        if (current()) setPreview(value => value ? { ...value, mode, data } : value);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unavailable';
-      setPreview(current => current?.rootKey === rootKey && current.path === path ? { ...current, error: /ENOENT|no such file/i.test(message) ? 'This file no longer exists.' : message } : current);
+      if (current()) setPreview(value => value ? { ...value, error: /ENOENT|no such file/i.test(message) ? 'This file no longer exists.' : message } : value);
     }
   }
-  const closePreview = () => { setPreview(null); requestAnimationFrame(() => tree.updateDomFocus()); };
+  const closePreview = () => { previewToken.current++; setPreview(null); requestAnimationFrame(() => tree.updateDomFocus()); };
 
   const describeTarget = (rootKey: string, path: string, kind: 'file' | 'lines' | 'folder', lines?: LineRange | null): FileReference =>
     ({ kind, rootKey, rootLabel: rootFor(rootKey)?.label, path, startLine: lines?.startLine ?? null, endLine: lines?.endLine ?? null });
@@ -244,7 +255,7 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
       <div className="explorer-tools" role="group" aria-label="Show">
         <button aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>All</button>
         <button aria-pressed={filter === 'changed'} onClick={() => setFilter('changed')}>Changed{changedRows.length ? ` ${changedRows.length}` : ''}</button>
-        <button aria-label="Refresh files" title="Refresh" onClick={() => { generation.current++; children.current.clear(); tree.rebuildTree(); setVersion(v => v + 1); void refreshStatus(); for (const id of expanded) void load(id); }}>↻</button>
+        <button aria-label="Refresh files" title="Refresh" onClick={() => { generation.current++; children.current.clear(); loading.current.clear(); tree.rebuildTree(); setVersion(v => v + 1); void refreshStatus(); for (const id of expanded) void load(id); }}>↻</button>
       </div>
     </div>
     <p className="explorer-follow muted">{override ? <>Browsing {primary?.label}. <button className="text-button" onClick={() => setOverride(null)}>Follow {ownSession ? 'session' : 'checkout'}</button></> : ownSession ? <>Following {ownSession.displayName || ownSession.title}{ownSession.workspaceId?.startsWith('root:') ? ' (runs in a folder below)' : ''}</> : 'Showing the project checkout'}</p>
@@ -287,8 +298,8 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
       {!changedRows.length && <li className="muted">{visible.some(root => root.git) ? 'No changes against HEAD.' : 'No Git repository in these roots.'}</li>}
       {changedRows.slice(0, 500).map(({ root, entry }) => {
         const name = entry.path.split('/').pop() || root.label; const dir = entry.path.split('/').slice(0, -1).join('/');
-        const item: Item = { id: idOf(root.key, entry.path), rootKey: root.key, path: entry.path, name, type: entry.directory ? 'directory' : 'file', sensitive: false };
-        return <li key={item.id}><button className="changed-row" onClick={() => void openPreview(root.key, entry.path, entry.kind === 'deleted' || entry.directory ? 'diff' : 'file')}
+        const item: Item = { id: idOf(root.key, entry.path), rootKey: root.key, path: entry.path, name, type: entry.directory ? 'directory' : 'file', sensitive: !!entry.sensitive };
+        return <li key={item.id}><button className="changed-row" disabled={entry.directory && entry.kind !== 'untracked'} onClick={() => { if (entry.directory) { setFilter('all'); return; } void openPreview(root.key, entry.path, entry.kind === 'deleted' ? 'diff' : 'file'); }}
           onContextMenu={event => { event.preventDefault(); void itemMenu(item, menuPosition(event)); }} title={`${DESCRIBE[entry.kind]}${entry.from ? ` from ${entry.from}` : ''}${entry.staged ? ' · staged' : ''}${entry.unstaged ? ' · unstaged' : ''}`}>
           <span className={`tree-name git-${entry.kind}`}>{name}{entry.directory ? '/' : ''}</span><span className="tree-dir">{visible.length > 1 ? `${root.label}${dir ? ' / ' : ''}` : ''}{dir}</span>
           <span className={`git-letter git-${entry.kind}`} aria-label={DESCRIBE[entry.kind]}>{LETTER[entry.kind]}</span></button></li>;

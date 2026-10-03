@@ -31,16 +31,23 @@ const parts = path => path ? path.split('/') : [];
 
 // Every component of path below root must exist and none may be a link
 // (junctions report as links on Windows). Returns the absolute path.
-async function resolveInside(root, path) {
+// The canonical name is checked for sensitivity too, so case differences or
+// Windows short names (ENV~1) cannot reach a sensitive file.
+const sensitiveCanonical = (realRoot, realPath) => isSensitivePath(relative(realRoot, realPath).split(sep).join('/'));
+async function resolveInside(root, path, { sensitive = false } = {}) {
   let current = root;
   for (const part of parts(path)) { current = join(current, part); if ((await lstat(current)).isSymbolicLink()) throw new Error('Links are not followed'); }
-  if (!inside(await realpath(root), await realpath(current))) throw new Error('Path escapes its folder');
+  const realRoot = await realpath(root); const real = await realpath(current);
+  if (!inside(realRoot, real)) throw new Error('Path escapes its folder');
+  if (!sensitive && sensitiveCanonical(realRoot, real)) throw new Error('Sensitive files cannot be read');
   return current;
 }
 function resolveInsideSync(root, path) {
   let current = root;
   for (const part of parts(path)) { current = join(current, part); if (lstatSync(current).isSymbolicLink()) throw new Error('Links are not followed'); }
-  if (!inside(realpathSync(root), realpathSync(current))) throw new Error('Path escapes its folder');
+  const realRoot = realpathSync(root); const real = realpathSync(current);
+  if (!inside(realRoot, real)) throw new Error('Path escapes its folder');
+  if (sensitiveCanonical(realRoot, real)) throw new Error('Sensitive files cannot be referenced');
   return current;
 }
 
@@ -48,7 +55,7 @@ function resolveInsideSync(root, path) {
 // links; the entry itself may be a link (revealing shows the link, not its target).
 export async function locate(root, path) {
   path = treePath(path, true);
-  const segments = parts(path); const folder = await resolveInside(root, segments.slice(0, -1).join('/'));
+  const segments = parts(path); const folder = await resolveInside(root, segments.slice(0, -1).join('/'), { sensitive: true });
   const full = segments.length ? join(folder, segments.at(-1)) : folder;
   return { full, stat: await lstat(full) };
 }
@@ -56,7 +63,7 @@ export async function locate(root, path) {
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 export async function listDirectory(root, path = '', limit = MAX_DIRECTORY_ENTRIES) {
   path = treePath(path, true);
-  const full = await resolveInside(root, path);
+  const full = await resolveInside(root, path, { sensitive: true });
   const dirents = await readdir(full, { withFileTypes: true });
   const entries = [];
   for (const dirent of dirents) {
@@ -129,7 +136,8 @@ export function fingerprintSync(root, path, startLine = null, endLine = null) {
   const fd = openSync(full, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   let bytes;
   try {
-    const opened = fstatSync(fd); if (opened.ino !== stat.ino || !opened.isFile()) throw new Error('The file changed while it was opened');
+    const opened = fstatSync(fd); if (opened.ino !== stat.ino || opened.dev !== stat.dev || !opened.isFile()) throw new Error('The file changed while it was opened');
+    if (opened.size > MAX_PREVIEW_BYTES) throw new Error('The file grew past 5 MiB while it was opened');
     bytes = Buffer.alloc(opened.size); let length = 0;
     while (length < bytes.length) { const count = readSync(fd, bytes, length, bytes.length - length, length); if (!count) break; length += count; }
     bytes = bytes.subarray(0, length);
@@ -152,10 +160,17 @@ const git = (gitRoot, args, maxBuffer = MAX_DIFF_BYTES * 4) => new Promise((reso
 export async function headDiff(root, gitRoot, prefix, path) {
   path = treePath(path);
   if (isSensitivePath(path)) return { path, hidden: true, text: '' };
-  // The folder must be reachable without links (a deleted file's folder may be gone too).
-  await resolveInside(root, path.split('/').slice(0, -1).join('/')).catch(error => { if (error.code !== 'ENOENT') throw error; });
+  // One file only: a folder path would diff everything below it, sensitive files included.
+  const full = await resolveInside(root, path).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  if (full) { if (!(await lstat(full)).isFile()) throw new Error('Diffs are shown for single files only'); }
+  else {
+    // A deleted file: Git must know exactly this one path.
+    await resolveInside(root, path.split('/').slice(0, -1).join('/')).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    const known = await git(gitRoot, ['ls-files', '-z', '--', `${prefix}${path}`]).catch(() => '');
+    if (known.split('\0').filter(Boolean).join('\0') !== `${prefix}${path}`) throw new Error('This file no longer exists');
+  }
   const head = await git(gitRoot, ['rev-parse', '--verify', '--quiet', 'HEAD']).then(out => out.trim(), () => '');
-  let text = await git(gitRoot, ['diff', '--no-color', '--no-ext-diff', '-M', head || EMPTY_TREE, '--', `${prefix}${path}`]).catch(() => '');
+  let text = await git(gitRoot, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '-M', head || EMPTY_TREE, '--', `${prefix}${path}`]).catch(() => '');
   if (!text) {
     const tracked = await git(gitRoot, ['ls-files', '--', `${prefix}${path}`]).then(out => !!out.trim(), () => false);
     if (!tracked) {
