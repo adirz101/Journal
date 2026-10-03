@@ -87,7 +87,8 @@ export function openableFile(project, session, path) {
   const stat = lstatSync(full);
   // Allowlist of passive document types; everything else is only revealed.
   const passive = /\.(?:md|markdown|txt|text|log|json|jsonc|ya?ml|toml|ini|cfg|conf|csv|tsv|diff|patch|png|jpe?g|gif|webp|bmp|pdf)$/i.test(path);
-  return { path: full, open: stat.isFile() && !(stat.mode & 0o111) && passive };
+  // Sensitive files (for example secrets.json) are only revealed, never opened.
+  return { path: full, open: stat.isFile() && !(stat.mode & 0o111) && passive && !isSensitivePath(path) };
 }
 
 export function fileDiff(project, session, path) {

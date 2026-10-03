@@ -6,6 +6,7 @@ import { buildAgentLaunch, captureCodexId, CODEX_RESUME_MARKER, UUID } from './a
 import { descendants, isAlive, processIdentity, processTable, sameIdentity, signalVerified, survivors } from './process.mjs';
 import { redact, text } from './validation.mjs';
 import { generateTitle } from './sessions.mjs';
+import { referenceEvent } from './references.mjs';
 
 export const MAX_SESSIONS = 4;
 export const LIVE_STATES = ['starting', 'running', 'waiting', 'stopping'];
@@ -66,7 +67,7 @@ export class TerminalManager extends EventEmitter {
     this.pending++;
     try { return await this.launch(request); } finally { this.pending--; }
   }
-  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, disabled = [] }) {
+  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, disabled = [], references = [] }) {
     if (provider !== 'claude' && provider !== 'codex') throw new Error('Unknown agent provider');
     if (typeof research !== 'boolean') throw new Error('Invalid research option');
     task = text(task, 'task', 4000, true);
@@ -86,7 +87,7 @@ export class TerminalManager extends EventEmitter {
     const project = await (this.store.view ? this.store.view(projectId, workspaceId) : this.store.project(projectId));
     // Always reselect and revalidate here; a stale preview never authorizes delivery.
     const oldReceipt = prior ? await this.store.latestNativeReceipt(projectId, provider, prior.nativeId) : null;
-    const receipt = await this.store.prepareContext(projectId, task || oldReceipt?.query || '', { workspaceId, disabled });
+    const receipt = await this.store.prepareContext(projectId, task || oldReceipt?.query || '', { workspaceId, disabled, references: prior ? [] : references });
     const baseline = await this.store.checkoutBaseline?.(projectId, workspaceId) ?? null;
     const now = new Date().toISOString();
     const session = { id: randomUUID(), projectId, provider, nativeId: prior?.nativeId ?? (provider === 'claude' ? randomUUID() : null),
@@ -146,6 +147,9 @@ export class TerminalManager extends EventEmitter {
     const { session } = entry;
     if (!entry.sawOutput) { entry.sawOutput = true; void this.refreshIdentity(entry); }
     entry.buffer.append(data); entry.tail = (entry.tail + data).slice(-8192);
+    // Whether the CLI enabled bracketed paste (DECSET 2004), for inserted references.
+    const on = entry.tail.lastIndexOf('\x1b[?2004h'); const off = entry.tail.lastIndexOf('\x1b[?2004l');
+    if (on >= 0 || off >= 0) entry.bracketedPaste = on > off;
     session.lastActivityAt = new Date().toISOString();
     if (session.provider === 'codex' && !session.nativeIdConfirmed) {
       const captured = captureCodexId(entry.tail);
@@ -186,6 +190,22 @@ export class TerminalManager extends EventEmitter {
   write(id, data) {
     if (typeof data !== 'string' || Buffer.byteLength(data) > 64 * 1024) throw new Error('Terminal input is too large');
     this.owned(id).proc.write(data);
+  }
+  // Types a file reference into the agent's input without submitting it. Only
+  // when Journal knows the agent is at its prompt or working (Claude hooks), never
+  // during a permission request, so pasted text cannot answer a prompt. Otherwise
+  // the caller copies the reference for the user to paste.
+  paste(id, text, reference = {}) {
+    const entry = this.owned(id); const { session } = entry;
+    if (typeof text !== 'string' || !text || text.length > 2048 || /[\x00-\x1f\x7f]/.test(text)) throw new Error('This reference cannot be typed into the terminal');
+    const reason = session.provider !== 'claude' ? 'Journal cannot see when Codex is ready for input'
+      : session.activity === 'permission' || session.status === 'waiting' ? 'The agent is waiting for a permission answer'
+      : session.status !== 'running' || entry.stopping ? 'The agent is not ready for input'
+      : !['idle', 'working'].includes(session.activity) ? 'Journal does not know yet whether the agent is ready for input' : null;
+    if (reason) return { inserted: false, reason };
+    entry.proc.write(entry.bracketedPaste ? `\x1b[200~${text} \x1b[201~` : `${text} `);
+    this.record(id, 'reference', referenceEvent(reference, 'inserted'));
+    return { inserted: true };
   }
   resize(id, cols, rows) {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 2 || cols > 500 || rows > 300) throw new Error('Invalid terminal size');

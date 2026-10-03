@@ -5,7 +5,7 @@ import { git } from './project.mjs';
 import { commitsSince, isAncestor, isCommit } from './status.mjs';
 import { relativePath, refuseCredentials, text } from './validation.mjs';
 
-export const isSensitivePath = path => path.split('/').some(p => p === '.git' || /^\.env(?:\.|$)/i.test(p) || /^(?:auth|credentials|secrets?)(?:\.|$)/i.test(p) || /\.(?:pem|p12|pfx|key)$/i.test(p) || /^(?:id_rsa|id_ed25519|\.npmrc|\.netrc|\.pypirc)$/i.test(p));
+export const isSensitivePath = path => path.split('/').some(p => p === '.git' || /^\.env(?:\.|$)/i.test(p) || /^(?:auth|credentials|secrets?)(?:\.|$)/i.test(p) || /\.(?:pem|p12|pfx|key|kdbx|keystore|jks)$/i.test(p) || /^(?:id_rsa|id_ed25519|id_ecdsa|id_dsa|\.npmrc|\.netrc|\.pypirc|\.pgpass|\.htpasswd|\.git-credentials|\.dockercfg)$/i.test(p));
 
 // The folder a source belongs to: the primary checkout (rootId null; worktree
 // views replace project.root with the worktree) or one of the project's
