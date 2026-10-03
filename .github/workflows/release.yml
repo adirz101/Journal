@@ -47,7 +47,17 @@ jobs:
       - run: npm test
       - run: npm run check
       - run: npm run build
+      - name: Display (diagnostics)
+        run: system_profiler SPDisplaysDataType | grep -iE 'resolution|display' || true
       - run: npm run test:desktop
+      - name: Upload Playwright results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-test-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 3
 
   macos:
     name: package macOS (arm64)
