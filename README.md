@@ -1,6 +1,6 @@
 # Journal
 
-Journal is a local-first workspace for Claude Code and Codex that carries reviewed project knowledge across agent sessions.
+Journal is a local-first workspace for Claude Code, Codex and Cursor that carries reviewed project knowledge across agent sessions.
 
 Switching agents should not mean rediscovering architecture decisions, constraints, failed approaches, and current project context.
 
@@ -20,14 +20,15 @@ Switching agents should not mean rediscovering architecture decisions, constrain
 
 ## What works today
 
-- **Local Git projects and native terminals:** open an existing checkout and run Claude Code or Codex with its existing login, settings, and permission prompts.
+- **Local Git projects and native terminals:** open an existing checkout and run Claude Code, Codex or the Cursor Agent CLI with its existing login, settings, and permission prompts.
+- **Cursor:** shown as a provider even before its CLI is installed. Install and sign-in run Cursor's own official commands in a visible terminal, only after you confirm; Journal never handles Cursor credentials. Each Cursor chat is created first so Journal can resume that exact chat; Research starts Cursor in Ask mode and Plan in Plan mode. See [providers](docs/PROVIDERS.md); authenticated validation is still manual.
 - **Up to four sessions at once:** a separate local runtime owns the terminals, so reloading the UI, an app crash, or choosing *Keep running in background* on quit leaves agents running; reopening Journal reconnects. A runtime crash is recovered explicitly, without resending prompts.
 - **Session views:** per-session state and attention markers, a changes view against the session's starting commit, and an activity timeline with observed commands and exit codes (Claude Code hooks; unknown for Codex).
 - **Status-update helper:** propose a branch update or repo overview drafted from Git history; nothing is saved until you review and approve it.
 - **Projects:** rename how a project appears in Journal, pin it, add related folders (another repository, docs, a plugin) as context, or remove it from Journal. Your files are never deleted or renamed.
 - **Sessions and menus:** rename, pin, archive or remove sessions, and right-click projects or sessions for common actions (reveal, copy path, copy native session ID, resume, stop). Removing never touches files and never silently stops a running agent.
 - **Files:** a read-only explorer in the right panel follows the session's workspace, shows Git state, previews files, and hands files or selected lines to the agent as references (paths and line ranges, never pasted contents). It does not edit files.
-- **Workspaces:** run a session in the current checkout, a Journal-managed Git worktree created from a base you choose, or an existing worktree. Journal never force-removes, stashes or copies your uncommitted work. Research mode starts each CLI in its own read-only mode (Claude plan mode, Codex read-only sandbox); it can be changed inside the session, so it is an intent rather than enforcement.
+- **Workspaces:** run a session in the current checkout, a Journal-managed Git worktree created from a base you choose, or an existing worktree. Journal never force-removes, stashes or copies your uncommitted work. Research mode starts each CLI in its own read-only mode (Claude plan mode, Codex read-only sandbox, Cursor Ask mode); it can be changed inside the session, so it is an intent rather than enforcement.
 - **Knowledge controls:** pin rules, leave a claim out for one task, mark it incorrect, supersede it, or propose a branch rule for all branches. A deterministic inbox suggests rules you stated in tasks and observed passing test commands, for your review.
 - **Data:** integrity-checked backups and restore, knowledge export/import (imports wait for review), session purge, and automatic trimming of old timelines.
 - **Reviewed project knowledge:** manually add and approve repo overviews, branch updates, decisions, constraints, conventions, lessons, and issues, backed by a source note or tracked-file excerpt.
@@ -100,7 +101,7 @@ npm run smoke:agents
 npm run pilot:memory
 ```
 
-The [current implementation status](docs/IMPLEMENTATION-STATUS.md) records 155 passing core tests, a passing typecheck and production build, and fifteen passing desktop scenarios (run headless). Desktop checks use real Electron, the runtime process and node-pty with controlled fixture CLIs: they cover context delivery, resume, four concurrent sessions, reload, app and runtime crashes, process cleanup, worktrees, research mode, and the changes view. These fixtures do not establish authenticated provider behavior.
+The [current implementation status](docs/IMPLEMENTATION-STATUS.md) records 164 passing core tests, a passing typecheck and production build, and sixteen passing desktop scenarios (run headless). Desktop checks use real Electron, the runtime process and node-pty with controlled fixture CLIs: they cover context delivery, resume, four concurrent sessions, reload, app and runtime crashes, process cleanup, worktrees, research mode, and the changes view. These fixtures do not establish authenticated provider behavior.
 
 `smoke:agents` checks installed native CLI startup without submitting a task or accepting trust prompts. `pilot:memory` evaluates local retrieval against 28 frozen synthetic claims and 20 labelled tasks without provider requests; it measures scope/evidence exclusion and lexical relevance, not model quality or time savings.
 

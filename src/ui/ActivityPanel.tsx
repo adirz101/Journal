@@ -67,7 +67,7 @@ export function ActivityPanel({ session, live }: { session: Session; live: Timel
   const observable = session.provider === 'claude';
   return <div className="panel-content activity-content">
     <div className="section-heading"><div><span className="eyebrow">OBSERVED ACTIVITY</span><h2>Commands and timeline</h2></div></div>
-    <p className="muted panel-intro">{observable ? 'Commands and exit codes come from Claude Code hooks. Running commands without a reported exit are shown as running or unknown.' : 'Codex does not expose command events to Journal in this mode, so commands and test results are unknown. The timeline shows what Journal itself observed.'}</p>
+    <p className="muted panel-intro">{observable ? 'Commands and exit codes come from Claude Code hooks. Running commands without a reported exit are shown as running or unknown.' : `${session.provider === 'cursor' ? 'Cursor' : 'Codex'} does not expose command events to Journal in this mode, so commands and test results are unknown. The timeline shows what Journal itself observed.`}</p>
     {error && <p className="form-error" role="alert">{error}</p>}
     {observable && <section aria-label="Tests" className="test-summary">
       <span className="eyebrow">TEST COMMANDS</span>

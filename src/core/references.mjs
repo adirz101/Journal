@@ -18,12 +18,13 @@ export function pathFromCwd(cwd, absolute) {
 
 const lines = (startLine, endLine) => startLine ? (endLine && endLine !== startLine ? `${startLine}-${endLine}` : `${startLine}`) : '';
 
-// Claude Code: @path, @path#L10-20, @folder/. Codex: the plain path (its
-// composer inserts paths the same way), with the line range in words.
+// Claude Code: @path, @path#L10-20, @folder/. Codex and Cursor: the plain path
+// (Codex's composer inserts paths this way; Cursor's @ opens an interactive
+// picker with no documented line syntax), with the line range in words.
 // Paths with spaces or unusual characters are quoted and never use @.
 export function formatReference(provider, { path, kind, startLine = null, endLine = null }) {
   if (typeof path !== 'string' || !path || path.length > 1024 || /[\x00-\x1f\x7f]/.test(path)) throw new Error('This path cannot be referenced');
-  if (provider !== 'claude' && provider !== 'codex') throw new Error('Unknown agent provider');
+  if (!['claude', 'codex', 'cursor'].includes(provider)) throw new Error('Unknown agent provider');
   const target = kind === 'folder' && !path.endsWith('/') ? `${path}/` : path;
   const range = lines(startLine, endLine);
   if (provider === 'claude' && SAFE_PATH.test(target)) return `@${target}${range ? `#L${range}` : ''}`;

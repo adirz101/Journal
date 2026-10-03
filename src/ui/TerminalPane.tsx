@@ -52,6 +52,8 @@ export function TerminalPane({ sessionId, live, appearance, onError }: { session
     }).catch(failed);
     attach();
     const input = terminal.onData(data => { if (acceptInput && liveRef.current) void api('write', { id: sessionId, data }).catch(failed); });
+    const focus = (event: Event) => { if ((event as CustomEvent).detail === sessionId) terminal.focus(); };
+    window.addEventListener('journal:focus-terminal', focus);
     let resizeFrame = 0;
     const resize = () => {
       cancelAnimationFrame(resizeFrame);
@@ -61,7 +63,8 @@ export function TerminalPane({ sessionId, live, appearance, onError }: { session
       });
     };
     const observer = new ResizeObserver(resize); observer.observe(host.current); resize();
-    return () => { disposed = true; void api('detach', { id: sessionId }).catch(() => {}); cancelAnimationFrame(resizeFrame); observer.disconnect(); removeListener?.(); input.dispose(); terminalRef.current = null; terminal.dispose(); };
+    const unfocus = () => window.removeEventListener('journal:focus-terminal', focus);
+    return () => { unfocus(); disposed = true; void api('detach', { id: sessionId }).catch(() => {}); cancelAnimationFrame(resizeFrame); observer.disconnect(); removeListener?.(); input.dispose(); terminalRef.current = null; terminal.dispose(); };
   }, [sessionId]);
   useEffect(() => { if (terminalRef.current) terminalRef.current.options.theme = terminalThemes[appearance]; }, [appearance]);
   return <div ref={host} className="terminal-surface" aria-label="Agent terminal" />;

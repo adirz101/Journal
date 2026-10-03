@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { isLive, type Project, type Session } from './types';
+import { isLive, PROVIDER_NAMES, type Project, type Session } from './types';
 import { menuPosition } from './menu';
 
 export const sessionName = (session: Session) => session.displayName || session.title;
@@ -8,7 +8,7 @@ export const activeOrder = (sessions: Session[]) => sessions.filter(s => !s.remo
 // Pinned first (in pin order), then newest first.
 export const byPin = (a: Session, b: Session) => (Number(!!b.pinned) - Number(!!a.pinned)) || ((a.pinSeq ?? 0) - (b.pinSeq ?? 0)) || b.createdAt.localeCompare(a.createdAt);
 
-const providerName = (session: Session) => session.provider === 'claude' ? 'Claude Code' : 'Codex';
+const providerName = (session: Session) => PROVIDER_NAMES[session.provider];
 
 export function relativeTime(iso: string | null | undefined, now: number) {
   if (!iso) return '';

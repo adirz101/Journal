@@ -88,6 +88,10 @@ A session runs in the project's own checkout, a Journal-managed Git worktree, or
 - **Selection controls**: pinned rules (still validated), leave-out for one task, mark incorrect, superseding replacements, branch-to-all-branches promotion proposals, environment qualifiers, category diversity, and per-claim selection reasons stored in receipts.
 - **Data** (`src/core/maintenance.mjs`): integrity-checked online backups, an offline restore script, storage accounting, versioned Brain export of approved claims and import (imports become candidates), explicit session purge, and 90-day timeline retention. Knowledge is never pruned automatically.
 
+## Cursor provider
+
+Cursor's adapter (`src/core/cursor.mjs`, with launch arguments in `agents.mjs`) uses only documented CLI commands. Detection accepts an executable only if `--version` is a Cursor build and `--help` names Cursor; it looks for `agent` and `cursor-agent` on `PATH`, then in the installers' locations, and reports which documented features the build has (`--resume`, `create-chat`, `--mode`). The runtime finds the CLI again at each launch, runs `create-chat` in the session's working directory and launches `agent --resume=<UUID>` with Journal's prompt, so the native ID is known before the CLI starts; if the chat cannot be created, the exit hint is kept for confirmation, as for Codex. Install and sign-in run in the main process in a pseudo-terminal shown in a dialog (`src/desktop/processes.mjs`); the install command is a constant chosen per platform, shown verbatim and run only after a native confirmation, and nothing from these processes is written to disk. The sign-in check keeps only signed in, signed out or unknown.
+
 ## Provider observability
 
 See [PROVIDERS.md](PROVIDERS.md) for versions and the full matrix.
