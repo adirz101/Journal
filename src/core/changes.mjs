@@ -63,6 +63,8 @@ export function sessionChanges(project, session) {
     const lines = untrackedLines(project.root, path);
     files.push({ path, from: null, additions: lines, deletions: 0, binary: lines === null, untracked: true });
   }
+  // A folder inside a larger repository shows only its own paths.
+  if (project.pathPrefix) for (let i = files.length - 1; i >= 0; i--) if (!files[i].path.startsWith(project.pathPrefix)) files.splice(i, 1);
   for (const file of files) { file.preexisting = preexisting.has(file.path); file.sensitive = isSensitivePath(file.path); }
   const head = project.head;
   return {
@@ -87,6 +89,7 @@ export function openableFile(project, session, path) {
 
 export function fileDiff(project, session, path) {
   path = relativePath(path);
+  if (project.pathPrefix && !path.startsWith(project.pathPrefix)) throw new Error('File is not in this session\'s changes');
   if (isSensitivePath(path)) return { path, hidden: true, text: '' };
   // Only paths this view listed; never an arbitrary request.
   if (!sessionChanges(project, session).files.some(file => file.path === path)) throw new Error('File is not in this session\'s changes');

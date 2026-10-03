@@ -54,7 +54,7 @@ Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI
 
 | Check | Result |
 | --- | --- |
-| `npm test` | 133 passed |
+| `npm test` | 136 passed |
 | `npm run check`, `npm run build` | Passed (the existing ~545 KiB chunk warning remains) |
 | `npm run test:desktop` | 13 passed: real Electron, runtime and node-pty with fixture CLIs, covering four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches and project management |
 | `npm run dist:dir` | Unsigned app builds; packaged runtime starts; notices bundled |

@@ -135,14 +135,18 @@ test('sessions keep one explicit cwd: display names never change it, and a folde
 test('an existing v5 project row migrates without losing data', t => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'mig6-'))); t.after(() => rmSync(root, { recursive: true, force: true }));
   const repo = gitInit(join(root, 'legacy')); const path = join(root, 'j.sqlite');
-  const first = new JournalStore(path); const project = first.openProject(repo); first.close();
+  const first = new JournalStore(path); const project = first.openProject(repo); const newer = first.openProject(gitInit(join(root, 'newer'))); first.close();
   const raw = new DatabaseSync(path);
-  const body = JSON.parse(raw.prepare('SELECT body FROM projects').get().body);
-  for (const key of ['displayName', 'pinned', 'pinnedAt', 'roots', 'removed', 'folderName']) delete body[key];
-  raw.prepare('UPDATE projects SET body=?').run(JSON.stringify(body)); raw.exec('PRAGMA user_version=5'); raw.close();
+  for (const row of raw.prepare('SELECT id, body FROM projects').all()) {
+    const body = JSON.parse(row.body);
+    for (const key of ['displayName', 'pinned', 'pinnedAt', 'roots', 'removed', 'folderName', 'openSeq']) delete body[key];
+    raw.prepare('UPDATE projects SET body=? WHERE id=?').run(JSON.stringify(body), row.id);
+  }
+  raw.exec('PRAGMA user_version=5'); raw.close();
   const migrated = new JournalStore(path); t.after(() => migrated.close());
-  const [listed] = migrated.listProjects();
-  assert.equal(listed.id, project.id); assert.equal(listed.name, 'legacy'); assert.equal(listed.pinned, false); assert.deepEqual(listed.roots, []);
+  const listed = migrated.listProjects();
+  assert.deepEqual(listed.map(p => p.id), [newer.id, project.id], 'The previous most-recent-first order is kept');
+  assert.equal(listed[1].name, 'legacy'); assert.equal(listed[1].pinned, false); assert.deepEqual(listed[1].roots, []);
 });
 
 test('folders ignored by an enclosing repository are plain folders; subfolders of another repository say so', t => {
@@ -152,4 +156,46 @@ test('folders ignored by an enclosing repository are plain folders; subfolders o
   assert.equal(ignored.kind, 'folder');
   const sub = f.store.addProjectRoot(f.project.id, join(host, 'docs')).roots.at(-1);
   assert.equal(sub.kind, 'git'); assert.equal(sub.gitRoot, host); assert.notEqual(sub.gitRoot, sub.path);
+});
+
+test('review fixes: .git folders are refused; a moved project can still be inspected and removed', t => {
+  const f = fixture(t); const other = gitInit(join(f.root, 'other'));
+  assert.throws(() => f.store.addProjectRoot(f.project.id, join(f.repo, '.git')), /\.git/);
+  assert.throws(() => f.store.addProjectRoot(f.project.id, join(other, '.git', 'hooks')), /\.git/);
+  const moved = join(f.root, 'moved'); execFileSync('mv', [f.repo, moved]);
+  const details = f.store.projectDetails(f.project.id);
+  assert.equal(details.missing, true); assert.equal(details.project.name, 'engineforge');
+  f.store.removeProject(f.project.id, { deleteData: true });
+  assert.equal(f.store.listProjects().length, 0); assert.ok(existsSync(join(moved, 'README.md')));
+});
+
+test('review fixes: folder sessions never create primary-branch proposals; subfolders list only their own changes', async t => {
+  const f = fixture(t); const host = gitInit(join(f.root, 'host')); mkdirSync(join(host, 'docs')); writeFileSync(join(host, 'docs', 'a.md'), 'a\n'); writeFileSync(join(host, 'top.md'), 't\n');
+  execFileSync('git', ['-C', host, 'add', '.']); execFileSync('git', ['-C', host, '-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qm', 'docs']);
+  const root = f.store.addProjectRoot(f.project.id, join(host, 'docs')).roots[0];
+  const manager = new TerminalManager({ store: f.store, trackMs: 0, identify: () => null, table: () => null, spawn: () => ({ onData() {}, onExit() {}, write() {}, resize() {}, kill() {} }) });
+  const { session, receipt } = await manager.start({ projectId: f.project.id, provider: 'claude', task: 'Rule: Docs pages use sentence case headings everywhere.', workspaceId: `root:${root.id}` });
+  void receipt;
+  f.store.appendEvent(session.id, 'command-start', { toolUseId: 'a', command: 'npm test', test: true }); f.store.appendEvent(session.id, 'command-end', { toolUseId: 'a', status: 'succeeded', exitCode: 0 });
+  writeFileSync(join(host, 'docs', 'a.md'), 'changed\n'); writeFileSync(join(host, 'top.md'), 'changed outside the folder\n');
+  const kinds = f.store.generateProposals(session.id).map(p => p.kind);
+  assert.deepEqual(kinds, ['rule'], 'Folder test commands and commits are not primary-branch knowledge');
+  const changes = f.store.sessionChanges(session.id);
+  assert.deepEqual(changes.files.map(file => file.path), ['docs/a.md']);
+  assert.match(f.store.sessionFileDiff(session.id, 'docs/a.md').text, /\+changed/);
+  assert.throws(() => f.store.sessionFileDiff(session.id, 'top.md'));
+  manager.disposed = true;
+});
+
+test('review fixes: packets name the working folder and absolute folder evidence; exports keep the folder', t => {
+  const f = fixture(t); const docs = join(f.root, 'docs'); mkdirSync(docs); writeFileSync(join(docs, 'g.md'), 'Guide line about deployment\n');
+  const root = f.store.addProjectRoot(f.project.id, docs).roots[0];
+  f.approve('Deployment guide lives in the docs folder.', { source: { kind: 'file', rootId: root.id, path: 'g.md', startLine: 1, endLine: 1 } });
+  const packet = f.store.prepareContext(f.project.id, 'deployment guide', { workspaceId: `root:${root.id}` }).packet;
+  assert.match(packet, new RegExp(`Working folder: ${docs.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)); assert.ok(packet.includes(`${docs}/g.md:1`));
+  const exported = f.store.exportBrain(f.project.id).json;
+  assert.equal(exported.memories[0].revisions[0].source.folder.path, docs);
+  const other = f.store.openProject(gitInit(join(f.root, 'other')));
+  f.store.importBrain(other.id, JSON.stringify(exported));
+  assert.match(f.store.listMemories(other.id)[0].source.note, /folder .*docs: g\.md:1/);
 });

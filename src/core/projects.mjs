@@ -19,6 +19,8 @@ export function classifyFolder(project, input) {
   let path;
   try { path = realpathSync(text(input, 'folder path', 4096)); } catch { throw new Error('That folder does not exist'); }
   if (!statSync(path).isDirectory()) throw new Error('Choose a folder, not a file');
+  // Git internals are never a context source (remote URLs, hooks, objects).
+  if (path.split(sep).includes('.git') || quiet(() => git(path, ['rev-parse', '--is-inside-git-dir'])) === 'true') throw new Error('Git metadata folders (.git) cannot be added');
   if (path === project.root) throw new Error('This is already the project\'s primary repository');
   if (inside(path, project.root)) throw new Error('This folder contains the primary repository; add the primary repository\'s siblings instead');
   for (const root of project.roots ?? []) {

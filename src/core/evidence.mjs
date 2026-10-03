@@ -7,11 +7,11 @@ import { relativePath, refuseCredentials, text } from './validation.mjs';
 
 export const isSensitivePath = path => path.split('/').some(p => p === '.git' || /^\.env(?:\.|$)/i.test(p) || /^(?:auth|credentials|secrets?)(?:\.|$)/i.test(p) || /\.(?:pem|p12|pfx|key)$/i.test(p) || /^(?:id_rsa|id_ed25519|\.npmrc|\.netrc|\.pypirc)$/i.test(p));
 
-// The folder a source belongs to: the primary checkout (rootId null; the
-// worktree for worktree sessions) or one of the project's additional folders.
-// Null when that folder was removed from the project.
+// The folder a source belongs to: the primary checkout (rootId null; worktree
+// views replace project.root with the worktree) or one of the project's
+// additional folders. Null when that folder was removed from the project.
 export function evidenceRoot(project, rootId) {
-  if (!rootId) return { path: project.evidenceRoot ?? project.root, git: true };
+  if (!rootId) return { path: project.root, git: true };
   const root = (project.roots ?? []).find(entry => entry.id === rootId);
   return root ? { path: root.path, git: root.kind === 'git' } : null;
 }

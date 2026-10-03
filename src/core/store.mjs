@@ -8,7 +8,7 @@ import { branchDraft, commitsSince, overviewDraft, PLACEHOLDER } from './status.
 import { aliasesFor, areaMatches, isDuplicate, possibleConflict, queryTerms } from './retrieval.mjs';
 import { checkoutBaseline, fileDiff, openableFile, sessionChanges } from './changes.mjs';
 import { classifyFolder, folderStatus } from './projects.mjs';
-import { basename } from 'node:path';
+import { basename, relative, sep } from 'node:path';
 import { applyRetention, backupTo, checkpoint, exportBrain, importBrain, purgeSession, storageInfo } from './maintenance.mjs';
 import { ruleProposals, statusProposal, testCommandProposals } from './proposals.mjs';
 import { addWorktree, creationNotices, listGitWorktrees, plannedPath, registered, removalBlockers, removeWorktree, resolveBase, validateBranchName, workspaceView } from './workspaces.mjs';
@@ -56,9 +56,10 @@ export class JournalStore {
       // Projects become managed entities: display name, pin, extra folders.
       [6, () => {
         const update = this.db.prepare('UPDATE projects SET body=? WHERE id=?');
-        for (const row of this.db.prepare('SELECT id, root, body FROM projects').all()) {
+        for (const row of this.db.prepare('SELECT rowid, id, root, body FROM projects').all()) {
           const body = JSON.parse(row.body);
-          update.run(JSON.stringify({ displayName: null, pinned: false, pinnedAt: null, roots: [], removed: false, ...body, folderName: body.folderName ?? basename(row.root) }), row.id);
+          // rowid preserves the previous most-recent-first order.
+          update.run(JSON.stringify({ displayName: null, pinned: false, pinnedAt: null, roots: [], removed: false, openSeq: row.rowid, ...body, folderName: body.folderName ?? basename(row.root) }), row.id);
         }
       }],
     ];
@@ -91,7 +92,7 @@ export class JournalStore {
     const prior = parse(this.db.prepare('SELECT body FROM projects WHERE root=?').get(info.root));
     // A monotonic open sequence orders projects deterministically, even within one millisecond.
     const openSeq = (this.db.prepare("SELECT max(coalesce(json_extract(body,'$.openSeq'),0)) AS n FROM projects").get().n ?? 0) + 1;
-    const project = { displayName: null, pinned: false, pinnedAt: null, roots: [], ...prior, ...info, folderName: info.name, id: prior?.id ?? randomUUID(), openedAt: now(), openSeq, removed: false };
+    const project = { displayName: null, pinned: false, pinnedAt: null, roots: [], ...prior, ...info, folderName: info.name, id: prior?.id ?? randomUUID(), openedAt: now(), openSeq, removed: false, removedAt: null };
     this.db.prepare('INSERT INTO projects(id,root,body) VALUES(?,?,?) ON CONFLICT(root) DO UPDATE SET body=excluded.body').run(project.id, project.root, JSON.stringify(project));
     if (prior?.removed) this.audit('project-restored', { id: project.id });
     return this.describe(project);
@@ -142,12 +143,15 @@ export class JournalStore {
     this.audit('project-folder-removed', { id, rootId });
     return this.saveProject({ ...stored, roots: stored.roots.filter(root => root.id !== rootId) });
   }
+  // Works even when the primary folder was moved or deleted, so the project
+  // can still be inspected and removed from Journal.
   projectDetails(id) {
-    const project = this.project(id);
+    let project; let missing = false;
+    try { project = this.project(id); } catch (error) { if (/removed from Journal/.test(error.message)) throw error; project = this.describe(this.storedProject(id)); missing = true; }
     const count = (sql, ...args) => this.db.prepare(sql).get(...args).n;
     const knowledgeBy = new Map(this.db.prepare(`SELECT json_extract(r.body,'$.source.rootId') AS root, count(*) AS n FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.project_id=? AND m.status IN ('active','candidate') GROUP BY root`).all(id).map(row => [row.root, row.n]));
     return {
-      project, roots: project.roots.map(root => ({ ...folderStatus(root), knowledge: knowledgeBy.get(root.id) ?? 0 })),
+      project, missing, roots: project.roots.map(root => ({ ...folderStatus(root), knowledge: knowledgeBy.get(root.id) ?? 0 })),
       counts: {
         knowledge: count(`SELECT count(*) AS n FROM memories WHERE project_id=? AND status IN ('active','candidate')`, id),
         sessions: count('SELECT count(*) AS n FROM sessions WHERE project_id=?', id),
@@ -370,7 +374,7 @@ export class JournalStore {
     }
     const id = randomUUID(); const items = []; const excluded = []; let briefCount = 0; const perCategory = new Map();
     const disabledSet = new Set(disabled);
-    const header = `Journal project knowledge — checkout ${project.head ?? 'unborn'}, receipt ${id}\nProject: ${project.name}; branch ${project.branch ?? 'detached HEAD'}.\nThese are reviewed, scoped claims with evidence. Native project instructions take precedence. Validate against current code.\n`;
+    const header = `Journal project knowledge — checkout ${project.head ?? 'unborn'}, receipt ${id}\nProject: ${project.name}; branch ${project.branch ?? 'detached HEAD'}.\n${project.cwd ? `Working folder: ${project.cwd}. Evidence paths without a folder are relative to the primary repository at ${project.root}.\n` : ''}These are reviewed, scoped claims with evidence. Native project instructions take precedence. Validate against current code.\n`;
     let packet = header;
     for (const row of matches) {
       const memory = { ...parse(row), status: row.status };
@@ -385,7 +389,8 @@ export class JournalStore {
       }
       // Category diversity: at most four task claims of one kind.
       if (memory.category !== 'brief' && !row.pinned && (perCategory.get(memory.category) ?? 0) >= 4) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'category-limit' }); continue; }
-      const folder = memory.source.rootId ? `${(project.roots ?? []).find(root => root.id === memory.source.rootId)?.name ?? 'removed folder'}/` : '';
+      // Folder evidence names its absolute folder so the agent can find it from any cwd.
+      const folder = memory.source.rootId ? `${(project.roots ?? []).find(root => root.id === memory.source.rootId)?.path ?? '(removed folder)'}/` : '';
       const evidence = memory.source.kind === 'file' ? `${folder}${memory.source.path}:${memory.source.startLine} @ ${memory.source.commit ?? (memory.source.rootId ? 'untracked folder' : 'unborn')}`
         : memory.source.kind === 'git' ? `Git history ${memory.source.base ? `${memory.source.base.slice(0, 7)}..` : ''}${memory.source.head.slice(0, 7)}`
         : memory.source.kind === 'import' ? `Imported (reviewed here): ${memory.source.note}`
@@ -460,13 +465,16 @@ export class JournalStore {
   generateProposals(sessionId) {
     const session = this.getSession(sessionId);
     const receipt = (() => { try { return this.getReceipt(session.receiptId); } catch { return null; } })();
-    let project; try { project = this.sessionView(session); } catch { return []; }
+    // Proposals describe the primary repository: use its view, never a folder's Git identity.
+    const inFolder = String(session.workspaceId ?? '').startsWith('root:');
+    let project; try { project = this.view(session.projectId, inFolder ? null : session.workspaceId ?? null); } catch { return []; }
     const existing = this.db.prepare(`SELECT r.body FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.project_id=? AND m.status IN ('active','candidate')`).all(session.projectId).map(row => parse(row).statement);
     const branchUpdate = this.db.prepare(`SELECT r.body FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.project_id=? AND m.status='active'
       AND json_extract(r.body,'$.category')='brief' AND json_extract(r.body,'$.scope')='branch' AND json_extract(r.body,'$.branch')=? ORDER BY r.rowid DESC LIMIT 1`).get(session.projectId, project.branch);
     const update = branchUpdate ? parse(branchUpdate) : null;
-    const candidates = [...ruleProposals(session, receipt), ...testCommandProposals(session, this.listEvents(sessionId, 2000)),
-      ...statusProposal(session, project, update ? this.drift(project, { ...update, category: 'brief', scope: 'branch' }, new Map()) : 0, !!update)];
+    // Commands and commits in an additional folder belong to that folder, not the primary branch.
+    const candidates = [...ruleProposals(session, receipt), ...(inFolder ? [] : [...testCommandProposals(session, this.listEvents(sessionId, 2000)),
+      ...statusProposal(session, project, update ? this.drift(project, { ...update, category: 'brief', scope: 'branch' }, new Map()) : 0, !!update)])];
     const created = [];
     for (const candidate of candidates.slice(0, 10)) {
       if (candidate.statement && candidate.kind !== 'branch-status' && existing.some(statement => isDuplicate(statement, candidate.statement))) continue;
@@ -602,7 +610,7 @@ export class JournalStore {
       const root = project.roots.find(entry => entry.id === workspaceId.slice(5));
       if (!root) throw new Error('That folder is no longer part of this project');
       const status = folderStatus(root); if (!status.exists) throw new Error(`Folder ${root.path} no longer exists`);
-      return { ...project, cwd: root.path, cwdBranch: status.currentBranch, cwdHead: status.head, cwdIsGit: root.kind === 'git', workspaceId };
+      return { ...project, cwd: root.path, cwdBranch: status.currentBranch, cwdHead: status.head, cwdIsGit: root.kind === 'git', cwdGitRoot: root.gitRoot ?? root.path, workspaceId };
     }
     const workspace = this.getWorkspace(workspaceId);
     if (workspace.projectId !== projectId) throw new Error('Workspace belongs to another project');
@@ -639,7 +647,9 @@ export class JournalStore {
   cwdView(view) {
     if (!view.cwd) return view;
     if (!view.cwdIsGit) throw new Error('This folder is not a Git repository, so changes cannot be listed');
-    return { ...view, root: view.cwd, head: view.cwdHead, branch: view.cwdBranch };
+    // Git runs at the repository root; a subfolder of another repository is listed by prefix.
+    const prefix = relative(view.cwdGitRoot, view.cwd).split(sep).join('/');
+    return { ...view, root: view.cwdGitRoot, head: view.cwdHead, branch: view.cwdBranch, pathPrefix: prefix ? `${prefix}/` : '' };
   }
   checkoutBaseline(projectId, workspaceId = null) { const view = this.view(projectId, workspaceId); return view.cwd && !view.cwdIsGit ? null : checkoutBaseline(this.cwdView(view)); }
   sessionView(session) { return this.cwdView(this.view(session.projectId, session.workspaceId ?? null)); }
