@@ -47,11 +47,12 @@ jobs:
       - run: npm test
       - run: npm run check
       - run: npm run build
-      - name: Display (diagnostics)
-        run: system_profiler SPDisplaysDataType | grep -iE 'resolution|display' || true
+      - name: Window and terminal (diagnostics)
+        continue-on-error: true
+        run: node scripts/ci-diagnose.mjs
       - run: npm run test:desktop
       - name: Upload Playwright results
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: verify-test-results
