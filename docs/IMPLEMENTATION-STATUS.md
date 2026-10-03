@@ -17,7 +17,7 @@ Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI
 - Additional folders per project (other Git repositories, subfolders of other repositories, plain folders) with their own identity; folder-aware evidence and validation; a folder can be a session's explicit workspace.
 
 **Session management and menus**
-- Rename (with reset to a deterministic default title), pin, archive/unarchive (running sessions keep running) and remove from Journal (never files; a running session must be stopped or archived first). Native session IDs, workspaces, receipts and exact resume are unaffected.
+- Rename (with reset to a deterministic default title), pin, archive/unarchive (running sessions keep running and stay in Active with an archived badge) and remove from Journal (never files; a running session is stopped first or archived instead; "Remove and delete history" also deletes receipts unless other sessions continue the same native conversation). User fields are written atomically so app and runtime updates cannot overwrite each other. Native session IDs, workspaces, receipts and exact resume are unaffected.
 - Native right-click menus on projects (open, rename, pin, manage, add folder, reveal, copy path, remove) and sessions (open, rename, pin, archive, resume, interrupt, stop, reveal/copy workspace, copy native ID, remove), showing only actions that fit the current state.
 
 **Workspaces**
@@ -58,7 +58,7 @@ Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI
 
 | Check | Result |
 | --- | --- |
-| `npm test` | 141 passed |
+| `npm test` | 144 passed |
 | `npm run check`, `npm run build` | Passed (the existing ~545 KiB chunk warning remains) |
 | `npm run test:desktop` | 14 passed (headless): real Electron, runtime and node-pty with fixture CLIs, covering four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches, project management and right-click menus |
 | `npm run dist:dir` | Unsigned app builds; packaged runtime starts; notices bundled |

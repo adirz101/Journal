@@ -2,14 +2,16 @@
 // First meaningful line, markdown and rule prefixes removed, whitespace
 // collapsed, cut at a word boundary.
 export function generateTitle(task, prior = null) {
-  if (prior) return `Resume · ${prior.displayName || prior.title || 'session'}`.slice(0, 80);
-  const line = String(task ?? '').split(/\r?\n/).map(value => value.trim()).find(value => value && !/^```/.test(value)) ?? '';
+  if (prior) return `Resume · ${String(prior.displayName || prior.title || 'session').replace(/^(?:Resume · )+/, '')}`.slice(0, 80);
+  const line = String(task ?? '').split(/\r?\n/).map(value => value.trim()).find(value => /[\p{L}\p{N}]/u.test(value) && !/^```/.test(value)) ?? '';
   const clean = line.replace(/^(?:#+|[-*>]|\d+[.)])\s+/, '').replace(/^(?:rule|remember|decision|constraint|convention|lesson|task)\s*:\s*/i, '')
-    // Markdown emphasis and code markers only; identifiers like snake_case stay intact.
-    .replace(/`/g, '').replace(/(\*\*|__|~~)(\S(?:.*?\S)?)\1/g, '$2').replace(/(^|\s)[*_](\S(?:.*?\S)?)[*_](?=\s|$)/g, '$1$2').replace(/\s+/g, ' ').trim();
+    // Markdown emphasis (asterisks, strikethrough) and code markers only;
+    // underscores are left alone so snake_case and __dunder__ names survive.
+    .replace(/`/g, '').replace(/(^|\s)(\*\*|~~)(\S(?:.*?\S)?)\2(?=\s|$|[.,;:!?])/g, '$1$3').replace(/(^|\s)\*(\S(?:.*?\S)?)\*(?=\s|$)/g, '$1$2').replace(/\s+/g, ' ').trim();
   if (!clean) return 'Interactive session';
-  if (clean.length <= 60) return clean;
-  const cut = clean.slice(0, 60); const space = cut.lastIndexOf(' ');
+  const points = [...clean]; // code points: never split an emoji or surrogate pair
+  if (points.length <= 60) return clean;
+  const cut = points.slice(0, 60).join(''); const space = cut.lastIndexOf(' ');
   return `${(space > 30 ? cut.slice(0, space) : cut).replace(/[\s,.;:–-]+$/, '')}…`;
 }
 

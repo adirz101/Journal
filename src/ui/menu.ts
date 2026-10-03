@@ -4,9 +4,19 @@ export type MenuItem = { id: string; label: string; enabled?: boolean } | { sepa
 
 // Opens the native context menu (Electron positions it, handles Escape,
 // outside clicks, keyboard and theme) and returns the chosen item ID.
-export async function showMenu(items: (MenuItem | false | null | undefined)[]): Promise<string | null> {
-  const list = items.filter(Boolean) as MenuItem[];
+// position: where to open (from the triggering element for keyboard opens); defaults to the pointer.
+export async function showMenu(items: (MenuItem | false | null | undefined)[], position?: { x: number; y: number }): Promise<string | null> {
   // Drop leading, trailing and doubled separators left by state-dependent items.
-  const clean = list.filter((item, index) => !('separator' in item) || (index > 0 && index < list.length - 1 && !('separator' in list[index - 1])));
-  return await api<string | null>('contextMenu', { items: clean });
+  const clean: MenuItem[] = [];
+  for (const item of items.filter(Boolean) as MenuItem[]) if (!('separator' in item) || (clean.length && !('separator' in clean[clean.length - 1]))) clean.push(item);
+  while (clean.length && 'separator' in clean[clean.length - 1]) clean.pop();
+  return await api<string | null>('contextMenu', { items: clean, ...(position ? { x: Math.round(position.x), y: Math.round(position.y) } : {}) });
+}
+
+// Pointer opens use the pointer; keyboard opens (menu key, Shift+F10, buttons)
+// report no pointer position, so the menu opens at the element instead.
+export function menuPosition(event: { clientX: number; clientY: number; currentTarget: EventTarget | null; detail?: number }) {
+  if (event.clientX || event.clientY) return undefined;
+  const rect = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect();
+  return rect ? { x: rect.left + 8, y: rect.bottom } : undefined;
 }

@@ -199,12 +199,17 @@ const actions = {
       if (choice === 'archive') return store.archiveSession(id);
       if (choice !== 'stop') return null;
       await runtime.call('stop', { id });
-      for (let i = 0; i < 100 && LIVE.includes((await store.getSession(id)).status); i++) await new Promise(r => setTimeout(r, 100));
-      if (LIVE.includes((await store.getSession(id)).status)) throw new Error('The session did not stop; it was not removed');
+      // Wait for the exit and the leftover-process scan, so nothing is recorded after removal.
+      const settled = current => !LIVE.includes(current.status) && current.survivors !== null;
+      for (let i = 0; i < 150 && !settled(await store.getSession(id)); i++) await new Promise(r => setTimeout(r, 100));
+      const after = await store.getSession(id);
+      if (LIVE.includes(after.status)) throw new Error('The session did not stop; it was not removed');
+      if (after.survivors?.length) throw new Error(`The agent stopped, but ${after.survivors.length} child process${after.survivors.length === 1 ? '' : 'es'} kept running. The session was kept so you can end them from its header.`);
     } else {
-      const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Remove from Journal', 'Cancel'], defaultId: 1, cancelId: 1, message: `Remove "${label}" from Journal?`,
-        detail: `Removes it from Journal's session lists and deletes its timeline. Context receipts are kept so the native conversation can still be resumed exactly. ${files}` });
-      if (response !== 0) return null;
+      const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Remove from Journal', 'Remove and delete history', 'Cancel'], defaultId: 2, cancelId: 2, message: `Remove "${label}" from Journal?`,
+        detail: `Remove from Journal hides it and deletes its timeline; its context receipts are kept so the native conversation can still be resumed exactly. Remove and delete history also deletes its receipts (refused if other sessions continue the same native conversation). ${files}` });
+      if (response === 2) return null;
+      if (response === 1) { await runtime.call('release', { id }).catch(() => {}); await store.purgeSession(id); return { id, removed: true }; }
     }
     await runtime.call('release', { id }).catch(() => {});
     return store.removeSession(id);
@@ -217,13 +222,21 @@ const actions = {
   copySessionNativeId: async ({ id }) => { const session = await store.getSession(id); if (!session.nativeId) throw new Error('No native session ID is known for this session'); clipboard.writeText(session.nativeId); },
   // A native context menu built from labels the renderer chose; returns only
   // the chosen item ID, and the renderer runs its existing action for it.
-  contextMenu: ({ items }) => {
+  contextMenu: ({ items, x, y }) => {
     if (!Array.isArray(items) || !items.length || items.length > 40) throw new Error('Invalid menu');
     const template = items.map(item => item?.separator ? { type: 'separator' } : { id: text(item?.id, 'menu item', 40), label: text(item?.label, 'menu label', 80), enabled: item.enabled !== false });
-    if (headless && typeof globalThis.__journalMenuHook === 'function') return globalThis.__journalMenuHook(template);
+    if (headless && typeof globalThis.__journalMenuHook === 'function') {
+      // Tests may only choose what a user could: an existing, enabled item.
+      const choice = globalThis.__journalMenuHook(template);
+      if (choice !== null && !template.some(item => item.id === choice && item.enabled)) throw new Error(`Menu item ${choice} is missing or disabled`);
+      return choice;
+    }
+    const position = Number.isInteger(x) && Number.isInteger(y) && x >= 0 && y >= 0 ? { x, y } : {};
     return new Promise(resolve => {
-      const menu = Menu.buildFromTemplate(template.map(item => item.type ? item : { ...item, click: () => resolve(item.id) }));
-      menu.popup({ window, callback: () => setTimeout(() => resolve(null), 100) });
+      let clicked = false;
+      const menu = Menu.buildFromTemplate(template.map(item => item.type ? item : { ...item, click: () => { clicked = true; resolve(item.id); } }));
+      // The close callback can precede the click; resolve empty only once no click is pending.
+      menu.popup({ window, ...position, callback: () => setTimeout(() => { if (!clicked) resolve(null); }, 250) });
     });
   },
   start: input => {

@@ -64,24 +64,36 @@ console.log('PTY_READY '+JSON.stringify(process.argv.slice(2,4)));process.stdin.
     // Removing a running session never kills silently: choose "Keep running and archive".
     await answer(app, 1); await menu(app, 'remove'); await renamed.click({ button: 'right' });
     expect(await app.evaluate(() => (globalThis as any).__lastDialog.buttons)).toEqual(['Stop and remove', 'Keep running and archive', 'Cancel']);
-    await expect(page.getByRole('button', { name: /ARCHIVED · 1 · 1 running/ })).toBeVisible();
+    // A running archived session stays visible in Active (it uses a slot), marked archived.
+    await expect(renamed.locator('.archived-badge')).toBeVisible();
     const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
     expect(alive(launches()[0].pid)).toBe(true); // archiving left the agent running
-    await page.getByRole('button', { name: /ARCHIVED/ }).click();
     await menu(app, 'unarchive'); await renamed.click({ button: 'right' });
-    await expect(page.getByRole('button', { name: /ARCHIVED/ })).toHaveCount(0);
+    await expect(renamed.locator('.archived-badge')).toHaveCount(0);
     await menu(app, 'stop'); await renamed.click({ button: 'right' });
     await expect(page.locator('.terminal-label')).toContainText('stopped');
     await menu(app, null); await renamed.click({ button: 'right' });
     expect(await lastMenu(app)).toContain('resume'); expect(await lastMenu(app)).not.toContain('stop');
     await menu(app, 'resume'); await renamed.click({ button: 'right' });
+    await expect(page.getByRole('button', { name: /^Claude Code: Notes draft/ })).toBeVisible();
     await expect.poll(() => launches().length).toBe(2);
     expect(launches()[1].argv.slice(0, 2)).toEqual(['--resume', nativeId]);
     await expect(page.getByRole('button', { name: /^Claude Code: Resume · Notes draft/ })).toBeVisible();
     await page.getByRole('button', { name: 'Stop terminal' }).click(); await expect(page.locator('.terminal-label')).toContainText('stopped');
+    // Cancel changes nothing; "Stop and remove" stops the agent first, then removes it.
+    await page.getByLabel('Initial task').fill('Throwaway run');
+    await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
+    const throwaway = page.getByRole('button', { name: /^Codex: Throwaway run/ });
+    await expect(throwaway).toBeVisible(); await expect.poll(() => launches().length).toBe(3);
+    const throwawayPid = launches()[2].pid;
+    await answer(app, 2); await menu(app, 'remove'); await throwaway.click({ button: 'right' });
+    await expect(throwaway).toBeVisible(); expect(alive(throwawayPid)).toBe(true);
+    await answer(app, 0); await menu(app, 'remove'); await throwaway.click({ button: 'right' });
+    await expect(throwaway).toHaveCount(0); await expect.poll(() => alive(throwawayPid)).toBe(false);
     // Remove a stopped session; the project keeps its files.
     await answer(app, 0); await menu(app, 'remove'); await renamed.click({ button: 'right' });
     await expect(renamed).toHaveCount(0);
+    expect(await app.evaluate(() => (globalThis as any).__lastDialog.buttons)).toEqual(['Remove from Journal', 'Remove and delete history', 'Cancel']);
     await answer(app, 0); await menu(app, 'remove'); await projectButton.click({ button: 'right' });
     await expect(page.locator('.project-link')).toHaveCount(0);
     expect(existsSync(resolve(project, 'README.md')) && existsSync(resolve(project, '.git')) && existsSync(extra)).toBe(true);

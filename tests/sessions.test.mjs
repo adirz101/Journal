@@ -27,7 +27,7 @@ test('default titles are deterministic, cleaned and truncated at a word boundary
   assert.equal(generateTitle('Rule: Always use `npm test`'), 'Always use npm test');
   assert.equal(generateTitle('- [ ] list item task'), '[ ] list item task');
   assert.equal(generateTitle('Rename read_table to fetch_rows in TASK_1 and _private'), 'Rename read_table to fetch_rows in TASK_1 and _private');
-  assert.equal(generateTitle('Use *careful* __bold__ ~~old~~ text'), 'Use careful bold old text');
+  assert.equal(generateTitle('Use *careful* **bold** ~~old~~ text'), 'Use careful bold old text');
   assert.equal(generateTitle(''), 'Interactive session');
   const long = generateTitle('Refactor the payment retry logic so that every retry reuses the idempotency key and logs it');
   assert.ok(long.length <= 61 && long.endsWith('…') && !long.includes('  ')); assert.equal(long, generateTitle('Refactor the payment retry logic so that every retry reuses the idempotency key and logs it'));
@@ -88,4 +88,38 @@ test('migration v7 keeps existing sessions and gives them user fields', t => {
   const migrated = new JournalStore(path); t.after(() => migrated.close());
   const session = migrated.getSession('old');
   assert.deepEqual([session.title, session.nativeId, session.displayName, session.pinned, session.archived, session.removed], ['Old task', '55555555-5555-4555-8555-555555555555', null, false, false, false]);
+});
+
+test('two connections (app and runtime) never undo each other: user fields and status survive interleaving', async t => {
+  const f = fixture(t);
+  const { session } = await f.manager.start({ projectId: f.project.id, provider: 'codex', task: 'Interleaving' });
+  const runtimeView = { ...f.store.getSession(session.id) }; // the runtime's stale copy
+  const app = new JournalStore(join(f.root, 'j.sqlite')); t.after(() => app.close());
+  app.renameSession(session.id, 'Renamed by app'); app.archiveSession(session.id);
+  f.store.saveSession({ ...runtimeView, status: 'exited', nativeId: '66666666-6666-4666-8666-666666666666', archived: false, displayName: 'stale' });
+  let stored = app.getSession(session.id);
+  assert.deepEqual([stored.displayName, stored.archived, stored.status, stored.nativeId], ['Renamed by app', true, 'exited', '66666666-6666-4666-8666-666666666666']);
+  app.setSessionPinned(session.id, true); // a user write after the runtime's status write
+  stored = f.store.getSession(session.id);
+  assert.deepEqual([stored.status, stored.nativeId, stored.pinned], ['exited', '66666666-6666-4666-8666-666666666666', true], 'User writes never revert runtime state');
+  app.removeSession(session.id);
+  f.store.saveSession({ ...runtimeView, status: 'exited' }); // a late runtime save
+  assert.equal(app.getSession(session.id).removed, true, 'A removed session never comes back');
+  assert.equal(app.activeSessions().some(s => s.id === session.id), false);
+  assert.deepEqual(app.generateProposals(session.id), [], 'Nothing is derived from a removed session');
+});
+
+test('removal refuses while leftover child processes are recorded', async t => {
+  const f = fixture(t); const { session } = await f.manager.start({ projectId: f.project.id, provider: 'claude', task: 'x' });
+  f.procs[0].exit({ exitCode: 0 });
+  f.store.saveSession({ ...f.store.getSession(session.id), survivors: [{ pid: 4242, started: 'x', command: 'daemon' }] });
+  assert.throws(() => f.store.removeSession(session.id), /leftover child processes/);
+});
+
+test('titles keep identifiers and whole characters, and never stack resume prefixes', () => {
+  assert.equal(generateTitle('Fix __init__ and _private handling'), 'Fix __init__ and _private handling');
+  assert.equal(generateTitle('---\n#\nReal first line'), 'Real first line');
+  const emoji = generateTitle('😀'.repeat(70)); assert.ok(!emoji.includes('�') && [...emoji.replace('…', '')].length <= 60);
+  const cjk = generateTitle('漢字'.repeat(40)); assert.equal([...cjk.replace('…', '')].length, 60);
+  assert.equal(generateTitle('', { title: 'Resume · Resume · Build page' }), 'Resume · Build page');
 });

@@ -3,7 +3,7 @@ import { TerminalPane } from './TerminalPane';
 import { KnowledgeForm } from './KnowledgeForm';
 import { KnowledgePanel } from './KnowledgePanel';
 import { ResizableWorkspace } from './ResizableWorkspace';
-import { SessionList, needsAttention, resumable, stateLabel } from './SessionList';
+import { SessionList, activeOrder, needsAttention, resumable, stateLabel } from './SessionList';
 import { ChangesPanel } from './ChangesPanel';
 import { ActivityPanel } from './ActivityPanel';
 import { WorkspaceDialog } from './WorkspaceDialog';
@@ -11,7 +11,7 @@ import { ContextPanel } from './ContextPanel';
 import { DataDialog } from './DataDialog';
 import { ManageProjectDialog } from './ManageProjectDialog';
 import { RenameDialog } from './RenameDialog';
-import { showMenu } from './menu';
+import { menuPosition, showMenu } from './menu';
 import journalMarkWhite from '../../assets/branding/journal-mark-white.png';
 import journalMarkDark from '../../assets/branding/journal-mark.png';
 import journalWordmark from '../../assets/branding/journal-wordmark.png';
@@ -45,14 +45,15 @@ export default function App() {
   const session = selectedId ? sessions[selectedId] ?? null : null;
   // A confirmation draft belongs to one launch, never to another conversation.
   const resumeValue = resumeDraft?.sessionId === session?.id ? resumeDraft?.value ?? '' : session?.nativeId ?? '';
-  const taskRef = useRef<HTMLTextAreaElement>(null); const projectRef = useRef<Project | null>(null);
+  const taskRef = useRef<HTMLTextAreaElement>(null); const removedIds = useRef(new Set<string>()); const projectRef = useRef<Project | null>(null);
   projectRef.current = state?.project ?? null;
   const connected = runtime.state === 'connected';
   const failed = useCallback((error: unknown) => setError(error instanceof Error ? error.message : String(error)), []);
-  // Older snapshots (for example a slow store read) never replace newer runtime state.
+  // Older snapshots (for example a slow store read) never replace newer runtime state,
+  // and a snapshot read before a removal never brings the removed session back.
   const merge = useCallback((items: Session[]) => setSessions(current => {
     const next = { ...current };
-    for (const item of items) { const known = next[item.id]; if (!known || (item.version ?? 0) >= (known.version ?? 0)) next[item.id] = { ...known, ...item }; }
+    for (const item of items) { if (item.removed || removedIds.current.has(item.id)) continue; const known = next[item.id]; if (!known || (item.version ?? 0) >= (known.version ?? 0)) next[item.id] = { ...known, ...item }; }
     return next;
   }), []);
   useEffect(() => { void api('setAppearance', { appearance }).catch(failed); }, [appearance, failed]);
@@ -89,7 +90,8 @@ export default function App() {
     void api<Bootstrap>('bootstrap').then(async data => {
       setBootstrap(data); setProjects(data.projects); setRuntime(data.runtime); merge([...data.active, ...data.live]);
       const remembered = (() => { try { return localStorage.getItem('journal-project'); } catch { return null; } })();
-      const selected = data.projects.find(p => p.id === (data.live.find(isLive)?.projectId ?? remembered));
+      const firstLive = activeOrder([...data.active, ...data.live]).find(isLive);
+      const selected = data.projects.find(p => p.id === (firstLive?.projectId ?? remembered));
       if (selected) {
         const next = await refresh(selected.id);
         const live = data.live.find(s => isLive(s) && s.projectId === selected.id);
@@ -107,13 +109,17 @@ export default function App() {
       if (event.type === 'timeline') { setLiveEvents(current => [...current.slice(-1999), event.event]); return; }
       if (event.type === 'proposals') { setKnowledgeVersion(v => v + 1); return; }
       if (event.type !== 'status') return;
-      merge([event.session]);
+      // Runtime events carry status only; names, pins, archive and removal are
+      // owned by the store and never taken from the runtime's in-memory copy.
+      const status = { ...event.session } as Session & Record<string, unknown>;
+      for (const field of ['displayName', 'pinned', 'pinSeq', 'archived', 'archivedAt', 'removed', 'removedAt']) delete status[field];
+      merge([status]);
     });
   }, [refresh, reloadSessions, merge, failed]);
   async function run(action: () => Promise<void>) { setBusy(true); setError(''); try { await action(); } catch (error) { failed(error); } finally { setBusy(false); } }
   async function chooseProject(project: Project) {
     await run(async () => { const next = await refresh(project.id); try { localStorage.setItem('journal-project', project.id); } catch { /* optional */ }
-      const live = Object.values(sessions).find(s => isLive(s) && s.projectId === project.id);
+      const live = activeOrder(Object.values(sessions)).find(s => isLive(s) && s.projectId === project.id);
       setSelectedId(live?.id ?? null); setReceipt(next?.receipts[0] ?? null); setTask(''); });
   }
   async function openProject() {
@@ -135,7 +141,7 @@ export default function App() {
       // Switch active sessions: ⌘1–4 on macOS, Alt+1–4 elsewhere (Ctrl+digit stays with the terminal).
       const switching = bootstrap?.platform === 'darwin' ? event.metaKey && !event.altKey : event.altKey && !event.ctrlKey && !event.metaKey;
       if (switching && /^[1-4]$/.test(event.key)) {
-        const target = ordered.filter(s => isLive(s) || s.status === 'orphaned')[Number(event.key) - 1];
+        const target = activeOrder(ordered)[Number(event.key) - 1];
         if (target) { event.preventDefault(); void selectSession(target); }
         return;
       }
@@ -166,7 +172,7 @@ export default function App() {
     unarchive: (target: Session) => run(async () => { merge([await api<Session>('unarchiveSession', { id: target.id })]); }),
     remove: (target: Session) => run(async () => {
       const result = await api<Session | null>('removeSession', { id: target.id }); if (!result) return;
-      if (result.removed) { setSessions(current => { const next = { ...current }; delete next[target.id]; return next; }); if (selectedId === target.id) setSelectedId(null); await refresh(); }
+      if (result.removed) { removedIds.current.add(target.id); setSessions(current => { const next = { ...current }; delete next[target.id]; return next; }); setSelectedId(current => current === target.id ? null : current); await refresh(); }
       else merge([result]);
     }),
     resume: (target: Session) => start(target.provider, target),
@@ -178,7 +184,7 @@ export default function App() {
     copyNativeId: (target: Session) => run(async () => { await api('copySessionNativeId', { id: target.id }); }),
   };
   const revealLabel = bootstrap?.platform === 'darwin' ? 'Finder' : bootstrap?.platform === 'win32' ? 'File Explorer' : 'file manager';
-  async function sessionMenu(target: Session) {
+  async function sessionMenu(target: Session, position?: { x: number; y: number }) {
     const live = isLive(target); const orphan = target.status === 'orphaned';
     const choice = await showMenu([
       { id: 'open', label: 'Open' }, { id: 'rename', label: 'Rename…' },
@@ -189,21 +195,21 @@ export default function App() {
       orphan && target.identityVerified !== false && { id: 'endOrphan', label: 'End orphaned process' },
       { separator: true },
       { id: 'reveal', label: `Reveal Workspace in ${revealLabel}`, enabled: !!target.cwd }, { id: 'copyPath', label: 'Copy Workspace Path', enabled: !!target.cwd },
-      { id: 'copyNativeId', label: 'Copy Native Session ID', enabled: !!target.nativeId },
+      { id: 'copyNativeId', label: target.nativeId && !target.nativeIdConfirmed ? 'Copy Native Session ID (unconfirmed)' : 'Copy Native Session ID', enabled: !!target.nativeId && target.nativeIdConfirmed },
       { separator: true }, { id: 'remove', label: 'Remove from Journal…' },
-    ]);
+    ], position);
     if (choice === 'open') await selectSession(target);
     else if (choice && choice in sessionActions) await sessionActions[choice as keyof typeof sessionActions](target);
   }
   // Project actions shared by the right-click menu and Manage Project.
   const removedProject = (id: string) => { setProjects(items => items.filter(p => p.id !== id)); if (state?.project.id === id) { setState(null); setSelectedId(null); setReceipt(null); } void reloadProjects().catch(failed); };
-  async function projectMenu(target: Project) {
+  async function projectMenu(target: Project, position?: { x: number; y: number }) {
     const choice = await showMenu([
       { id: 'open', label: 'Open' }, { id: 'rename', label: 'Rename…' }, { id: 'pin', label: target.pinned ? 'Unpin' : 'Pin' },
       { id: 'manage', label: 'Manage Project…' }, { id: 'addFolder', label: 'Add Folder…' },
       { separator: true }, { id: 'reveal', label: `Reveal in ${revealLabel}` }, { id: 'copyPath', label: 'Copy Path' },
       { separator: true }, { id: 'remove', label: 'Remove from Journal…' },
-    ]);
+    ], position);
     if (choice === 'open') await chooseProject(target);
     else if (choice === 'rename') setRenameTarget({ kind: 'project', project: target });
     else if (choice === 'pin') await run(async () => { await api('setProjectPinned', { id: target.id, pinned: !target.pinned }); await reloadProjects(); });
@@ -226,8 +232,8 @@ export default function App() {
       <div className="brand"><img className="brand-icon" src={journalMark} alt="" width={32} height={32} /><div>Journal<small>PROJECT MEMORY</small></div><span className="local-tag">LOCAL</span></div>
       <button className="open-project" onClick={() => void openProject()} disabled={busy}><span>＋</span> Open project <kbd>{bootstrap?.platform === 'darwin' ? '⌘' : 'Ctrl'} O</kbd></button>
       <div className="nav-caption">PROJECTS <span>{projects.length}</span></div>
-      <nav aria-label="Projects">{projects.map(project => <div key={project.id} className="project-row"><button className={`project-link ${state?.project.id === project.id ? 'selected' : ''}`} onClick={() => void chooseProject(project)} onContextMenu={event => { event.preventDefault(); void projectMenu(project); }} title={project.root}><svg className="folder-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 11h18" /></svg><span className="project-name">{project.name}</span>{project.pinned && <span className="pin-mark"><span aria-hidden="true">⚲</span><span className="visually-hidden">pinned</span></span>}{ordered.some(s => s.projectId === project.id && needsAttention(s)) && <span className="attention" aria-label="needs attention">●</span>}</button><button className="project-manage" aria-label={`Manage ${project.name}`} onClick={() => setManageId(project.id)}>⋯</button></div>)}</nav>
-      <SessionList sessions={ordered} projects={projects} selectedId={selectedId} currentProjectId={state?.project.id ?? null} connected={connected} now={now} onSelect={next => void selectSession(next)} onMenu={next => void sessionMenu(next)} onNew={newSession} canStart={!!state && canStart} />
+      <nav aria-label="Projects">{projects.map(project => <div key={project.id} className="project-row"><button className={`project-link ${state?.project.id === project.id ? 'selected' : ''}`} onClick={() => void chooseProject(project)} onContextMenu={event => { event.preventDefault(); void projectMenu(project, menuPosition(event)); }} title={project.root}><svg className="folder-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 11h18" /></svg><span className="project-name">{project.name}</span>{project.pinned && <span className="pin-mark"><span aria-hidden="true">⚲</span><span className="visually-hidden">pinned</span></span>}{ordered.some(s => s.projectId === project.id && needsAttention(s)) && <span className="attention" aria-label="needs attention">●</span>}</button><button className="project-manage" aria-label={`Manage ${project.name}`} onClick={() => setManageId(project.id)}>⋯</button></div>)}</nav>
+      <SessionList sessions={ordered} projects={projects} selectedId={selectedId} currentProjectId={state?.project.id ?? null} connected={connected} now={now} onSelect={next => void selectSession(next)} onMenu={(next, position) => void sessionMenu(next, position)} onNew={newSession} canStart={!!state && canStart} />
       <div className="sidebar-footer"><button className="theme-toggle" aria-label={`Switch to ${appearance === 'dark' ? 'light' : 'dark'} mode`} onClick={() => setAppearance(value => value === 'dark' ? 'light' : 'dark')}><span aria-hidden="true">{appearance === 'dark' ? '☀' : '◐'}</span> {appearance === 'dark' ? 'Light mode' : 'Dark mode'}</button><button className="theme-toggle" onClick={() => setDataDialog(true)}><span aria-hidden="true">⛁</span> Data and backups</button><span className={`status-dot ${connected ? 'running' : 'waiting'}`} /> {connected ? 'Runtime connected' : runtime.state === 'connecting' ? 'Starting runtime…' : 'Runtime disconnected'}<small>No terminal transcripts saved</small></div>
     </aside>
 
@@ -256,7 +262,7 @@ export default function App() {
               {session.status === 'orphaned' && session.identityVerified !== false && <button onClick={() => void sessionAction('terminateOrphan')}>End orphaned process</button>}
               {!!session.survivors?.length && <button onClick={() => void sessionAction('terminateSurvivors')}>End {session.survivors.length} leftover process{session.survivors.length === 1 ? '' : 'es'}</button>}
               <button onClick={() => void (session.archived ? sessionActions.unarchive(session) : sessionActions.archive(session))}>{session.archived ? 'Unarchive' : 'Archive'}</button>
-              <button onClick={() => void sessionMenu(session)} aria-label="More session actions">⋯</button>
+              <button onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); void sessionMenu(session, { x: rect.left, y: rect.bottom }); }} aria-label="More session actions" aria-haspopup="menu">⋯</button>
             </div>}</div>
             {projectBranchChanged && <p className="hint session-hint">The checkout is now on {state.project.branch ?? 'a detached HEAD'}; this session started on {session.branch ?? 'a detached HEAD'}.</p>}
             {session?.status === 'orphaned' && <p className="hint session-hint">{session.identityVerified === false ? `A process with this session's PID (${(session as { pid?: number }).pid ?? 'unknown'}) is still running, but Journal cannot verify it is the original agent, so it will not signal it. Resume stays blocked until it ends; check it outside Journal.` : 'The runtime that owned this terminal stopped while its process kept running. Journal cannot reattach to it. End it here, or leave it running; resuming this conversation stays blocked while it runs.'}</p>}

@@ -458,19 +458,22 @@ export class JournalStore {
   // Runtime saves carry status; user-owned fields (name, pin, archive,
   // removal) always come from the stored row, so a status save can never
   // undo a rename. updateSessionUser is the only writer of those fields.
+  // One atomic statement each: the app and the runtime write sessions from
+  // separate processes, so read-then-write would let one undo the other.
   saveSession(session) {
-    const stored = parse(this.db.prepare('SELECT body FROM sessions WHERE id=?').get(session.id));
-    const merged = { ...session };
-    for (const field of SESSION_USER_FIELDS) { if (stored && field in stored) merged[field] = stored[field]; else delete merged[field]; }
-    this.db.prepare('INSERT INTO sessions VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(merged.id, merged.projectId, JSON.stringify(merged));
-    return merged;
+    // '->' keeps JSON types (true stays true); a missing field patches as null and is dropped.
+    const userFields = SESSION_USER_FIELDS.map(field => `'${field}', sessions.body -> '$.${field}'`).join(', ');
+    this.db.prepare(`INSERT INTO sessions VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET body=json_patch(excluded.body, json_object(${userFields}))`)
+      .run(session.id, session.projectId, JSON.stringify(session));
+    return this.getSession(session.id);
   }
   updateSessionUser(id, patch) {
-    const session = this.getSession(id);
-    for (const key of Object.keys(patch)) if (!SESSION_USER_FIELDS.includes(key)) throw new Error('Invalid session field');
-    const next = { ...session, ...patch };
-    this.db.prepare('UPDATE sessions SET body=? WHERE id=?').run(JSON.stringify(next), id);
-    return next;
+    const keys = Object.keys(patch);
+    if (!keys.length || keys.some(key => !SESSION_USER_FIELDS.includes(key))) throw new Error('Invalid session field');
+    const { changes } = this.db.prepare(`UPDATE sessions SET body=json_set(body, ${keys.map(key => `'$.${key}', json(?)`).join(', ')}) WHERE id=?`)
+      .run(...keys.map(key => JSON.stringify(patch[key] ?? null)), text(id, 'session ID', 100));
+    if (!changes) throw new Error('Unknown session');
+    return this.getSession(id);
   }
   renameSession(id, name) {
     const displayName = name === null || name === '' ? null : text(name, 'session name', 120);
@@ -489,6 +492,7 @@ export class JournalStore {
   removeSession(id) {
     const session = this.getSession(id);
     if (['starting', 'running', 'waiting', 'stopping', 'orphaned'].includes(session.status)) throw new Error('Stop the session before removing it');
+    if (session.survivors?.length) throw new Error('End or keep the leftover child processes first; removing would hide them');
     this.db.prepare('DELETE FROM events WHERE session_id=?').run(id);
     this.audit('session-removed', { id });
     return this.updateSessionUser(id, { removed: true, removedAt: now(), pinned: false, pinSeq: null });
@@ -507,6 +511,7 @@ export class JournalStore {
   // ----- Proposal inbox (deterministic extraction) -----
   generateProposals(sessionId) {
     const session = this.getSession(sessionId);
+    if (session.removed) return []; // removed by the user: nothing is derived from it
     const receipt = (() => { try { return this.getReceipt(session.receiptId); } catch { return null; } })();
     // Proposals describe the primary repository: use its view, never a folder's Git identity.
     const inFolder = String(session.workspaceId ?? '').startsWith('root:');
