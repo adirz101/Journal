@@ -1,5 +1,7 @@
 export type Provider = 'claude' | 'codex';
-export interface Project { id: string; name: string; root: string; branch: string | null; head: string | null; }
+export interface ProjectRoot { id: string; path: string; name: string; kind: 'git' | 'folder'; nested: boolean; gitRoot: string | null; branch: string | null; exists?: boolean; currentBranch?: string | null; knowledge?: number; }
+export interface Project { id: string; name: string; root: string; branch: string | null; head: string | null; displayName?: string | null; folderName?: string; pinned?: boolean; roots?: ProjectRoot[]; }
+export interface ProjectDetails { project: Project; roots: ProjectRoot[]; counts: { knowledge: number; sessions: number; liveSessions: number; receipts: number; events: number; proposals: number; worktrees: number }; }
 export interface Source { kind: 'user' | 'file' | 'git'; note?: string; path?: string; startLine?: number; endLine?: number; excerpt?: string; contentHash?: string; base?: string | null; head?: string; commitCount?: number | null; }
 export interface Conflict { id: string; revision: number; statement: string; }
 export interface Memory { pinned?: boolean; environment?: string; selection?: { reason: string; bytes: number }; promotedFrom?: { id: string; revision: number; branch: string }; supersedes?: { id: string; revision: number }; id: string; projectId: string; revisionId: string; revision: number; statement: string; category: string; scope: 'checkout' | 'branch'; area: string; branch: string | null; source: Source; status: 'candidate' | 'active' | 'rejected' | 'archived'; validation: 'current' | 'stale' | 'wrong-branch'; drift?: number | null; conflicts?: Conflict[]; }

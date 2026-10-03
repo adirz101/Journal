@@ -128,7 +128,7 @@ process.stdin.on('data',data=>{
     expect(error).toContain('Unknown desktop action');
     await app.close();
     app = await electron.launch({ args: ['.'], env }); page = await app.firstWindow();
-    await page.getByRole('button', { name: /fixture project/ }).click();
+    await page.getByRole('button', { name: /^fixture project/ }).click();
     await expect(page.getByText('Fixture tests require Docker', { exact: true })).toBeVisible();
     await page.getByRole('tab', { name: 'Context', exact: true }).click();
     await expect(page.getByTestId('context-packet')).toContainText('Fixture tests require Docker');

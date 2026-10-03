@@ -12,6 +12,10 @@ Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI
 - Renderer reload, app crash and keep-running quit leave sessions running and are rediscovered. A runtime crash recovers sessions as interrupted or orphaned (verified or unverified), with uncertain delivery and no resend.
 - Ownership: signals go through the held PTY handle, or after a restart through PID plus UTC start time; stop escalates SIGTERM to the group, then SIGKILL after 3 s. Leftover descendants are reported and ended only on request.
 
+**Projects**
+- Display names (folders are never renamed), pinning with deterministic order, Remove from Journal (keep data, restorable) or Remove and delete Journal data, with explicit confirmation that files are not deleted.
+- Additional folders per project (other Git repositories, subfolders of other repositories, plain folders) with their own identity; folder-aware evidence and validation; a folder can be a session's explicit workspace.
+
 **Workspaces**
 - Current checkout, Journal-managed worktrees from an explicit base, and imported worktrees, with intent persisted before Git side effects and reconciliation after crashes.
 - No force, no stash, no transfer of uncommitted work. Removal refuses dirty, untracked, ignored, locked or in-use worktrees and keeps the branch; imported worktrees are never deleted.
@@ -30,7 +34,7 @@ Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI
 - Proposal inbox from explicit rule lines, passing test commands and moved branches. Deterministic, idempotent and review-gated.
 
 **Data and security**
-- SQLite (migrations v5): workspaces, proposals, audit, events and pinned claims.
+- SQLite (migrations v6): workspaces, proposals, audit, events, pinned claims and project settings.
 - Integrity-checked online backups, an offline restore script that keeps the previous database, storage and free-space reporting, a clear disk-full error, and a transaction fix that preserves the original SQLite error.
 - Versioned Brain export of approved claims (JSON plus Markdown, checksum, redaction) and import (size and schema limits, checksum, candidates only, no automatic branch matching).
 - Explicit session purge (refused when other sessions continue the same native conversation, so resume history stays correct) and 90-day timeline retention; knowledge is never pruned.
@@ -50,9 +54,9 @@ Verification uses local checks on the user's Mac. Fixture-only GitHub Actions CI
 
 | Check | Result |
 | --- | --- |
-| `npm test` | 123 passed |
+| `npm test` | 133 passed |
 | `npm run check`, `npm run build` | Passed (the existing ~545 KiB chunk warning remains) |
-| `npm run test:desktop` | 11 passed: real Electron, runtime and node-pty with fixture CLIs, covering four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, and the status helper |
+| `npm run test:desktop` | 13 passed: real Electron, runtime and node-pty with fixture CLIs, covering four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches and project management |
 | `npm run dist:dir` | Unsigned app builds; packaged runtime starts; notices bundled |
 | GitHub Actions | BLOCKED (workflow scope) |
 

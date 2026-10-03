@@ -2,6 +2,12 @@
 // and its client so they cannot drift apart.
 export const STORE_METHODS = [
   'openProject',
+  'renameProject',
+  'setProjectPinned',
+  'addProjectRoot',
+  'removeProjectRoot',
+  'projectDetails',
+  'removeProject',
   'listProjects',
   'project',
   'proposeMemory',

@@ -49,7 +49,7 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
     await page.getByRole('button', { name: 'Stop terminal' }).click();
     await expect(page.getByRole('button', { name: 'Start Codex', exact: true })).toBeEnabled();
     git('switch', '-c', 'feature');
-    await page.getByRole('button', { name: /orientation project/ }).click();
+    await page.getByRole('button', { name: /^orientation project/ }).click();
     await page.getByRole('tab', { name: /^Knowledge/ }).click();
     await addUpdate('FEATURE_PROGRESS: feature work is underway; next is feature review.');
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();

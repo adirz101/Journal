@@ -7,7 +7,16 @@ import { relativePath, refuseCredentials, text } from './validation.mjs';
 
 export const isSensitivePath = path => path.split('/').some(p => p === '.git' || /^\.env(?:\.|$)/i.test(p) || /^(?:auth|credentials|secrets?)(?:\.|$)/i.test(p) || /\.(?:pem|p12|pfx|key)$/i.test(p) || /^(?:id_rsa|id_ed25519|\.npmrc|\.netrc|\.pypirc)$/i.test(p));
 
-function sourceFile(root, path) {
+// The folder a source belongs to: the primary checkout (rootId null; the
+// worktree for worktree sessions) or one of the project's additional folders.
+// Null when that folder was removed from the project.
+export function evidenceRoot(project, rootId) {
+  if (!rootId) return { path: project.evidenceRoot ?? project.root, git: true };
+  const root = (project.roots ?? []).find(entry => entry.id === rootId);
+  return root ? { path: root.path, git: root.kind === 'git' } : null;
+}
+
+function sourceFile(root, path, { tracked = true } = {}) {
   path = relativePath(path);
   if (isSensitivePath(path)) {
     throw new Error('Sensitive files cannot be used as evidence');
@@ -29,8 +38,9 @@ function sourceFile(root, path) {
   try {
     const opened = fstatSync(fd);
     if (!opened.isFile() || opened.dev !== stat.dev || opened.ino !== stat.ino || opened.size > 1024 * 1024) throw new Error('Source changed during validation');
-    try { git(root, ['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', path]); }
-    catch { throw new Error('Evidence must be a tracked project file'); }
+    // Non-Git folders cannot prove a file is tracked; the other checks still apply.
+    if (tracked) { try { git(root, ['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', path]); }
+    catch { throw new Error('Evidence must be a tracked project file'); } }
     if (realpathSync(full) !== canonical || lstatSync(full).isSymbolicLink()) throw new Error('Source changed during validation');
     const buffer = Buffer.alloc(1024 * 1024 + 1); let length = 0;
     while (length < buffer.length) {
@@ -61,7 +71,9 @@ export function captureEvidence(project, input) {
     return { kind: 'git', base, head: project.head, commitCount: base ? commitsSince(project.root, base) : null, capturedAt: new Date().toISOString() };
   }
   if (input.kind !== 'file') throw new Error('Invalid source kind');
-  const file = sourceFile(project.root, input.path);
+  const root = evidenceRoot(project, input.rootId ?? null);
+  if (!root) throw new Error('That folder is no longer part of this project');
+  const file = sourceFile(root.path, input.path, { tracked: root.git });
   const lines = file.content.split(/\r?\n/);
   const startLine = input.startLine ?? 1; const endLine = input.endLine ?? startLine;
   if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine || endLine > lines.length || endLine - startLine >= 30) {
@@ -70,7 +82,8 @@ export function captureEvidence(project, input) {
   const excerpt = lines.slice(startLine - 1, endLine).join('\n');
   if (excerpt.length > 4000) throw new Error('Source excerpt is too large');
   refuseCredentials(excerpt);
-  return { kind: 'file', path: file.path, contentHash: file.contentHash, excerpt, startLine, endLine, commit: project.head, capturedAt: new Date().toISOString() };
+  const commit = !input.rootId ? project.head : root.git ? (() => { try { return git(root.path, ['rev-parse', 'HEAD']); } catch { return null; } })() : null;
+  return { kind: 'file', ...(input.rootId ? { rootId: input.rootId } : {}), path: file.path, contentHash: file.contentHash, excerpt, startLine, endLine, commit, capturedAt: new Date().toISOString() };
 }
 
 export function validateEvidence(project, source, cache, scope = 'branch') {
@@ -80,15 +93,19 @@ export function validateEvidence(project, source, cache, scope = 'branch') {
     // history is rewritten or reset. A repo overview stays valid on every
     // branch of the checkout while some branch, remote or tag still contains its commit.
     const key = `git:${scope}:${source.head}`;
-    const reachable = () => { try { return !!git(project.root, ['for-each-ref', '--count=1', '--contains', source.head, 'refs/heads', 'refs/remotes', 'refs/tags']); } catch { return false; } };
-    const check = () => isCommit(project.root, source.head) && (scope === 'checkout' ? reachable() : isAncestor(project.root, source.head));
+    const gitRoot = evidenceRoot(project, null).path;
+    const reachable = () => { try { return !!git(gitRoot, ['for-each-ref', '--count=1', '--contains', source.head, 'refs/heads', 'refs/remotes', 'refs/tags']); } catch { return false; } };
+    const check = () => isCommit(gitRoot, source.head) && (scope === 'checkout' ? reachable() : isAncestor(gitRoot, source.head));
     if (!cache) return check();
     if (!cache.has(key)) cache.set(key, check());
     return cache.get(key);
   }
-  if (cache?.has(source.path)) return cache.get(source.path) === source.contentHash;
+  const root = evidenceRoot(project, source.rootId ?? null);
+  if (!root) return false; // the folder was removed from the project
+  const key = `file:${root.path}\u0000${source.path}`;
+  if (cache?.has(key)) return cache.get(key) === source.contentHash;
   try {
-    const hash = sourceFile(project.root, source.path).contentHash; cache?.set(source.path, hash);
+    const hash = sourceFile(root.path, source.path, { tracked: root.git }).contentHash; cache?.set(key, hash);
     return hash === source.contentHash;
-  } catch { cache?.set(source.path, null); return false; }
+  } catch { cache?.set(key, null); return false; }
 }

@@ -25,7 +25,8 @@ export class Observers {
     const hooks = Object.fromEntries(HOOK_EVENTS.map(event => [event, [{ hooks: [{ type: 'command', command, timeout: 3 }] }]]));
     const settingsFile = join(this.dir, `${session.id}.settings.json`);
     writeFileSync(settingsFile, JSON.stringify({ hooks }), { mode: 0o600 });
-    let root = project.root; try { root = realpathSync(project.root); } catch { /* keep recorded root */ }
+    // Observations must come from where the session runs (checkout, worktree or folder).
+    const cwd = session.cwd ?? project.root; let root = cwd; try { root = realpathSync(cwd); } catch { /* keep recorded root */ }
     this.sessions.set(session.id, { token, target, settingsFile, root, offset: 0, partial: '' });
     return settingsFile;
   }

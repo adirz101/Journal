@@ -9,6 +9,7 @@ import { ActivityPanel } from './ActivityPanel';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import { ContextPanel } from './ContextPanel';
 import { DataDialog } from './DataDialog';
+import { ManageProjectDialog } from './ManageProjectDialog';
 import journalMarkWhite from '../../assets/branding/journal-mark-white.png';
 import journalMarkDark from '../../assets/branding/journal-mark.png';
 import journalWordmark from '../../assets/branding/journal-wordmark.png';
@@ -36,7 +37,7 @@ export default function App() {
   const [liveEvents, setLiveEvents] = useState<TimelineEvent[]>([]);
   const [now, setNow] = useState(Date.now());
   const [workspaces, setWorkspaces] = useState<WorkspaceList | null>(null); const [workspaceId, setWorkspaceId] = useState<string>(''); const [research, setResearch] = useState(false);
-  const [workspaceDialog, setWorkspaceDialog] = useState(false); const [disabled, setDisabled] = useState<string[]>([]); const [dataDialog, setDataDialog] = useState(false);
+  const [workspaceDialog, setWorkspaceDialog] = useState(false); const [disabled, setDisabled] = useState<string[]>([]); const [dataDialog, setDataDialog] = useState(false); const [manageId, setManageId] = useState<string | null>(null);
   const [resumeDraft, setResumeDraft] = useState<{ sessionId: string; value: string } | null>(null);
   const session = selectedId ? sessions[selectedId] ?? null : null;
   // A confirmation draft belongs to one launch, never to another conversation.
@@ -58,7 +59,7 @@ export default function App() {
     const projectId = id ?? projectRef.current?.id; if (!projectId) return;
     const next = await api<ProjectState>('project', { projectId }); setState(next); merge(next.sessions);
     const list = await api<WorkspaceList>('workspaces', { projectId }).catch(() => null); setWorkspaces(list);
-    setWorkspaceId(current => list?.workspaces.some(w => w.id === current && w.state === 'ready') ? current : '');
+    setWorkspaceId(current => list?.workspaces.some(w => w.id === current && w.state === 'ready') || next.project.roots?.some(root => `root:${root.id}` === current) ? current : '');
     return next;
   }, [merge]);
   // Branch switches happen outside Journal (terminal, editor, the agent itself):
@@ -77,6 +78,7 @@ export default function App() {
     window.addEventListener('focus', check); document.addEventListener('visibilitychange', check);
     return () => { clearInterval(timer); window.removeEventListener('focus', check); document.removeEventListener('visibilitychange', check); };
   }, [refresh]);
+  const reloadProjects = useCallback(async () => setProjects(await api<Project[]>('projects')), []);
   const reloadSessions = useCallback(async () => {
     const result = await api<{ live: Session[]; active: Session[] }>('sessions'); merge([...result.active, ...result.live]);
   }, [merge]);
@@ -170,7 +172,7 @@ export default function App() {
       <div className="brand"><img className="brand-icon" src={journalMark} alt="" width={32} height={32} /><div>Journal<small>PROJECT MEMORY</small></div><span className="local-tag">LOCAL</span></div>
       <button className="open-project" onClick={() => void openProject()} disabled={busy}><span>＋</span> Open project <kbd>{bootstrap?.platform === 'darwin' ? '⌘' : 'Ctrl'} O</kbd></button>
       <div className="nav-caption">PROJECTS <span>{projects.length}</span></div>
-      <nav aria-label="Projects">{projects.map(project => <button key={project.id} className={`project-link ${state?.project.id === project.id ? 'selected' : ''}`} onClick={() => void chooseProject(project)}><svg className="folder-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 11h18" /></svg><span>{project.name}</span>{ordered.some(s => s.projectId === project.id && needsAttention(s)) && <span className="attention" aria-label="needs attention">●</span>}</button>)}</nav>
+      <nav aria-label="Projects">{projects.map(project => <div key={project.id} className="project-row"><button className={`project-link ${state?.project.id === project.id ? 'selected' : ''}`} onClick={() => void chooseProject(project)} title={project.root}><svg className="folder-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 11h18" /></svg><span className="project-name">{project.name}</span>{project.pinned && <span className="pin-mark" aria-label="pinned">⚲</span>}{ordered.some(s => s.projectId === project.id && needsAttention(s)) && <span className="attention" aria-label="needs attention">●</span>}</button><button className="project-manage" aria-label={`Manage ${project.name}`} onClick={() => setManageId(project.id)}>⋯</button></div>)}</nav>
       <SessionList sessions={ordered} projects={projects} selectedId={selectedId} currentProjectId={state?.project.id ?? null} connected={connected} now={now} onSelect={next => void selectSession(next)} onNew={newSession} canStart={!!state && canStart} />
       <div className="sidebar-footer"><button className="theme-toggle" aria-label={`Switch to ${appearance === 'dark' ? 'light' : 'dark'} mode`} onClick={() => setAppearance(value => value === 'dark' ? 'light' : 'dark')}><span aria-hidden="true">{appearance === 'dark' ? '☀' : '◐'}</span> {appearance === 'dark' ? 'Light mode' : 'Dark mode'}</button><button className="theme-toggle" onClick={() => setDataDialog(true)}><span aria-hidden="true">⛁</span> Data and backups</button><span className={`status-dot ${connected ? 'running' : 'waiting'}`} /> {connected ? 'Runtime connected' : runtime.state === 'connecting' ? 'Starting runtime…' : 'Runtime disconnected'}<small>No terminal transcripts saved</small></div>
     </aside>
@@ -187,12 +189,13 @@ export default function App() {
             <div className="launch-options"><label className="inline-label">Workspace<select value={workspaceId} onChange={e => setWorkspaceId(e.target.value)} aria-label="Workspace">
               <option value="">Current checkout · {state.project.branch ?? 'detached HEAD'}</option>
               {workspaces?.workspaces.filter(w => w.state === 'ready').map(w => <option key={w.id} value={w.id!}>{w.kind === 'managed' ? 'Worktree' : 'Imported'} · {w.branch ?? 'detached'}</option>)}
+              {state.project.roots?.map(root => <option key={root.id} value={`root:${root.id}`}>Folder · {root.name}</option>)}
             </select></label><button className="text-button" onClick={() => setWorkspaceDialog(true)}>Workspaces…</button>
               <label className="inline-check"><input type="checkbox" checked={research} onChange={e => setResearch(e.target.checked)} /> Research (starts in Claude plan mode or the Codex read-only sandbox; can be changed in the session)</label></div>
             <p className="provider-line">{bootstrap?.agents.map(a => <span key={a.provider} title={a.available ? `${a.path ?? ''}\nResume: ${a.capabilities?.exactResume}\nObserved: status ${a.capabilities?.status.join(', ')}; commands ${a.capabilities?.commands}` : 'Not found on PATH'}>{a.provider === 'claude' ? 'Claude Code' : 'Codex'} {a.available ? a.version ?? '' : '· not found'}</span>)}</p>
             {bootstrap?.agents.some(a => !a.available) && <p className="hint">{bootstrap.agents.filter(a => !a.available).map(a => a.provider).join(', ')} not found on PATH. Install the native CLI, then reopen Journal.</p>}
           </section>
-          <section className="terminal-panel"><div className="terminal-heading"><div><span className={`status-dot ${session?.status ?? ''}`} /><strong>{session ? session.provider === 'claude' ? 'Claude Code' : 'Codex' : 'Terminal'}</strong><span className="terminal-label">{session ? `${label}${session.branch ? ` · ${projectBranchChanged ? 'started on ' : ''}⑂ ${session.branch}` : ''}${session.workspaceId ? ' · worktree' : ''}${session.research ? ' · research' : ''}` : 'Ready to start'}</span>{session && <span className="terminal-title" title={session.title}>{session.title}</span>}</div>
+          <section className="terminal-panel"><div className="terminal-heading"><div><span className={`status-dot ${session?.status ?? ''}`} /><strong>{session ? session.provider === 'claude' ? 'Claude Code' : 'Codex' : 'Terminal'}</strong><span className="terminal-label">{session ? `${label}${session.branch ? ` · ${projectBranchChanged ? 'started on ' : ''}⑂ ${session.branch}` : ''}${session.workspaceId ? session.workspaceId.startsWith('root:') ? ' · folder' : ' · worktree' : ''}${session.research ? ' · research' : ''}` : 'Ready to start'}</span>{session && <span className="terminal-title" title={session.title}>{session.title}</span>}</div>
             {session && <div className="terminal-actions">
               {isLive(session) && connected && <><button onClick={() => void sessionAction('interrupt')}>Interrupt <kbd>^C</kbd></button><button onClick={() => void sessionAction('stop')} disabled={session.status === 'stopping'}>Stop terminal</button></>}
               {resumable(session) && <button disabled={busy || !canStart} onClick={() => void start(session.provider, session)}>Resume</button>}
@@ -224,6 +227,8 @@ export default function App() {
         onToggle={id => { const next = disabled.includes(id) ? disabled.filter(x => x !== id) : [...disabled, id]; setDisabled(next); if (receipt?.state === 'prepared') void api<Receipt>('prepareContext', { projectId: state.project.id, task: receipt.query, workspaceId: workspaceId || null, disabled: next }).then(setReceipt).catch(failed); }}
         onSelectReceipt={setReceipt} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />}
     </aside>}
+    {manageId && <ManageProjectDialog projectId={manageId} onClose={() => setManageId(null)} onChanged={() => { void reloadProjects().catch(failed); if (state?.project.id === manageId) void refresh().catch(failed); }}
+      onRemoved={() => { const removed = manageId; setManageId(null); setProjects(items => items.filter(p => p.id !== removed)); if (state?.project.id === removed) { setState(null); setSelectedId(null); setReceipt(null); } void reloadProjects().catch(failed); }} />}
     {dataDialog && <DataDialog project={state?.project ?? null} onClose={() => setDataDialog(false)} onChanged={() => { setKnowledgeVersion(v => v + 1); void refresh().catch(() => {}); }} />}
     {state && workspaceDialog && <WorkspaceDialog project={state.project} onClose={() => setWorkspaceDialog(false)} onChanged={() => void refresh().catch(failed)} />}
     {state && form && <KnowledgeForm project={state.project} memory={form.memory} supersedes={form.supersedes} initialCategory={form.initialCategory} draft={form.draft} onClose={() => setForm(null)} onSaved={() => { setForm(null); setPanel('knowledge'); setKnowledgeVersion(v => v + 1); }} />}
