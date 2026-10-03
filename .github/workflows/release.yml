@@ -87,7 +87,10 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-        run: npm run dist:mac
+        run: |
+          # An empty secret must not reach electron-builder as a certificate path.
+          if [ -z "${CSC_LINK:-}" ]; then unset CSC_LINK CSC_KEY_PASSWORD; fi
+          npm run dist:mac
       - name: Expected artifacts only
         run: node scripts/release-check.mjs --artifacts release --platform mac ${TAG:+--tag "$TAG"}
       - name: Package audit
@@ -142,7 +145,9 @@ jobs:
           # Optional Authenticode certificate; unsigned when empty.
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-        run: npm run dist:win
+        run: |
+          if [ -z "${CSC_LINK:-}" ]; then unset CSC_LINK CSC_KEY_PASSWORD; fi
+          npm run dist:win
       - name: Expected artifacts only
         run: node scripts/release-check.mjs --artifacts release --platform win ${TAG:+--tag "$TAG"}
       - name: Package audit

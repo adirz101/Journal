@@ -102,6 +102,8 @@ test('the explorer browses, decorates, previews and references files without edi
     // Git state follows external changes through the watcher.
     writeFileSync(resolve(f.project, 'src', 'a.ts'), 'export const a = 1;\nexport const b = 22;\nexport const c = 3;\n');
     writeFileSync(resolve(f.project, 'fresh.ts'), 'new\n'); unlinkSync(resolve(f.project, 'gone.txt'));
+    // Linux does not watch files (no native recursive watching): status refreshes on request.
+    if (process.platform === 'linux') await page.getByRole('button', { name: 'Refresh files' }).click();
     await expect(row(page, /^a\.ts, modified/)).toBeVisible();
     await expect(row(page, /^fresh\.ts, untracked/)).toBeVisible();
     await expect(row(page, /^src, contains changes/)).toBeVisible();
