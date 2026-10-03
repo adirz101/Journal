@@ -120,17 +120,23 @@ export function createChat(path, cwd, env = process.env, timeout = 20000, platfo
     let target; try { target = launchTarget(path, ['create-chat'], { env, platform }); } catch { resolve(null); return; }
     let child; try { child = spawn(target.file, target.args, { cwd, env: childEnv(env), stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, detached: platform !== 'win32' }); } catch { resolve(null); return; }
     let output = ''; let done = false;
-    const end = () => { try { if (platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGTERM'); else child.kill(); } catch { /* already gone */ } };
-    const finish = id => { if (done) return; done = true; clearTimeout(timer); resolve(id); if (child.exitCode === null) end(); };
+    // The ID is the first line that is exactly a UUID.
+    const found = () => output.split(/\r?\n/).map(line => line.trim()).find(line => UUID.test(line));
+    // Always end the whole group (a launcher's node child may linger): TERM,
+    // then KILL if it is still there. Windows: taskkill ends the process tree.
+    const end = () => {
+      if (!child.pid) return;
+      if (platform === 'win32') { execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {}); return; }
+      try { process.kill(-child.pid, 'SIGTERM'); } catch { return; }
+      setTimeout(() => { try { process.kill(-child.pid, 0); process.kill(-child.pid, 'SIGKILL'); } catch { /* group gone */ } }, 2000).unref();
+    };
+    const finish = id => { if (done) return; done = true; clearTimeout(timer); resolve(id); end(); };
     const timer = setTimeout(() => finish(null), timeout);
     child.stdout.setEncoding('utf8');
-    child.stdout.on('data', data => {
-      output = (output + data).slice(-4096);
-      const id = output.split(/\s+/).find(word => UUID.test(word));
-      if (id) finish(id.toLowerCase());
-    });
+    child.stdout.on('data', data => { output = (output + data).slice(-4096); const id = found(); if (id) finish(id.toLowerCase()); });
     child.on('error', () => finish(null));
-    child.on('exit', () => setImmediate(() => { const id = output.split(/\s+/).find(word => UUID.test(word)); finish(id ? id.toLowerCase() : null); }));
+    // 'close' fires after stdout is fully read, so a quickly printed ID is never lost.
+    child.on('close', () => { const id = found(); finish(id ? id.toLowerCase() : null); });
   });
 }
 
