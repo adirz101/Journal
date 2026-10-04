@@ -64,8 +64,11 @@ module.exports = {
   mac: {
     category: 'public.app-category.developer-tools',
     target: [{ target: 'dmg', arch: ['arm64'] }, { target: 'zip', arch: ['arm64'] }],
-    // Full-bleed artwork: macOS 26+ masks it itself; the rounded original would sit on a grey platter.
-    icon: 'assets/branding/journal-app-icon-macos.png',
+    // Icon Composer icon (one layer: the full-bleed artwork, no glass effects). actool
+    // (Xcode 26 or later) compiles it to Assets.car for macOS 26+, which shapes it
+    // itself, and to a rounded Icon.icns for earlier macOS. The rounded original
+    // PNG would sit on a grey platter on macOS 26+.
+    icon: 'assets/branding/Journal.icon',
     artifactName: '${productName}-${version}-${arch}.${ext}',
     // Ad-hoc ("-") when no Developer ID is configured: Apple Silicon refuses
     // to run unsigned code, and a quarantined app with a broken signature is

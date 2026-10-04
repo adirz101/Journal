@@ -32,6 +32,7 @@ npm run release:check -- --artifacts release --platform mac
 npm run release:audit -- release/mac-arm64/Journal.app
 npm run smoke:packaged -- release/mac-arm64/Journal.app/Contents/MacOS/Journal
 ```
+Packaging the macOS app needs Xcode 26 or later: electron-builder compiles the Icon Composer icon (`assets/branding/Journal.icon`) with `actool`, which the command-line tools alone do not include. If `xcode-select -p` points at the command-line tools, prefix the build with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`. The icon is shaped by the system on macOS 26 and later, and ships pre-rounded (`icon.icns`, up to 256 px) for earlier versions.
 Windows packages are built on a Windows machine or runner with `npm run dist:win` (the workflow does this on `windows-latest`).
 
 ## CI notes
