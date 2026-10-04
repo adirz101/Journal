@@ -104,14 +104,15 @@ export const searchesMemory = (text: string, actionsOnly: boolean) => !actionsOn
 // Groups in order: an empty query lists live sessions, quiet ones and actions; a query
 // lists sessions, actions and notes; '>' lists actions only. When everything is empty
 // (and no note search is in flight) the two fallbacks prefill, they never start.
-export function buildGroups(input: { text: string; actionsOnly: boolean; sessions: PaletteItem[]; quiet: PaletteItem[]; actions: PaletteItem[]; notes: PaletteItem[]; notesLoading: boolean }): PaletteGroup[] {
+// fallbacks: false without a project (there is no task box or note form to fill); the message stays.
+export function buildGroups(input: { text: string; actionsOnly: boolean; sessions: PaletteItem[]; quiet: PaletteItem[]; actions: PaletteItem[]; notes: PaletteItem[]; notesLoading: boolean; fallbacks?: boolean }): PaletteGroup[] {
   const { text, actionsOnly } = input;
   const groups: PaletteGroup[] = actionsOnly ? [{ id: 'actions', label: words.groups.actions, items: input.actions }]
     : !text ? [{ id: 'sessions', label: words.groups.sessions, items: input.sessions }, { id: 'quiet', label: words.groups.quiet, items: input.quiet }, { id: 'actions', label: words.groups.actions, items: input.actions }]
     : [{ id: 'sessions', label: words.groups.sessions, items: input.sessions }, { id: 'actions', label: words.groups.actions, items: input.actions }, { id: 'memory', label: words.groups.memory, items: input.notes }];
   const shown = groups.filter(group => group.items.length);
   if (shown.length || !text || input.notesLoading) return shown;
-  return [{ id: 'none', label: words.noResults(text), items: [{ kind: 'fallback', id: 'new-with-task', label: words.newWithTask }, { kind: 'fallback', id: 'add-as-note', label: words.addAsNote }] }];
+  return [{ id: 'none', label: words.noResults(text), items: input.fallbacks === false ? [] : [{ kind: 'fallback', id: 'new-with-task', label: words.newWithTask }, { kind: 'fallback', id: 'add-as-note', label: words.addAsNote }] }];
 }
 
 export function fileGroup(hits: { path: string; spans: Span[] }[]): PaletteGroup[] {

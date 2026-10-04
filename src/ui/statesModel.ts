@@ -59,7 +59,9 @@ export function recoveryView(recovery: Recovery | null, sessions: Record<string,
       : session.status === 'orphaned' ? 'running' : resumable(session) ? 'continue' : session.status === 'interrupted' ? 'needs-id' : 'gone';
     rows.push({ session, action, reason: action === 'continue' ? blocked : null });
   }
-  if (!rows.some(row => row.action !== 'gone')) return null;
   const open = rows.filter(row => row.action !== 'gone');
-  return { rows: open, interrupted: recovery.total ?? recovery.sessions.length, leftovers: leftovers.filter(s => !s.removed), allResumable: open.every(row => row.action === 'continue') };
+  // Leftover processes keep the panel open until they end, even when every row is resolved.
+  const left = leftovers.filter(s => !s.removed && !s.archived);
+  if (!open.length && !left.length) return null;
+  return { rows: open, interrupted: recovery.total ?? recovery.sessions.length, leftovers: left, allResumable: open.length > 0 && open.every(row => row.action === 'continue') };
 }

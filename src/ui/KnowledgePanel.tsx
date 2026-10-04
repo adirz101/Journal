@@ -108,6 +108,14 @@ export function KnowledgePanel({ project, workspaces = [], version, trustVersion
       .then(found => { if (current && found.items[0]) { focusHandled = focus.seq; setFocusNote({ seq: focus.seq, note: found.items[0] }); } }).catch(onError);
     return () => { current = false; };
   }, [focus, project.id, onError]);
+  // Edits, reviews and archiving reload the note it shows, so its state and actions stay current.
+  const focusedId = focusNote?.note.id;
+  useEffect(() => {
+    if (!focusedId) return; let current = true;
+    void api<MemoryPage>('memoryPage', { projectId: project.id, ids: [focusedId], filter: 'history', limit: 1, offset: 0 })
+      .then(found => { if (current) setFocusNote(shown => shown && shown.note.id === focusedId ? (found.items[0] ? { ...shown, note: found.items[0] } : null) : shown); }).catch(() => {});
+    return () => { current = false; };
+  }, [version, focusedId, project.id]);
   const shownItems = focusNote && focusNote.note.projectId === project.id && !items.some(item => item.id === focusNote.note.id) ? [focusNote.note, ...items] : items;
   const focusIndex = focusNote ? shownItems.findIndex(item => item.id === focusNote.note.id) : -1;
   useEffect(() => {

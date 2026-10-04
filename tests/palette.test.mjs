@@ -110,6 +110,7 @@ test('no results offers New session with this task first', async t => {
   assert.equal(m.keepActive(groups, null), 'new-with-task', 'the first fallback is active');
   assert.deepEqual(m.buildGroups({ ...input, notesLoading: true }), [], 'nothing is offered while notes are still searched');
   assert.deepEqual(m.buildGroups({ ...input, text: '' }), []);
+  assert.deepEqual(labels(m.buildGroups({ ...input, fallbacks: false })), [['none', []]], 'without a project the message stays and nothing is offered');
 });
 
 test('moveActive wraps and jumps groups', async t => {

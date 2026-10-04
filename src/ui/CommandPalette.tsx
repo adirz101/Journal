@@ -92,7 +92,7 @@ export const CommandPalette = memo(function CommandPalette(props: CommandPalette
     const sessionItems = actionsOnly ? [] : sessionMatches(sessions, projectId, text, now, connected, keys);
     const quiet = actionsOnly || text || !connected ? [] : quietItems(sessions, now);
     const memory = memoryWanted && notes.query === text ? noteItems(notes.page?.items ?? [], text) : [];
-    return buildGroups({ text, actionsOnly, sessions: sessionItems, quiet, actions: actionItems(PALETTE_ACTIONS, keys, can, text), notes: memory, notesLoading });
+    return buildGroups({ text, actionsOnly, sessions: sessionItems, quiet, actions: actionItems(PALETTE_ACTIONS, keys, can, text), notes: memory, notesLoading, fallbacks: !!projectId });
   }, [files, text, found, actionsOnly, sessions, projectId, now, connected, keys, can, memoryWanted, notes, notesLoading]);
 
   // The active option is kept by id; when it goes, the first option is active
@@ -104,6 +104,11 @@ export const CommandPalette = memo(function CommandPalette(props: CommandPalette
   const activeDom = domId(active);
   useEffect(() => { if (activeDom) document.getElementById(activeDom)?.scrollIntoView({ block: 'nearest' }); }, [activeDom]);
 
+  // Enter while the file list still shows an earlier query's results waits for this query's
+  // reply, then opens its first file: a quick type-and-Enter never opens a stale match.
+  const fileStale = files && !!text && found.query !== text;
+  const [enterPending, setEnterPending] = useState(false);
+  useEffect(() => { if (enterPending && !fileStale) { setEnterPending(false); run(findItem(groups, keepActive(groups, null))); } }); // eslint-disable-line react-hooks/exhaustive-deps
   function run(item: PaletteItem | null) {
     if (!item) return;
     if (item.kind === 'session') props.onOpenSession(item.session);
@@ -129,7 +134,7 @@ export const CommandPalette = memo(function CommandPalette(props: CommandPalette
     }
     const move = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : event.key === 'PageDown' ? 'next-group' : event.key === 'PageUp' ? 'prev-group' : null;
     if (move !== null && !event.altKey && !event.metaKey && !event.ctrlKey) { event.preventDefault(); setChosen(moveActive(groups, active, move)); return; }
-    if (event.key === 'Enter' && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey) { event.preventDefault(); run(findItem(groups, active)); return; }
+    if (event.key === 'Enter' && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey) { event.preventDefault(); if (fileStale) setEnterPending(true); else run(findItem(groups, active)); return; }
     if (event.key === 'Tab') event.preventDefault();
   }
 
@@ -167,7 +172,7 @@ export const CommandPalette = memo(function CommandPalette(props: CommandPalette
       <div className="palette-search">
         <svg className="palette-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
         <input ref={input} role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" aria-activedescendant={activeDom} aria-label={title} aria-describedby="palette-how"
-          placeholder={placeholder} value={raw} onChange={event => { setRaw(event.target.value); setChosen(null); }} onKeyDown={onKeyDown} spellCheck={false} autoComplete="off" maxLength={200} />
+          placeholder={placeholder} value={raw} onChange={event => { setRaw(event.target.value); setChosen(null); setEnterPending(false); }} onKeyDown={onKeyDown} spellCheck={false} autoComplete="off" maxLength={200} />
         <kbd aria-hidden="true">esc</kbd>
       </div>
       <p id="palette-how" className="visually-hidden">{files ? words.fileHowTo : words.howTo}</p>

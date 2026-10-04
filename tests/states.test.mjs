@@ -70,6 +70,11 @@ test('recoveryView: resumable → continue; unconfirmed Codex → needs-id; orph
   const resumed = row('a2', { status: 'running', resumedFrom: 'a' });
   assert.equal(recoveryView(recovery('a'), byId(a, resumed), null), null);
   assert.equal(recoveryView(recovery('a', 'b'), byId({ ...a, archived: true }, { ...b, removed: true }), null), null);
+  // Leftover processes keep the panel open after every row is resolved; an archived one does not.
+  const survivor = row('s', { survivors: [{ pid: 2, started: AT, command: 'node' }] });
+  const kept = recoveryView(recovery('s'), byId(survivor, row('s2', { resumedFrom: 's', status: 'running' })), null);
+  assert.deepEqual([kept.rows.length, kept.leftovers.map(s => s.id), kept.allResumable], [0, ['s'], false]);
+  assert.equal(recoveryView(recovery('s'), byId({ ...survivor, archived: true }, row('s2', { resumedFrom: 's', status: 'running' })), null), null);
   assert.equal(recoveryView(recovery('a'), {}, null), null, 'rows not loaded are not offered');
   // A row whose status event has not arrived yet takes the recovered status.
   assert.equal(recoveryView(recovery('a'), byId({ ...a, status: 'running' }), null).rows[0].action, 'continue');

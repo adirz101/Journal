@@ -187,6 +187,11 @@ test('open-file finds README.md and previews it; .env and id_rsa never appear', 
     await expect(paletteDialog(page)).toHaveCount(0);
     await expect(page.getByRole('region', { name: 'Preview of README.md' })).toBeVisible();
     await expect(page.getByRole('region', { name: 'Preview of README.md' })).toContainText('Palette fixture');
+    // Handled once: showing the Files tab again does not reopen it.
+    await page.getByRole('button', { name: 'Back to files' }).click();
+    await inspectorTab(page, 'Memory'); await inspectorTab(page, 'Files');
+    await expect(page.getByRole('tree', { name: 'Files' })).toBeVisible();
+    await expect(page.getByRole('region', { name: /Preview of/ })).toHaveCount(0);
     // ⌘P / Ctrl+Shift+O inside the command palette switches to files and keeps the text.
     await openPalette(app, page);
     await page.keyboard.type('readme');
@@ -243,11 +248,13 @@ test('Add reference… in the composer adds a file chip', async () => {
     await newSession(page);
     await page.getByRole('button', { name: 'Add reference…', exact: true }).click();
     await expect(paletteDialog(page, 'Reference a file')).toBeVisible();
-    await page.keyboard.type('readme');
-    await expect(results(page).getByRole('option')).toHaveCount(1);
-    await page.keyboard.press('Enter');
+    await page.keyboard.type('term');
+    await expect(results(page).getByRole('option', { name: /terminal\.mjs/ })).toBeVisible();
+    // Enter right after typing waits for this query's results: the earlier match is never taken.
+    await combobox(page).fill('readme'); await page.keyboard.press('Enter');
     await expect(paletteDialog(page, 'Reference a file')).toHaveCount(0);
     await expect(referenceChips(page)).toContainText('README.md');
+    await expect(referenceChips(page)).not.toContainText('terminal.mjs');
     await expect(page.getByRole('region', { name: /Preview of/ })).toHaveCount(0);
     expect(f.launches()).toHaveLength(0);
     // The Files tab is untouched; the memory tab still works.

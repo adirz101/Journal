@@ -91,7 +91,7 @@ export default function App() {
   const [palette, setPalette] = useState<{ mode: 'all' | 'files'; purpose: 'open' | 'reference' } | null>(null);
   // A note or file opened from the palette (seq: one request each).
   const [memoryFocus, setMemoryFocus] = useState<{ id: string; seq: number } | null>(null);
-  const [filesReveal, setFilesReveal] = useState<{ rootKey: string; path: string; seq: number } | null>(null);
+  const [filesReveal, setFilesReveal] = useState<{ projectId: string; rootKey: string; path: string; seq: number } | null>(null);
   // Sessions a crashed runtime left behind, until Done (acknowledgeRecovery); loadedAt: the recovery whose rows are fetched.
   const [recovery, setRecovery] = useState<Recovery | null>(null); const [recoveryLoadedAt, setRecoveryLoadedAt] = useState<string | null>(null);
   // === End Phase 8 ===
@@ -474,8 +474,8 @@ export default function App() {
   const filesRoot = session && session.projectId === state?.project.id && session.workspaceId && !session.workspaceId.startsWith('root:') ? session.workspaceId : 'checkout';
   // The palette's callbacks stay the same object (they read the newest App state through a ref),
   // so terminal and timeline events do not re-render the open palette.
-  const paletteLatest = useRef({ palette, filesRoot, selectSession, newSession, addReference, checkProvider, runCommand, showInspector: layout.showInspector, failed });
-  paletteLatest.current = { palette, filesRoot, selectSession, newSession, addReference, checkProvider, runCommand, showInspector: layout.showInspector, failed };
+  const paletteLatest = useRef({ palette, filesRoot, projectId: state?.project.id ?? null, selectSession, newSession, addReference, checkProvider, runCommand, commandBlock, showInspector: layout.showInspector, failed });
+  paletteLatest.current = { palette, filesRoot, projectId: state?.project.id ?? null, selectSession, newSession, addReference, checkProvider, runCommand, commandBlock, showInspector: layout.showInspector, failed };
   const paletteCallbacks = useMemo(() => ({
     onClose: () => setPalette(null),
     // Closed first, then run on the next frame, so the open-dialog guard never swallows it.
@@ -483,6 +483,8 @@ export default function App() {
       setPalette(null);
       requestAnimationFrame(() => {
         const latest = paletteLatest.current;
+        // The guard is checked again: the state may have changed since the palette listed it.
+        if (latest.commandBlock(id) !== null) return;
         if (id === 'manage-workspaces') setWorkspaceDialog(true);
         else if (id === 'check-agents') for (const provider of ['claude', 'codex', 'cursor'] as const) void latest.checkProvider(provider, true);
         else latest.runCommand.current(id);
@@ -491,14 +493,15 @@ export default function App() {
     onOpenSession: (target: Session) => { setPalette(null); void paletteLatest.current.selectSession(target); },
     onOpenNote: (id: string) => { setPalette(null); setPanel('memory'); paletteLatest.current.showInspector(); setMemoryFocus(current => ({ id, seq: (current?.seq ?? 0) + 1 })); },
     onOpenFile: (path: string) => {
-      const { palette: open, filesRoot: rootKey } = paletteLatest.current; setPalette(null);
+      const { palette: open, filesRoot: rootKey, projectId } = paletteLatest.current; setPalette(null);
+      if (!projectId) return;
       if (open?.purpose === 'reference') { void paletteLatest.current.addReference({ rootKey, path, startLine: null, endLine: null }).catch(paletteLatest.current.failed); return; }
-      setFilesChoice('all'); setPanel('files'); paletteLatest.current.showInspector(); setFilesReveal(current => ({ rootKey, path, seq: (current?.seq ?? 0) + 1 }));
+      setFilesChoice('all'); setPanel('files'); paletteLatest.current.showInspector(); setFilesReveal(current => ({ projectId, rootKey, path, seq: (current?.seq ?? 0) + 1 }));
     },
     // Prefills only: nothing starts, and a draft task is kept (the query goes on a new line).
-    onNewWithTask: (text: string) => { setPalette(null); paletteLatest.current.newSession(); setTask(current => current.trim() ? `${current.replace(/\s+$/, '')}\n${text}` : text); },
+    onNewWithTask: (text: string) => { setPalette(null); if (!paletteLatest.current.projectId) return; paletteLatest.current.newSession(); setTask(current => current.trim() ? `${current.replace(/\s+$/, '')}\n${text}` : text); },
     // The note form, prefilled: saving adds it for review, as any new note.
-    onAddNote: (text: string) => { setPalette(null); setForm({ initialStatement: text }); },
+    onAddNote: (text: string) => { setPalette(null); if (paletteLatest.current.projectId) setForm({ initialStatement: text }); },
   }), []);
   // Each action's reason, recomputed per render but passed on only when one changes.
   const blockList = PALETTE_ACTIONS.map(id => commandBlock(id));
@@ -509,9 +512,11 @@ export default function App() {
   const sessionsRef = useRef(sessions); sessionsRef.current = sessions;
   useEffect(() => {
     if (!recovery) return; let current = true;
+    // Loaded only when every row is known: a failed fetch never lets the panel close by itself
+    // (the user can still choose Done).
     const missing = recovery.sessions.filter(entry => !sessionsRef.current[entry.id]).map(entry => entry.id);
-    void Promise.all(missing.map(id => api<Session>('getSession', { id }).then(found => { if (found) merge([found]); }).catch(() => {})))
-      .then(() => { if (current) setRecoveryLoadedAt(recovery.at); });
+    void Promise.all(missing.map(id => api<Session | null>('getSession', { id }).then(found => { if (found) merge([found]); return !!found; }).catch(() => false)))
+      .then(results => { if (current && results.every(Boolean)) setRecoveryLoadedAt(recovery.at); });
     return () => { current = false; };
   }, [recovery, merge]);
   const startBlocked = !connected ? composer.runtimeDown : liveCount >= MAX_SESSIONS ? statesCopy.slotsFull : null;

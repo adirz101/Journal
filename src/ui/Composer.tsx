@@ -94,11 +94,12 @@ export function Composer(props: ComposerProps) {
   // A refused start is explained while its cause holds: "4 sessions are running" goes once a slot frees.
   const startError = props.startError && !(props.startError.code === 'SLOTS_FULL' && props.liveCount < MAX_LIVE) ? props.startError : null;
   // === Phase 8: an agent that can't start (StartError) ===
-  // A refused start's card stays until the agent is ready again (Check again) or the choice
-  // changes; an agent's own status check shows its card only for a sign-in (a missing or
-  // unsupported agent that was never started keeps the reason beside Start).
+  // A refused start's card stays until the choice changes, the next start, or (missing or
+  // unsupported) until Check again finds the agent ready; an agent's own status check shows its
+  // card only for a sign-in (a missing or unsupported agent that was never started keeps the
+  // reason beside Start).
   const problem = startProblem({ provider, agent, error: startError });
-  const problemCard = problem && (startError ? !(problem.kind === 'missing' && agentReady(agent)) : problem.kind === 'signed-out') ? problem : null;
+  const problemCard = problem && (startError ? !((problem.kind === 'missing' || problem.kind === 'unsupported') && agentReady(agent)) : problem.kind === 'signed-out') ? problem : null;
   const shown = block ?? (startError && !problemCard ? startError.message : null);
   // === End Phase 8 ===
 
