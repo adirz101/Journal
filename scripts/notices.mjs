@@ -1,26 +1,30 @@
 // Generates THIRD_PARTY_NOTICES.md from the production dependency tree plus
 // Electron, which the packaged app bundles. Run before packaging a release.
-import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // Everything that ships: runtime dependencies (node_modules in the app) and the
 // packages Vite bundles into dist/ (package.json "journal.rendererBundle"),
-// each with its own dependencies, plus Electron itself.
+// each with its own dependencies, plus Electron itself. Dependencies resolve
+// through package-lock.json the way Node resolves them (nested node_modules
+// first), so deduplicated and nested copies are all found.
 const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
+const lock = JSON.parse(readFileSync('package-lock.json', 'utf8')).packages;
 const roots = new Set([...Object.keys(manifest.dependencies ?? {}), ...(manifest.journal?.rendererBundle ?? [])]);
-const tree = JSON.parse(execFileSync('npm', ['ls', '--all', '--json'], { encoding: 'utf8', shell: process.platform === 'win32', maxBuffer: 64 * 1024 * 1024 }));
-const packages = new Map();
-const walk = node => { for (const [name, info] of Object.entries(node.dependencies ?? {})) { if (packages.has(name) || !info.version) continue; packages.set(name, info.version); walk(info); } };
-for (const [name, info] of Object.entries(tree.dependencies ?? {})) if (roots.has(name)) { packages.set(name, info.version); walk(info); }
-for (const name of roots) if (!packages.has(name)) throw new Error(`${name} is listed as shipped but is not installed`);
-packages.set('electron', JSON.parse(readFileSync('node_modules/electron/package.json', 'utf8')).version);
+const resolve = (from, name) => { for (let dir = from; ; dir = dir.slice(0, Math.max(0, dir.lastIndexOf('/node_modules/')))) { const path = `${dir ? `${dir}/` : ''}node_modules/${name}`; if (lock[path]) return path; if (!dir) return null; } };
+const packages = new Map(); // directory -> [name, version]
+const visit = path => { const info = lock[path]; if (packages.has(path) || !info.version) return; // (links have no version)
+  packages.set(path, [path.slice(path.lastIndexOf('node_modules/') + 'node_modules/'.length), info.version]);
+  for (const name of Object.keys({ ...info.dependencies, ...info.optionalDependencies })) { const dep = resolve(path, name); if (dep) visit(dep); } };
+for (const name of roots) { const path = resolve('', name); if (!path) throw new Error(`${name} is listed as shipped but is not installed`); visit(path); }
+packages.set('node_modules/electron', ['electron', JSON.parse(readFileSync('node_modules/electron/package.json', 'utf8')).version]);
 // winpty is compiled into node-pty's Windows build (winpty-agent.exe, winpty.dll);
 // its license is not part of node-pty's own LICENSE file.
 const components = [['winpty (in node-pty, Windows)', 'node_modules/node-pty/deps/winpty/LICENSE']];
 const sections = [];
-for (const [name, version] of [...packages].sort(([a], [b]) => a.localeCompare(b))) {
-  const dir = join('node_modules', name); if (!existsSync(dir)) continue;
+const seen = new Set();
+for (const [dir, [name, version]] of [...packages].sort(([, [a, x]], [, [b, y]]) => a.localeCompare(b) || x.localeCompare(y))) {
+  if (!existsSync(dir) || seen.has(`${name}@${version}`)) continue; seen.add(`${name}@${version}`);
   const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
   const file = readdirSync(dir).find(entry => /^(?:licen[cs]e|copying|notice)(?:\.|$)/i.test(entry));
   const text = file ? readFileSync(join(dir, file), 'utf8').trim() : '(No license file shipped with the package.)';

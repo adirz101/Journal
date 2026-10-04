@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, type Project } from './types';
+import { api, type Project, type UpdateState } from './types';
+import { UpdateSettings } from './UpdateNotice';
 
 interface StorageInfo { database: number; wal: number; tables: Record<string, number>; freeBytes: number | null; lowDisk: boolean | null; }
 const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
-export function DataDialog({ project, onClose, onChanged }: { project: Project | null; onClose: () => void; onChanged: () => void }) {
+export function DataDialog({ project, update, onClose, onChanged }: { project: Project | null; update: UpdateState | null; onClose: () => void; onChanged: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [info, setInfo] = useState<StorageInfo | null>(null); const [message, setMessage] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   useEffect(() => { dialog.current?.showModal(); void api<StorageInfo>('storageInfo').then(setInfo).catch(e => setError(e.message)); }, []);
@@ -23,6 +24,7 @@ export function DataDialog({ project, onClose, onChanged }: { project: Project |
     <p className="muted small-print">Restore a backup with Journal closed: <code>npm run data:restore -- &lt;backup.sqlite&gt;</code>. The current database is kept beside the restored one. Add <code>--force</code> only if Journal crashed and left a stale lock.</p>
     {message && <p className="hint" role="status">{message}</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
+    <UpdateSettings state={update} />
     <div className="dialog-actions"><button onClick={onClose}>Done</button></div>
   </dialog>;
 }

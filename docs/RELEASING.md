@@ -44,6 +44,16 @@ Windows packages are built on a Windows machine or runner with `npm run dist:win
 3. Tag and push: `git tag v<version> && git push origin v<version>`.
 4. The `Release` workflow verifies, packages, smoke-tests and creates a **draft** release with the six assets. Review the notes (from `.github/release-notes-template.md`), download and check the assets, then publish by hand. Workflow artifacts are kept for three days only; GitHub Releases is the download location.
 
+## Automatic updates
+Journal updates itself with [electron-updater](https://www.electron.build/auto-update) (MIT) from GitHub Releases, starting with 0.2.0-alpha.2; earlier builds must be replaced by hand once.
+- The release workflow uploads the update feed with the installers: `latest-mac.yml` (macOS, pointing at the ZIP), `latest.yml` (Windows installer) and the `.blockmap` files for differential downloads. `release-check --artifacts` fails if a feed file is missing. Builds never upload anything themselves (`--publish never`); the `publish` entry in `electron-builder.config.cjs` only writes the feed location into the app.
+- Drafts are invisible to the updater: nothing reaches users until a maintainer publishes the release. Publishing is the release decision.
+- Installed builds check 30 seconds after launch and every six hours (switchable in **Data and backups**, with a manual **Check for updates**), download in the background and show **Restart to update** in the sidebar. Journal never restarts on its own; installing asks what to do with running sessions, as quitting does, shuts down normally, and only then starts the installer. On Windows sessions are always stopped for an update: the NSIS installer ends every process started from the install folder, including the runtime.
+- Prereleases (`-alpha.N`) follow newer prereleases and releases; a release version ignores prereleases; downgrades are never offered. Journal sets no update channel (the GitHub provider would then match only tags with that channel name): an alpha looks for `alpha*.yml` and falls back to the one feed Journal publishes, `latest*.yml`.
+- The Windows portable EXE cannot replace itself: it shows that a version is available and links to the release. Development builds and tests never check (`JOURNAL_HEADLESS=1` or `JOURNAL_DISABLE_UPDATES=1` also switch updates off).
+- macOS installs updates only when the new build is signed by the same Developer ID, so the release workflow refuses to build a tag without the macOS signing secrets.
+- To verify end to end: install version N, publish N+1, and confirm the notice, the download and the restart on both platforms.
+
 ## Signing and notarization
 macOS signing and notarization are configured (4 October 2026): the release workflow signs tag builds with the Developer ID Application certificate and the hardened runtime, notarizes and staples them, and checks the result with `spctl` and `stapler validate`. Pull-request builds never receive the certificate: they are ad-hoc signed. Keep all macOS secrets configured together: a signed but not notarized build fails the workflow's Gatekeeper check (`spctl`). `APPLE_API_KEY_P8` holds the raw `.p8` text of a Team API key (it has an issuer ID); `MAC_CSC_LINK` is a base64 `.p12` that includes the private key. Windows builds remain unsigned (SmartScreen may warn) until a code-signing certificate is added; this never blocks a release.
 
@@ -59,4 +69,4 @@ Local signed builds (optional): `CSC_NAME="Adir Zak (N859VCGPS7)" npm run dist:m
 | `WIN_CSC_LINK` | Authenticode code-signing certificate as a base64-encoded `.pfx` (optional) |
 | `WIN_CSC_KEY_PASSWORD` | Its password |
 
-With the macOS certificate, the app is signed with the hardened runtime and `assets/entitlements.mac.plist` (JIT, unsigned executable memory for V8, and library validation off for node-pty); with the API key it is also notarized and stapled, and the workflow checks `spctl` and `stapler validate`. Windows signing is not required for alpha releases and never blocks them. Auto-update is not implemented.
+With the macOS certificate, the app is signed with the hardened runtime and `assets/entitlements.mac.plist` (JIT, unsigned executable memory for V8, and library validation off for node-pty); with the API key it is also notarized and stapled, and the workflow checks `spctl` and `stapler validate`. Windows signing is not required for alpha releases and never blocks them.

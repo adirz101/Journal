@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { auditEntries, checkTag, checksumLines, configArtifacts, expectedArtifacts, LEAKS, loadConfig, readVersion, tagFor } from '../scripts/release-lib.mjs';
+import { auditEntries, checkTag, checksumLines, configArtifacts, expectedArtifacts, LEAKS, loadConfig, productionPackages, readVersion, tagFor, UPDATE_FILES } from '../scripts/release-lib.mjs';
 import { dataDirectory, guiPathEntries, unpackedPath, withGuiPath } from '../src/desktop/environment.mjs';
 import { removeLater } from './support/cleanup.mjs';
 
@@ -23,9 +23,12 @@ test('one version source: tag, package.json and artifact names agree', () => {
   assert.throws(() => execFileSync(process.execPath, ['scripts/release-check.mjs', '--tag', 'v0.0.1'], { stdio: 'pipe' }));
 });
 
-test('packaging config: stable ID, platforms, per-user installer, data kept, nothing published', () => {
+test('packaging config: stable ID, platforms, per-user installer, data kept, update feed', () => {
   const config = withEnv({ CSC_LINK: undefined, APPLE_API_KEY: undefined }, () => loadConfig());
-  assert.equal(config.appId, 'io.github.adirz101.journal'); assert.equal(config.productName, 'Journal'); assert.equal(config.publish, null);
+  assert.equal(config.appId, 'io.github.adirz101.journal'); assert.equal(config.productName, 'Journal');
+  // The update feed: electron-updater reads it from app-update.yml. Builds never upload; the release workflow does.
+  assert.deepEqual(config.publish, [{ provider: 'github', owner: 'adirz101', repo: 'Journal' }]); assert.equal(config.detectUpdateChannel, false);
+  assert.deepEqual(UPDATE_FILES, { mac: ['latest-mac.yml'], win: ['latest.yml'] });
   assert.deepEqual(config.mac.target, [{ target: 'dmg', arch: ['arm64'] }, { target: 'zip', arch: ['arm64'] }]);
   assert.deepEqual(config.win.target, [{ target: 'nsis', arch: ['x64'] }, { target: 'portable', arch: ['x64'] }]);
   assert.equal(config.nsis.perMachine, false); assert.equal(config.nsis.oneClick, true, 'Per user without an all-users choice');
@@ -49,14 +52,16 @@ test('packaging config: stable ID, platforms, per-user installer, data kept, not
   assert.equal(png[25], 2, 'Opaque RGB: no transparent margin for macOS to frame');
   const signedOnly = withEnv({ CSC_LINK: 'secret-path', CSC_IDENTITY_AUTO_DISCOVERY: undefined, APPLE_API_KEY: undefined }, () => loadConfig());
   assert.equal(signedOnly.mac.notarize, false, 'Notarization only with App Store Connect credentials');
-  // Only node-pty ships as a module; the renderer libraries are bundled by Vite.
-  assert.deepEqual(Object.keys(pkg.dependencies), ['node-pty']);
+  // node-pty and electron-updater ship as modules; the renderer libraries are bundled by Vite.
+  assert.deepEqual(Object.keys(pkg.dependencies), ['electron-updater', 'node-pty']);
   for (const name of pkg.journal.rendererBundle) assert.ok(pkg.devDependencies[name], name);
 });
 
 test('notices cover everything that ships', () => {
   const notices = readFileSync('THIRD_PARTY_NOTICES.md', 'utf8');
-  for (const name of [...pkg.journal.rendererBundle, 'node-pty', 'electron']) assert.match(notices, new RegExp(`^## ${name.replace(/[/@.]/g, '\\$&')} `, 'm'), name);
+  const shipped = productionPackages(JSON.parse(readFileSync('package-lock.json', 'utf8'))).map(path => path.split('node_modules/').at(-1));
+  assert.ok(shipped.includes('electron-updater') && shipped.includes('sax'), 'Updater dependencies, including deduplicated ones');
+  for (const name of [...pkg.journal.rendererBundle, ...shipped, 'node-pty', 'electron']) assert.match(notices, new RegExp(`^## ${name.replace(/[/@.]/g, '\\$&')} `, 'm'), name);
 });
 
 test('the node-pty spawn-helper path fix is applied once and fails closed on change', t => {
@@ -79,6 +84,12 @@ test('package audit: allow-list, forbidden files and leaks', () => {
   for (const bad of ['.env', 'src/core/.env.local', 'data/journal.sqlite', 'runtime-stderr.log', 'dist/assets/index.js.map', '.cache/tmp/x', 'tests/a.test.mjs', 'fixtures/x.json', 'docs/a.md', 'src/ui/App.tsx', 'certs/dev.p12'])
     assert.equal(auditEntries([bad]).length, 1, bad);
   assert.match(auditEntries(['node_modules/react/index.js'])[0], /not on the allow-list/);
+  // Production dependencies from the lockfile are allowed, nested ones by their full path; secrets are still not.
+  const lock = { packages: { '': {}, 'node_modules/electron-updater': {}, 'node_modules/electron-updater/node_modules/semver': {}, 'node_modules/vite': { dev: true }, 'node_modules/node-pty': {} } };
+  const packages = productionPackages(lock); assert.deepEqual(packages, ['electron-updater', 'electron-updater/node_modules/semver']);
+  assert.deepEqual(auditEntries(['node_modules/electron-updater/out/main.js', 'node_modules/electron-updater/node_modules/semver/index.js', 'node_modules/semver/index.js'], packages), [], 'Nested or hoisted');
+  assert.equal(auditEntries(['node_modules/semverx/index.js', 'node_modules/xsemver/index.js'], packages).length, 2, 'Exact package names only');
+  assert.equal(auditEntries(['node_modules/vite/index.js'], packages).length, 1); assert.equal(auditEntries(['node_modules/electron-updater/.env'], packages).length, 1);
   // Windows node-pty files are allowed; generated build projects are not.
   assert.deepEqual(auditEntries(['node_modules/node-pty/build/Release/conpty.node', 'node_modules/node-pty/build/Release/winpty-agent.exe', 'node_modules/node-pty/build/Release/conpty/OpenConsole.exe', 'node_modules/node-pty/lib/worker/conoutSocketWorker.js']), []);
   assert.equal(auditEntries(['node_modules/node-pty/build/deps/winpty/src/winpty.vcxproj']).length, 1);

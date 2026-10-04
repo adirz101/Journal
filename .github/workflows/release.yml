@@ -4,8 +4,9 @@
 # it by hand. Manual runs and pull requests that change packaging build and
 # test without releasing.
 #
-# Signing is optional and never faked (see docs/RELEASING.md). Without secrets:
-# macOS builds are ad-hoc signed and not notarized; Windows builds are unsigned.
+# Signing is never faked (see docs/RELEASING.md). Tag releases require the macOS
+# signing secrets (updates need a Developer ID signature); manual runs and pull
+# requests without them are ad-hoc signed. Windows builds are unsigned.
 # Fixture CLIs only: no Claude Code, Codex or Cursor logins or provider requests.
 name: Release
 
@@ -96,6 +97,10 @@ jobs:
             { echo "CSC_KEYCHAIN=$keychain"; echo "CSC_NAME=$identity"; } >> "$GITHUB_ENV"
             echo "signed=true" >> "$GITHUB_OUTPUT"
           else
+            # Released macOS builds must be Developer ID signed: Squirrel.Mac installs an
+            # update only when it is signed like the running app, so an ad-hoc release
+            # could never update itself (docs/RELEASING.md).
+            if [ "$GITHUB_REF_TYPE" = "tag" ]; then echo "::error::Tag releases need the macOS signing secrets (automatic updates require a Developer ID signature)"; exit 1; fi
             # Without a certificate the app is only ad-hoc signed; electron-builder would skip even
             # that for pull requests, leaving a broken signature (CSC_FOR_PULL_REQUEST keeps it).
             echo "signed=false" >> "$GITHUB_OUTPUT"; echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"; echo "CSC_FOR_PULL_REQUEST=true" >> "$GITHUB_ENV"
@@ -143,6 +148,8 @@ jobs:
           path: |
             release/Journal-*-arm64.dmg
             release/Journal-*-arm64.zip
+            release/latest-mac.yml
+            release/*.blockmap
           if-no-files-found: error
           retention-days: 3 # hand-off to the release job only; downloads come from GitHub Releases
 
@@ -224,6 +231,8 @@ jobs:
           path: |
             release/Journal-Setup-*-x64.exe
             release/Journal-Portable-*-x64.exe
+            release/latest.yml
+            release/*.blockmap
           if-no-files-found: error
           retention-days: 3
 
@@ -250,7 +259,10 @@ jobs:
           version=$(node -p "require('./package.json').version")
           node scripts/release-check.mjs --tag "$TAG"
           cp THIRD_PARTY_NOTICES.md dist-assets/THIRD-PARTY-NOTICES.txt
-          node scripts/checksums.mjs dist-assets "Journal-$version-arm64.dmg" "Journal-$version-arm64.zip" "Journal-Setup-$version-x64.exe" "Journal-Portable-$version-x64.exe" THIRD-PARTY-NOTICES.txt
+          # Installed copies update from latest-mac.yml / latest.yml and the blockmaps.
+          test -f dist-assets/latest-mac.yml && test -f dist-assets/latest.yml
+          blockmaps=$(cd dist-assets && ls *.blockmap 2>/dev/null || true)
+          node scripts/checksums.mjs dist-assets "Journal-$version-arm64.dmg" "Journal-$version-arm64.zip" "Journal-Setup-$version-x64.exe" "Journal-Portable-$version-x64.exe" THIRD-PARTY-NOTICES.txt latest-mac.yml latest.yml $blockmaps
           (cd dist-assets && sha256sum -c SHA256SUMS.txt)
           ls -la dist-assets
       - name: Create draft release (never published automatically)
@@ -265,4 +277,4 @@ jobs:
             --title "Journal $version" --notes-file "$RUNNER_TEMP/notes.md" \
             "dist-assets/Journal-$version-arm64.dmg" "dist-assets/Journal-$version-arm64.zip" \
             "dist-assets/Journal-Setup-$version-x64.exe" "dist-assets/Journal-Portable-$version-x64.exe" \
-            dist-assets/SHA256SUMS.txt dist-assets/THIRD-PARTY-NOTICES.txt
+            dist-assets/SHA256SUMS.txt dist-assets/THIRD-PARTY-NOTICES.txt dist-assets/latest-mac.yml dist-assets/latest.yml dist-assets/*.blockmap

@@ -11,6 +11,7 @@ import { ContextPanel } from './ContextPanel';
 import { ExplorerPanel } from './ExplorerPanel';
 import { CursorStatus } from './ProviderStatus';
 import { ProcessDialog } from './ProcessDialog';
+import { UpdateNotice, useUpdateState } from './UpdateNotice';
 import { DataDialog } from './DataDialog';
 import { ManageProjectDialog } from './ManageProjectDialog';
 import { RenameDialog } from './RenameDialog';
@@ -47,6 +48,7 @@ export default function App() {
   const [workspaceDialog, setWorkspaceDialog] = useState(false); const [disabled, setDisabled] = useState<string[]>([]); const [dataDialog, setDataDialog] = useState(false); const [manageId, setManageId] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ kind: 'project'; project: Project } | { kind: 'session'; session: Session } | null>(null);
   // Right panel: collapsible, wider while previewing a file; references chosen for the next task.
+  const update = useUpdateState();
   const [collapsed, setCollapsed] = useState(storedCollapsed); const [previewing, setPreviewing] = useState(false); const [explorerFocus, setExplorerFocus] = useState(0);
   const [references, setReferences] = useState<FileReference[]>([]); const [evidenceSource, setEvidenceSource] = useState<{ kind: 'file'; path: string; startLine: number; endLine: number; rootId?: string } | null>(null);
   useEffect(() => { try { localStorage.setItem('journal-panel-collapsed', collapsed ? '1' : '0'); } catch { /* optional */ } }, [collapsed]);
@@ -259,7 +261,7 @@ export default function App() {
       <div className="nav-caption">PROJECTS <span>{projects.length}</span></div>
       <nav aria-label="Projects">{projects.map(project => <div key={project.id} className="project-row"><button className={`project-link ${state?.project.id === project.id ? 'selected' : ''}`} onClick={() => void chooseProject(project)} onContextMenu={event => { event.preventDefault(); void projectMenu(project, menuPosition(event)); }} title={project.root}><svg className="folder-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 11h18" /></svg><span className="project-name">{project.name}</span>{project.pinned && <span className="pin-mark"><span aria-hidden="true">⚲</span><span className="visually-hidden">pinned</span></span>}{ordered.some(s => s.projectId === project.id && needsAttention(s)) && <span className="attention" aria-label="needs attention">●</span>}</button><button className="project-manage" aria-label={`Manage ${project.name}`} onClick={() => setManageId(project.id)}>⋯</button></div>)}</nav>
       <SessionList sessions={ordered} projects={projects} selectedId={selectedId} currentProjectId={state?.project.id ?? null} connected={connected} now={now} onSelect={next => void selectSession(next)} onMenu={(next, position) => void sessionMenu(next, position)} onNew={newSession} canStart={!!state && canStart} />
-      <div className="sidebar-footer"><button className="theme-toggle" aria-label={`Switch to ${appearance === 'dark' ? 'light' : 'dark'} mode`} onClick={() => setAppearance(value => value === 'dark' ? 'light' : 'dark')}><span aria-hidden="true">{appearance === 'dark' ? '☀' : '◐'}</span> {appearance === 'dark' ? 'Light mode' : 'Dark mode'}</button><button className="theme-toggle" onClick={() => setDataDialog(true)}><span aria-hidden="true">⛁</span> Data and backups</button><span className={`status-dot ${connected ? 'running' : 'waiting'}`} /> {connected ? 'Runtime connected' : runtime.state === 'connecting' ? 'Starting runtime…' : 'Runtime disconnected'}<small>No terminal transcripts saved</small></div>
+      <div className="sidebar-footer"><UpdateNotice state={update} onError={failed} /><button className="theme-toggle" aria-label={`Switch to ${appearance === 'dark' ? 'light' : 'dark'} mode`} onClick={() => setAppearance(value => value === 'dark' ? 'light' : 'dark')}><span aria-hidden="true">{appearance === 'dark' ? '☀' : '◐'}</span> {appearance === 'dark' ? 'Light mode' : 'Dark mode'}</button><button className="theme-toggle" onClick={() => setDataDialog(true)}><span aria-hidden="true">⛁</span> Data and backups</button><span className={`status-dot ${connected ? 'running' : 'waiting'}`} /> {connected ? 'Runtime connected' : runtime.state === 'connecting' ? 'Starting runtime…' : 'Runtime disconnected'}<small>No terminal transcripts saved</small></div>
     </aside>
 
     <main className="workspace">
@@ -341,7 +343,7 @@ export default function App() {
       note="Only Journal's label changes. The native Claude, Codex or Cursor session ID and exact resume are unaffected." onClose={() => setRenameTarget(null)}
       onSave={async name => { merge([await api<Session>('renameSession', { id: renameTarget.session.id, name })]); }} />}
     {processView && <ProcessDialog id={processView.id} title={processView.title} command={processView.command} appearance={appearance} onClose={() => setProcessView(null)} onExit={() => void checkCursor(processView.kind)} />}
-    {dataDialog && <DataDialog project={state?.project ?? null} onClose={() => setDataDialog(false)} onChanged={() => { setKnowledgeVersion(v => v + 1); void refresh().catch(() => {}); }} />}
+    {dataDialog && <DataDialog update={update} project={state?.project ?? null} onClose={() => setDataDialog(false)} onChanged={() => { setKnowledgeVersion(v => v + 1); void refresh().catch(() => {}); }} />}
     {state && workspaceDialog && <WorkspaceDialog project={state.project} onClose={() => setWorkspaceDialog(false)} onChanged={() => void refresh().catch(failed)} />}
     {state && evidenceSource && <KnowledgeForm project={state.project} initialSource={evidenceSource} onClose={() => setEvidenceSource(null)} onSaved={() => { setEvidenceSource(null); setPanel('knowledge'); setKnowledgeVersion(v => v + 1); }} />}
     {state && form && <KnowledgeForm project={state.project} memory={form.memory} supersedes={form.supersedes} initialCategory={form.initialCategory} draft={form.draft} onClose={() => setForm(null)} onSaved={() => { setForm(null); setPanel('knowledge'); setKnowledgeVersion(v => v + 1); }} />}
