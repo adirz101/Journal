@@ -99,6 +99,17 @@ Each decision has a recommendation. The user must confirm the items marked **spe
 | D14 | **Notifications.** | Add them (Phase 2), Claude only, one per waiting episode. Hide the command text by default (lock-screen privacy) behind a setting. | 2 |
 | D15 | **Usability test timing.** | Run the mockup test (board B15) during Phases 0–2, which don't depend on it. Fold findings into Phases 3–8 before they're expanded. | 3–8 |
 
+**Decided by the user on 4 October 2026:**
+- **D1:** one-click Remember, approved.
+- **D6:** count distinct conversations, approved.
+- **D7: bundle JetBrains Mono.** This overrides the recommendation:
+  - Ship the woff2 files locally under the CSP `font-src 'self'`.
+  - Add the font to the renderer bundle, `THIRD_PARTY_NOTICES.md` (SIL OFL 1.1) and the package audit allow-list.
+  - Use it for code, paths, IDs and the terminal. The fallback stack follows it.
+- **D8:** Ctrl+Shift shortcuts on Windows/Linux through the router, approved.
+
+Other decisions follow the recommendations above unless the user changes them. The spec amendments D2–D4 are still to be confirmed when their phases start.
+
 ### 2.1 Recommended shortcut map (D8)
 
 Every app shortcut is intercepted in the main process (`before-input-event`), so it works while the terminal has focus. Keys not listed stay with the terminal.
@@ -572,7 +583,7 @@ Each task lists **files**, **what to build** (signatures and behaviour), **tests
 ### Phase 1: Foundation (F1–F4, BUG-7)
 
 **Task 1.1: Semantic tokens and type scale (F3, D7)**
-- **Files:** create `src/ui/tokens.css`; modify `src/ui/styles.css` (import it at the top and replace hard-coded hex with `var(--…)`), `src/ui/theme.ts` (xterm themes read the same values), `src/ui/TerminalPane.tsx` (system monospace stack).
+- **Files:** create `src/ui/tokens.css`; modify `src/ui/styles.css` (import it at the top and replace hard-coded hex with `var(--…)`), `src/ui/theme.ts` (xterm themes read the same values), `src/ui/TerminalPane.tsx` (bundled JetBrains Mono first in the stack, D7); add the JetBrains Mono woff2 files (regular, medium, semibold) as local assets, and update `npm run notices` inputs and the package audit allow-list.
 - **Build:**
   - Tokens for both themes, from board B8: `--bg --side --panel --raised --field --hover --sel --line --line2 --tx --tx2 --tx3 --acc --accbtn --accsoft --amb --ambsoft --ambline --grn --grnsoft --red --redsoft --term`.
   - Light theme on `:root[data-theme=light]`, which keeps the existing mechanism (`App.tsx:33`).
