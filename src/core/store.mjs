@@ -309,8 +309,9 @@ export class JournalStore {
   // retire: false (reaffirm) keeps the supersedes record without archiving what it replaced again.
   approveMemory(memory, { via = null, reason = null, retire = true } = {}) {
     const { id } = memory;
-    this.db.prepare(`UPDATE memories SET status='active' WHERE id=?`).run(id);
-    this.db.prepare('UPDATE memories SET approved_at=?, approved_revision=? WHERE id=?').run(now(), memory.revision, id);
+    // Only the revision that was checked is remembered; a newer one (another window) is left for review.
+    const { changes } = this.db.prepare(`UPDATE memories SET status='active', approved_at=?, approved_revision=? WHERE id=? AND current_revision=?`).run(now(), memory.revision, id, memory.revisionId);
+    if (changes !== 1) throw new Error('This note changed while you were checking it; try again');
     const retired = retire ? memory.supersedes?.id ?? null : null;
     // Approving a replacement retires the claim it supersedes.
     if (retired) this.db.prepare(`UPDATE memories SET status='archived', pinned=0 WHERE id=? AND status='active'`).run(retired);
@@ -892,11 +893,15 @@ export class JournalStore {
     if (new Set(prepared.map(({ proposal }) => proposal.projectId)).size > 1) throw new Error('Choose suggestions from one project');
     for (const [index, a] of prepared.entries()) for (const b of prepared.slice(index + 1)) {
       if (isDuplicate(a.item.statement, b.item.statement)) throw new Error(`"${b.item.statement.slice(0, 60)}" repeats another suggestion; remember only one of them`);
+      const overlap = a.item.scope === 'checkout' || b.item.scope === 'checkout' || a.item.branch === b.item.branch;
+      if (overlap && possibleConflict(a.item.statement, b.item.statement)) throw new Error(`"${b.item.statement.slice(0, 60)}" may contradict another suggestion; remember only one of them`);
     }
     return this.transaction(() => prepared.map(({ proposal, item, expected }) => {
       // Re-read inside the lock: another window may have handled it meanwhile.
       const current = this.getProposal(proposal.id);
       if (current.state !== 'open') throw new Error('This suggestion was already handled');
+      // Again under the lock (SQLite only): a note remembered meanwhile may contradict it.
+      if (this.conflictsWith(item.projectId, item.id, item).length) throw new Error(`"${proposal.statement.slice(0, 60)}" may conflict with a remembered note. Review it in Memory.`);
       this.writeMemory(item, expected);
       this.db.prepare('UPDATE proposals SET body=? WHERE id=?').run(JSON.stringify({ ...current, state: 'accepted', memoryId: item.id, handledAt: now() }), proposal.id);
       this.audit('proposal-accepted', { id: proposal.id, memoryId: item.id, kind: proposal.kind, via });

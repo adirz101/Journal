@@ -505,3 +505,56 @@ test('Still true on a replacement does not archive the note it replaced again', 
   const audit = f.store.listAudit(1000).slice(auditBefore).find(a => a.action === 'memory-active');
   assert.equal(audit.body.supersedes, null);
 });
+
+test('a failure inside the remember transaction rolls the whole batch back', t => {
+  const f = fixture(t);
+  const s = f.session('Do it.\nRule: Release tags must be signed by CI.\nDecision: Payment webhooks retry three times before failing.');
+  const ids = f.store.generateProposals(s.id).map(p => p.id);
+  const original = f.store.writeMemory; let calls = 0;
+  // The second item's note gains a revision after it was checked: writeMemory's revision check fails mid-batch.
+  f.store.writeMemory = function (item, expected) { return original.call(this, item, ++calls === 2 ? 'a-revision-written-meanwhile' : expected); };
+  t.after(() => { f.store.writeMemory = original; });
+  const before = f.counts(); const auditBefore = f.store.listAudit(1000).length;
+  assert.throws(() => f.store.rememberProposals(ids, { via: 'wrap-up' }), /changed while you were checking it/);
+  assert.equal(calls, 2, 'the first item was written before the failure');
+  assert.deepEqual(f.counts(), before);
+  assert.equal(f.store.listAudit(1000).length, auditBefore);
+  assert.deepEqual(ids.map(id => f.store.getProposal(id).state), ['open', 'open']);
+  assert.equal(f.store.db.prepare(`SELECT count(*) AS n FROM memories WHERE status='active'`).get().n, 0);
+});
+
+test('approveMemory refuses a note whose revision moved on', t => {
+  const f = fixture(t);
+  const input = { statement: 'Retries use exponential backoff', category: 'convention', scope: 'checkout', area: '', source: { kind: 'user', note: 'n' } };
+  const first = f.store.proposeMemory(f.project.id, input);
+  const checked = f.store.getMemory(first.id);
+  f.store.proposeMemory(f.project.id, { ...input, memoryId: first.id, statement: 'Retries use linear backoff' });
+  const before = f.counts();
+  assert.throws(() => f.store.transaction(() => f.store.approveMemory(checked)), /changed while you were checking it/);
+  assert.deepEqual(f.counts(), before);
+  const now = f.store.getMemory(first.id);
+  assert.equal(now.status, 'candidate'); assert.equal(f.store.db.prepare('SELECT approved_at FROM memories WHERE id=?').get(first.id).approved_at, null);
+});
+
+test('rememberProposals checks conflicts again inside the lock and within the batch', t => {
+  const f = fixture(t);
+  const [signed] = f.store.generateProposals(f.session('x\nRule: Release tags must be signed by CI.').id).map(p => p.id);
+  // A contradicting note is remembered after the batch was checked, before it is written.
+  const original = f.store.transaction;
+  f.store.transaction = function (fn) {
+    f.store.transaction = original;
+    const other = f.store.proposeMemory(f.project.id, { statement: 'Release tags must not be signed by CI.', category: 'convention', scope: 'checkout', area: '', source: { kind: 'user', note: 'n' } });
+    f.store.setMemoryStatus(other.id, 'active');
+    return original.call(this, fn);
+  };
+  t.after(() => { f.store.transaction = original; });
+  assert.throws(() => f.store.rememberProposals([signed], { via: 'wrap-up' }), /may conflict with a remembered note/);
+  assert.equal(f.store.getProposal(signed).state, 'open');
+  // Two suggestions in one batch that contradict each other.
+  const g = fixture(t);
+  const pair = g.store.generateProposals(g.session('x\nRule: Payment webhooks must retry before failing.\nDecision: Payment webhooks must not retry before failing.').id).map(p => p.id);
+  assert.equal(pair.length, 2);
+  const before = g.counts();
+  assert.throws(() => g.store.rememberProposals(pair, { via: 'wrap-up' }), /may contradict another suggestion; remember only one of them/);
+  assert.deepEqual(g.counts(), before);
+});
