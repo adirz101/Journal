@@ -44,3 +44,30 @@ test('released builds have no Reload or developer tools in the View menu', () =>
     assert.ok(!view.submenu.some(item => item.role === 'reload'), platform);
   }
 });
+
+test('notification preferences are menu checkboxes until the Settings dialog exists', () => {
+  const options = { name: 'Journal', checkForUpdates() {}, openUrl() {} };
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    const changes = [];
+    const setPreference = (key, value) => changes.push([key, value]);
+    const on = menuTemplate({ ...options, platform, preferences: { notifications: true, notificationCommand: false }, setPreference });
+    const approval = find(on, 'notify-approval'); const command = find(on, 'notify-command');
+    assert.equal(approval.type, 'checkbox', platform); assert.equal(command.type, 'checkbox', platform);
+    assert.equal(approval.label, 'Notify When Claude Needs Approval'); assert.equal(command.label, 'Show Commands in Notifications');
+    assert.equal(approval.checked, true, platform); assert.equal(command.checked, false, platform); assert.equal(command.enabled, true, platform);
+    const parent = on.find(item => item.submenu?.includes(approval));
+    assert.ok(parent.submenu.includes(command));
+    if (platform === 'darwin') assert.equal(parent, on[0], 'macOS: the app menu');
+    else assert.equal(parent.role, 'windowMenu', `${platform}: the Window menu`);
+    approval.click(); command.click();
+    assert.deepEqual(changes, [['notifications', false], ['notificationCommand', true]], platform);
+
+    const off = menuTemplate({ ...options, platform, preferences: { notifications: false, notificationCommand: true }, setPreference });
+    assert.equal(find(off, 'notify-approval').checked, false, platform);
+    assert.equal(find(off, 'notify-command').checked, true, platform);
+    assert.equal(find(off, 'notify-command').enabled, false, `${platform}: disabled while notifications are off`);
+  }
+  // The Window menu keeps its standard items.
+  const win = menuTemplate({ ...options, platform: 'win32', preferences: { notifications: true, notificationCommand: false }, setPreference() {} });
+  assert.deepEqual(win[3].submenu.filter(item => item.role).map(item => item.role), ['minimize', 'zoom', 'close']);
+});
