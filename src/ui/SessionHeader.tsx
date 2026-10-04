@@ -9,9 +9,10 @@ type Point = { x: number; y: number };
 // The selected session's header (board B4): title and actions, then provider,
 // workspace, mode, start time and state. Rename stays in the menus (RenameDialog),
 // so keys typed next to a focused terminal never land in a title field.
-export function SessionHeader({ session, state, connected, busy, canStart, now, mac, projectBranch, agentVersion, onInterrupt, onStop, onContinue, onArchiveToggle, onEndOrphan, onEndSurvivors, onMenu }: {
+export function SessionHeader({ session, state, connected, busy, canStart, now, mac, projectBranch, agentVersion, hideContinue, onInterrupt, onStop, onContinue, onArchiveToggle, onEndOrphan, onEndSurvivors, onMenu }: {
   session: Session; state: SessionState; connected: boolean; busy: boolean; canStart: boolean; now: number; mac: boolean;
   projectBranch: string | null; agentVersion: string | null;
+  hideContinue?: boolean;  // Phase 6: the wrap-up carries Continue itself
   onInterrupt(): void; onStop(): void; onContinue(): void; onArchiveToggle(): void; onEndOrphan(): void; onEndSurvivors(): void; onMenu(at: Point): void;
 }) {
   const title = session.displayName || session.title;
@@ -25,7 +26,7 @@ export function SessionHeader({ session, state, connected, busy, canStart, now, 
       <h1 className="session-title" title={title}>{title}</h1>
       <div className="session-actions">
         {isLive(session) && connected && <><button onClick={onInterrupt}>{shell.interrupt} <kbd>{mac ? '⌃C' : 'Ctrl+C'}</kbd></button><button className="danger-ghost" onClick={onStop} disabled={session.status === 'stopping'}>{copy.stop}</button></>}
-        {resumable(session) && <button title={tip.continue} disabled={busy || !canStart} onClick={onContinue}>{copy.continue}</button>}
+        {resumable(session) && !hideContinue && <button title={tip.continue} disabled={busy || !canStart} onClick={onContinue}>{copy.continue}</button>}
         {session.status === 'orphaned' && session.identityVerified !== false && <button onClick={onEndOrphan}>End orphaned process</button>}
         {survivors > 0 && <button onClick={onEndSurvivors}>End {survivors} leftover process{survivors === 1 ? '' : 'es'}</button>}
         {!isLive(session) && <button onClick={onArchiveToggle}>{session.archived ? 'Unarchive' : 'Archive'}</button>}

@@ -120,3 +120,14 @@ export async function ensureWide(app: ElectronApplication, page?: Page) {
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1600, 900));
   if (page) await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeGreaterThanOrEqual(1440);
 }
+
+// ----- Phase 6: session end -----
+
+// An ended session opens on its wrap-up; this switches to its terminal (no-op when the
+// terminal is already shown). Specs that read an ended session's output call it first.
+export async function showTerminal(page: Page) {
+  const wrapUp = page.locator('.wrap-up');
+  const button = wrapUp.getByRole('button', { name: 'Show terminal', exact: true }).first();
+  if (await button.count()) await button.click();
+  await expect(page.locator('.terminal-surface, .wrap-not-saved').first()).toBeVisible();
+}
