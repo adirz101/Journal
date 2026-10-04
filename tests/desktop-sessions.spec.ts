@@ -102,6 +102,8 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     const mac = process.platform === 'darwin'; const slot = [mac ? 'meta' : 'alt'] as const;
     await expect(sessionButton(page, 'TASK_2')).toHaveAttribute('aria-current', 'true');
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused();
+    // Slot keys are ignored while a switch is still loading (busy); wait for it to finish.
+    await expect(page.locator('main.workspace')).not.toHaveAttribute('aria-busy', 'true');
     await pressKey(app, '1', [...slot]); // Stable slots in start order: slot 1 is TASK_0.
     await expect(sessionButton(page, 'TASK_0')).toHaveAttribute('aria-current', 'true');
     await expect(page.locator('.terminal-surface')).toContainText('TASK TASK_0');
