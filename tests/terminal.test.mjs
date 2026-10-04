@@ -739,6 +739,21 @@ test('Esc or Ctrl+C while working shows Your turn; a later tool event restores W
   }
 });
 
+test('Esc or Ctrl+C after typing during the turn leaves Working (it may close a menu or leave vim insert mode)', async t => {
+  for (const [typed, key] of [['abc', '\x1b'], ['/co', '\x1b'], ['x', '\x03'], ['\x1b[200~pasted\x1b[201~', '\x1b']]) {
+    const { send, state, write } = await hooked(t);
+    write('typed before the turn');
+    send('UserPromptSubmit');
+    write(typed);
+    write(key);
+    assert.equal(state(), 'running/working', JSON.stringify([typed, key]));
+    // A new turn starts clean: only typing since the turn began counts.
+    send('Stop'); send('UserPromptSubmit');
+    write('\x1b[A'); write(key);
+    assert.equal(state(), 'running/idle', JSON.stringify([typed, key]));
+  }
+});
+
 test('arrow keys and Alt+letter while working do not change state', async t => {
   const { send, state, write } = await hooked(t);
   send('UserPromptSubmit');

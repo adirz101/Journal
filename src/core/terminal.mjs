@@ -41,6 +41,9 @@ function canonical(path) {
   }
 }
 export const isTestCommand = command => TEST_COMMAND.test(command ?? '');
+// Terminal input that types text (not only keys such as arrows, Esc, Enter or Ctrl+C).
+const KEY_SEQUENCES = /\x1b(?:\[200~|\[201~|\[[0-9;?]*[ -\/]*[@-~]|O.|.)?/g;
+const printable = data => /[^\x00-\x1f\x7f]/.test(data.replace(KEY_SEQUENCES, ''));
 
 export class OutputBuffer {
   constructor(limit = 256 * 1024) { this.limit = limit; this.bytes = 0; this.chunks = []; this.sequence = 0; }
@@ -266,12 +269,14 @@ export class TerminalManager extends EventEmitter {
     const dismiss = data === '\x1b' || data === '\x03';
     if (entry.pending.length && !data.startsWith('\x1b[200~') && (data.includes('\r') || dismiss || /^[1-9]$/.test(data))) entry.answered = true;
     entry.proc.write(data); entry.lastInputAt = Date.now();
+    if (printable(data)) entry.typedThisTurn = true;
     const { session } = entry;
     if (entry.answered && entry.pending.length === 1 && session.status === 'waiting') {
       // Esc or Ctrl+C rejects the tool and interrupts the turn, which no hook reports: Claude is back at its input box.
       entry.pending = []; entry.answered = false; this.syncPending(entry); this.observe(id, session.nativeId, 'running', dismiss ? 'idle' : 'working');
-    } else if (dismiss && !entry.pending.length && session.provider === 'claude' && session.status === 'running' && session.activity === 'working') {
+    } else if (dismiss && !entry.pending.length && session.provider === 'claude' && session.status === 'running' && session.activity === 'working' && !entry.typedThisTurn) {
       // "esc to interrupt": Stop does not fire on a user interrupt. A later tool event corrects this if the turn went on.
+      // Not after typing during the turn: the key may only close an autocomplete menu or leave vim insert mode.
       this.observe(id, session.nativeId, 'running', 'idle');
     }
   }
@@ -370,7 +375,7 @@ export class TerminalManager extends EventEmitter {
     if (nativeId === session.nativeId && !entry.identityAmbiguous && session.nativeIdSource === 'preassigned') session.nativeIdSource = 'preassigned-observed';
     session.nativeIdConfirmed = !entry.identityAmbiguous;
     if (!entry.stopping && status) session.status = status;
-    if (activity !== undefined) { if (activity !== session.activity) entry.activitySince = Date.now(); session.activity = activity; }
+    if (activity !== undefined) { if (activity !== session.activity) { entry.activitySince = Date.now(); entry.typedThisTurn = false; } session.activity = activity; }
     this.persist(session, true); this.emitStatus(session);
   }
   // Open approval prompts end when their own tool (or the last in-flight tool of its kind)
