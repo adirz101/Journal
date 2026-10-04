@@ -73,6 +73,22 @@ A fresh read-only reviewer found no actionable issues in the source, regressions
 
 Final required local checks are reported in [implementation status](IMPLEMENTATION-STATUS.md). Outstanding native coverage: Codex interactive approval under an approval-capable profile, interruption of an already running tool and child cleanup, Windows, and broader combinations of inherited plugins/settings. No installer, signing, public release or full-roadmap implementation is established by this trial.
 
+## Sign-in status check (5 October 2026)
+
+The user signed in to Claude Code and Codex and tested both through Journal. Journal's own
+detection and status probe (`detectProvider` then `probeAuth` from `src/core/agents.mjs`) was then run
+against the real CLIs on the user's Mac. Only the conclusion and the shape of the output were
+printed; no account detail was read into a log.
+
+| Provider | Version | Help documents a status check | Journal's conclusion | Output shape |
+| --- | --- | --- | --- | --- |
+| Claude Code | 2.1.286 | `auth` listed | signed in (270 ms) | `auth status --json` exits 0, JSON on stdout |
+| Codex | codex-cli 0.159.3 | `login` and `login status` listed | signed in (118 ms) | `login status` exits 0, its line on **stderr**, nothing on stdout |
+| Cursor | 2026.10.01-e373342 | detected and ready | (own sign-in check, not probed here) | — |
+
+Codex reporting on stderr confirms the probe's `output: 'both'`. The signed-out outputs of
+both CLIs are still unverified.
+
 ## To verify
 
 - After approving a Bash permission in authenticated Claude Code, Journal shows Working, not Needs approval, while the command runs.
@@ -95,7 +111,7 @@ Final required local checks are reported in [implementation status](IMPLEMENTATI
 - Windows: Ctrl+Enter starts from the task box, and Delete on a focused note in "What the agent will know" leaves it out.
 - Windows: the task box's underlines line up with the typed text under ClearType at 100 %, 125 % and 150 % scaling, including after the box scrolls.
 - "Sent to N sessions" (Phase 5, D6) with authenticated providers: a Claude conversation continued twice counts once; a Codex session whose native ID arrives only from its exit banner, then is continued, counts once after the ID is known; a Cursor session counts by its chat ID. A session interrupted by a runtime crash right after launch counts (uncertain) and its Session tab never reads "What was sent". The fixture tests (`tests/insights.test.mjs`, `tests/desktop-memory.spec.ts`) use fixture CLIs and stored IDs.
-- Phase 7 first run: `claude auth status --json` and `codex login status` output on current versions, signed in and signed out (which stream, which exit code), and that Journal reads them as signed in or signed out without keeping any account detail.
+- Phase 7 first run: `claude auth status --json` and `codex login status` output when **signed out** (which stream, which exit code), and that Journal reads it as signed out. Signed in was verified on 5 October 2026 (see above).
 - Phase 7 first run: Sign in from Journal finishes in the visible terminal for Claude Code, Codex and Cursor (including a browser hand-off), and the row updates once the terminal exits.
 - Phase 7 first run: Install runs the official command and the installed CLI is found afterwards, on macOS and on Windows (PowerShell without a profile); a failed download is shown as failed.
 - Phase 7 first run: dragging a folder in from Finder (macOS) and File Explorer (Windows) opens it as a project; a non-Git folder and a network share are refused plainly.
