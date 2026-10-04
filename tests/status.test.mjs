@@ -174,6 +174,16 @@ test('the top-level fallback lists dot-directories after ordinary ones', () => {
   assert.equal(describeStructure(structure('/unused', 'HEAD', run)), 'src, .github');
 });
 
+test('the top-level fallback keeps a tab inside a name', () => {
+  const run = (root, args) => {
+    if (args.includes('-r')) throw new Error('stdout maxBuffer length exceeded');
+    return '040000 tree 1111111111111111111111111111111111111111\tmy\tdir\x00100644 blob 2222222222222222222222222222222222222222\ta\tb.txt\0';
+  };
+  const result = structure('/unused', 'HEAD', run);
+  assert.deepEqual([...result.dirs], [['my\tdir', null]]);
+  assert.deepEqual(result.files, ['a\tb.txt']);
+});
+
 test('structure is null when neither Git listing can be read', () => {
   assert.equal(structure('/unused', 'HEAD', () => { throw new Error('fail'); }), null);
 });

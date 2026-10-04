@@ -130,7 +130,7 @@ export function structure(root, ref, run = git) {
   if (!top) return null;
   const dirs = new Map(); const files = [];
   for (const entry of top) {
-    const [meta, name] = entry.split('\t');
+    const tab = entry.indexOf('\t'); if (tab < 0) continue; const meta = entry.slice(0, tab); const name = entry.slice(tab + 1);
     if (meta.split(' ')[1] === 'tree') dirs.set(name, null); else files.push(name);
   }
   return { dirs, files, counted: false };
