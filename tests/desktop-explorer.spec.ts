@@ -111,7 +111,7 @@ test('the explorer browses, decorates, previews and references files without edi
     await expect(row(page, /^fresh\.ts, untracked/)).toBeVisible();
     await expect(row(page, /^src, contains changes/)).toBeVisible();
     await expect(page.getByRole('treeitem', { name: /^gone\.txt/ })).toHaveCount(0);
-    await page.getByRole('button', { name: /^Changed/ }).click();
+    await page.getByRole('button', { name: /^Uncommitted/ }).click();
     const changed = page.getByRole('list', { name: 'Changed files' });
     await expect(changed).toContainText('gone.txt'); await expect(changed).toContainText('fresh.ts');
     await changed.getByRole('button', { name: /gone\.txt/ }).click();
@@ -165,9 +165,13 @@ test('the explorer browses, decorates, previews and references files without edi
 
     // Another project shows only its own files: no stale tree, preview or reference carries over.
     await menu(app, 'refNext'); await row(page, /^README\.md/).click({ button: 'right' });
+    await expect(page.locator('.explorer-note')).toContainText('Added README.md to the next task.');
+    // The next task's references show in the New session view.
+    await newSession(page);
     await expect(page.getByRole('list', { name: 'Files referenced for the next task' })).toContainText('README.md');
     await row(page, /^README\.md/).click(); await expect(page.locator('.preview-path')).toHaveText('README.md');
     await choose(f.other); await openAnotherProject(app, page);
+    await expect(page.getByLabel('Initial task')).toBeVisible();
     await expect(page.locator('.file-preview')).toHaveCount(0);
     await expect(page.getByRole('list', { name: 'Files referenced for the next task' })).toHaveCount(0);
     await expect(row(page, /^OTHER_SECRET_FILE\.md/)).toBeVisible();

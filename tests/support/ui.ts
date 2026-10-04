@@ -90,8 +90,11 @@ export const sessionActions = (page: Page): Locator => page.locator('.session-ac
 // Selects an inspector tab and returns it.
 export async function inspectorTab(page: Page, name: 'Session' | 'Files' | 'Memory'): Promise<Locator> {
   const tab = page.getByRole('tab', { name: startsWith(name) });
+  const railButton = page.locator('.inspector-rail').getByRole('button', { name: startsWith(name) });
+  // Wait for the shell to render one of the two before choosing.
+  await expect(tab.or(railButton).first()).toBeVisible();
   // A medium or narrow window folds the inspector into a rail: its button opens the overlay on that tab.
-  if (!await tab.count()) await page.locator('.inspector-rail').getByRole('button', { name: startsWith(name) }).click();
+  if (!await tab.count()) await railButton.click();
   await tab.click();
   return tab;
 }

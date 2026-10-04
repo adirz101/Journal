@@ -2,7 +2,7 @@ import { test, expect, _electron as electron, type ElectronApplication } from '@
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { newSession, projectContextMenu, sessionStatus } from './support/ui';
+import { currentProject, newSession, projectContextMenu, sessionStatus } from './support/ui';
 
 test.skip(process.platform === 'win32', 'POSIX fixture CLIs');
 
@@ -33,6 +33,8 @@ console.log('PTY_READY '+JSON.stringify(process.argv.slice(2,4)));process.stdin.
     await app.evaluate(({ dialog, shell }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); (shell as any).showItemInFolder = (p: string) => { (globalThis as any).__revealed = p; }; }, project);
     const page = await app.firstWindow();
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    // The switcher has no project menu until the project has opened.
+    await expect(currentProject(page)).toHaveText('menu project');
     const projectButton = projectContextMenu(page);
     // Project menu: rename, pin, copy path, reveal, add folder.
     await menu(app, 'rename'); await projectButton.click({ button: 'right' });

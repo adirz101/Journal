@@ -2,7 +2,7 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { newSession, openSettings } from './support/ui';
+import { manageProject, newSession, openSettings } from './support/ui';
 
 // Approval notifications and the badge, end to end: real Electron, runtime and
 // node-pty, a fixture Claude CLI, and Journal's real observer hook. Electron's
@@ -199,7 +199,7 @@ test('clicking the notification selects its session in the renderer, but not whi
     hook(f.root, f.project, first, 'PermissionRequest', bash('s1'));
     await expect.poll(async () => (await notifications(app)).length).toBe(1);
     // An open dialog owns the window: the click must not switch the session behind it.
-    await page.getByRole('button', { name: /^Manage / }).click();
+    await manageProject(app, page, 'notify project');
     await expect(page.locator('dialog[open]')).toHaveCount(1);
     await app.evaluate(() => (globalThis as any).__notifications[0].handlers.click());
     await expect.poll(() => app.evaluate(() => (globalThis as any).__focusEvents.length)).toBe(1);
