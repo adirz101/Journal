@@ -10,10 +10,10 @@ Journal is a local-first workspace for Claude Code, Codex and Cursor that carrie
 
 Journal does not include Claude Code, Codex or Cursor: install the ones you use (Journal shows which it found, and can install the Cursor CLI for you with Cursor's official installer after you confirm).
 
-## Unsigned alpha builds
+## Signing
 
-- **macOS:** not signed with an Apple Developer ID and not notarized. Open the DMG and drag Journal to Applications. The first time you open it, macOS says it cannot verify Journal: click **Done**, then open **System Settings → Privacy & Security** and click **Open Anyway** next to the Journal message (on older macOS versions, Control-click Journal and choose **Open**).
-- **Windows:** not code-signed. SmartScreen may show "Windows protected your PC": click **More info**, then **Run anyway**. The installer installs for your user only and needs no administrator rights.
+- **macOS:** signed with an Apple Developer ID and notarized by Apple. Open the DMG, drag Journal to Applications and open it.
+- **Windows:** not code-signed yet. SmartScreen may show "Windows protected your PC": click **More info**, then **Run anyway**. The installer installs for your user only and needs no administrator rights.
 
 Only open builds downloaded from this release page, and check them against `SHA256SUMS.txt`:
 

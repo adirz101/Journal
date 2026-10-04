@@ -47,7 +47,7 @@ Download the latest build from [GitHub Releases](https://github.com/adirz101/Jou
 1. Download `Journal-<version>-arm64.dmg`.
 2. Open it.
 3. Drag **Journal** to **Applications**.
-4. Open Journal from Applications. Alpha builds are not notarized: the first time, macOS says it cannot verify Journal. Click **Done**, then open **System Settings → Privacy & Security** and click **Open Anyway** (on older macOS, Control-click Journal and choose **Open**).
+4. Open Journal from Applications. macOS builds are signed with an Apple Developer ID and notarized by Apple, so they open without security warnings.
 
 **Windows (x64)**
 1. Download `Journal-Setup-<version>-x64.exe` (installs for your user in one click, no administrator rights, Start Menu shortcut, uninstall from Settings → Apps) or `Journal-Portable-<version>-x64.exe` (runs without installing).
@@ -58,7 +58,7 @@ Journal keeps its data per user (macOS `~/Library/Application Support/journal-de
 
 ## Current limitations
 
-- Alpha software: release builds are unsigned (macOS ad-hoc signed, not notarized; Windows unsigned) and there are no automatic updates. Sessions in the same checkout share its working tree; use a worktree for isolation.
+- Alpha software: Windows builds are not code-signed yet (macOS builds are signed and notarized), and there are no automatic updates. Sessions in the same checkout share its working tree; use a worktree for isolation.
 - Local validation is on macOS. Native Windows operation is unverified; see the [Windows audit](docs/WINDOWS.md).
 - Knowledge and status updates require manual review. Automatic extraction, cloud sync, background agent orchestration, and cross-worktree knowledge promotion are not implemented.
 - Retrieval is lexical (stemmed, with identifier and path aliases), with finite context limits. Source fingerprints detect changes; they do not establish whether a claim is true. Journal does not inject context into conversations launched outside the app.

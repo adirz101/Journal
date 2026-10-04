@@ -10,8 +10,10 @@
 //   ad-hoc signed (required to run on Apple Silicon) and Gatekeeper warns.
 // - Windows: with WIN_CSC_LINK (or CSC_LINK) + password the installer and app are
 //   Authenticode-signed; otherwise they are unsigned and SmartScreen warns.
-const macSigned = !!process.env.CSC_LINK && process.env.CSC_IDENTITY_AUTO_DISCOVERY !== 'false';
-const notarize = macSigned && !!(process.env.APPLE_API_KEY && process.env.APPLE_API_KEY_ID && process.env.APPLE_API_ISSUER);
+// CI passes the certificate as CSC_LINK; a local build names a keychain identity with CSC_NAME.
+const macSigned = !!(process.env.CSC_LINK || process.env.CSC_NAME) && process.env.CSC_IDENTITY_AUTO_DISCOVERY !== 'false';
+// Notarization: an App Store Connect API key (CI) or a notarytool keychain profile (local).
+const notarize = macSigned && !!((process.env.APPLE_API_KEY && process.env.APPLE_API_KEY_ID && process.env.APPLE_API_ISSUER) || process.env.APPLE_KEYCHAIN_PROFILE);
 
 // Stable identifier (documented in docs/RELEASING.md): never change it after a
 // release, or macOS treats the app as a different program.
@@ -57,6 +59,8 @@ module.exports = {
   mac: {
     category: 'public.app-category.developer-tools',
     target: [{ target: 'dmg', arch: ['arm64'] }, { target: 'zip', arch: ['arm64'] }],
+    // Full-bleed artwork: macOS 26+ masks it itself; the rounded original would sit on a grey platter.
+    icon: 'assets/branding/journal-app-icon-macos.png',
     artifactName: '${productName}-${version}-${arch}.${ext}',
     // Ad-hoc ("-") when no Developer ID is configured: Apple Silicon refuses
     // to run unsigned code, and a quarantined app with a broken signature is

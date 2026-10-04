@@ -40,6 +40,13 @@ test('packaging config: stable ID, platforms, per-user installer, data kept, not
   assert.equal(config.mac.identity, '-'); assert.equal(config.mac.hardenedRuntime, false); assert.equal(config.mac.notarize, false);
   const signed = withEnv({ CSC_LINK: 'secret-path', CSC_IDENTITY_AUTO_DISCOVERY: undefined, APPLE_API_KEY: 'k', APPLE_API_KEY_ID: 'i', APPLE_API_ISSUER: 's' }, () => loadConfig());
   assert.equal(signed.mac.identity, undefined); assert.equal(signed.mac.hardenedRuntime, true); assert.equal(signed.mac.notarize, true);
+  // A local build signs with a keychain identity and notarizes with a notarytool profile.
+  const local = withEnv({ CSC_LINK: undefined, CSC_NAME: 'Adir Zak (N859VCGPS7)', CSC_IDENTITY_AUTO_DISCOVERY: undefined, APPLE_API_KEY: undefined, APPLE_KEYCHAIN_PROFILE: 'journal-notary' }, () => loadConfig());
+  assert.equal(local.mac.hardenedRuntime, true); assert.equal(local.mac.notarize, true);
+  // macOS gets full-bleed artwork (macOS 26+ masks it); other platforms keep the original.
+  assert.equal(config.mac.icon, 'assets/branding/journal-app-icon-macos.png'); assert.equal(config.icon, 'assets/branding/journal-app-icon.png');
+  const png = readFileSync(config.mac.icon); assert.equal(png.readUInt32BE(16), 1024); assert.equal(png.readUInt32BE(20), 1024);
+  assert.equal(png[25], 2, 'Opaque RGB: no transparent margin for macOS to frame');
   const signedOnly = withEnv({ CSC_LINK: 'secret-path', CSC_IDENTITY_AUTO_DISCOVERY: undefined, APPLE_API_KEY: undefined }, () => loadConfig());
   assert.equal(signedOnly.mac.notarize, false, 'Notarization only with App Store Connect credentials');
   // Only node-pty ships as a module; the renderer libraries are bundled by Vite.

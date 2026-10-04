@@ -92,7 +92,8 @@ function createWindow() {
 // Do not top-level-await readiness: Electron waits for its entry module to finish
 // evaluating before emitting ready (and automation loaders also defer that event).
 app.whenReady().then(async () => {
-if (process.platform === 'darwin') { if (headless) app.dock.hide(); else app.dock.setIcon(displayIcon); }
+// The packaged app keeps its bundle icon (masked by macOS); development builds show the artwork.
+if (process.platform === 'darwin') { if (headless) app.dock.hide(); else if (!app.isPackaged) app.dock.setIcon(displayIcon); }
 store = new StoreClient(resolve(userData, 'journal.sqlite'));
 await store.ready;
 runtime = new RuntimeClient({ dataDir: userData, launch: launchRuntime });
