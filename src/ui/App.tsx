@@ -64,7 +64,7 @@ export default function App() {
   const update = useUpdateState();
   const [previewing, setPreviewing] = useState(false); const [explorerFocus, setExplorerFocus] = useState(0);
   // The Files tab's view: the user's last choice for this app run, else Changed while the session changed something.
-  const [filesChoice, setFilesChoice] = useState<'changed' | 'all' | null>(null); const [packetSignal, setPacketSignal] = useState(0);
+  const [filesChoice, setFilesChoice] = useState<'changed' | 'all' | null>(null); const [packetRequest, setPacketRequest] = useState<number | null>(null);
   const [references, setReferences] = useState<FileReference[]>([]); const [evidenceSource, setEvidenceSource] = useState<{ kind: 'file'; path: string; startLine: number; endLine: number; rootId?: string } | null>(null);
   // References belong to the project they were chosen in; switching projects drops them.
   useEffect(() => { setReferences([]); setEvidenceSource(null); }, [state?.project.id]);
@@ -346,17 +346,17 @@ export default function App() {
   const filesView = filesChoice ?? (changed ? 'changed' : 'all');
   // A preview or an older record never feeds the status bar.
   const sessionReceipt = session && receipt?.id === session.receiptId ? receipt : null;
-  const showSent = () => { setPanel('session'); layout.showInspector(); setPacketSignal(n => n + 1); };
+  const showSent = () => { setPanel('session'); layout.showInspector(); setPacketRequest(n => (n ?? 0) + 1); };
   // === Region B: inspector ===
-  const inspector = (pane: 'full' | 'rail', overlay: boolean) => state && <Inspector pane={pane} inOverlay={overlay} overlayOpen={layout.inspector === 'overlay'} tab={panel} onTab={tab => { setPanel(tab); if (tab === 'files') setExplorerFocus(n => n + 1); }} badges={{ files: changed, memory: proposals.length }} shortcuts={bootstrap?.shortcuts}
+  const inspector = (pane: 'full' | 'rail', overlay: boolean) => state && <Inspector pane={pane} inOverlay={overlay} overlayOpen={layout.inspector === 'overlay'} tab={panel} onTab={setPanel} badges={{ files: changed, memory: proposals.length }} shortcuts={bootstrap?.shortcuts}
       
     onHide={overlay ? () => layout.closeOverlays(true) : layout.mode === 'wide' ? layout.toggleInspector : undefined} onShow={tab => tab ? layout.showInspector() : layout.toggleInspector()}>
-      {panel === 'session' && <SessionTab session={session} events={events} now={now} onShowSent={showSent} context={<ContextPanel receipt={receipt} session={session} bootstrap={bootstrap} history={state.receipts} disabled={disabled} events={events} now={now} packetSignal={packetSignal}
+      {panel === 'session' && <SessionTab session={session} events={events} now={now} onShowSent={showSent} context={<ContextPanel receipt={receipt} session={session} bootstrap={bootstrap} history={state.receipts} disabled={disabled} events={events} now={now} packetRequest={packetRequest} onPacketShown={() => setPacketRequest(null)}
         onToggle={id => { const next = disabled.includes(id) ? disabled.filter(x => x !== id) : [...disabled, id]; setDisabled(next); if (receipt?.state === 'prepared') void api<Receipt>('prepareContext', { projectId: state.project.id, task: receipt.query, workspaceId: workspaceId || null, disabled: next, references: referenceInputs }).then(setReceipt).catch(failed); }}
         onSelectReceipt={setReceipt} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />} />}
       {panel === 'files' && <FilesTab hasSession={!!session} view={filesView} onView={setFilesChoice} changed={changed}
         changes={session && <ChangesPanel session={session} changes={sessionChanges.changes} loading={sessionChanges.loading} error={sessionChanges.error} refresh={sessionChanges.refresh} />}
-        files={<ExplorerPanel key={state.project.id} project={state.project} session={session} rootsVersion={workspaces?.workspaces.map(w => `${w.id}:${w.state}`).join(',') ?? ''} revealLabel={`Reveal in ${revealLabel}`} focusSignal={explorerFocus} onPreviewing={setPreviewing} onError={failed}
+        files={<ExplorerPanel key={state.project.id} project={state.project} session={session} rootsVersion={workspaces?.workspaces.map(w => `${w.id}:${w.state}`).join(',') ?? ''} revealLabel={`Reveal in ${revealLabel}`} focusSignal={explorerFocus} onFocusHandled={() => setExplorerFocus(0)} onPreviewing={setPreviewing} onError={failed}
         onAddReference={async ref => {
           const projectId = state.project.id;
           const described = await api<FileReference>('describeReference', { projectId, workspaceId: workspaceId || null, rootKey: ref.rootKey, path: ref.path, startLine: ref.startLine, endLine: ref.endLine });

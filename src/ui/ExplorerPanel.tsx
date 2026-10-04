@@ -30,8 +30,8 @@ function lookup(status: FileStatus | undefined) {
   };
 }
 
-export function ExplorerPanel({ project, session, rootsVersion, revealLabel, focusSignal, onPreviewing, onAddReference, onSaveEvidence, onError }: {
-  project: Project; session: Session | null; rootsVersion: string; revealLabel: string; focusSignal: number;
+export function ExplorerPanel({ project, session, rootsVersion, revealLabel, focusSignal, onFocusHandled, onPreviewing, onAddReference, onSaveEvidence, onError }: {
+  project: Project; session: Session | null; rootsVersion: string; revealLabel: string; focusSignal: number; onFocusHandled?: () => void;
   onPreviewing: (previewing: boolean) => void; onAddReference: (reference: FileReference) => Promise<void>;
   onSaveEvidence: (source: { rootKey: string; path: string; startLine: number; endLine: number }) => void; onError: (error: unknown) => void;
 }) {
@@ -238,7 +238,8 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
     const node = scroller.current; if (!node) return;
     const observer = new ResizeObserver(() => setHeight(node.clientHeight)); observer.observe(node); return () => observer.disconnect();
   }, [preview, filter]);
-  useEffect(() => { if (focusSignal) { if (preview) closePreview(); else requestAnimationFrame(() => { const focused = tree.getFocusedItem?.(); (focused?.getElement() ?? scroller.current?.querySelector<HTMLElement>('[role=treeitem]'))?.focus(); }); } }, [focusSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+  // One-shot: App clears the signal once handled, so a remount (a tab switch) never takes focus.
+  useEffect(() => { if (focusSignal) { onFocusHandled?.(); if (preview) closePreview(); else requestAnimationFrame(() => { const focused = tree.getFocusedItem?.(); (focused?.getElement() ?? scroller.current?.querySelector<HTMLElement>('[role=treeitem]'))?.focus(); }); } }, [focusSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const rows = tree.getItems();
   const first = Math.max(0, Math.floor(top / ROW) - 8); const last = Math.min(rows.length, Math.ceil((top + height) / ROW) + 8);

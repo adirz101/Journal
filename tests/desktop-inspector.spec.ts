@@ -105,6 +105,16 @@ test('the status bar counts match the receipt, and See what was sent shows it', 
     await expect(page.getByRole('tab', { name: /^Session/ })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByTestId('context-packet')).toBeInViewport();
     await expect(page.getByRole('heading', { name: 'What this agent knows' })).toBeFocused();
+    // Focus moves only once: switching tabs away and back with the shortcuts leaves the terminal focused.
+    const terminal = page.locator('.xterm-helper-textarea');
+    await terminal.focus();
+    const tabKeys = (n: string) => pressKey(app, n, process.platform === 'darwin' ? ['meta', 'alt'] : ['alt', 'shift']);
+    await expect(async () => { await tabKeys('3'); await expect(page.getByRole('tab', { name: /^Memory/ })).toHaveAttribute('aria-selected', 'true', { timeout: 1000 }); }).toPass();
+    await expect(terminal).toBeFocused();
+    await expect(async () => { await tabKeys('1'); await expect(page.getByRole('tab', { name: /^Session/ })).toHaveAttribute('aria-selected', 'true', { timeout: 1000 }); }).toPass();
+    await expect(page.getByRole('heading', { name: 'What this agent knows' })).toBeVisible();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(terminal).toBeFocused();
   } finally { await closeApp(app); f.cleanup(); }
 });
 

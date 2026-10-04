@@ -32,15 +32,22 @@ function SessionReferences({ session, events }: { session: Session; events: Time
 
 // What the agent receives: the exact packet, why each note is there, what
 // was left out and why, and what Journal cannot observe.
-// events: the session's timeline (useSessionEvents). packetSignal: bumped by
-// "See what was sent", which shows the exact text and moves focus to it.
-export function ContextPanel({ receipt, session, bootstrap, history, disabled, events = [], now = Date.now(), packetSignal = 0, onToggle, onSelectReceipt, onChanged, onError }: {
-  receipt: Receipt | null; session: Session | null; bootstrap: Bootstrap | null; history: Receipt[]; disabled: string[]; events?: TimelineEvent[]; now?: number; packetSignal?: number;
+// events: the session's timeline (useSessionEvents). packetRequest: set by
+// "See what was sent", which shows the exact text and moves focus to it once:
+// onPacketShown clears it in App, so a later remount (a tab switch, a layout
+// change) never takes focus again.
+export function ContextPanel({ receipt, session, bootstrap, history, disabled, events = [], now = Date.now(), packetRequest = null, onPacketShown, onToggle, onSelectReceipt, onChanged, onError }: {
+  receipt: Receipt | null; session: Session | null; bootstrap: Bootstrap | null; history: Receipt[]; disabled: string[]; events?: TimelineEvent[]; now?: number; packetRequest?: number | null; onPacketShown?: () => void;
   onToggle: (id: string) => void; onSelectReceipt: (receipt: Receipt) => void; onChanged: () => void; onError: (error: unknown) => void;
 }) {
   const [raw, setRaw] = useState(false); const [open, setOpen] = useState<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null); const packet = useRef<HTMLPreElement>(null);
-  useEffect(() => { if (!packetSignal) return; setRaw(true); requestAnimationFrame(() => { packet.current?.scrollIntoView({ block: 'nearest' }); heading.current?.focus({ preventScroll: true }); }); }, [packetSignal]);
+  useEffect(() => {
+    if (!packetRequest) return;
+    onPacketShown?.(); setRaw(true);
+    // Not cancelled when the request clears: clearing it is what re-renders this.
+    requestAnimationFrame(() => { packet.current?.scrollIntoView({ block: 'nearest' }); heading.current?.focus({ preventScroll: true }); });
+  }, [packetRequest]); // eslint-disable-line react-hooks/exhaustive-deps
   const preview = receipt?.state === 'prepared';
   // The selected session's own record reads as what this agent knows; an
   // uncertain delivery never reads as sent.
