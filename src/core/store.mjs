@@ -26,16 +26,18 @@ const now = () => new Date().toISOString();
 const NO_BRIEF_WARNING = 'No current approved project brief is included. Add a checkout-scoped brief to orient every session.';
 const categories = ['brief', 'decision', 'constraint', 'convention', 'lesson', 'issue'];
 // One row per note in a launch that reached (or may have reached) the agent. Previews
-// (never stored), prepared and failed launches are not deliveries. :receipt limits it to one receipt.
-const RECORD_DELIVERIES = `INSERT OR IGNORE INTO deliveries(receipt_id, memory_id, revision, project_id, session_id, provider, native_id, at)
+// (never stored), prepared and failed launches are not deliveries. RECORD_DELIVERIES
+// scans every receipt (the v8 backfill); RECORD_RECEIPT_DELIVERIES records one launch
+// and finds its receipt through the primary key.
+export const RECORD_DELIVERIES = `INSERT OR IGNORE INTO deliveries(receipt_id, memory_id, revision, project_id, session_id, provider, native_id, at)
   SELECT r.id, json_extract(i.value,'$.id'), json_extract(i.value,'$.revision'), r.project_id,
     coalesce(json_extract(r.body,'$.sessionId'), s.id), json_extract(s.body,'$.provider'), json_extract(s.body,'$.nativeId'),
     coalesce(json_extract(r.body,'$.updatedAt'), json_extract(r.body,'$.createdAt'))
   FROM receipts r JOIN json_each(r.body,'$.items') i
   LEFT JOIN sessions s ON s.id = coalesce(json_extract(r.body,'$.sessionId'),
     (SELECT s2.id FROM sessions s2 WHERE json_extract(s2.body,'$.receiptId')=r.id LIMIT 1))
-  WHERE json_extract(r.body,'$.state') IN ('submitted','uncertain') AND json_extract(i.value,'$.id') IS NOT NULL
-    AND (:receipt IS NULL OR r.id=:receipt)`;
+  WHERE json_extract(r.body,'$.state') IN ('submitted','uncertain') AND json_extract(i.value,'$.id') IS NOT NULL`;
+export const RECORD_RECEIPT_DELIVERIES = `${RECORD_DELIVERIES} AND r.id=?`;
 
 export class JournalStore {
   constructor(path) {
@@ -104,7 +106,7 @@ export class JournalStore {
         }
         const set = this.db.prepare('UPDATE memories SET approved_at=?, approved_revision=? WHERE id=?');
         for (const [id, approval] of latest) set.run(approval.at, approval.revision, id);
-        this.db.prepare(RECORD_DELIVERIES).run({ receipt: null });
+        this.db.prepare(RECORD_DELIVERIES).run();
       }],
     ];
     for (const [version, apply] of steps) {
@@ -357,7 +359,7 @@ export class JournalStore {
     const [byWhere, byArgs] = join(conditions);
     const categoryCounts = Object.fromEntries(['all', ...categories].map(name => [name, 0]));
     for (const row of this.db.prepare(`SELECT json_extract(r.body,'$.category') AS category, count(*) AS n ${from} WHERE ${byWhere} GROUP BY 1`).all(...byArgs)) {
-      categoryCounts.all += row.n; if (row.category in categoryCounts && row.category !== 'all') categoryCounts[row.category] = row.n;
+      categoryCounts.all += row.n; if (Object.hasOwn(categoryCounts, row.category) && row.category !== 'all') categoryCounts[row.category] = row.n;
     }
     const [otherWhere, otherArgs] = join([base, other]);
     const otherCount = this.db.prepare(`SELECT count(*) AS n ${from} WHERE ${otherWhere}`).get(...otherArgs).n;
@@ -689,7 +691,7 @@ export class JournalStore {
         ...(receipt.state === 'prepared' && launchPrompt !== undefined ? { launchPrompt } : {}) };
       this.db.prepare('UPDATE receipts SET body=? WHERE id=?').run(JSON.stringify(updated), id);
       // From prepared only: submitted → uncertain is the same delivery.
-      if (receipt.state === 'prepared' && state !== 'failed') this.db.prepare(RECORD_DELIVERIES).run({ receipt: id });
+      if (receipt.state === 'prepared' && state !== 'failed') this.db.prepare(RECORD_RECEIPT_DELIVERIES).run(id);
       return updated;
     });
   }
