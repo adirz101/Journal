@@ -80,7 +80,7 @@ export class TerminalManager extends EventEmitter {
     super(); this.cursor = cursor; this.store = store; this.spawn = spawn; this.makeSettings = makeSettings; this.runtimeId = runtimeId; this.platform = platform;
     this.identify = identify; this.table = table; this.verifiedSignal = verifiedSignal; this.alive = alive; this.stopGraceMs = stopGraceMs;
     // Slots 1-4 are reserved synchronously at start so concurrent starts never share one.
-    this.entries = new Map(); this.reservedSlots = new Set(); this.pending = 0; this.flushPending = false; this.disposed = false;
+    this.entries = new Map(); this.reservedSlots = new Set(); this.flushPending = false; this.disposed = false;
     this.tracker = trackMs ? setInterval(() => { void this.trackDescendants().catch(() => {}); void this.recheckOrphans().catch(() => {}); }, trackMs) : null; this.tracker?.unref?.();
   }
   entry(id) { return this.entries.get(id) ?? null; }
@@ -95,10 +95,12 @@ export class TerminalManager extends EventEmitter {
   }
   async start(request) {
     if (this.disposed) throw fail(ERROR_CODES.SHUTTING_DOWN, 'Journal is shutting down');
-    const slot = this.liveEntries().length + this.pending >= MAX_SESSIONS ? null : this.freeSlot();
+    // Live sessions and starts in progress (reserved) each hold one slot; a start
+    // whose process already runs is in both sets but counts once.
+    const slot = this.freeSlot();
     if (!slot) throw fail(ERROR_CODES.SLOTS_FULL, `Journal runs up to ${MAX_SESSIONS} sessions at once. Stop one before starting another.`);
-    this.reservedSlots.add(slot); this.pending++;
-    try { return await this.launch({ ...request, slot }); } finally { this.pending--; this.reservedSlots.delete(slot); }
+    this.reservedSlots.add(slot);
+    try { return await this.launch({ ...request, slot }); } finally { this.reservedSlots.delete(slot); }
   }
   async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, plan = false, disabled = [], references = [], slot = null }) {
     if (!PROVIDERS.includes(provider)) throw new Error('Unknown agent provider');
@@ -185,7 +187,9 @@ export class TerminalManager extends EventEmitter {
       await this.store.updateReceiptState(receipt.id, current.state === 'prepared' && !spawned ? 'failed' : 'uncertain', session.id, prompt);
       this.record(session.id, 'error', { message: redact(error.message, 300) });
       this.emitStatus(session);
-      const code = CODES.has(error.code) ? error.code : error.code === 'ENOENT' ? ERROR_CODES.PROVIDER_MISSING : ERROR_CODES.START_FAILED;
+      // ENOENT means a missing executable only when spawning failed; later it is some other file.
+      const code = CODES.has(error.code) ? error.code : error.code === 'ENOENT' && !spawned ? ERROR_CODES.PROVIDER_MISSING : ERROR_CODES.START_FAILED;
+      if (code === ERROR_CODES.SHUTTING_DOWN) throw fail(code, error.message);
       throw fail(code, `Could not start ${provider}. Check that its CLI is installed and available on PATH. ${error.message}`);
     }
   }

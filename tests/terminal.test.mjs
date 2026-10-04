@@ -508,6 +508,38 @@ test('a missing executable gives PROVIDER_MISSING', async t => {
   await assert.rejects(f.start(), error => error.code === 'PROVIDER_MISSING' && /Could not start/.test(error.message));
 });
 
+test('a start whose process is already running counts once toward capacity', async t => {
+  const f = multi(t);
+  await f.start(); await f.start();
+  // Hold the third launch after its process started (its entry exists) and before it settles.
+  let release; const held = new Promise(resolve => { release = resolve; });
+  const update = f.store.updateReceiptState.bind(f.store); let first = true;
+  f.store.updateReceiptState = async (...args) => { if (first) { first = false; await held; } return update(...args); };
+  const third = f.start();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(f.procs.length, 3);
+  const fourth = await f.start();
+  release();
+  assert.deepEqual([(await third).slot, fourth.slot].sort(), [3, 4]);
+  await assert.rejects(f.start(), error => error.code === 'SLOTS_FULL');
+});
+
+test('ENOENT after the process started is START_FAILED, not PROVIDER_MISSING', async t => {
+  const f = multi(t);
+  const update = f.store.updateReceiptState.bind(f.store); let first = true;
+  f.store.updateReceiptState = (...args) => { if (first) { first = false; throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' }); } return update(...args); };
+  await assert.rejects(f.start(), error => error.code === 'START_FAILED');
+  assert.equal(f.procs.length, 1);
+});
+
+test('shutting down during a launch says so, without blaming the CLI', async t => {
+  const f = multi(t);
+  const save = f.store.saveSession.bind(f.store); let first = true;
+  f.store.saveSession = session => { if (first) { first = false; void f.manager.dispose({ stopSessions: false }); } return save(session); };
+  await assert.rejects(f.start(), error => error.code === 'SHUTTING_DOWN' && error.message === 'Journal is shutting down');
+  assert.equal(f.procs.length, 0);
+});
+
 test('recovered sessions have no slot', async t => {
   const f = multi(t);
   const now = new Date().toISOString();
