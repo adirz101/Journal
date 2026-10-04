@@ -28,12 +28,14 @@ export function KnowledgePanel({ project, version, busy, onEdit, onPropose, onCh
   // disabled: the list on screen may be stale, and a second click on it
   // would act on an outdated item.
   const [pending, setPending] = useState(false);
-  // optimistic: the action returns the updated claim (approve, reject,
-  // withdraw, pin), whose new status is shown at once.
+  // optimistic: the action returns the updated note (remember, reject,
+  // forget, pin), whose new status is shown at once. A null result means the
+  // user cancelled a confirmation (Forget…): nothing changed, so no reload.
   const act = async (action: () => Promise<unknown>, { optimistic = false } = {}) => {
     setPending(true);
     try {
       const result = await action();
+      if (result === null) return;
       if (optimistic && result && typeof result === 'object') { const updated = result as Memory; setItems(current => current.map(item => item.id === updated.id ? { ...item, status: updated.status, pinned: updated.pinned } : item)); }
       onChanged(); // the write succeeded; a failed reload below is reported separately
       try { await load(0); } catch (error) { onError(error); }
