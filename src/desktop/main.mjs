@@ -217,7 +217,7 @@ const actions = {
     modalOpen = open;
   },
   bootstrap: async () => ({ projects: await store.listProjects(), agents, platform: process.platform, shortcuts: shortcutKeys(process.platform), runtime: { state: runtimeState, warning: runtimeWarning },
-    live: runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [], active: await store.activeSessions() }),
+    live: runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [], active: await store.activeSessions(), hasNotes: false }),
   openProject: async () => {
     const result = await dialog.showOpenDialog(window, { title: 'Open a Git project', properties: ['openDirectory'] });
     return result.canceled ? null : store.openProject(result.filePaths[0]);
@@ -457,7 +457,8 @@ const actions = {
   },
   // ----- Cursor CLI: install and sign in run visibly, only after the user asks. -----
   providerStatus: ({ provider, fresh }) => { if (provider !== 'cursor') throw new Error('Only Cursor needs a status check'); return refreshCursor({ fresh: fresh === true }); },
-  installCursor: async () => {
+  providerInstall: async ({ provider }) => {
+    if (provider !== 'cursor') throw new Error('Not available yet');
     const command = installCommand(process.platform, process.env);
     const { response } = await dialog.showMessageBox(window, { type: 'question', buttons: ['Install', 'Cancel'], defaultId: 1, cancelId: 1, message: 'Install Cursor CLI?',
       detail: `Journal will run Cursor's official installation command:\n\n${command.display}\n\nThis downloads and installs the Cursor Agent CLI on your computer from cursor.com.${process.platform === 'win32' ? ' The installer also adds its folder to your user PATH.' : ''} It runs as you, without administrator rights, in a window where you can watch its output. Journal will not receive or store your Cursor credentials.` });
@@ -466,12 +467,18 @@ const actions = {
     const run = headless && globalThis.__journalCursorInstall ? globalThis.__journalCursorInstall : command;
     return { ...(await processes.start('install', { file: run.file, args: run.args, env: installEnv(process.env), cwd: homedir() })), command: command.display };
   },
-  cursorLogin: async () => {
+  providerLogin: async ({ provider }) => {
+    if (provider !== 'cursor') throw new Error('Not available yet');
     const found = await findCursor(process.env);
     if (!found.path) throw new Error('Install the Cursor CLI first');
     const target = launchTarget(found.path, ['login'], { env: process.env });
-    return processes.start('login', { file: target.file, args: target.args, env: runnable(process.env), cwd: homedir() });
+    return { ...(await processes.start('login', { file: target.file, args: target.args, env: runnable(process.env), cwd: homedir() })), command: 'agent login' };
   },
+  // Phase 7 contract stubs (replaced in Group A).
+  openProjectPath: () => { throw new Error('Not available yet'); },
+  firstRunDrafts: () => null,
+  rememberDraft: () => { throw new Error('Not available yet'); },
+  skipOrientation: () => { throw new Error('Not available yet'); },
   processInput: ({ id, data }) => processes.write(text(id, 'process', 40), data),
   processResize: ({ id, cols, rows }) => processes.resize(text(id, 'process', 40), cols, rows),
   processStop: ({ id }) => processes.stop(text(id, 'process', 40)),
