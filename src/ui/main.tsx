@@ -1,6 +1,10 @@
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import './styles.css';
+import { storedAppearance } from './theme';
+// Set the theme before the first render (and so before the first paint): App
+// applies it again whenever it changes.
+document.documentElement.dataset.theme = storedAppearance();
 // A terminal measures its cell size when it opens. Load the bundled monospace
 // font first, so it measures JetBrains Mono rather than a fallback. Bounded:
 // a font problem never keeps the window from rendering.

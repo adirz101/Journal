@@ -22,6 +22,7 @@ import { Updater, updateMode } from './updater.mjs';
 import { checkOutcome, menuTemplate } from './menu.mjs';
 import electronUpdater from 'electron-updater';
 import { dataDirectory, unpackedPath, withGuiPath } from './environment.mjs';
+import { WINDOW_BACKGROUND } from './window-colors.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../..');
@@ -41,6 +42,9 @@ if (app.isPackaged) { const next = withGuiPath(process.env).PATH; if (next) proc
 const userData = dataDirectory(process.env, app.getPath('appData'));
 mkdirSync(userData, { recursive: true, mode: 0o700 });
 app.setPath('userData', userData);
+// The last chosen appearance, so the first frame of a new window has the right background.
+const appearancePrefs = join(userData, 'appearance.json');
+const lastAppearance = () => { try { return JSON.parse(readFileSync(appearancePrefs, 'utf8')).appearance === 'light' ? 'light' : 'dark'; } catch { return 'dark'; } };
 if (!app.requestSingleInstanceLock()) app.quit();
 let window; let store; let runtime; let updater; let updatePolicy = null; let closing = false; let closed = false; let runtimeState = 'connecting'; let runtimeWarning = null;
 const devUrl = process.env.JOURNAL_DEV_URL;
@@ -72,7 +76,7 @@ function launchRuntime() {
 }
 
 function createWindow() {
-  window = new BrowserWindow({ title: 'Journal', icon: displayIcon, width: 1440, height: 920, minWidth: 900, minHeight: 640, backgroundColor: '#0F1115',
+  window = new BrowserWindow({ title: 'Journal', icon: displayIcon, width: 1440, height: 920, minWidth: 900, minHeight: 640, backgroundColor: WINDOW_BACKGROUND[lastAppearance()],
     show: !headless,
     // Hidden test windows keep their size on small CI screens (macOS clamps to the display otherwise).
     enableLargerThanScreen: headless,
@@ -158,8 +162,8 @@ const actions = {
   setAppearance: ({ appearance }) => {
     if (appearance !== 'light' && appearance !== 'dark') throw new Error('Invalid appearance');
     nativeTheme.themeSource = appearance;
-    // Repeats --bg from src/ui/tokens.css (as does the window background at creation).
-    window?.setBackgroundColor(appearance === 'light' ? '#FFFFFF' : '#0F1115');
+    window?.setBackgroundColor(WINDOW_BACKGROUND[appearance]);
+    try { writeFileSync(appearancePrefs, JSON.stringify({ appearance })); } catch { /* The next launch starts dark. */ }
   },
   bootstrap: async () => ({ projects: await store.listProjects(), agents, platform: process.platform, runtime: { state: runtimeState, warning: runtimeWarning },
     live: runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [], active: await store.activeSessions() }),
