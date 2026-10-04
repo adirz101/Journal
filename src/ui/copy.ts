@@ -16,7 +16,7 @@ export const copy = {
 // Tooltips keep the precise term.
 export const tip = {
   remember: 'Approve: agents receive this note from the next session',
-  forget: 'Archive: agents stop receiving it; it stays in history and can\'t be restored',
+  forget: 'Archive: agents stop receiving it; it stays in history. To use it again, revise it and review it.',
   continue: 'Resume the same native conversation by its exact ID',
   readOnly: 'Starts in Claude plan mode, the Codex read-only sandbox or Cursor Ask mode; can be changed in the session',
   plan: 'Claude plan mode or Cursor Plan mode',
