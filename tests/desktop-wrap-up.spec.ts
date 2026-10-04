@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { inspectorTab, newSession, showTerminal } from './support/ui';
@@ -19,7 +19,7 @@ function setup(name: string) {
   writeFileSync(resolve(project, 'src/a.js'), 'const graceMs = 3000;\nexport function stop() {}\nexport const other = 1;\n');
   git('add', '.'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'init');
   // Prints its task; QUICK tasks exit at once. Commands: append <file> <text>, setline <file> <n> <text>,
-  // print <text>, exit-with <n>; anything else echoes.
+  // insert <file> <after> <count> (lines "inserted 1".."inserted <count>"), print <text>, exit-with <n>; anything else echoes.
   const fixture = `#!${process.execPath}
 const fs=require('node:fs');
 if(process.argv.includes('--version')){console.log('fixture 1.0');process.exit(0)}
@@ -31,6 +31,7 @@ if(char!=='\\r'&&char!=='\\n'){input+=char;continue}
 const command=input;input='';const [verb,...rest]=command.split(' ');
 if(verb==='append'){fs.appendFileSync(rest[0],rest.slice(1).join(' ')+'\\n');console.log('WROTE '+rest[0])}
 else if(verb==='setline'){const lines=fs.readFileSync(rest[0],'utf8').split('\\n');lines[Number(rest[1])-1]=rest.slice(2).join(' ');fs.writeFileSync(rest[0],lines.join('\\n'));console.log('WROTE '+rest[0])}
+else if(verb==='insert'){const lines=fs.readFileSync(rest[0],'utf8').split('\\n');lines.splice(Number(rest[1]),0,...Array.from({length:Number(rest[2])},(_,i)=>'inserted '+(i+1)));fs.writeFileSync(rest[0],lines.join('\\n'));console.log('WROTE '+rest[0])}
 else if(verb==='print')console.log(rest.join(' '));
 else if(verb==='exit-with')process.exit(Number(rest[0]));
 else console.log('ECHO '+command);
@@ -119,7 +120,7 @@ test('Remember puts the note in Memory at once; Remember all remembers every sug
     await expect(page.locator('.sidebar-footer .count-badge')).toHaveCount(0);
     await inspectorTab(page, 'Memory');
     await page.locator('.filter-tabs').getByRole('button', { name: 'Remembered', exact: true }).click();
-    await expect(page.locator('.memory-list').getByText('Release tags must be signed by CI')).toBeVisible();
+    await expect(page.locator('.memory-list .note-statement').getByText('Release tags must be signed by CI')).toBeVisible();
     const id = await projectId(page);
     const audit = await request(page, 'memoryPage', { projectId: id, filter: 'active' }) as any;
     expect(audit.items.map((item: any) => item.statement)).toEqual(['Release tags must be signed by CI']);
@@ -136,6 +137,43 @@ test('Remember puts the note in Memory at once; Remember all remembers every sug
     await expect(keep(page).locator('.wrap-row-done.ok')).toHaveCount(2);
     const active = await request(page, 'memoryPage', { projectId: id, filter: 'active' }) as any;
     expect(active.items.map((item: any) => item.statement).sort()).toEqual(['Always run npm test before pushing', 'Never commit generated files', 'Release tags must be signed by CI']);
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('the wrap-up keys wait for a closed dialog, focus in the wrap-up or nowhere, and no IME composition', async () => {
+  const f = setup('wrap-keys'); const { app, page } = await open(f.env, f.project);
+  try {
+    await start(page, 'rule: Always run npm test before pushing\nrule: Never commit generated files');
+    await type(page, 'exit-with 0');
+    await expect(keep(page).getByRole('button', { name: /^Remember all 2/ })).toBeVisible({ timeout: 15000 });
+    const combo = mac ? 'Shift+Meta+Enter' : 'Control+Shift+Enter';
+    const nothingRemembered = async () => {
+      await page.waitForTimeout(400);
+      await expect(keep(page).locator('.wrap-row-done')).toHaveCount(0);
+      expect((await request(page, 'proposals', { projectId: await projectId(page) }) as any[]).length).toBe(2);
+    };
+    // A dialog is open (focus moved out of it, too): nothing happens.
+    await inspectorTab(page, 'Memory');
+    await page.getByRole('button', { name: 'Add a note' }).first().click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.press(combo);
+    await nothingRemembered();
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    // Focus in the inspector's search field (outside the wrap-up): nothing happens.
+    await page.getByLabel('Search project memory').focus();
+    await page.keyboard.press(combo);
+    await nothingRemembered();
+    // An IME composition's Enter: nothing happens.
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.evaluate(isMac => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, metaKey: isMac, ctrlKey: !isMac, isComposing: true, bubbles: true })), mac);
+    await nothingRemembered();
+    // Focus nowhere, no dialog, no composition: both are remembered.
+    await page.keyboard.press(combo);
+    await expect(keep(page).locator('.wrap-row-done.ok')).toHaveCount(2);
+    await expect(page.locator('.wrap-up [role=status]').first()).toContainText('Remembered.');
   } finally { await closeApp(app); f.cleanup(); }
 });
 
@@ -194,13 +232,21 @@ test('hand-off fills the composer without starting', async () => {
   } finally { await closeApp(app); f.cleanup(); }
 });
 
+// A remembered note on src/a.js lines 1-2, as the user would save it.
+async function fileNote(page: Page, statement: string, path = 'src/a.js', startLine = 1, endLine = 2) {
+  const id = await projectId(page);
+  const note = await request(page, 'proposeMemory', { projectId: id, input: { statement, category: 'decision', scope: 'checkout', area: '', source: { kind: 'file', path, startLine, endLine } } }) as any;
+  await request(page, 'setMemoryStatus', { id: note.id, status: 'active' });
+  return note.id as string;
+}
+const revision = async (page: Page, id: string) => (await request(page, 'getMemory', { id }) as any).revision as number;
+
 test('a session that changed a note’s file shows the catch; Still true remembers it again', async () => {
   const f = setup('wrap-catch'); const { app, page } = await open(f.env, f.project);
   try {
-    const id = await projectId(page);
-    const note = await request(page, 'proposeMemory', { projectId: id, input: { statement: 'Stop waits 3 s before it kills the process', category: 'decision', scope: 'checkout', area: '', source: { kind: 'file', path: 'src/a.js', startLine: 1, endLine: 2 } } }) as any;
-    await request(page, 'setMemoryStatus', { id: note.id, status: 'active' });
-    await start(page, 'Raise the grace period');
+    const id = await fileNote(page, 'Stop waits 3 s before it kills the process');
+    // A task with a rule, so a suggestion waits behind the catch (board 14).
+    await start(page, 'rule: Raise the grace period in one place only');
     await type(page, 'setline src/a.js 1 const graceMs = 5000;', 'WROTE src/a.js');
     await type(page, 'exit-with 0');
     const card = page.locator('.stale-catch');
@@ -208,19 +254,121 @@ test('a session that changed a note’s file shows the catch; Still true remembe
     await expect(card).toContainText('Until you check it, the note is left out of new sessions');
     await expect(card.locator('.stale-diff tr.del')).toContainText('removed const graceMs = 3000;');
     await expect(card.locator('.stale-diff tr.add')).toContainText('added const graceMs = 5000;');
+    await expect(card.locator('.stale-diff th')).toHaveText(['Saved line', 'Line now', 'Change', 'Text']);
     await expect(card.locator('.note-evidence')).toHaveText('Check needed · file changed');
+    // The suggestion waits behind one line until Review.
+    const more = page.locator('.wrap-more');
+    await expect(more).toContainText('More suggestion from this session', { timeout: 15000 });
+    await expect(keep(page)).toHaveCount(0);
+    // The edit kept the cited lines in place, so no range is asked for.
     await card.getByRole('button', { name: 'Still true', exact: true }).click();
-    // A moved citation asks for the new lines first.
-    const range = card.getByRole('group', { name: 'The cited lines moved. Lines' });
-    if (await range.count()) await range.getByRole('button', { name: 'Still true', exact: true }).click();
+    await expect(page.getByRole('group', { name: 'The cited lines moved. Lines' })).toHaveCount(0);
     await expect(page.locator('.wrap-resolved')).toContainText('Marked still true.');
-    // Leaving commits the staged check.
+    await expect(page.locator('.wrap-up [role=status]').first()).toContainText('Marked still true.');
+    // Show terminal does not commit it: Undo is still there after Back to summary.
+    await page.getByRole('button', { name: 'Show terminal', exact: true }).click();
+    await expect(page.locator('.terminal-panel .terminal-surface')).toContainText('WROTE src/a.js');
+    expect(await revision(page, id)).toBe(1);
+    await page.getByRole('button', { name: 'Back to summary', exact: true }).click();
+    await expect(page.locator('.wrap-resolved').getByRole('button', { name: 'Undo', exact: true })).toBeVisible();
+    expect(await revision(page, id)).toBe(1);
+    await more.getByRole('button', { name: 'Review', exact: true }).click();
+    await expect(keep(page).getByRole('article', { name: /Raise the grace period in one place only/ })).toBeVisible();
+    // Leaving the session commits the staged check.
     await newSession(page);
-    await expect.poll(async () => (await request(page, 'getMemory', { id: note.id }) as any).revision).toBe(2);
-    const memory = await request(page, 'getMemory', { id: note.id }) as any;
-    expect(memory.status).toBe('active');
+    await expect.poll(() => revision(page, id)).toBe(2);
+    expect((await request(page, 'getMemory', { id }) as any).status).toBe('active');
+    // Back to the session: the catch is read again, and the checked note is not in it.
+    await sessionButton(page, 'Raise the grace period in one place only').click();
+    await expect(heading(page)).toHaveText('Exited 0 after <1m');
+    // A cached catch would show the note again and fold the suggestions behind it.
+    await expect(keep(page).getByRole('article', { name: /Raise the grace period in one place only/ })).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('.stale-catch')).toHaveCount(0);
+    await expect(page.locator('.wrap-more')).toHaveCount(0);
     await inspectorTab(page, 'Memory');
     await expect(page.locator('.memory-card').filter({ hasText: 'Stop waits 3 s' }).locator('.memory-state')).toHaveText('Remembered');
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('a cut change keeps Still true disabled until the whole change from the note’s base is shown', async () => {
+  const f = setup('wrap-truncated'); const { app, page } = await open(f.env, f.project);
+  try {
+    // An earlier commit touched the file after the note was saved: the whole change starts at the note's base.
+    const id = await fileNote(page, 'Stop waits 3 s before it kills the process');
+    writeFileSync(resolve(f.project, 'src/a.js'), readFileSync(resolve(f.project, 'src/a.js'), 'utf8').replace('export const other = 1;', 'export const other = 2;'));
+    f.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qam', 'C2');
+    await start(page, 'Insert a long block');
+    await type(page, 'insert src/a.js 1 60', 'WROTE src/a.js');
+    await type(page, 'exit-with 0');
+    const card = page.locator('.stale-catch');
+    await expect(card).toBeVisible({ timeout: 15000 });
+    const still = card.getByRole('button', { name: 'Still true', exact: true });
+    await expect(card).toContainText('Part of this change is not shown.');
+    await expect(still).toBeDisabled();
+    await card.getByRole('button', { name: 'Show the whole change', exact: true }).click();
+    await expect(card.locator('.stale-whole-diff')).toContainText('+inserted 60');
+    await expect(card.locator('.stale-whole-diff')).toContainText('+export const other = 2;'); // C2's change: the note's base, not the session's
+    await expect(card.locator('.stale-whole-diff')).toHaveAttribute('aria-label', 'The whole change in this file since the note was saved');
+    await expect(still).toBeEnabled();
+    await still.click();
+    await expect(page.locator('.wrap-resolved')).toContainText('Marked still true.');
+    await page.locator('.wrap-resolved').getByRole('button', { name: 'Undo', exact: true }).click();
+    // The file changes again before the check is saved: refused, reloaded, and the new cut change must be shown again.
+    await expect(still).toBeEnabled();
+    await still.click();
+    writeFileSync(resolve(f.project, 'src/a.js'), readFileSync(resolve(f.project, 'src/a.js'), 'utf8').replace('inserted 30', 'inserted thirty'));
+    // The staged check commits after 10 s.
+    await expect(card).toContainText('Couldn’t mark it still true: The file changed again; check it once more.', { timeout: 20000 });
+    await expect(card.getByRole('button', { name: 'Show the whole change', exact: true })).toBeVisible();
+    await expect(still).toBeDisabled();
+    expect(await revision(page, id)).toBe(1);
+    await card.getByRole('button', { name: 'Show the whole change', exact: true }).click();
+    await expect(card.locator('.stale-whole-diff')).toContainText('+inserted thirty');
+    await expect(still).toBeEnabled();
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('Still true stays disabled when the whole change is too large or cannot be read', async () => {
+  const f = setup('wrap-blocked'); const { app, page } = await open(f.env, f.project);
+  try {
+    await fileNote(page, 'Stop waits 3 s before it kills the process');
+    await fileNote(page, 'The README names the project', 'README.md', 1, 1);
+    await start(page, 'Insert two long blocks');
+    await type(page, 'insert src/a.js 1 60', 'WROTE src/a.js');
+    await type(page, 'insert README.md 1 60', 'WROTE README.md');
+    await type(page, 'exit-with 0');
+    const large = page.locator('.stale-catch').filter({ hasText: 'This session changed a.js.' });
+    const readme = page.locator('.stale-catch').filter({ hasText: 'This session changed README.md.' });
+    await expect(large).toBeVisible({ timeout: 15000 }); await expect(readme).toBeVisible();
+    // The file grows past the 200 KB diff limit after the catch was read.
+    const path = resolve(f.project, 'src/a.js');
+    writeFileSync(path, readFileSync(path, 'utf8') + Array.from({ length: 20000 }, (_, i) => `appended line ${i + 1}`).join('\n') + '\n');
+    await large.getByRole('button', { name: 'Show the whole change', exact: true }).click();
+    await expect(large).toContainText('This change is too large to show in full here. Update the note instead.');
+    await expect(large.locator('.stale-whole-diff')).toHaveCount(0);
+    await expect(large.getByRole('button', { name: 'Still true', exact: true })).toBeDisabled();
+    // The file is gone before the whole change is asked for.
+    rmSync(resolve(f.project, 'README.md'));
+    await readme.getByRole('button', { name: 'Show the whole change', exact: true }).click();
+    await expect(readme).toContainText('Couldn’t load the whole change. Update the note instead.');
+    await expect(readme.getByRole('button', { name: 'Still true', exact: true })).toBeDisabled();
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('a staged Still true that fails after leaving the wrap-up is reported', async () => {
+  const f = setup('wrap-flush'); const { app, page } = await open(f.env, f.project);
+  try {
+    const id = await fileNote(page, 'Stop waits 3 s before it kills the process');
+    await start(page, 'Raise the grace');
+    await type(page, 'setline src/a.js 1 const graceMs = 5000;', 'WROTE src/a.js');
+    await type(page, 'exit-with 0');
+    const card = page.locator('.stale-catch');
+    await card.getByRole('button', { name: 'Still true', exact: true }).click({ timeout: 15000 });
+    await expect(page.locator('.wrap-resolved')).toContainText('Marked still true.');
+    writeFileSync(resolve(f.project, 'src/a.js'), readFileSync(resolve(f.project, 'src/a.js'), 'utf8').replace('5000', '6000'));
+    await newSession(page);
+    await expect(page.locator('.error-banner[role=alert]')).toContainText('Couldn’t mark it still true: The file changed again; check it once more.');
+    expect(await revision(page, id)).toBe(1);
   } finally { await closeApp(app); f.cleanup(); }
 });
 

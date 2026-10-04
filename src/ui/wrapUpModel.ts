@@ -18,9 +18,21 @@ export function endedView(session: Pick<Session, 'status'> | null | undefined): 
   return session.status === 'exited' || session.status === 'stopped' || session.status === 'failed' || session.status === 'interrupted' ? 'wrap-up' : null;
 }
 
-// A non-zero exit (or a signal, which has no code) or a failed start.
-export const isErrorExit = (session: Pick<Session, 'status' | 'exitCode'>) =>
-  (session.status === 'exited' && (session.exitCode ?? null) !== 0) || session.status === 'failed';
+// node-pty reports the signal number (a SIGTERM kill is { exitCode: 0, signal: 15 }); 0 or
+// none is a normal exit. Common numbers get their POSIX names (the same on macOS and Linux);
+// the rest read "signal N". A name (a string) is kept as it is.
+const SIGNALS: Record<number, string> = { 1: 'SIGHUP', 2: 'SIGINT', 3: 'SIGQUIT', 4: 'SIGILL', 6: 'SIGABRT', 8: 'SIGFPE', 9: 'SIGKILL', 11: 'SIGSEGV', 13: 'SIGPIPE', 14: 'SIGALRM', 15: 'SIGTERM' };
+export function signalName(signal: string | number | null | undefined): string | null {
+  if (signal === null || signal === undefined || signal === '' || signal === 0) return null;
+  const number = typeof signal === 'number' ? signal : /^\d+$/.test(signal) ? Number(signal) : null;
+  if (number === null) return String(signal);
+  if (!Number.isInteger(number) || number <= 0) return null;
+  return SIGNALS[number] ?? `signal ${number}`;
+}
+
+// A non-zero exit, an exit by a signal (its exit code may read 0), or a failed start.
+export const isErrorExit = (session: Pick<Session, 'status' | 'exitCode' | 'signal'>) =>
+  (session.status === 'exited' && ((session.exitCode ?? null) !== 0 || !!signalName(session.signal))) || session.status === 'failed';
 
 // "<1m", "18m", "1h 5m".
 export function durationText(ms: number | null | undefined): string {
@@ -41,7 +53,7 @@ export function exitLine(session: Pick<Session, 'status' | 'exitCode' | 'signal'
   const duration = durationText(durationOf(session, summary));
   switch (session.status) {
     case 'exited': {
-      const signal = summary?.signal ?? session.signal ?? null;
+      const signal = signalName(summary?.signal ?? session.signal);
       if (signal) return wrapUp.endedBy(signal, duration);
       return wrapUp.exited(summary?.exitCode ?? session.exitCode ?? 0, duration);
     }
@@ -99,6 +111,16 @@ export function rememberable(proposal: Pick<Proposal, 'kind' | 'conflicts' | 'sc
 export function rememberAllIds(list: readonly Proposal[], project: Pick<Project, 'branch'>, workspaces: readonly Copy[]): string[] | null {
   const ids = list.filter(p => rememberable(p, project, workspaces)).map(p => p.id);
   return ids.length >= 2 && ids.length <= 5 ? ids : null;
+}
+
+// Remember all acts only on suggestions the user has seen: the ids shown in the last
+// painted frame (seen) that are still open and rememberable now (current). A suggestion
+// that arrives between that frame and the click or ⇧⌘↵ is left out until it has been
+// painted once. null when nothing seen is left.
+export function rememberAllSeen(seen: readonly string[] | null, current: readonly string[] | null): string[] | null {
+  if (!seen || !current) return null;
+  const ids = seen.filter(id => current.includes(id));
+  return ids.length ? ids : null;
 }
 
 // Memory tab actions for a note of another branch (B8): Revise needs the main checkout on

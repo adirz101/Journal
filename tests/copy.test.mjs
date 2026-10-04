@@ -29,7 +29,7 @@ const ALLOWED = [
 const DEFERRED = [
   ['KnowledgePanel.tsx', 'Propose branch update', 'Phase 7'], ['KnowledgePanel.tsx', 'Propose overview', 'Phase 7'],
   ['App.tsx', 'Preview context ↗', 'Phase 4'], ['App.tsx', 'Initial task', 'Phase 4'],
-  ['KnowledgeForm.tsx', 'Save for review', 'Phase 6'], ['App.tsx', 'Native session ID', 'Phase 6'],
+  ['KnowledgeForm.tsx', 'Save for review', 'Phase 6'],
 ];
 const exempt = ([, text, file, position]) => ALLOWED.some(([f, t, p]) => f === file && t === text && p === position) || DEFERRED.some(([f, t]) => f === file && t === text);
 // The syntactic position of a string, so an allow-list entry names one use.
@@ -321,7 +321,8 @@ test('errors from core and the desktop main process use the plain vocabulary', (
 test('the wrap-up vocabulary avoids the old terms', () => {
   const samples = { exited: [0, '18m'], stopped: ['11m'], endedBy: ['SIGTERM', '3m'], alreadyChanged: [2], testsHidden: ['Codex'], passed: [3], failed: [1],
     rememberAll: [3], branchUnreachable: ['feature/x'], staleHead: ['process.mjs', 1], whatChanged: ['process.mjs:41'], renamedTo: ['b.js'], ended: [2],
-    unknown: [1], rangeLabel: ['First'], checkFailed: ['The file changed again; check it once more.'] };
+    unknown: [1], rangeLabel: ['First'], checkFailed: ['The file changed again; check it once more.'],
+    moreSuggestions: [2], moreSuggestionsLabel: [2], source: ['src/a.js:3–5'], editOnBranch: ['feature/x'], finishOnBranch: ['feature/x'] };
   const values = Object.entries(wrapUp).flatMap(([key, value]) => typeof value === 'function' ? [[key, value(...(samples[key] ?? []))]]
     : typeof value === 'object' ? Object.entries(value).map(([inner, text]) => [`${key}.${inner}`, text]) : [[key, value]]);
   assert.ok(Object.entries(wrapUp).filter(([, value]) => typeof value === 'function').every(([key]) => key in samples), 'every function has sample arguments');
@@ -329,4 +330,7 @@ test('the wrap-up vocabulary avoids the old terms', () => {
   assert.equal(wrapUp.exited(0, '18m'), 'Exited 0 after 18m');
   assert.equal(wrapUp.staleHead('process.mjs', 1), 'This session changed process.mjs. 1 note is based on it.');
   assert.equal(wrapUp.ended(1), 'Session ended. 1 suggestion.');
+  assert.equal(wrapUp.moreSuggestions(2), 'More suggestions from this session');
+  assert.equal(wrapUp.moreSuggestionsLabel(1), '1 more suggestion from this session');
+  assert.doesNotMatch(wrapUp.notSavedFailed, /was not saved|no longer available/, 'a failed start does not claim it had output');
 });

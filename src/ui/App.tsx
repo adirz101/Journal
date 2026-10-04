@@ -470,19 +470,20 @@ export default function App() {
           {session.status === 'interrupted' && <p className="hint session-hint">This session's runtime stopped unexpectedly. Whether its first message reached the agent is uncertain, and nothing was resent.{resumable(session) ? ' Continue reopens the same conversation.' : ''}</p>}
           {!!session.survivors?.length && <p className="hint session-hint">Child processes outlived the agent: {session.survivors.map(s => `${s.pid} ${s.command}`).join('; ')}</p>}
           {/* === Phase 6: the wrap-up replaces the terminal of an ended session (Show terminal brings it back) === */}
-          {wrapUpShown ? <div className="wrap-scroll"><WrapUp key={session.id} session={session} project={state.project} workspaces={workspaces?.workspaces ?? []} receipt={sessionReceipt} events={events} agents={bootstrap?.agents ?? []}
-            appearance={appearance} mac={bootstrap?.platform === 'darwin'} busy={busy} canStart={canStart} connected={connected} justEnded={justEnded}
+          {/* Show terminal hides the wrap-up without unmounting it, so a staged Still true or Dismiss keeps its Undo;
+              only another session or project (the key) commits it. */}
+          {endedView(session) ? <><div className="wrap-scroll" hidden={!wrapUpShown}><WrapUp key={session.id} session={session} project={state.project} workspaces={workspaces?.workspaces ?? []} receipt={sessionReceipt} events={events} agents={bootstrap?.agents ?? []}
+            appearance={appearance} mac={bootstrap?.platform === 'darwin'} busy={busy} canStart={canStart} connected={connected} justEnded={justEnded} hidden={!wrapUpShown} knowledgeVersion={knowledgeVersion}
             onShowTerminal={() => setTerminalShown(current => ({ ...current, [session.id]: true }))} onContinue={() => void start(session.provider, session)}
             onConfirmId={nativeId => run(async () => { merge([await api<Session>('confirmNativeId', { id: session.id, nativeId })]); })} onCopyId={() => void sessionActions.copyNativeId(session)}
             onOpenDiff={() => { setFilesChoice('changed'); setPanel('files'); layout.showInspector(); }} onOpenMemory={() => { setPanel('memory'); layout.showInspector(); }}
             onEdit={(memory, done) => setForm({ memory, after: done })} onFinishDraft={() => void proposeUpdate('branch')} onHandoff={handoff}
             onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} /></div>
-          : endedView(session) ? <>
-            <div className="wrap-terminal-bar"><button type="button" onClick={() => setTerminalShown(current => ({ ...current, [session.id]: false }))}>{wrapUpCopy.showSummary}</button></div>
-            <div className="terminal-panel"><EndedTerminal session={session} appearance={appearance} onError={setError} /></div></>
+            {!wrapUpShown && <><div className="wrap-terminal-bar"><button type="button" onClick={() => setTerminalShown(current => ({ ...current, [session.id]: false }))}>{wrapUpCopy.showSummary}</button></div>
+            <div className="terminal-panel"><EndedTerminal session={session} appearance={appearance} onError={setError} /></div></>}</>
           : <div className="terminal-panel"><TerminalPane key={session.id} sessionId={session.id} live={isLive(session) && connected} appearance={appearance} onError={setError} /></div>}
           {/* === End Phase 6 === */}
-          {!wrapUpShown && !isLive(session) && session.status !== 'orphaned' && !session.nativeIdConfirmed && <div className="resume-id"><label>Native session ID<input value={resumeValue} onChange={e => setResumeDraft({ sessionId: session.id, value: e.target.value })} placeholder="Exact UUID from the native CLI" /></label><button disabled={busy} onClick={() => void run(async () => { const next = await api<Session>('confirmNativeId', { id: session.id, nativeId: resumeValue }); merge([next]); })}>Confirm conversation ID</button></div>}
+          {!wrapUpShown && !isLive(session) && session.status !== 'orphaned' && !session.nativeIdConfirmed && <div className="resume-id"><label>{wrapUpCopy.idLabel}<input value={resumeValue} onChange={e => setResumeDraft({ sessionId: session.id, value: e.target.value })} placeholder={wrapUpCopy.idPlaceholder} spellCheck={false} /></label><button disabled={busy} onClick={() => void run(async () => { const next = await api<Session>('confirmNativeId', { id: session.id, nativeId: resumeValue }); merge([next]); })}>{wrapUpCopy.confirmId}</button></div>}
           <StatusBar receipt={sessionReceipt} changes={sessionChanges.changes} update={update} onShowSent={showSent} onError={failed} />
         </section>}
     </main>

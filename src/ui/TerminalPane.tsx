@@ -11,11 +11,14 @@ export interface TerminalHandle { copyText(maxLines?: number): string }
 
 // onUnavailable: the runtime has no buffer for this session (released or from an earlier
 // run): attach answers with no chunks, a gap and sequence 0. focusOnAttach: false for a
-// read-only preview that must not take the keyboard.
-export function TerminalPane({ sessionId, live, appearance, onError, onUnavailable, handleRef, focusOnAttach = true }: { sessionId: string; live: boolean; appearance: Appearance; onError: (message: string) => void;
-  onUnavailable?: () => void; handleRef?: Ref<TerminalHandle>; focusOnAttach?: boolean }) {
+// read-only preview that must not take the keyboard (journal:focus-terminal without a
+// session ID skips it, as it skips a terminal that is not rendered). onReady: the replay
+// is on screen, so copyText has something to read.
+export function TerminalPane({ sessionId, live, appearance, onError, onUnavailable, onReady, handleRef, focusOnAttach = true }: { sessionId: string; live: boolean; appearance: Appearance; onError: (message: string) => void;
+  onUnavailable?: () => void; onReady?: () => void; handleRef?: Ref<TerminalHandle>; focusOnAttach?: boolean }) {
   const host = useRef<HTMLDivElement>(null); const liveRef = useRef(live); const errorRef = useRef(onError);
   const unavailableRef = useRef(onUnavailable); unavailableRef.current = onUnavailable; const focusRef = useRef(focusOnAttach); focusRef.current = focusOnAttach;
+  const readyRef = useRef(onReady); readyRef.current = onReady;
   // The last lines of the buffer, read on request; nothing is stored.
   useImperativeHandle(handleRef, () => ({
     copyText(maxLines = 500) {
@@ -68,13 +71,20 @@ export function TerminalPane({ sessionId, live, appearance, onError, onUnavailab
       terminal.write(prefix + snapshot.chunks.map(chunk => chunk.data).join(''), () => {
         if (disposed) return;
         attached = true; acceptInput = true; for (const event of queued) handle(event); queued.length = 0;
+        readyRef.current?.();
         if (focusRef.current) terminal.focus();
       });
     }).catch(failed);
     attach();
     const input = terminal.onData(data => { if (acceptInput && liveRef.current) void api('write', { id: sessionId, data }).catch(failed); });
     // No session ID: whichever terminal is shown (an overlay returning focus).
-    const focus = (event: Event) => { const target = (event as CustomEvent).detail; if (target === undefined || target === sessionId) terminal.focus(); };
+    // A read-only preview takes focus only when asked for by its session ID; a hidden one never.
+    const focus = (event: Event) => {
+      const target = (event as CustomEvent).detail;
+      if (target === undefined ? !focusRef.current : target !== sessionId) return;
+      if (!host.current?.isConnected || !host.current.getClientRects().length) return;
+      terminal.focus();
+    };
     window.addEventListener('journal:focus-terminal', focus);
     // Only a changed size is sent: the runtime treats output right after a resize
     // as a repaint, not agent output, so layout changes that keep the size must not count.

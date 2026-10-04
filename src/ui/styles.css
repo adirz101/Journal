@@ -201,6 +201,7 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
    animation for the view, its cards or resolved rows: it appears several times a day,
    often after a keyboard Stop. Buttons only change color on hover (fine pointers). */
 .wrap-scroll{flex:1;min-height:0;overflow-y:auto;scrollbar-gutter:stable;container-type:inline-size;container-name:wrapup}
+.wrap-scroll[hidden],.wrap-up[hidden]{display:none}
 .wrap-up{display:flex;flex-direction:column;gap:16px;max-width:960px;padding:16px 20px 20px;font-size:var(--text-body)}
 .wrap-up h2,.wrap-up h3{margin:0}
 .wrap-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.wrap-head h2{font-size:var(--text-title);font-weight:600;color:var(--tx2)}.wrap-head h2.tone-error{color:var(--red)}
@@ -231,6 +232,10 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .wrap-row-meta{font-size:var(--text-meta);color:var(--tx3)}.wrap-row-warn{font-size:var(--text-meta);color:var(--amb)}
 .wrap-row-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .wrap-row-done{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);font-size:var(--text-meta);color:var(--tx2)}.wrap-row-done:last-child{border-bottom:0}.wrap-row-done.ok{background:var(--grnsoft);color:var(--tx)}.wrap-row-done button{margin-left:auto}
+/* Board 14: suggestions wait behind one line while the catch is shown. */
+.wrap-more{display:flex;align-items:center;gap:10px;padding:10px 16px;border:1px solid var(--line);border-radius:10px;background:var(--panel);font-size:var(--text-meta);color:var(--tx2)}
+.wrap-more-count{min-width:20px;padding:1px 6px;border-radius:999px;text-align:center;font-weight:600;font-variant-numeric:tabular-nums;color:var(--amb);background:var(--ambsoft)}.wrap-more button{margin-left:auto}
+.wrap-row-meta code{font-family:var(--font-mono);font-size:var(--text-caption);color:var(--tx2);overflow-wrap:anywhere}
 /* The out-of-date catch (board 14): amber means it needs you. */
 .stale-catch{border:1px solid var(--ambline);border-radius:12px;background:var(--panel);overflow:hidden}
 .stale-lead{padding:14px 18px;background:var(--ambsoft);border-bottom:1px solid var(--ambline);border-left:3px solid var(--amb)}.stale-lead h3{font-size:15px;font-weight:600}.stale-lead p{margin:3px 0 0;font-size:var(--text-meta);color:var(--tx2)}

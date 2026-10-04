@@ -164,3 +164,28 @@ test('ranges, hunk counts and key labels', async t => {
   assert.equal(m.keyLabels(false).continue, 'Ctrl+Enter');
   assert.equal(m.keyLabels(false).rememberAll, 'Ctrl+Shift+Enter');
 });
+
+test('signal exits: node-pty shapes are error exits with the signal name; signal 0 is a normal exit', async t => {
+  const m = await load(t);
+  // node-pty reports a kill as exitCode 0 with the signal number.
+  const term = session({ exitCode: 0, signal: 15, endedAt: at(3) });
+  assert.equal(m.isErrorExit(term), true); assert.equal(m.exitLine(term), 'Ended by SIGTERM after 3m');
+  const kill = session({ exitCode: 0, signal: 9, endedAt: at(3) });
+  assert.equal(m.isErrorExit(kill), true); assert.equal(m.exitLine(kill), 'Ended by SIGKILL after 3m');
+  const normal = session({ exitCode: 0, signal: 0 });
+  assert.equal(m.isErrorExit(normal), false); assert.equal(m.exitLine(normal), 'Exited 0 after 18m');
+  // The summary's signal wins and is named the same way; other numbers and names.
+  assert.equal(m.exitLine(session({ exitCode: 0, signal: null }), { durationMs: 60_000, exitCode: 0, signal: 2 }), 'Ended by SIGINT after 1m');
+  assert.equal(m.signalName(31), 'signal 31'); assert.equal(m.signalName('9'), 'SIGKILL'); assert.equal(m.signalName('SIGHUP'), 'SIGHUP');
+  assert.equal(m.signalName(null), null); assert.equal(m.signalName(0), null); assert.equal(m.signalName(''), null);
+  assert.equal(m.isErrorExit(session({ status: 'stopped', exitCode: 0, signal: 15 })), false, 'a stop by the user is not an error exit');
+});
+
+test('Remember all covers only suggestions already painted', async t => {
+  const m = await load(t);
+  assert.deepEqual(m.rememberAllSeen(['a', 'b'], ['a', 'b', 'c']), ['a', 'b'], 'a late suggestion waits for its first paint');
+  assert.deepEqual(m.rememberAllSeen(['a', 'b', 'c'], ['a', 'c']), ['a', 'c'], 'one handled meanwhile is left out');
+  assert.equal(m.rememberAllSeen(null, ['a', 'b']), null, 'nothing painted yet');
+  assert.equal(m.rememberAllSeen(['a', 'b'], null), null, 'Remember all is hidden now');
+  assert.equal(m.rememberAllSeen(['a'], ['b', 'c']), null);
+});

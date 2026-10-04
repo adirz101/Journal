@@ -2,16 +2,23 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type Proposal, type Session, type SessionSummary, type StaleCatch } from './types';
 import { LOOKING_MS } from './wrapUpModel';
 
-// The out-of-date catch reads Git and hashes files, so it runs once per session per app
-// run (keyed by the end snapshot), and again only when asked (a failed Still true).
+// The out-of-date catch reads Git and hashes files, so it is kept per session for this
+// app run (keyed by the end snapshot). It is dropped for a session when one of its notes
+// is resolved here (Still true, Update note, Forget), for every session when notes change
+// (knowledgeVersion), and refetched when asked (a refused Still true). A reply that was
+// requested before a drop is shown but not cached (generation).
 const staleCache = new Map<string, StaleCatch>();
+let generation = 0;
 const staleKey = (session: Session) => `${session.id}:${session.changeStats?.at ?? ''}`;
-export const forgetStaleCatch = (sessionId: string) => { for (const key of [...staleCache.keys()]) if (key.startsWith(`${sessionId}:`)) staleCache.delete(key); };
+export const forgetStaleCatch = (sessionId: string) => { generation++; for (const key of [...staleCache.keys()]) if (key.startsWith(`${sessionId}:`)) staleCache.delete(key); };
+export const forgetAllStaleCatches = () => { generation++; staleCache.clear(); };
 
 // Data for one ended session's wrap-up: the summary (SQL only), its suggestions (this
 // session and its resume chain) and the out-of-date catch. A reply for another session,
 // or one superseded by a newer request, is dropped.
-export function useWrapUp(session: Session, onError: (error: unknown) => void) {
+// knowledgeVersion: App's counter of note changes; a change drops every cached catch (the
+// view on screen keeps its own copy, so resolved cards stay in place).
+export function useWrapUp(session: Session, onError: (error: unknown) => void, knowledgeVersion = 0) {
   const id = session.id; const projectId = session.projectId;
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [proposals, setProposals] = useState<Proposal[] | null>(null);
@@ -36,8 +43,8 @@ export function useWrapUp(session: Session, onError: (error: unknown) => void) {
   const loadStale = useCallback((force = false) => {
     const cached = staleCache.get(key);
     if (cached && !force) { setStale(cached); return; }
-    const ticket = ++tickets.current.stale;
-    void api<StaleCatch>('staleNotes', { sessionId: id }).then(next => { staleCache.set(key, next); if (ticket === tickets.current.stale) setStale(next); },
+    const ticket = ++tickets.current.stale; const asked = generation;
+    void api<StaleCatch>('staleNotes', { sessionId: id }).then(next => { if (asked === generation) staleCache.set(key, next); if (ticket === tickets.current.stale) setStale(next); },
       error => { if (ticket === tickets.current.stale) { setStale({ available: false, notes: [], truncated: false }); errorRef.current(error); } });
   }, [id, key]);
 
@@ -45,6 +52,8 @@ export function useWrapUp(session: Session, onError: (error: unknown) => void) {
   useEffect(() => { loadSummary(); }, [loadSummary, session.status, session.changeStats?.at, session.nativeIdConfirmed, session.nativeId]);
   useEffect(() => { loadProposals(); }, [loadProposals]);
   useEffect(() => { loadStale(); }, [loadStale]);
+  const seenVersion = useRef(knowledgeVersion);
+  useEffect(() => { if (seenVersion.current !== knowledgeVersion) { seenVersion.current = knowledgeVersion; forgetAllStaleCatches(); } }, [knowledgeVersion]);
   // The proposals event for this session (any count) ends the placeholder and refetches.
   useEffect(() => window.journal?.onEvent(event => {
     if (event.type === 'proposals' && event.sessionId === id) loadProposals(() => setLooking(false));

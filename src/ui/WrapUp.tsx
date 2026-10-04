@@ -7,7 +7,7 @@ import { StaleCatchCard } from './StaleCatchCard';
 import { useWrapUp } from './useWrapUp';
 import { resumable } from './sessionState';
 import type { Appearance } from './theme';
-import { branchReachable, createStagedActions, exitLine, handoffPrefill, identityLine, isErrorExit, keyLabels, rememberable, rememberAllIds, SEEN_SUGGESTIONS, shortId, testsLine, type HandoffPrefill } from './wrapUpModel';
+import { branchReachable, createStagedActions, exitLine, handoffPrefill, identityLine, isErrorExit, keyLabels, noteActions, rememberable, rememberAllIds, rememberAllSeen, SEEN_SUGGESTIONS, shortId, testsLine, type HandoffPrefill } from './wrapUpModel';
 
 type Outcome = 'remembered' | 'dismissing' | 'dismissed' | 'review';
 const readSeen = () => { try { return localStorage.getItem(SEEN_SUGGESTIONS) === '1'; } catch { return false; } };
@@ -16,30 +16,37 @@ const message = (error: unknown) => error instanceof Error ? error.message : Str
 
 // An ended session's terminal, read-only. When the runtime no longer has its buffer
 // (released, or from an earlier run), it says so instead of showing an empty terminal.
-export function EndedTerminal({ session, appearance, onError, handleRef, preview = false, onUnavailable }: {
-  session: Session; appearance: Appearance; onError(message: string): void; handleRef?: Ref<TerminalHandle>; preview?: boolean; onUnavailable?(): void;
+export function EndedTerminal({ session, appearance, onError, handleRef, preview = false, onUnavailable, onReady }: {
+  session: Session; appearance: Appearance; onError(message: string): void; handleRef?: Ref<TerminalHandle>; preview?: boolean; onUnavailable?(): void; onReady?(): void;
 }) {
   const [gone, setGone] = useState(false);
-  if (gone) return <p className="wrap-not-saved" role="note">{wrapUp.notSaved}</p>;
+  // A failed start may never have printed anything: say so without claiming output existed.
+  if (gone) return <p className="wrap-not-saved" role="note">{session.status === 'failed' ? wrapUp.notSavedFailed : wrapUp.notSaved}</p>;
   return <TerminalPane key={session.id} sessionId={session.id} live={false} appearance={appearance} onError={onError} handleRef={handleRef} focusOnAttach={!preview}
-    onUnavailable={() => { setGone(true); onUnavailable?.(); }} />;
+    onUnavailable={() => { setGone(true); onUnavailable?.(); }} onReady={onReady} />;
 }
 
 // The session wrap-up (boards 6 and 14, States panel 5): how it ended, notes this session
 // put out of date, what is worth keeping, the counts and how to continue. Nothing is kept
 // without a click. No entrance animation: it replaces the terminal in place, several times a day.
-export function WrapUp({ session, project, workspaces, receipt, events, agents, appearance, mac, busy, canStart, connected, justEnded,
+// hidden: Show terminal is on. The wrap-up stays mounted (staged choices keep their Undo)
+// but takes no keys and holds no terminal preview.
+export function WrapUp({ session, project, workspaces, receipt, events, agents, appearance, mac, busy, canStart, connected, justEnded, hidden = false, knowledgeVersion = 0,
   onShowTerminal, onContinue, onConfirmId, onCopyId, onOpenDiff, onOpenMemory, onEdit, onFinishDraft, onHandoff, onChanged, onError }: {
   session: Session; project: Project; workspaces: Workspace[]; receipt: Receipt | null; events: TimelineEvent[]; agents: AgentInfo[];
-  appearance: Appearance; mac: boolean; busy: boolean; canStart: boolean; connected: boolean; justEnded: boolean;
+  appearance: Appearance; mac: boolean; busy: boolean; canStart: boolean; connected: boolean; justEnded: boolean; hidden?: boolean; knowledgeVersion?: number;
   onShowTerminal(): void; onContinue(): void; onConfirmId(nativeId: string): Promise<void>; onCopyId(): void; onOpenDiff(): void; onOpenMemory(): void;
   onEdit(memory: Memory, done: () => void): void; onFinishDraft(): void; onHandoff(prefill: HandoffPrefill): void; onChanged(): void; onError(error: unknown): void;
 }) {
-  const data = useWrapUp(session, onError);
+  const data = useWrapUp(session, onError, knowledgeVersion);
   const { summary } = data;
   const staged = useRef(createStagedActions()).current;
-  // Leaving the view (another session, Show terminal, another project) commits staged choices.
-  useEffect(() => () => staged.flushAll(), [staged]);
+  // Leaving the view (another session or project; App keys the wrap-up by session) commits
+  // staged choices. A commit that fails after that reports to onError (the banner).
+  const live = useRef(true);
+  const errorRef = useRef(onError); errorRef.current = onError;
+  useEffect(() => { live.current = true; return () => { live.current = false; staged.flushAll(); }; }, [staged]);
+  const lostError = (error: unknown) => errorRef.current(error);
   const heading = useRef<HTMLHeadingElement>(null); const root = useRef<HTMLElement>(null);
   // The terminal that had focus is gone when the session ends under it: focus the heading.
   useEffect(() => { if (justEnded && (!document.activeElement || document.activeElement === document.body)) heading.current?.focus(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -50,6 +57,12 @@ export function WrapUp({ session, project, workspaces, receipt, events, agents, 
     : !connected ? composer.runtimeDown : !canStart ? copy.slotsFull(4) : '';
   const canContinue = !continueBlock && !busy;
   const error = isErrorExit(session);
+  const reasonId = `wrapup-continue-reason-${session.id}`;
+
+  // One persistent polite live region for the end, resolved rows and staged choices
+  // (rows that mount with a role are not reliably announced). n repeats a same text.
+  const [spoken, setSpoken] = useState({ text: '', n: 0 });
+  const announce = (text: string) => setSpoken(current => ({ text, n: current.n + 1 }));
 
   // Suggestions: the list on screen keeps cards this view handled, so a refetch never hides an outcome.
   const [shown, setShown] = useState<Proposal[]>([]);
@@ -64,26 +77,44 @@ export function WrapUp({ session, project, workspaces, receipt, events, agents, 
       ...incoming.filter(n => !current.some(p => p.id === n.id))]);
   }, [data.proposals]); // eslint-disable-line react-hooks/exhaustive-deps
   const openList = shown.filter(p => !outcomes[p.id]);
-  const allIds = rememberAllIds(openList, project, workspaces);
+  // Board 14: while the catch is on screen, the suggestions wait behind one line with Review.
+  const staleNotes = data.stale?.notes ?? [];
+  const [reviewing, setReviewing] = useState(false);
+  const collapsed = staleNotes.length > 0 && !reviewing && shown.length > 0;
+  const listed = rememberAllIds(openList, project, workspaces);
+  const allIds = collapsed ? null : listed;
+  // Remember all covers only what was painted: the ids of the last frame the user saw.
+  // A suggestion arriving later joins after its first paint (rememberAllSeen).
+  const seenIds = useRef<string[] | null>(null);
+  const allKey = allIds?.join(',') ?? '';
+  useEffect(() => {
+    if (!allKey) { seenIds.current = null; return; }
+    const frame = requestAnimationFrame(() => { seenIds.current = allKey.split(','); });
+    return () => cancelAnimationFrame(frame);
+  }, [allKey]);
+  const rememberAll = () => { const ids = rememberAllSeen(seenIds.current, allIds); if (ids && !working) void remember(ids); };
   const markSeen = () => { if (!seen) { setSeen(true); writeSeen(); } };
 
   async function remember(ids: string[]) {
     if (working) return;
     setWorking(true); setRememberError(''); markSeen();
-    try { await api('rememberProposals', { ids }); setOutcomes(current => ({ ...current, ...Object.fromEntries(ids.map(id => [id, 'remembered' as const])) })); onChanged(); }
+    try { await api('rememberProposals', { ids }); setOutcomes(current => ({ ...current, ...Object.fromEntries(ids.map(id => [id, 'remembered' as const])) })); announce(wrapUp.remembered); onChanged(); }
     catch (failure) { setRememberError(message(failure)); }
     finally { setWorking(false); }
   }
   async function edit(proposal: Proposal) {
     setRememberError(''); markSeen();
-    try { const memory = await api<Memory>('acceptProposal', { id: proposal.id }); setOutcomes(current => ({ ...current, [proposal.id]: 'review' })); onChanged(); onEdit(memory, onChanged); }
+    try { const memory = await api<Memory>('acceptProposal', { id: proposal.id }); setOutcomes(current => ({ ...current, [proposal.id]: 'review' })); announce(wrapUp.waitingReview); onChanged(); onEdit(memory, onChanged); }
     catch (failure) { setRememberError(message(failure)); }
   }
   function dismiss(proposal: Proposal) {
-    markSeen(); setOutcomes(current => ({ ...current, [proposal.id]: 'dismissing' }));
+    markSeen(); setOutcomes(current => ({ ...current, [proposal.id]: 'dismissing' })); announce(wrapUp.dismissed);
     staged.stage(`dismiss:${proposal.id}`, () => {
-      void api('dismissProposal', { id: proposal.id }).then(() => { setOutcomes(current => ({ ...current, [proposal.id]: 'dismissed' })); onChanged(); },
-        failure => { setOutcomes(current => { const next = { ...current }; delete next[proposal.id]; return next; }); setRememberError(message(failure)); });
+      void api('dismissProposal', { id: proposal.id }).then(() => { if (live.current) setOutcomes(current => ({ ...current, [proposal.id]: 'dismissed' })); onChanged(); },
+        failure => {
+          if (!live.current) { lostError(failure); return; }
+          setOutcomes(current => { const next = { ...current }; delete next[proposal.id]; return next; }); setRememberError(message(failure));
+        });
     });
   }
   const undoDismiss = (id: string) => { if (staged.undo(`dismiss:${id}`)) setOutcomes(current => { const next = { ...current }; delete next[id]; return next; }); };
@@ -92,24 +123,24 @@ export function WrapUp({ session, project, workspaces, receipt, events, agents, 
   // the wrap-up or nowhere, no dialog is open and no IME composition is running.
   const keysRef = useRef<(event: KeyboardEvent) => void>(() => {});
   keysRef.current = event => {
-    if (event.key !== 'Enter' || event.isComposing || event.repeat || event.altKey || !(mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)) return;
+    if (hidden || event.key !== 'Enter' || event.isComposing || event.keyCode === 229 || event.repeat || event.altKey || !(mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)) return;
     const active = document.activeElement;
     if (document.querySelector('dialog[open]') || (active && active !== document.body && !root.current?.contains(active))) return;
-    if (event.shiftKey) { if (allIds && !working) { event.preventDefault(); void remember(allIds); } return; }
+    if (event.shiftKey) { if (rememberAllSeen(seenIds.current, allIds) && !working) { event.preventDefault(); rememberAll(); } return; }
     if (canContinue) { event.preventDefault(); onContinue(); }
   };
   useEffect(() => { const handler = (event: KeyboardEvent) => keysRef.current(event); window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler); }, []);
 
   // One polite announcement after the first load; never per refetch.
-  const [announcement, setAnnouncement] = useState('');
   const announced = useRef(false);
   useEffect(() => {
     if (announced.current || !summary || data.looking || !data.proposals) return;
-    announced.current = true; setAnnouncement(wrapUp.ended(data.proposals.length));
-  }, [summary, data.looking, data.proposals]);
+    announced.current = true; announce(wrapUp.ended(data.proposals.length));
+  }, [summary, data.looking, data.proposals]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A refused Still true per note, shown again on the reloaded card.
+  const [refused, setRefused] = useState<Record<string, string>>({});
   // Trust lines for the notes in the catch (origin and delivery count), fetched once per list.
-  const staleNotes = data.stale?.notes ?? [];
   const staleIds = staleNotes.map(item => item.note.id).join(',');
   const [trust, setTrust] = useState<Record<string, NoteTrust>>({});
   useEffect(() => {
@@ -122,10 +153,11 @@ export function WrapUp({ session, project, workspaces, receipt, events, agents, 
 
   const handoffTargets = agents.filter(a => a.available && (a.state ?? 'ready') === 'ready');
   const prefill = (provider: Provider) => handoffPrefill(session, receipt, events, provider, workspaces, project.roots ?? []);
-  const continueButton = (primary: boolean) => <button type="button" className={primary ? 'primary' : undefined} title={continueBlock || tip.continue} disabled={!canContinue} aria-keyshortcuts={keys.continueAria} onClick={onContinue}>
+  const continueButton = (primary: boolean) => <button type="button" className={primary ? 'primary' : undefined} title={continueBlock || tip.continue} disabled={!canContinue} aria-keyshortcuts={keys.continueAria}
+    aria-describedby={continueBlock ? reasonId : undefined} onClick={onContinue}>
     {wrapUp.continueShort} <kbd aria-hidden="true">{keys.continue}</kbd></button>;
 
-  return <section ref={root} className="wrap-up" aria-labelledby="wrapup-title">
+  return <section ref={root} className="wrap-up" aria-labelledby="wrapup-title" hidden={hidden}>
     <div className="wrap-head">
       <h2 id="wrapup-title" ref={heading} tabIndex={-1} className={error ? 'tone-error' : undefined}>{exitLine(session, summary)}</h2>
       {!error && <div className="wrap-head-actions">
@@ -133,18 +165,26 @@ export function WrapUp({ session, project, workspaces, receipt, events, agents, 
         {continueButton(true)}
       </div>}
     </div>
-    {!error && continueBlock && <p className="wrap-block-reason">{continueBlock}</p>}
-    <p className="visually-hidden" role="status">{announcement}</p>
+    {!error && continueBlock && <p className="wrap-block-reason" id={reasonId}>{continueBlock}</p>}
+    <p className="visually-hidden" role="status" aria-live="polite">{spoken.text}{spoken.n > 1 && spoken.n % 2 === 0 ? '\u00a0' : ''}</p>
 
-    {error && <ExitErrorPanel session={session} appearance={appearance} onError={onError} onShowTerminal={onShowTerminal} continueButton={continueButton(false)} reason={continueBlock} />}
+    {error && <ExitErrorPanel session={session} appearance={appearance} hidden={hidden} onError={onError} onShowTerminal={onShowTerminal} continueButton={continueButton(false)} reason={continueBlock} reasonId={reasonId} />}
 
-    {staleNotes.map(item => <StaleCatchCard key={item.note.id} item={item} sessionId={session.id} project={project} sameFile={perFile[item.path] ?? 1} trust={trust[item.note.id]} staged={staged}
-      onUpdate={onEdit} onChanged={onChanged} onReload={data.reloadStale} />)}
+    {/* Keyed by note and file hash: a reloaded catch (the file changed again) starts with nothing shown or staged. */}
+    {staleNotes.map(item => <StaleCatchCard key={`${item.note.id}:${item.contentHash ?? ''}`} item={item} sessionId={session.id} project={project} sameFile={perFile[item.path] ?? 1} trust={trust[item.note.id]} staged={staged}
+      live={live} notice={refused[item.note.id]} onUpdate={onEdit} onChanged={onChanged} onReload={data.reloadStale} onRefused={text => setRefused(current => ({ ...current, [item.note.id]: text }))}
+      onError={lostError} onAnnounce={announce} />)}
 
-    <section className="wrap-keep" aria-labelledby="wrapup-keep">
+    {collapsed ? <div className="wrap-more">
+      <span className="wrap-more-count" aria-hidden="true">{shown.length}</span>
+      <span aria-hidden="true">{wrapUp.moreSuggestions(shown.length)}</span>
+      <span className="visually-hidden">{wrapUp.moreSuggestionsLabel(shown.length)}</span>
+      <button type="button" className="wrap-small" onClick={() => setReviewing(true)}>{wrapUp.review}</button>
+    </div>
+    : <section className="wrap-keep" aria-labelledby="wrapup-keep">
       <div className="wrap-keep-head">
         <div><h3 id="wrapup-keep">{wrapUp.worthKeeping}</h3><p>{wrapUp.nothingKept}</p></div>
-        {allIds && <button type="button" className="ghost" disabled={working} aria-keyshortcuts={keys.rememberAllAria} onClick={() => void remember(allIds)}>{wrapUp.rememberAll(allIds.length)} <kbd aria-hidden="true">{keys.rememberAll}</kbd></button>}
+        {allIds && <button type="button" className="ghost" disabled={working} aria-keyshortcuts={keys.rememberAllAria} onClick={rememberAll}>{wrapUp.rememberAll(allIds.length)} <kbd aria-hidden="true">{keys.rememberAll}</kbd></button>}
       </div>
       {rememberError && <p className="form-error wrap-keep-error" role="alert">{rememberError}</p>}
       {!seen && openList.length > 0 && <div className="wrap-explainer">
@@ -155,7 +195,7 @@ export function WrapUp({ session, project, workspaces, receipt, events, agents, 
         onRemember={() => void remember([proposal.id])} onEdit={() => void edit(proposal)} onDismiss={() => dismiss(proposal)} onUndo={() => undoDismiss(proposal.id)}
         onOpenMemory={onOpenMemory} onFinishDraft={onFinishDraft} />)}
       {!shown.length && <p className="wrap-quiet">{data.looking || !data.proposals ? wrapUp.looking : wrapUp.noSuggestions}</p>}
-    </section>
+    </section>}
 
     <div className="wrap-cards">
       <div className="wrap-card" title={wrapUp.changesTip}>
@@ -193,31 +233,37 @@ export function WrapUp({ session, project, workspaces, receipt, events, agents, 
 }
 
 // States panel 5: an error exit leads with the last terminal output, or says it is gone.
-function ExitErrorPanel({ session, appearance, onError, onShowTerminal, continueButton, reason }: {
-  session: Session; appearance: Appearance; onError(error: unknown): void; onShowTerminal(): void; continueButton: React.ReactNode; reason: string;
+// Copy output is enabled once the replay is on screen (onReady), never while it loads.
+function ExitErrorPanel({ session, appearance, hidden, onError, onShowTerminal, continueButton, reason, reasonId }: {
+  session: Session; appearance: Appearance; hidden: boolean; onError(error: unknown): void; onShowTerminal(): void; continueButton: React.ReactNode; reason: string; reasonId: string;
 }) {
-  const handle = useRef<TerminalHandle>(null); const [gone, setGone] = useState(false); const [status, setStatus] = useState('');
+  const handle = useRef<TerminalHandle>(null); const [gone, setGone] = useState(false); const [ready, setReady] = useState(false); const [status, setStatus] = useState('');
+  useEffect(() => { if (hidden) setReady(false); }, [hidden]); // the preview is unmounted while hidden
   async function copyOutput() {
-    const text = handle.current?.copyText(500) ?? ''; if (!text) return;
+    const text = handle.current?.copyText(500) ?? '';
+    if (!text) { setStatus(wrapUp.nothingToCopy); return; }
     try { await navigator.clipboard.writeText(text); }
     catch {
-      // A hidden or unfocused window may refuse the async clipboard; the selection fallback still works there.
+      // A hidden or unfocused window may refuse the async clipboard; the selection fallback still
+      // works there. It moves focus to a temporary field, so focus goes back to where it was.
+      const previous = document.activeElement as HTMLElement | null;
       const area = document.createElement('textarea'); area.value = text; area.setAttribute('readonly', ''); area.className = 'visually-hidden';
       document.body.append(area); area.select(); document.execCommand('copy'); area.remove();
+      if (previous && previous !== document.body && previous.isConnected) previous.focus({ preventScroll: true });
     }
     setStatus(wrapUp.copied);
   }
   return <section className="wrap-error" aria-labelledby="wrapup-error">
     <h3 id="wrapup-error">{wrapUp.exitedWithError}</h3>
     <span className="wrap-card-label">{wrapUp.lastOutput}</span>
-    <div className="wrap-error-terminal"><EndedTerminal session={session} appearance={appearance} onError={onError} handleRef={handle} preview onUnavailable={() => setGone(true)} /></div>
+    <div className="wrap-error-terminal">{!hidden && <EndedTerminal session={session} appearance={appearance} onError={onError} handleRef={handle} preview onUnavailable={() => setGone(true)} onReady={() => setReady(true)} />}</div>
     <div className="wrap-error-actions">
       <button type="button" className="primary" onClick={onShowTerminal}>{wrapUp.showTerminal}</button>
       {continueButton}
-      <button type="button" className="ghost" disabled={gone} onClick={() => void copyOutput()}>{wrapUp.copyOutput}</button>
+      <button type="button" className="ghost" disabled={gone || !ready} onClick={() => void copyOutput()}>{wrapUp.copyOutput}</button>
       <span role="status" className="wrap-quiet">{status}</span>
     </div>
-    {reason && <p className="wrap-block-reason">{reason}</p>}
+    {reason && <p className="wrap-block-reason" id={reasonId}>{reason}</p>}
   </section>;
 }
 
@@ -227,7 +273,8 @@ function SuggestionRow({ proposal, outcome, project, workspaces, working, onReme
   proposal: Proposal; outcome: Outcome | undefined; project: Project; workspaces: Workspace[]; working: boolean;
   onRemember(): void; onEdit(): void; onDismiss(): void; onUndo(): void; onOpenMemory(): void; onFinishDraft(): void;
 }) {
-  if (outcome) return <div className={`wrap-row-done${outcome === 'remembered' ? ' ok' : ''}`} role="status">
+  // Announced through the wrap-up's live region; the row itself has no role.
+  if (outcome) return <div className={`wrap-row-done${outcome === 'remembered' ? ' ok' : ''}`}>
     <span>{outcome === 'remembered' ? wrapUp.remembered : outcome === 'review' ? wrapUp.waitingReview : wrapUp.dismissed}</span>
     {outcome === 'dismissing' && <button type="button" className="wrap-small" onClick={onUndo}>{wrapUp.undo}</button>}
     {(outcome === 'remembered' || outcome === 'review') && <button type="button" className="link" onClick={onOpenMemory}>{wrapUp.openInMemory}</button>}
@@ -238,19 +285,27 @@ function SuggestionRow({ proposal, outcome, project, workspaces, working, onReme
   const conflict = !!proposal.conflicts?.length;
   const origin = update ? wrapUp.branchUpdate : proposal.kind === 'rule' ? wrapUp.fromTask : proposal.kind === 'test-command' ? wrapUp.fromTests : wrapUp.fromSession;
   const scope = proposal.scope === 'branch' ? copy.trust.onlyOn(proposal.branch ?? copy.trust.anotherBranch) : wrapUp.appliesAll;
+  // Board 6: a suggestion with a file source names it ("Source: path:lines") in place of where it came from.
+  const file = proposal.source?.kind === 'file' && proposal.source.path ? `${proposal.source.path}${proposal.source.startLine ? `:${proposal.source.startLine}${proposal.source.endLine && proposal.source.endLine !== proposal.source.startLine ? `–${proposal.source.endLine}` : ''}` : ''}` : null;
+  // Edit… opens the note form, which revises only on the note's own branch (noteActions).
+  const editable = noteActions({ scope: proposal.scope as Memory['scope'], branch: proposal.branch ?? null }, project, workspaces).revise;
+  const finishBlocked = update && proposal.branch !== project.branch;
+  const reasonId = `wrap-row-reason-${proposal.id}`;
+  const reason = finishBlocked ? wrapUp.finishOnBranch(proposal.branch ?? '') : !update && !conflict && !reachable ? wrapUp.branchUnreachable(proposal.branch ?? '')
+    : !update && !editable ? wrapUp.editOnBranch(proposal.branch ?? '') : '';
   return <article className="wrap-row" aria-label={`${label}: ${proposal.statement.slice(0, 80)}`}>
     <span className="wrap-cat">{label}</span>
     <div className="wrap-row-text">
       <p dir="auto">{proposal.statement}</p>
-      <span className="wrap-row-meta">{origin}{update ? '' : ` · ${scope}`}{proposal.earlier ? ` · ${wrapUp.suggestedEarlier}` : ''}</span>
+      <span className="wrap-row-meta">{file ? <>{wrapUp.source('')}<code>{file}</code></> : origin}{update ? '' : ` · ${scope}`}{proposal.earlier ? ` · ${wrapUp.suggestedEarlier}` : ''}</span>
       {conflict && <span className="wrap-row-warn">{wrapUp.mayConflict}</span>}
-      {!update && !conflict && !reachable && <span className="wrap-row-warn">{wrapUp.branchUnreachable(proposal.branch ?? '')}</span>}
+      {reason && <span className="wrap-row-warn" id={reasonId}>{reason}</span>}
     </div>
     <div className="wrap-row-actions">
-      {update ? <button type="button" className="wrap-small" disabled={proposal.branch !== project.branch} onClick={onFinishDraft}>{wrapUp.finishDraft}</button> : <>
+      {update ? <button type="button" className="wrap-small" disabled={finishBlocked} aria-describedby={finishBlocked ? reasonId : undefined} onClick={onFinishDraft}>{wrapUp.finishDraft}</button> : <>
         {conflict ? <button type="button" className="wrap-small" onClick={onOpenMemory}>{wrapUp.reviewInMemory}</button>
-          : <button type="button" className="primary wrap-small" title={tip.remember} disabled={working || !rememberable(proposal, project, workspaces)} onClick={onRemember}>{wrapUp.remember}</button>}
-        <button type="button" className="wrap-small" disabled={working} onClick={onEdit}>{wrapUp.edit}</button>
+          : <button type="button" className="primary wrap-small" title={tip.remember} disabled={working || !rememberable(proposal, project, workspaces)} aria-describedby={!reachable ? reasonId : undefined} onClick={onRemember}>{wrapUp.remember}</button>}
+        {editable && <button type="button" className="wrap-small" disabled={working} onClick={onEdit}>{wrapUp.edit}</button>}
       </>}
       <button type="button" className="ghost wrap-small" disabled={working} onClick={onDismiss}>{wrapUp.dismiss}</button>
     </div>
