@@ -32,7 +32,7 @@ import journalMarkWhite from '../../assets/branding/journal-mark-white.png';
 import journalMarkDark from '../../assets/branding/journal-mark.png';
 import journalWordmark from '../../assets/branding/journal-wordmark.png';
 import { storedAppearance, type Appearance } from './theme';
-import { copy, tip } from './copy';
+import { copy, shell, tip } from './copy';
 import { keyLetter } from './keys';
 import { api, errorCode, isLive, PROVIDER_NAMES, type Bootstrap, type CommandId, type FileReference, type InspectorTab, type Memory, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
 
@@ -320,8 +320,10 @@ export default function App() {
   async function switcherMenu(position?: { x: number; y: number }) {
     const current = state?.project ?? null; if (!current && !projects.length) { await openProject(); return; }
     // Menu item IDs are short (main allows 40 characters and 40 items), so projects are listed by position in this snapshot.
-    const listed = projects.slice(0, 28);
-    const choice = await showMenu([...listed.map((p, index) => ({ id: `project:${index}`, label: `${p.name}${p.pinned ? ' · Pinned' : ''}${p.id === current?.id ? ' · Current' : ''}` })), { separator: true },
+    // Past 28 projects a disabled line says how many are left out and how to reach them (there is no all-projects list).
+    const listed = projects.slice(0, 28); const hidden = projects.length - listed.length;
+    const choice = await showMenu([...listed.map((p, index) => ({ id: `project:${index}`, label: `${p.name}${p.pinned ? ' · Pinned' : ''}${p.id === current?.id ? ' · Current' : ''}` })),
+      hidden > 0 && { id: 'more-projects', label: shell.moreProjects(hidden), enabled: false }, { separator: true },
       ...(current ? projectItems(current) : [{ id: 'open-project', label: 'Open project…' }])], position);
     const picked = choice?.startsWith('project:') ? listed[Number(choice.slice('project:'.length))] ?? null : null;
     if (picked) { if (picked.id !== current?.id) await chooseProject(picked); }
