@@ -1,8 +1,9 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { inspectorTab, newSession, showTerminal, startSession, taskBox } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 // Phase 6 Group B: the session wrap-up, one-click Remember, the out-of-date catch, the
 // hand-off and the exit-error view. Real Electron, runtime and node-pty with fixture CLIs
@@ -37,8 +38,7 @@ else if(verb==='exit-with')process.exit(Number(rest[0]));
 else console.log('ECHO '+command);
 }})}`;
   for (const provider of ['claude', 'codex']) { writeFileSync(resolve(bin, provider), fixture); chmodSync(resolve(bin, provider), 0o755); }
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' };
-  delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   return { root, project, git, env, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 

@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:f
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { currentProject, taskBox } from './support/ui';
-import { fixtureEnv } from './support/fixture-env';
+import { fixtureEnv } from './support/env';
 
 test.skip(process.platform === 'win32', 'POSIX fixture CLIs');
 

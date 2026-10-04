@@ -1,8 +1,9 @@
 import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { chooseAgent, inspectContext, inspectorTab, newSession, sessionStatus, startButton, startSession, switchProject } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 test('empty-task launches carry an approved repo overview and current branch update to either provider', async () => {
   // A long scenario: each start now begins with New session (Phase 3 split view), and hidden test windows click slowly.
@@ -19,7 +20,7 @@ if(process.argv.includes('--version')){console.log('fixture 1.0');process.exit(0
 console.log('PTY_READY '+process.stdout.isTTY);console.log(JSON.stringify(process.argv.slice(2)));
 process.stdin.setRawMode(true);process.stdin.resume();`;
   for (const provider of ['claude', 'codex']) { writeFileSync(resolve(bin, provider), fixture); chmodSync(resolve(bin, provider), 0o755); }
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const app = await electron.launch({ args: ['.'], env });
   try {
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);

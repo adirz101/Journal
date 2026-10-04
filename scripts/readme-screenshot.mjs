@@ -1,15 +1,15 @@
 // Takes the README screenshot (docs/assets/journal-preview.png) from fixture data, headless:
-// a throwaway repository under /tmp, fixture agent CLIs (PATH holds only them, a node link and
-// the system folders; HOME is empty), notes seeded through the store. No personal data, no
+// a throwaway repository under /tmp, fixture agent CLIs (the shared fixtureEnv: fixture CLIs and
+// a few linked system tools on PATH, an empty HOME), notes seeded through the store. No personal data, no
 // provider login. Usage: npm run build, then node scripts/readme-screenshot.mjs . docs/assets/journal-preview.png [dark|light]
 import { _electron as electron } from '@playwright/test';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, symlinkSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+// Fixture-only environment (no real PATH, HOME or provider variables): see tests/support/env.ts.
+import { fixtureEnv } from '../tests/support/env.ts';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 const repo = process.argv[2]; const out = process.argv[3]; const theme = process.argv[4] ?? 'dark';
-const root = mkdtempSync('/tmp/journal-demo-'); const project = resolve(root, 'ledger-service'); const bin = resolve(root, 'bin'); const tools = resolve(root, 'tools'); const home = resolve(root, 'home');
-for (const d of [project, bin, tools, home, resolve(project, 'src/refunds'), resolve(project, 'src/invoices')]) mkdirSync(d, { recursive: true });
-symlinkSync(process.execPath, resolve(tools, 'node'));
+const root = mkdtempSync('/tmp/journal-demo-'); const project = resolve(root, 'ledger-service'); const bin = resolve(root, 'bin'); for (const d of [project, bin, resolve(project, 'src/refunds'), resolve(project, 'src/invoices')]) mkdirSync(d, { recursive: true });
 const git = (...a) => execFileSync('git', ['-C', project, '-c', 'user.name=Demo', '-c', 'user.email=demo@example.test', ...a], { stdio: 'pipe' });
 git('init', '-q', '-b', 'main');
 writeFileSync(resolve(project, 'README.md'), '# Ledger service\n\nLedger records invoices and refunds for small shops.\n');
@@ -24,8 +24,7 @@ const task=(process.argv.at(-1)||'').split('\\n').at(-1);
 const lines=['','  Task: '+task,'','  Reading src/refunds/policy.ts','  Reading src/refunds/partial.ts','  The refund window is 30 days (src/refunds/policy.ts:1).','','  Plan:','   1. Split the refund amount across invoice lines','   2. Keep the 30-day window check before any split','   3. Add tests for a refund that spans two lines','','  Editing src/refunds/partial.ts',''];
 for(const l of lines)console.log(l);process.stdout.write('> ');process.stdin.resume();`;
 for (const p of ['claude', 'codex']) { writeFileSync(resolve(bin, p), fixture); chmodSync(resolve(bin, p), 0o755); }
-const env = { ...process.env, PATH: [bin, tools, '/usr/bin', '/bin'].join(':'), HOME: home, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop', JOURNAL_HEADLESS: '1' };
-delete env.ELECTRON_RUN_AS_NODE;
+const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop', JOURNAL_HEADLESS: '1' } });
 const app = await electron.launch({ args: [repo], cwd: repo, env });
 try {
   await app.evaluate(({ dialog }, p) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] }); globalThis.__journalFocused = () => true; }, project);

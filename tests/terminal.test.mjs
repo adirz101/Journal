@@ -508,6 +508,42 @@ test('a missing executable gives PROVIDER_MISSING', async t => {
   await assert.rejects(f.start(), error => error.code === 'PROVIDER_MISSING' && /Could not start/.test(error.message));
 });
 
+test('a missing Claude or Codex CLI is PROVIDER_MISSING before any context, receipt or session', async t => {
+  for (const provider of ['claude', 'codex']) {
+    const f = multi(t); const asked = [];
+    f.manager.resolveProvider = name => { asked.push(name); return null; };
+    let prepared = 0; const prepare = f.store.prepareContext.bind(f.store); f.store.prepareContext = (...args) => { prepared++; return prepare(...args); };
+    const before = f.store.listSessions(f.project.id).length;
+    await assert.rejects(f.start(provider), error => error.code === 'PROVIDER_MISSING' && /not installed/.test(error.message));
+    assert.deepEqual(asked, [provider]);
+    assert.equal(prepared, 0, 'no context is prepared, so no receipt is written');
+    assert.equal(f.store.listSessions(f.project.id).length, before, 'no session is saved');
+    assert.equal(f.procs.length, 0, 'nothing is spawned');
+    assert.equal(f.manager.freeSlot(), 1, 'the reserved slot is free again');
+  }
+});
+
+test('a found CLI launches exactly as before: the provider name and the same argv', async t => {
+  const f = multi(t); const launches = [];
+  const spawn = f.manager.spawn; f.manager.spawn = (executable, argv, options) => { launches.push({ executable, argv }); return spawn(executable, argv, options); };
+  f.manager.resolveProvider = name => `/fixtures/bin/${name}`;
+  await f.start('claude'); await f.start('codex');
+  assert.equal(launches[0].executable, 'claude'); assert.equal(launches[1].executable, 'codex');
+  assert.deepEqual(launches[1].argv, ['--', 'x']);
+  assert.equal(launches[0].argv.at(-1), 'x'); assert.ok(launches[0].argv.includes('--session-id'));
+});
+
+test('a headless test run refuses a CLI outside JOURNAL_TEST_PROVIDER_DIR as PROVIDER_MISSING', async t => {
+  const f = multi(t); const dir = mkdtempSync(join(tmpdir(), 'journal-guard-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const outside = join(dir, '..', `journal-guard-real-${process.pid}`); writeFileSync(outside, ''); t.after(() => rmSync(outside, { force: true }));
+  f.manager.env = { JOURNAL_HEADLESS: '1', JOURNAL_TEST_PROVIDER_DIR: dir };
+  f.manager.resolveProvider = () => outside;
+  await assert.rejects(f.start('codex'), error => error.code === 'PROVIDER_MISSING' && /outside the test provider folder/.test(error.message));
+  assert.equal(f.procs.length, 0);
+  const inside = join(dir, 'codex'); writeFileSync(inside, ''); f.manager.resolveProvider = () => inside;
+  await f.start('codex'); assert.equal(f.procs.length, 1);
+});
+
 test('a start whose process is already running counts once toward capacity', async t => {
   const f = multi(t);
   await f.start(); await f.start();

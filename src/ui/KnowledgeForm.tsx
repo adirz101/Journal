@@ -5,11 +5,12 @@ import { useModalDialog } from './useModalDialog';
 
 const placeholder = /\[describe[^\]]*\]/;
 
-export function KnowledgeForm({ project, memory: revising, supersedes, initialCategory, draft, initialSource, onClose, onSaved }: { project: Project; memory?: Memory; supersedes?: Memory; initialCategory?: string; draft?: StatusDraft; initialSource?: { kind: 'file'; path: string; startLine: number; endLine: number; rootId?: string }; onClose: () => void; onSaved: () => void }) {
+// initialStatement (Phase 8): the palette's Add as a note prefills the statement; saving still goes through review.
+export function KnowledgeForm({ project, memory: revising, supersedes, initialCategory, initialStatement, draft, initialSource, onClose, onSaved }: { project: Project; memory?: Memory; supersedes?: Memory; initialCategory?: string; initialStatement?: string; draft?: StatusDraft; initialSource?: { kind: 'file'; path: string; startLine: number; endLine: number; rootId?: string }; onClose: () => void; onSaved: () => void }) {
   // Replacing a claim starts from its content but saves a new claim that retires the old one on approval.
   const memory = revising ?? supersedes;
   const dialog = useRef<HTMLDialogElement>(null);
-  const [statement, setStatement] = useState(draft?.statement ?? memory?.statement ?? ''); const [category, setCategory] = useState(draft ? 'brief' : memory?.category ?? initialCategory ?? 'constraint');
+  const [statement, setStatement] = useState(draft?.statement ?? memory?.statement ?? initialStatement ?? ''); const [category, setCategory] = useState(draft ? 'brief' : memory?.category ?? initialCategory ?? 'constraint');
   const [scope, setScope] = useState(draft?.scope ?? memory?.scope ?? (initialCategory === 'brief' ? 'checkout' : project.branch ? 'branch' : 'checkout')); const [area, setArea] = useState(memory?.area ?? ''); const [environment, setEnvironment] = useState(memory?.environment ?? '');
   const [kind, setKind] = useState(draft ? 'git' : memory?.source.kind ?? initialSource?.kind ?? 'user');
   // A proposal or an existing Git-backed update can keep its commit range as evidence.

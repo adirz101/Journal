@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { resolveExecutable, runFile } from './process.mjs';
+import { resolveExecutable, runFile, testProviderAllowed } from './process.mjs';
 import { cursorState, findCursor, installCommand } from './cursor.mjs';
 
 // Journal-owned adapter for the documented interactive CLI arguments.
@@ -111,7 +111,9 @@ const lastLine = text => String(text ?? '').trim().split('\n').at(-1)?.trim() ||
 export async function detectProvider(provider, env = process.env, { runner = runFile, probes = true, platform = process.platform, ...options } = {}) {
   if (provider === 'cursor') return detectCursor(env, { platform, ...options, ...(runner !== runFile ? { runner } : {}) });
   if (!Object.hasOwn(PROVIDER_COMMANDS, provider)) throw new Error('Unknown agent provider');
-  const path = resolveExecutable(provider, env, platform);
+  // A test run's guard: a CLI outside its fixture folder is not installed (never run).
+  const found = resolveExecutable(provider, env, platform);
+  const path = found && testProviderAllowed(found, env) ? found : null;
   const row = { provider, state: 'missing', available: false, version: null, path, auth: 'unchecked', supports: { login: false, authStatus: false },
     commands: commandsFor(provider, platform, env), capabilities: CAPABILITIES[provider] };
   if (!path) return row;

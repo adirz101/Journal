@@ -1,8 +1,9 @@
 import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { newSession, openSettings, startSession, statusBar } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 // Development and test builds never contact GitHub; the update UI is driven by
 // sending the window the same events the updater sends.
@@ -13,7 +14,7 @@ test('update notices: progress, restart only for a downloaded update, settings i
   const bin = resolve(root, 'bin'); mkdirSync(bin);
   writeFileSync(resolve(bin, 'claude'), `#!${process.execPath}\nif(process.argv.includes('--version')){console.log('fixture 1.0');process.exit(0)}\nconsole.log('PTY_READY');process.stdin.setRawMode(true);process.stdin.resume();\n`); chmodSync(resolve(bin, 'claude'), 0o755);
   writeFileSync(resolve(root, 'package.json'), '{"type":"commonjs"}\n');
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const app = await electron.launch({ args: ['.'], env });
   try {
     const page = await app.firstWindow();

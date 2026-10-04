@@ -17,6 +17,9 @@ const DESCRIBE: Record<GitKind, string> = { conflict: 'conflict', deleted: 'dele
 
 interface Item { id: string; rootKey: string; path: string; name: string; type: 'root' | 'directory' | 'file' | 'symlink' | 'other' | 'more'; sensitive: boolean; }
 const idOf = (rootKey: string, path: string) => `${rootKey}\u0000${path}`;
+// Phase 8: the last palette request handled, kept across remounts (the Files tab mounts this
+// panel each time it is shown), so an old request never opens its file again.
+let revealHandled = 0;
 type Roots = { primary: FileRoot[]; folders: FileRoot[] };
 interface Preview { rootKey: string; path: string; mode: 'file' | 'diff'; data?: FilePreviewData; diff?: { text: string; truncated: boolean; hidden: boolean }; error?: string; line?: number; }
 
@@ -30,8 +33,12 @@ function lookup(status: FileStatus | undefined) {
   };
 }
 
-export function ExplorerPanel({ project, session, rootsVersion, revealLabel, focusSignal, onFocusHandled, onPreviewing, onAddReference, onSaveEvidence, onError }: {
+export function ExplorerPanel({ project, session, rootsVersion, revealLabel, focusSignal, onFocusHandled, onPreviewing, onAddReference, onSaveEvidence, onError, reveal, onRoot }: {
   project: Project; session: Session | null; rootsVersion: string; revealLabel: string; focusSignal: number; onFocusHandled?: () => void;
+  // Phase 8 review M2: the root shown (the palette searches it), and null on unmount.
+  onRoot?: (projectId: string, rootKey: string | null) => void;
+  // Phase 8: a file opened from the palette (seq increases per request); previewed once its root is shown.
+  reveal?: { projectId: string; rootKey: string; path: string; seq: number } | null;
   onPreviewing: (previewing: boolean) => void; onAddReference: (reference: FileReference) => Promise<void>;
   onSaveEvidence: (source: { rootKey: string; path: string; startLine: number; endLine: number }) => void; onError: (error: unknown) => void;
 }) {
@@ -53,6 +60,9 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
   const primary = roots?.primary.find(root => root.key === primaryKey) ?? null;
   const visible = useMemo(() => primary ? [primary, ...(roots?.folders.filter(root => root.exists !== false) ?? [])] : [], [primary, roots]);
   const visibleKey = visible.map(root => root.key).join('|');
+  const onRootRef = useRef(onRoot); onRootRef.current = onRoot;
+  useEffect(() => { if (primary) onRootRef.current?.(project.id, primaryKey); }, [project.id, primaryKey, primary]);
+  useEffect(() => () => onRootRef.current?.(project.id, null), [project.id]);
   const rootFor = (key: string) => visible.find(root => root.key === key) ?? null;
 
   useEffect(() => { setOverride(null); }, [ownSession?.id]);
@@ -126,6 +136,24 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
     tree.rebuildTree(); setVersion(v => v + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleKey]);
+
+  // === Phase 8: a file opened from the palette ===
+  // Show its root (unless it is a folder root, always listed), then expand its folders and
+  // preview it once that root's tree is in place (the effect above resets the tree first).
+  useEffect(() => {
+    if (!reveal || reveal.seq <= revealHandled || !roots) return;
+    const primaryRoot = roots.primary.some(root => root.key === reveal.rootKey);
+    // Another project's request, or a root that is gone, is dropped rather than kept waiting.
+    if (reveal.projectId !== project.id || (!primaryRoot && !roots.folders.some(root => root.key === reveal.rootKey))) { revealHandled = reveal.seq; return; }
+    if (primaryRoot && primaryKey !== reveal.rootKey) { setOverride(reveal.rootKey === followKey ? null : reveal.rootKey); return; }
+    if (!visible.some(root => root.key === reveal.rootKey)) return;
+    revealHandled = reveal.seq; setFilter('all');
+    const parts = reveal.path.split('/').slice(0, -1);
+    const folders = [idOf(reveal.rootKey, ''), ...parts.map((_, i) => idOf(reveal.rootKey, parts.slice(0, i + 1).join('/')))];
+    setExpanded(current => [...new Set([...current, ...folders])]);
+    void openPreview(reveal.rootKey, reveal.path);
+  }, [reveal, roots, primaryKey, visibleKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // === End Phase 8 ===
 
   const refreshStatus = useCallback(async () => {
     const started = generation.current;

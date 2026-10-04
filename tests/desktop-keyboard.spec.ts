@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync,
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
-import { fixtureEnv } from './support/fixture-env';
+import { fixtureEnv } from './support/env';
 import { expectAccessible, expectVisibleFocus, tabTo } from './support/a11y';
 import { taskBox } from './support/ui';
 

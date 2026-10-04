@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http';
 import { resolve, delimiter, extname, join, normalize } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
-import { fixtureEnv } from './support/fixture-env';
+import { fixtureEnv } from './support/env';
 import { contextPreview, newSession, startSession, taskBox } from './support/ui';
 
 // Phase 9 performance checks, measured on the React profiling build (npm run build:profile,

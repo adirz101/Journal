@@ -1,5 +1,5 @@
 import { useEffect, type RefObject } from 'react';
-import { modalCounter, trackModalDialog } from './modal';
+import { modalCounter, takeReturnFocus, trackModalDialog } from './modal';
 
 // Report failures are ignored: outside Electron there is no main process, and a
 // lost report only means shortcut keys are claimed while a dialog is open (its
@@ -13,7 +13,9 @@ const modals = modalCounter(open => { try { void window.journal?.request('setMod
 // taken focus meanwhile.
 export function useModalDialog(dialog: RefObject<HTMLDialogElement | null>) {
   useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+    // A palette command blurs the terminal before this dialog exists; focus still goes back to it.
+    const held = takeReturnFocus();
+    const previous = held instanceof HTMLElement ? held : document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
     const release = trackModalDialog(dialog.current, modals);
     return () => {
       release();

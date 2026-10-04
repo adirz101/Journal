@@ -1,8 +1,9 @@
 import { test, expect, type ElectronApplication, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { chooseAgent, filesView, inspectorTab, newSession, sessionStatus, startButton, startSession } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 // Cursor as a third provider with fake CLIs: install (confirmed, visible,
 // failure and success), PATH not refreshed, sign-in, launch with an exact chat
@@ -44,14 +45,14 @@ if(fs.existsSync(${JSON.stringify(failInstall)})){console.error('Download failed
 fs.mkdirSync(${JSON.stringify(cursorDir)},{recursive:true});fs.writeFileSync(${JSON.stringify(resolve(cursorDir, 'agent'))},${JSON.stringify(cursorCli)});fs.chmodSync(${JSON.stringify(resolve(cursorDir, 'agent'))},0o755);
 console.log('Installed to ~/.local/bin/agent. Add ~/.local/bin to your PATH.');`);
   chmodSync(installer, 0o755); writeFileSync(failInstall, '');
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)),
-    PATH: `${bin}${delimiter}/usr/bin${delimiter}/bin${delimiter}${resolve(process.execPath, '..')}`, HOME: home, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' };
-  delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, home, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const launches = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').map(l => JSON.parse(l)) : [];
   const app = await electron.launch({ args: ['.'], env });
   try {
     await app.evaluate(({ dialog }, p) => { (dialog as any).showOpenDialog = async () => ({ canceled: false, filePaths: [p] }); }, project);
     await app.evaluate((_e, file) => { (globalThis as any).__journalCursorInstall = { file, args: [] }; }, installer);
+    // Headless runs look for Cursor (and check its sign-in) only when a spec allows Cursor's probes.
+    await app.evaluate(() => { (globalThis as any).__journalAuthProbes = ['cursor']; });
     const page = await app.firstWindow();
     await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     // The Cursor card is honest about the missing CLI and holds its one action; the details
