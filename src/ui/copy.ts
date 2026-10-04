@@ -27,7 +27,7 @@ export const copy = {
     added: (date: string) => `You added this on ${date}`, git: (range: string) => `Drafted from Git (${range})`, upTo: (head: string) => `up to ${head}`,
     imported: (date: string) => `Imported on ${date}`, promoted: (branch: string) => `Proposed for all branches from ⑂ ${branch}`,
     basedOn: (where: string) => `Based on ${where}`, unchanged: 'file unchanged since you saved it', fileChanged: 'file changed',
-    atStart: 'checked when the session started', atPrepared: 'checked when this launch was prepared', onlyOn: (branch: string) => `only on ⑂ ${branch}`, anotherBranch: 'another branch', folderRemoved: 'its folder was removed from the project',
+    atStart: 'checked when the session started', whenYouStart: 'checked when you start', atPrepared: 'checked when this launch was prepared', onlyOn: (branch: string) => `only on ⑂ ${branch}`, anotherBranch: 'another branch', folderRemoved: 'its folder was removed from the project',
     notSent: 'Not sent yet', sentTo: (n: number) => n === 1 ? 'Sent to 1 session' : `Sent to ${n} sessions`,
     sentTip: 'Counted once per conversation, including resumes. Includes starts where Journal could not confirm delivery.',
     // Memory tab filters (board WrapUp): chips by category, then two attention toggles.

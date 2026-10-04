@@ -213,6 +213,34 @@ test('Backspace on a focused preview note leaves it out', async () => {
   } finally { await closeApp(app); f.cleanup(); }
 });
 
+test('Tab passes each preview list in at most two stops', async () => {
+  // One tab stop per list (roving rows) plus the active row's Leave out: from Start, Tab reaches
+  // the brief's row and button, the first relevant row and its button, then Inspect all, however
+  // many notes match. Inactive rows' buttons are out of the Tab order, yet Delete still works.
+  const f = setup(); const { app, page } = await open(f);
+  try {
+    await remember(page, [{ statement: BRIEF, category: 'brief' }, { statement: NOTE }, { statement: 'Worktree names follow the journal/ prefix', category: 'convention' }, { statement: 'Worktree folders live under .worktrees', category: 'decision' }]);
+    await taskBox(page).fill('worktree');
+    const rows = relevant(page).getByRole('listitem');
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(1).getByRole('button', { name: /Leave out/ })).toHaveAttribute('tabindex', '-1');
+    await expect(rows.first().getByRole('button', { name: /Leave out/ })).not.toHaveAttribute('tabindex', '-1');
+    const inspect = contextPreview(page).getByRole('button', { name: 'Inspect all', exact: true });
+    await startButton(page).focus();
+    let presses = 0;
+    while (presses < 20 && !(await inspect.evaluate(el => el === document.activeElement))) { await page.keyboard.press('Tab'); presses++; }
+    expect(presses).toBe(5);
+    // Arrows move the active row; its button joins the Tab order and the previous one leaves it.
+    await rows.first().focus(); await page.keyboard.press('ArrowDown');
+    await expect(rows.nth(1)).toBeFocused();
+    await expect(rows.nth(1).getByRole('button', { name: /Leave out/ })).not.toHaveAttribute('tabindex', '-1');
+    await expect(rows.first().getByRole('button', { name: /Leave out/ })).toHaveAttribute('tabindex', '-1');
+    await page.keyboard.press('Delete');
+    await expect(rows).toHaveCount(2);
+    await expect(contextPreview(page)).toContainText('1 left out by you');
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
 test('agent cards are honest', async () => {
   const f = setup(); const { app, page } = await open(f);
   try {

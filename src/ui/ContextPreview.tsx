@@ -1,28 +1,24 @@
-import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { composer, copy, excludedReason } from './copy';
 import { NoteCard } from './NoteCard';
-import { evidenceLine } from './noteCardModel';
 import { BYTE_LIMIT, meterText, NOTE_LIMIT, type PreviewItem, type PreviewView } from './composerModel';
 import type { Project } from './types';
 
 // One note in the preview or the hover card: Phase 5's NoteCard with the task
-// words FTS matched. Until the sources are checked, a file note says where it is
-// based and that it is checked when you start, never that the file is unchanged.
-export function PreviewNote({ item, project, variant, checked, onLeaveOut }: { item: PreviewItem; project: Project; variant: 'hover' | 'preview'; checked: boolean; onLeaveOut?(): void }) {
-  const terms = item.selection?.terms ?? [];
-  const rootName = item.source.rootId ? project.roots?.find(root => root.id === item.source.rootId)?.name : undefined;
-  const evidence = checked ? null : evidenceLine({ ...item, validation: 'current' }, rootName);
-  // NoteCard reads evidence from file sources only; an unchecked note's line is written here instead.
-  const note: PreviewItem = checked ? { ...item, validation: 'current' } : evidence ? { ...item, source: { kind: 'user', note: item.source.note } } : item;
-  return <NoteCard note={note} project={project} variant={variant} matched={terms} onLeaveOut={onLeaveOut}>
-    {evidence && <div className="note-line note-evidence" title={evidence.title}>{copy.trust.basedOn(evidence.title)} · {composer.checkedWhenYouStart.toLowerCase()}</div>}
-  </NoteCard>;
-}
+// words FTS matched, one line per row (compact). Until the sources are checked
+// (unchecked), a file note says it is checked when you start, never that the file
+// is unchanged. tabbable: false for a list row that is not the active one.
+export const PreviewNote = memo(function PreviewNote({ item, project, variant, checked, tabbable = true, onLeaveOut }: { item: PreviewItem; project: Project; variant: 'hover' | 'preview'; checked: boolean; tabbable?: boolean; onLeaveOut?(): void }) {
+  const note = useMemo(() => checked ? { ...item, validation: 'current' as const } : item, [item, checked]);
+  return <NoteCard note={note} project={project} variant={variant} compact matched={item.selection?.terms ?? NONE} unchecked={!checked} tabbable={tabbable} onLeaveOut={onLeaveOut} />;
+});
+const NONE: string[] = [];
 
 // A list with one tab stop for its rows: arrows move between notes, Backspace or
-// Delete leaves the focused note out. After any leave-out (key or button) focus
-// moves to the next note; onLastLeft hears when the list's last note went.
-function NoteList({ label, items, render, onLeaveOut, onLastLeft }: { label: string; items: PreviewItem[]; render(item: PreviewItem, leaveOut: () => void): ReactNode; onLeaveOut(id: string): void; onLastLeft(): void }) {
+// Delete leaves the focused note out. Only the active row's own buttons stay in the
+// Tab order (tabbable), so Tab passes a list in two stops at most. After any
+// leave-out (key or button) focus moves to the next note; onLastLeft hears when the list's last note went.
+function NoteList({ label, items, render, onLeaveOut, onLastLeft }: { label: string; items: PreviewItem[]; render(item: PreviewItem, leaveOut: () => void, tabbable: boolean): ReactNode; onLeaveOut(id: string): void; onLastLeft(): void }) {
   const rows = useRef<(HTMLLIElement | null)[]>([]);
   const [active, setActive] = useState(0); const pending = useRef<number | null>(null);
   const index = Math.min(active, Math.max(0, items.length - 1));
@@ -42,7 +38,7 @@ function NoteList({ label, items, render, onLeaveOut, onLastLeft }: { label: str
     else if (event.key === 'Backspace' || event.key === 'Delete') { event.preventDefault(); leave(at); }
   };
   return <ul className="preview-list" aria-label={label}>{items.map((item, at) =>
-    <li key={item.id} ref={el => { rows.current[at] = el; }} tabIndex={at === index ? 0 : -1} onFocus={() => setActive(at)} onKeyDown={event => keys(event, at)}>{render(item, () => leave(at))}</li>)}</ul>;
+    <li key={item.id} ref={el => { rows.current[at] = el; }} tabIndex={at === index ? 0 : -1} onFocus={() => setActive(at)} onKeyDown={event => keys(event, at)}>{render(item, () => leave(at), at === index)}</li>)}</ul>;
 }
 
 function Meter({ label, value, max, text }: { label: string; value: number; max: number; text: string }) {
@@ -59,7 +55,7 @@ export function ContextPreview({ view, error, taskNotes, project, mac, onLeaveOu
 }) {
   const aside = useRef<HTMLElement>(null);
   const checked = !!view?.checked;
-  const note = (item: PreviewItem, leaveOut: () => void) => <PreviewNote item={item} project={project} variant="preview" checked={checked} onLeaveOut={leaveOut} />;
+  const note = (item: PreviewItem, leaveOut: () => void, tabbable: boolean) => <PreviewNote item={item} project={project} variant="preview" checked={checked} tabbable={tabbable} onLeaveOut={leaveOut} />;
   // A group's last note left out: its list goes, so focus stays in the preview instead of falling to the page.
   const lastLeft = useRef(false);
   useLayoutEffect(() => { if (lastLeft.current) { lastLeft.current = false; aside.current?.focus(); } });
