@@ -31,10 +31,16 @@ test('menu check results', () => {
 
 test('released builds have no Reload or developer tools in the View menu', () => {
   const options = { name: 'Journal', checkForUpdates() {}, openUrl() {}, packaged: true };
-  for (const platform of ['darwin', 'win32']) {
+  for (const platform of ['darwin', 'win32', 'linux']) {
     const template = menuTemplate({ ...options, platform });
     assert.ok(!template.some(item => item.role === 'viewMenu'), platform);
     const view = template.find(item => item.label === 'View');
     assert.deepEqual(view.submenu.filter(item => item.role).map(item => item.role), ['resetZoom', 'zoomIn', 'zoomOut', 'togglefullscreen'], platform);
+  }
+  assert.ok(menuTemplate({ ...options, platform: 'win32', packaged: false }).some(item => item.role === 'viewMenu'), 'Development builds keep the default View menu');
+  for (const platform of ['darwin', 'win32']) {
+    const view = menuTemplate({ ...options, platform, devTools: true }).find(item => item.label === 'View');
+    assert.equal(view.submenu.at(-1).role, 'toggleDevTools', platform);
+    assert.ok(!view.submenu.some(item => item.role === 'reload'), platform);
   }
 });

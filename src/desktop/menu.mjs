@@ -2,10 +2,10 @@
 // "Check for Updates…", in the app menu on macOS and in Help elsewhere.
 export const PROJECT_URL = 'https://github.com/adirz101/Journal';
 
-export function menuTemplate({ platform, name, checkForUpdates, openUrl, packaged = false }) {
-  // Released builds: zoom and full screen only. Reload would drop the renderer mid-session for no user benefit.
+export function menuTemplate({ platform, name, checkForUpdates, openUrl, packaged = false, devTools = false }) {
+  // Released builds: zoom and full screen only. Reload would drop the renderer mid-session; DevTools is a developer affordance, not a security boundary (set JOURNAL_DEVTOOLS=1 for support).
   const view = packaged
-    ? { label: 'View', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] }
+    ? { label: 'View', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }, ...(devTools ? [{ type: 'separator' }, { role: 'toggleDevTools' }] : [])] }
     : { role: 'viewMenu' };
   const check = { id: 'check-for-updates', label: 'Check for Updates…', click: () => checkForUpdates() };
   const help = { role: 'help', submenu: [{ label: 'Journal on GitHub', click: () => openUrl(PROJECT_URL) }, { label: 'Releases', click: () => openUrl(`${PROJECT_URL}/releases`) }] };

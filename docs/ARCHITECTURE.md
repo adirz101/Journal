@@ -23,6 +23,7 @@ Renderer (React, sandboxed)  ──IPC──>  Electron main (app)  ──local 
 | --- | --- |
 | Renderer reload | Main asks the runtime to detach output streaming; the reloaded renderer re-attaches and repaints from the bounded buffer. Sessions continue. |
 | Window close or app quit | With live sessions, Journal asks: **Stop sessions and quit** (graceful stop, then the runtime exits) or **Keep running in background** (the runtime keeps sessions, and the next launch rediscovers them). `JOURNAL_QUIT_POLICY=stop` or `keep` skips the prompt. |
+| Developer tools | Released builds have no Reload or DevTools in the View menu; set `JOURNAL_DEVTOOLS=1` to add Toggle Developer Tools for support. Development builds keep the default View menu. |
 | App crash | The runtime notices the client disconnect and keeps sessions. The next launch connects to the same runtime and lists live sessions. |
 | Runtime crash | PTY masters close and native CLIs normally exit. The app reconnects, starting a new runtime if needed. The new runtime recovers sessions owned by any previous runtime: `interrupted`; `orphaned` when the recorded process still exists with the same identity; or `orphaned` and *unverified* when the PID is alive but its identity cannot be read (never signalled). Orphans block resume and ID confirmation for the same conversation and are rechecked every 5 s; once gone they become `interrupted`. Prompt delivery becomes `uncertain`, and nothing is resent. |
 | Idle runtime | It exits after 60 s with no client and no live sessions. |

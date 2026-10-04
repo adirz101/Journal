@@ -466,7 +466,7 @@ async function checkForUpdatesFromMenu() {
   if (outcome.kind === 'ready') await actions.installUpdate().catch(error => dialog.showErrorBox('Could not install the update', error.message));
   if (outcome.kind === 'available') actions.openUpdateRelease();
 }
-Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate({ platform: process.platform, name: app.name, packaged: app.isPackaged, checkForUpdates: () => void checkForUpdatesFromMenu().catch(() => {}), openUrl: url => void shell.openExternal(url) })));
+Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate({ platform: process.platform, name: app.name, packaged: app.isPackaged, devTools: process.env.JOURNAL_DEVTOOLS === '1', checkForUpdates: () => void checkForUpdatesFromMenu().catch(() => {}), openUrl: url => void shell.openExternal(url) })));
 // Release smoke checks of builds that cannot be driven by automation (the
 // Windows portable EXE relaunches itself): report basic health, then quit.
 // Packaged builds only; contains no project or user content.
