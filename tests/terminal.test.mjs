@@ -225,7 +225,7 @@ async function hooked(t) {
   return { send, state, write, f, session };
 }
 
-test('the real hook order (PreToolUse before an id-less PermissionRequest) clears on that tool completing', async t => {
+test('the expected hook order (PreToolUse before an id-less PermissionRequest) clears on that tool completing — to verify natively', async t => {
   const { send, state } = await hooked(t);
   send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'npm test' });
   send('PermissionRequest', { tool: 'Bash' });

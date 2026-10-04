@@ -77,7 +77,8 @@ Final required local checks are reported in [implementation status](IMPLEMENTATI
 
 - After approving a Bash permission in authenticated Claude Code, Journal shows Working, not Needs approval, while the command runs.
 - Whether the `PermissionRequest` payload includes `tool_use_id` and `tool_input`. Journal matches an id-less request to the in-flight tool by name, command and file path, and otherwise falls back to the last tool of that kind completing.
-- Which hook events follow a denial with feedback. Journal clears the prompt when a new tool starts while only the pending tool is in flight.
+- Which hook events follow a denial with feedback. Journal shows Working as soon as a single open prompt is answered in Journal's terminal (digit, Enter, Esc, Ctrl+C or Interrupt), or when the asking tool completes.
+- Claude fires PreToolUse before PermissionRequest for the same tool.
 - Whether subagent hooks share the parent `session_id`. If they do, a sibling tool must not hide an open approval.
 - Claude permission prompts are answered with a digit, Enter or Esc, which Journal uses to know the prompt was answered.
 - Whether Claude can show a second permission prompt (for example from a parallel subagent) before the first is answered.
