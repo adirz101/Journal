@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { resolve, dirname, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -20,6 +20,7 @@ import { launchTarget, resolveExecutable } from '../core/process.mjs';
 import { RootWatcher } from './watch.mjs';
 import { Updater, updateMode } from './updater.mjs';
 import { checkOutcome, menuTemplate } from './menu.mjs';
+import { APP_USER_MODEL_ID, createNotifier, readPreferences, writePreferences } from './notify.mjs';
 import { matchShortcut, shortcutKeys, shouldDispatch } from './shortcuts.mjs';
 import electronUpdater from 'electron-updater';
 import { dataDirectory, unpackedPath, withGuiPath } from './environment.mjs';
@@ -36,6 +37,8 @@ const appIcon = nativeImage.createFromPath(resolve(root, 'assets/branding/journa
 const iconSize = appIcon.getSize(); const iconInset = Math.round(Math.min(iconSize.width, iconSize.height) * 0.05);
 const displayIcon = appIcon.crop({ x: iconInset, y: iconInset, width: iconSize.width - 2 * iconInset, height: iconSize.height - 2 * iconInset });
 app.setName('Journal');
+// Windows shows a packaged app's notifications only under its AppUserModelId (the installer's shortcut carries the same appId).
+if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? APP_USER_MODEL_ID : process.execPath);
 // A packaged app opened from Finder has a minimal PATH; add the usual CLI
 // install folders so Claude Code, Codex and Cursor are found (see environment.mjs).
 if (app.isPackaged) { const next = withGuiPath(process.env).PATH; if (next) process.env.PATH = next; }
@@ -46,6 +49,9 @@ app.setPath('userData', userData);
 // The last chosen appearance, so the first frame of a new window has the right background.
 const appearancePrefs = join(userData, 'appearance.json');
 const lastAppearance = () => { try { return JSON.parse(readFileSync(appearancePrefs, 'utf8')).appearance === 'light' ? 'light' : 'dark'; } catch { return 'dark'; } };
+// Notification preferences (two booleans; see notify.mjs). Local to this device, read without a store round trip.
+const preferencesFile = join(userData, 'preferences.json');
+let preferences = readPreferences(preferencesFile);
 if (!app.requestSingleInstanceLock()) app.quit();
 // modalOpen: the renderer reports whether a modal dialog is open (setModalOpen).
 let window; let modalOpen = false; let store; let runtime; let updater; let updatePolicy = null; let closing = false; let closed = false; let runtimeState = 'connecting'; let runtimeWarning = null;
@@ -106,6 +112,8 @@ function createWindow() {
   window.webContents.on('did-start-loading', () => { modalOpen = false; void runtime?.call('detach', {}).catch(() => {}); });
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   window.on('closed', () => { window = null; });
+  // Windows and Linux flash the taskbar while something waits; looking at Journal stops it.
+  window.on('focus', () => { if (process.platform !== 'darwin') window?.flashFrame(false); });
   if (devUrl) window.loadURL(devUrl); else window.loadFile(resolve(root, 'dist/index.html'));
 }
 
@@ -120,7 +128,35 @@ runtime = new RuntimeClient({ dataDir: userData, launch: launchRuntime });
 // The runtime's in-memory sessions carry status only: names, pins, archive and
 // removal belong to the store, so its copies of those fields never reach the UI.
 const fromRuntime = session => { const status = { ...session }; for (const field of SESSION_USER_FIELDS) delete status[field]; return status; };
-runtime.on('event', event => send(event?.type === 'status' && event.session ? { ...event, session: fromRuntime(event.session) } : event));
+// Approval notifications and the badge. Headless test runs replace the OS
+// notification, badge and focus through globals; nothing else can.
+const testHook = name => headless && typeof globalThis[name] === 'function' ? globalThis[name] : null;
+const notifier = createNotifier({
+  // Constructing through a plain function lets a test install its stand-in after launch.
+  Notification: function JournalNotification(options) { return new (testHook('__journalNotification') ?? Notification)(options); },
+  isSupported: () => !!testHook('__journalNotification') || Notification.isSupported(),
+  isFocused: () => { const focused = testHook('__journalFocused'); return focused ? !!focused() : !!window && !window.isDestroyed() && window.isFocused(); },
+  onClick: sessionId => {
+    if (!window || window.isDestroyed()) return;
+    // Hidden test windows stay hidden.
+    if (!headless) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); }
+    send({ type: 'focus-session', sessionId });
+  },
+  // macOS: Dock badge. Windows has no badge count (setBadgeCount returns false), so the taskbar flashes instead; Linux gets both where its launcher supports a count.
+  setBadge: count => {
+    const hook = testHook('__journalBadge'); if (hook) { hook(count); return; }
+    app.setBadgeCount(count);
+    if (process.platform !== 'darwin' && window && !window.isDestroyed()) window.flashFrame(count > 0 && !window.isFocused());
+  },
+  // The user's name for the session lives in the store, not in the runtime's copy.
+  titleFor: session => store.getSession(session.id).then(row => row.displayName || row.title, () => session.title),
+  preferences: () => preferences,
+});
+const seedNotifier = async () => { try { notifier.seed([...(await runtime.call('list')).map(fromRuntime), ...(await store.activeSessions())]); } catch { /* the next status events correct the badge */ } };
+runtime.on('event', event => {
+  if (event?.type === 'status' && event.session) { const session = fromRuntime(event.session); notifier.update(session); send({ ...event, session }); return; }
+  send(event);
+});
 // Explorer: one watched root, the status call per root shared while it runs,
 // and an external editor found on PATH (or named by JOURNAL_EDITOR).
 const watcher = new RootWatcher(change => send({ type: 'files', ...change }));
@@ -146,7 +182,7 @@ const findEditor = () => {
 runtime.on('warning', message => { runtimeWarning = message; send({ type: 'runtime', state: runtimeState, warning: message }); });
 runtime.on('disconnected', () => { runtimeState = 'disconnected'; send({ type: 'runtime', state: 'disconnected' }); });
 runtime.on('failed', message => { runtimeWarning = message; send({ type: 'runtime', state: 'disconnected', warning: message }); });
-runtime.on('reconnected', () => { runtimeState = 'connected'; send({ type: 'runtime', state: 'connected', recovered: true }); });
+runtime.on('reconnected', () => { runtimeState = 'connected'; send({ type: 'runtime', state: 'connected', recovered: true }); void seedNotifier(); });
 let agents = detectAgents();
 // Cursor's sign-in state is checked off the startup path, again after install
 // or sign-in, and on request. Only signed in / signed out is kept.
@@ -477,7 +513,7 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
     try { return { ok: true, value: await actions[action](input) }; } finally { if (ROOT_CHANGES.has(action)) rootCache.clear(); }
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Operation failed', ...(error?.code ? { code: error.code } : {}) }; }
 });
-try { await runtime.connect(); runtimeState = 'connected'; }
+try { await runtime.connect(); runtimeState = 'connected'; await seedNotifier(); }
 catch (error) { runtimeState = 'disconnected'; console.error('Journal runtime unavailable:', error.message); void runtime.reconnect(); }
 createWindow();
 // Updates: packaged builds only. The automatic-check preference lives in the data folder.
@@ -498,7 +534,15 @@ async function checkForUpdatesFromMenu() {
   if (outcome.kind === 'ready') await actions.installUpdate().catch(error => dialog.showErrorBox('Could not install the update', error.message));
   if (outcome.kind === 'available') actions.openUpdateRelease();
 }
-Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate({ platform: process.platform, name: app.name, packaged: app.isPackaged, devTools: process.env.JOURNAL_DEVTOOLS === '1', checkForUpdates: () => void checkForUpdatesFromMenu().catch(() => {}), openUrl: url => void shell.openExternal(url) })));
+// Rebuilt after each preference change so the checkboxes show the stored values.
+const buildMenu = () => Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate({ platform: process.platform, name: app.name, packaged: app.isPackaged, devTools: process.env.JOURNAL_DEVTOOLS === '1',
+  checkForUpdates: () => void checkForUpdatesFromMenu().catch(() => {}), openUrl: url => void shell.openExternal(url), preferences, setPreference })));
+function setPreference(key, value) {
+  try { preferences = writePreferences(preferencesFile, { [key]: value }); }
+  catch (error) { dialog.showErrorBox('Could not save the setting', error.message); }
+  buildMenu();
+}
+buildMenu();
 // Release smoke checks of builds that cannot be driven by automation (the
 // Windows portable EXE relaunches itself): report basic health, then quit.
 // Packaged builds only; contains no project or user content.
@@ -538,7 +582,7 @@ app.on('before-quit', event => {
       if (response === 2) { closing = false; if (!window) createWindow(); return; }
       policy = response === 0 ? 'stop' : 'keep';
     }
-    processes.stopAll(); updater?.stop();
+    processes.stopAll(); updater?.stop(); notifier.dispose();
     await runtime.close({ shutdown: policy !== 'keep' && !!runtime.socket, stopSessions: true });
     await store.close().catch(() => {});
     closed = true;
