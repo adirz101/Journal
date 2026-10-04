@@ -23,6 +23,8 @@ The logic for the agent defaults and the mode help text is in `…/journal-mock/
 
 Step **A0** checks each of these names against the merged code and fixes this plan if anything drifted.
 
+> **A0 check (4 October 2026):** A0 was cut from `15f8e86`, before Phase 3 merged. Phase 2's `ERROR_CODES` (`src/core/terminal.mjs`) and the preload's `code` on rejected requests exist. `NewSessionView.tsx`, `InspectorTab` and `tests/support/ui.ts` do not exist yet, so Group B rebases on the merged Phase 3 before B0 and rechecks section 1.6 there. `api()` passes the preload's error through unchanged, so `code` reaches callers.
+
 **Checks after every commit:** `npm test`, `npm run check`, `npm run build`. Renderer and desktop changes also need `npm run test:desktop` (hidden windows, Electron-native node-pty; check the exit status). Every result here is fixture-only. Phase 4 adds no provider behaviour, and launch argv, native settings, permissions and exact-ID resume don't change.
 
 **Out of scope:**

@@ -7,9 +7,22 @@ export interface Project { id: string; name: string; root: string; branch: strin
 export interface ProjectDetails { missing?: boolean; project: Project; roots: ProjectRoot[]; counts: { knowledge: number; sessions: number; liveSessions: number; receipts: number; events: number; proposals: number; worktrees: number }; }
 export interface Source { rootId?: string; kind: 'user' | 'file' | 'git' | 'import'; note?: string; path?: string; startLine?: number; endLine?: number; excerpt?: string; contentHash?: string; base?: string | null; head?: string; commitCount?: number | null; }
 export interface Conflict { id: string; revision: number; statement: string; }
-export interface Memory { pinned?: boolean; environment?: string; selection?: { reason: string; bytes: number }; promotedFrom?: { id: string; revision: number; branch: string }; supersedes?: { id: string; revision: number }; id: string; projectId: string; revisionId: string; revision: number; statement: string; category: string; scope: 'checkout' | 'branch'; area: string; branch: string | null; source: Source; status: 'candidate' | 'active' | 'rejected' | 'archived'; validation: 'current' | 'stale' | 'wrong-branch' | 'folder-removed'; drift?: number | null; conflicts?: Conflict[]; }
+export interface Memory { pinned?: boolean; environment?: string; selection?: SelectionInfo; promotedFrom?: { id: string; revision: number; branch: string }; supersedes?: { id: string; revision: number }; id: string; projectId: string; revisionId: string; revision: number; statement: string; category: string; scope: 'checkout' | 'branch'; area: string; branch: string | null; source: Source; status: 'candidate' | 'active' | 'rejected' | 'archived'; validation: 'current' | 'stale' | 'wrong-branch' | 'folder-removed'; drift?: number | null; conflicts?: Conflict[]; }
+// Composer modes: the launch flags stay plan/research (Phase 4).
+export type Mode = 'build' | 'plan' | 'read-only';
+// Why a note was selected. terms: the raw task terms FTS matched (receipts from Phase 4 on).
+export interface SelectionInfo { reason: string; bytes: number; terms?: string[]; }
+// The typing preview (previewSelection): stored records only, nothing validated or written.
+export interface SelectionPreview {
+  kind: 'selection'; checked: false; query: string; branch: string | null;
+  items: (Memory & { selection: SelectionInfo })[];   // same order and rules as a receipt
+  excluded: { id: string; reason: string }[];          // never 'stale': evidence is not read
+  warnings: string[]; bytes: number;                   // packet bytes before references and drift text
+  terms: string[];                                     // queryTerms(task + reference paths)
+  taskNotes: number;                                   // remembered non-brief notes on this branch or all branches
+}
 export interface MemoryPage { items: Memory[]; total: number; offset: number; limit: number; counts: Record<string, number>; }
-export interface Receipt { preview?: boolean; references?: FileReference[]; disabled?: string[]; workspaceId?: string | null; sessionId?: string; id: string; packet: string; launchPrompt?: string; query: string; items: Memory[]; excluded: { id: string; reason: string }[]; warnings?: string[]; state: string; estimatedTokens: number; createdAt: string; }
+export interface Receipt { terms?: string[]; preview?: boolean; references?: FileReference[]; disabled?: string[]; workspaceId?: string | null; sessionId?: string; id: string; packet: string; launchPrompt?: string; query: string; items: Memory[]; excluded: { id: string; reason: string }[]; warnings?: string[]; state: string; estimatedTokens: number; createdAt: string; }
 export type SessionStatus = 'starting' | 'running' | 'waiting' | 'stopping' | 'stopped' | 'exited' | 'failed' | 'interrupted' | 'orphaned';
 export interface Survivor { pid: number; started: string; command: string; }
 export interface Session { id: string; projectId: string; provider: Provider; nativeId: string | null; nativeIdConfirmed: boolean; title: string; status: SessionStatus; receiptId: string; createdAt: string;
@@ -56,7 +69,7 @@ declare global {
 // (the runtime reads the database from another process).
 // Only writes that change what a packet contains, and none that wait on a dialog.
 const KNOWLEDGE_WRITES = new Set(['proposeMemory', 'setMemoryStatus', 'setPinned', 'markIncorrect', 'proposePromotion', 'acceptProposal']);
-const READS_KNOWLEDGE = new Set(['start', 'prepareContext']);
+const READS_KNOWLEDGE = new Set(['start', 'prepareContext', 'previewSelection']);
 const pendingWrites = new Set<Promise<unknown>>();
 // What the preload bridge returns: thrown errors would lose their code crossing it.
 export type Settled = { ok: true; value: unknown } | { ok: false; error: string; code?: string };

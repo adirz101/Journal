@@ -52,6 +52,7 @@ export const STORE_METHODS = [
   'setPinned',
   'proposePromotion',
   'prepareContext',
+  'previewSelection',
   'fileRoots',
   'fileRoot',
   'referenceFor',

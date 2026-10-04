@@ -33,6 +33,31 @@ export const tip = {
   limitedStatus: "Journal sees output, not the agent's state. Check the terminal for prompts.",
 } as const;
 
+// The New session composer (Phase 4, boards B5 and B13).
+export const composer = {
+  newSession: 'New session', checkoutLine: (name: string, branch: string, sha: string) => `${name} · ${branch} at ${sha}`,
+  task: 'Task', taskHint: 'optional, picks relevant notes', taskPlaceholder: 'What are you working on? Mention a module or path to include notes about it.',
+  agent: 'Agent', mode: 'Mode', build: 'Build', plan: copy.plan, readOnly: copy.readOnly, workspace: 'Workspace', manage: 'Manage',
+  modeHelp: { build: 'Normal native permissions. The CLI asks before it runs tools.',
+    plan: 'Starts in Claude plan mode or Cursor Plan mode. You can switch inside the session.',
+    'read-only': 'The agent can read but is asked not to change files (Claude plan mode, Codex read-only sandbox, Cursor Ask). You can switch inside the session.' },
+  separateCopyHelp: 'Isolated from your other sessions. Journal never stashes, copies or force-removes your work.',
+  start: (name: string) => `Start ${name}`, nativeStays: 'Your native login, settings and approvals stay with the CLI.',
+  installed: (version: string | null) => version ? `Installed · ${version}` : 'Installed', signedIn: 'Signed in', signInNeeded: 'Sign in needed',
+  notInstalled: 'Not installed', install: 'Install…', signIn: 'Sign in…', checking: 'Checking…', unsupported: 'Unsupported version',
+  notCursor: 'Not the Cursor CLI', cantLaunch: 'Can’t launch',
+  noPlan: (name: string) => `${name} has no plan mode. Choose Build or Read-only.`, noModes: 'This Cursor version has no modes. Choose Build.',
+  slotsFull: '4 sessions are running. Stop one to start another.', runtimeDown: 'The runtime is reconnecting. Start is available again once it connects.',
+  agentMissing: (name: string) => `${name} isn’t installed on this computer.`,
+  updatesAsYouType: 'updates as you type', notes: 'Notes', size: 'Size', notChecked: 'Sources are checked when you start', checked: 'Sources checked',
+  notesMatch: (n: number) => n === 1 ? '1 note matches' : `${n} notes match`, hoverHint: 'hover an underline',
+  notesMatching: (word: string) => `Notes matching “${word}”`, matches: 'matches', leaveOutShort: 'Leave out',
+  leaveOutTip: (mac: boolean) => `Tip: press ${mac ? '⌫' : 'Delete'} on a note to leave it out of this session only.`,
+  inspectAll: 'Inspect all', restore: 'Restore', relevantNone: 'No remembered note matches this task yet.',
+  relevantEmpty: 'Nothing here yet. After this session, I’ll suggest rules and lessons worth keeping. The ones you remember show up here when they match your task.',
+  previewFailed: (message: string) => `Preview unavailable: ${message}`,
+} as const;
+
 export const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 const CATEGORIES: Record<string, string> = { constraint: copy.rule, decision: 'Decision', convention: 'Convention', lesson: 'Lesson', issue: 'Known issue' };

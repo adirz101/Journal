@@ -280,6 +280,8 @@ const actions = {
   proposeStatusUpdate: ({ projectId, scope }) => store.proposeStatusUpdate(projectId, scope),
   memoryHistory: ({ id }) => store.memoryHistory(id),
   prepareContext: ({ projectId, task, workspaceId, disabled, references }) => store.prepareContext(projectId, task, { workspaceId: workspaceId ?? null, disabled: disabled ?? [], references: references ?? [], persist: false }),
+  // The typing preview: stored records only (no Git, no evidence reads, no writes).
+  previewSelection: ({ projectId, task, workspaceId, branch, disabled, references }) => store.previewSelection(projectId, task, { workspaceId: workspaceId ?? null, branch: branch ?? null, disabled: disabled ?? [], references: references ?? [] }),
   // ----- Explorer (read-only). Roots resolve from Journal's records; the
   // renderer only names a root key and a relative path. -----
   fileRoots: ({ projectId }) => store.fileRoots(text(projectId, 'project ID', 100)),

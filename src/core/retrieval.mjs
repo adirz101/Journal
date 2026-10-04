@@ -8,10 +8,29 @@ export const STOPWORDS = new Set(('a an and are as at be by for from in is it of
 const GENERIC_SEGMENTS = new Set(['src', 'lib', 'app', 'apps', 'packages', 'test', 'tests', 'spec', 'index', 'main', 'mjs', 'js', 'ts', 'tsx', 'jsx', 'cjs', 'md', 'core', 'utils', 'util']);
 
 // Split identifiers and paths: readTable -> read, table; jsonStore.mjs -> json, store.
-export function identifierParts(value) {
-  return value.split(/[^\p{L}\p{N}]+/u).flatMap(word => word.replace(/([\p{Ll}\p{N}])(\p{Lu})/gu, '$1 $2').replace(/(\p{Lu})(\p{Lu}\p{Ll})/gu, '$1 $2').split(' '))
-    .map(part => part.toLowerCase()).filter(part => part.length > 1);
+// Ranges are UTF-16 offsets into value (plus offset), so value.slice(start, end)
+// is always the original text; only `part` is lowercased. A part starts at a
+// lower-case letter or digit followed by an upper-case letter (readTable), or
+// before the last capital of an acronym followed by a lower-case letter (HTTPServer).
+const UPPER = /^\p{Lu}$/u; const LOWER = /^\p{Ll}$/u; const LOWER_OR_DIGIT = /^[\p{Ll}\p{N}]$/u;
+export function identifierPartRanges(value, offset = 0) {
+  const ranges = [];
+  for (const { 0: word, index } of value.matchAll(/[\p{L}\p{N}]+/gu)) {
+    const chars = [...word]; const at = []; let position = 0;
+    for (const char of chars) { at.push(position); position += char.length; }
+    const cuts = [0];
+    for (let i = 1; i < chars.length; i++) {
+      if ((LOWER_OR_DIGIT.test(chars[i - 1]) && UPPER.test(chars[i])) || (UPPER.test(chars[i - 1]) && UPPER.test(chars[i]) && i + 1 < chars.length && LOWER.test(chars[i + 1]))) cuts.push(at[i]);
+    }
+    cuts.push(word.length);
+    for (let i = 0; i + 1 < cuts.length; i++) {
+      const part = word.slice(cuts[i], cuts[i + 1]).toLowerCase();
+      if (part.length > 1) ranges.push({ part, start: offset + index + cuts[i], end: offset + index + cuts[i + 1] });
+    }
+  }
+  return ranges;
 }
+export function identifierParts(value) { return identifierPartRanges(value).map(range => range.part); }
 
 const PATHISH = /[\w.-]+(?:\/[\w.-]+)+|[\w-]+\.(?:mjs|cjs|js|ts|tsx|jsx|py|rs|go|rb|java|kt|swift|json|ya?ml|toml|md|css|sql|sh)\b|\b[a-z]+[A-Z][\w]*\b|\b\w+_\w+\b/g;
 
@@ -32,6 +51,27 @@ export function queryTerms(query, limit = 24) {
     for (const term of [whole, ...identifierParts(word)]) if (term && !/[./-]/.test(term) && term.length > 1 && !STOPWORDS.has(term)) terms.push(term);
   }
   return [...new Set(terms)].slice(0, limit);
+}
+
+// Every occurrence of every term queryTerms(text, limit) produces, in text order:
+// whole words (trimmed of leading and trailing ./-) and identifier parts.
+// Terms past the limit are never searched, so they are never marked.
+export function queryTermSpans(text, limit = 24) {
+  const wanted = new Set(queryTerms(text, limit)); const spans = [];
+  if (!wanted.size) return spans;
+  for (const { 0: word, index } of text.matchAll(/[\p{L}\p{N}_./-]+/gu)) {
+    const lead = word.length - word.replace(/^[./-]+/, '').length;
+    const end = word.replace(/[./-]+$/, '').length;
+    const whole = lead < end && wanted.has(word.slice(lead, end).toLowerCase()) ? { term: word.slice(lead, end).toLowerCase(), start: index + lead, end: index + end, whole: true } : null;
+    if (whole) spans.push(whole);
+    for (const range of identifierPartRanges(word, index)) {
+      if (!wanted.has(range.part)) continue;
+      // A word that is its own only part (refund) is one whole span.
+      if (whole && range.start === whole.start && range.end === whole.end) continue;
+      spans.push({ term: range.part, start: range.start, end: range.end, whole: false });
+    }
+  }
+  return spans;
 }
 
 const singular = word => word.length > 4 && word.endsWith('ies') ? `${word.slice(0, -3)}y` : word.length > 3 && word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word;
