@@ -80,4 +80,9 @@ export const STORE_METHODS = [
   'staleNotesForSession',
   'rememberProposals',
   'reaffirmMemory',
+  'needsOrientation',
+  'firstRunDrafts',
+  'rememberDraft',
+  'skipOrientation',
+  'hasActiveNotes',
 ];
