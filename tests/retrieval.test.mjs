@@ -154,7 +154,7 @@ test('pinned rules ride along with every task but stale or wrong-branch pins are
   const stale = f.store.proposeMemory(f.project.id, { statement: 'README says fixture setup', category: 'convention', scope: 'checkout', area: '', source: { kind: 'file', path: 'README.md', startLine: 1, endLine: 1 } });
   f.store.setMemoryStatus(stale.id, 'active');
   f.store.setPinned(pinned.id, true); f.store.setPinned(stale.id, true);
-  assert.throws(() => f.store.setPinned(f.store.proposeMemory(f.project.id, { statement: 'candidate', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'x' } }).id, true), /approved/);
+  assert.throws(() => f.store.setPinned(f.store.proposeMemory(f.project.id, { statement: 'candidate', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'x' } }).id, true), { message: 'Only a remembered note can be pinned' });
   const receipt = f.store.prepareContext(f.project.id, 'translate the landing page');
   assert.deepEqual(receipt.items.map(i => i.id).sort(), [pinned.id, stale.id].sort());
   assert.ok(receipt.items.every(i => i.selection.reason === 'pinned'));

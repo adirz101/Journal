@@ -87,8 +87,8 @@ export function importBrain(store, projectId, raw) {
   const project = store.project(projectId);
   if (typeof raw !== 'string' || Buffer.byteLength(raw) > MAX_IMPORT_BYTES) throw new Error('Import file is missing or larger than 5 MiB');
   let document; try { document = JSON.parse(raw); } catch { throw new Error('Import file is not valid JSON'); }
-  if (document?.format !== BRAIN_FORMAT || document.version !== BRAIN_VERSION || !Array.isArray(document.memories)) throw new Error('Not a Journal knowledge export (format journal-brain, version 1)');
-  if (document.memories.length > 5000) throw new Error('Too many claims in one import');
+  if (document?.format !== BRAIN_FORMAT || document.version !== BRAIN_VERSION || !Array.isArray(document.memories)) throw new Error('Not a Journal project memory export (format journal-brain, version 1)');
+  if (document.memories.length > 5000) throw new Error('Too many notes in one import');
   if (document.checksum !== checksum(document.memories)) throw new Error('Checksum mismatch: the export was modified or damaged');
   const origin = text(String(document.project?.name ?? 'unknown project'), 'project name', 200);
   const existing = store.db.prepare(`SELECT r.body FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.project_id=? AND m.status IN ('active','candidate')`).all(projectId).map(row => JSON.parse(row.body).statement);

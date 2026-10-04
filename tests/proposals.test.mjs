@@ -122,7 +122,7 @@ test('a branch suggestion is remembered on the branch it came from, not the chec
   const memory = f.store.acceptProposal(created.id);
   assert.equal(memory.scope, 'branch'); assert.equal(memory.branch, 'feature/flags');
   assert.equal(f.store.getProposal(created.id).state, 'accepted');
-  assert.throws(() => f.store.setMemoryStatus(memory.id, 'active'), /check out that branch to approve it/, "It is approved on its own branch");
+  assert.throws(() => f.store.setMemoryStatus(memory.id, 'active'), /check out that branch to remember it/, "It is remembered on its own branch");
   f.git('checkout', '-q', 'feature/flags'); f.store.setMemoryStatus(memory.id, 'active');
   assert.equal(f.store.prepareContext(f.project.id, 'Feature flags default').items.length, 1);
   f.git('checkout', '-q', 'main');
@@ -175,7 +175,7 @@ test('revising a note bound to another branch is refused; approving it elsewhere
   const memory = f.store.acceptProposal(created.id);
   const revise = () => f.store.proposeMemory(f.project.id, { memoryId: memory.id, statement: 'Feature flags default to off everywhere', category: memory.category, scope: 'branch', area: '', source: { kind: 'user', note: 'fixture' } });
   assert.throws(revise, /This note belongs to branch feature\/flags; check out that branch to revise it/);
-  assert.throws(() => f.store.setMemoryStatus(memory.id, 'active'), /belongs to branch feature\/flags; check out that branch to approve it/);
+  assert.throws(() => f.store.setMemoryStatus(memory.id, 'active'), /belongs to branch feature\/flags; check out that branch to remember it/);
 });
 
 test('a suggestion made in a worktree is remembered on the worktree branch while the main checkout is elsewhere', t => {
@@ -199,7 +199,7 @@ test('a note for a branch open in a worktree explains that it cannot be revised 
   const memory = f.store.acceptProposal(f.store.generateProposals(s.id).find(p => p.kind === 'test-command').id);
   const revise = () => f.store.proposeMemory(f.project.id, { memoryId: memory.id, statement: 'Run npm test before committing', category: memory.category, scope: 'branch', area: '', source: { kind: 'user', note: 'fixture' } });
   assert.throws(revise, { message: 'This note belongs to branch feature/flags, which is open in a separate copy (worktree); revising it from there is not available yet. You can reject it.' });
-  assert.throws(() => f.store.setMemoryStatus(memory.id, 'active'), { message: 'This note belongs to branch feature/flags, which is open in a separate copy (worktree); approving it from there is not available yet. You can reject it.' });
+  assert.throws(() => f.store.setMemoryStatus(memory.id, 'active'), { message: 'This note belongs to branch feature/flags, which is open in a separate copy (worktree); remembering it from there is not available yet. You can reject it.' });
   assert.equal(f.store.setMemoryStatus(memory.id, 'rejected').status, 'rejected');
 });
 

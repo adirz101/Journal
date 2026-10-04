@@ -158,7 +158,10 @@ test('proposing requires a real source, valid area and allowed enum values', t =
     assert.throws(() => f.propose(extra));
   }
   const m = f.propose(); writeFileSync(resolve(f.repo, 'tests.md'), 'changed');
-  assert.throws(() => f.store.setMemoryStatus(m.id, 'active'), /evidence/i);
+  assert.throws(() => f.propose({ source: null }), { message: 'A note needs a source' });
+  assert.throws(() => f.store.setMemoryStatus(m.id, 'active'), { message: 'Evidence or branch changed; revise the note before remembering it' });
+  f.store.setMemoryStatus(m.id, 'rejected');
+  assert.throws(() => f.store.setMemoryStatus(m.id, 'active'), { message: 'Only a note waiting for review can be remembered' });
 });
 
 test('untracked wildcard filenames cannot impersonate a tracked source', t => {

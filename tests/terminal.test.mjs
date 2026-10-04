@@ -89,7 +89,7 @@ test('a chunked native Codex banner supplies only a hint until exact-ID confirma
   assert.equal(f.store.getSession(first.session.id).nativeId, nativeId);
   assert.equal(f.store.getSession(first.session.id).nativeIdConfirmed, false);
   f.callbacks.exit({ exitCode: 0 });
-  await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'codex', resumeId: first.session.id }), /Confirm the exact/);
+  await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'codex', resumeId: first.session.id }), /Confirm the conversation ID before continuing/);
   await f.manager.confirmNativeId(first.session.id, nativeId);
   const resumed = await f.manager.start({ projectId: f.project.id, provider: 'codex', resumeId: first.session.id });
   assert.equal(resumed.session.nativeId, nativeId);
@@ -104,7 +104,7 @@ test('a later incomplete Codex banner clears a stored unconfirmed hint across ca
   assert.equal(f.store.getSession(first.session.id).nativeId, null);
   assert.equal(f.store.getSession(first.session.id).nativeIdConfirmed, false);
   f.callbacks.exit({ exitCode: 0 });
-  await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'codex', resumeId: first.session.id }), /Confirm the exact/);
+  await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'codex', resumeId: first.session.id }), /Confirm the conversation ID before continuing/);
 });
 
 test('withdrawal names the claim and revision that the native agent actually received', async t => {
@@ -164,13 +164,15 @@ test('spawn failure records failed session and receipt rather than a successful 
 test('a foreign hook UUID cannot silently replace the native resume identity', async t => {
   const f = runtime(t); const started = await f.manager.start({ projectId: f.project.id, provider: 'claude' });
   const nativeId = started.session.nativeId;
+  const errors = []; f.manager.on('event', e => { if (e.type === 'error') errors.push(e.message); });
   f.manager.observe(started.session.id, 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', 'waiting');
+  assert.deepEqual(errors, ['Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.']);
   assert.equal(f.manager.entry(started.session.id).session.nativeId, nativeId);
   assert.equal(f.manager.entry(started.session.id).session.nativeIdConfirmed, false);
   f.manager.observe(started.session.id, nativeId, 'running');
   assert.equal(f.manager.entry(started.session.id).session.nativeIdConfirmed, false);
   f.callbacks.exit({ exitCode: 0 });
-  await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'claude', resumeId: started.session.id }), /Confirm the exact/);
+  await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'claude', resumeId: started.session.id }), /Confirm the conversation ID before continuing/);
 });
 
 test('display credit stays bounded during flood while interrupts still reach the process', async t => {

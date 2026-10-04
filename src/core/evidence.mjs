@@ -60,7 +60,7 @@ function sourceFile(root, path, { tracked = true } = {}) {
 }
 
 export function captureEvidence(project, input) {
-  if (!input || typeof input !== 'object') throw new Error('Knowledge requires a source');
+  if (!input || typeof input !== 'object') throw new Error('A note needs a source');
   if (input.kind === 'user' || input.kind === 'import') {
     const note = text(input.note, `${input.kind} source`); refuseCredentials(note);
     return { kind: input.kind, note, capturedAt: new Date().toISOString() };

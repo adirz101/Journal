@@ -222,7 +222,7 @@ export class JournalStore {
     const carried = !input.supersedes && input.memoryId ? (() => { try { return this.getMemory(input.memoryId).supersedes?.id ?? null; } catch { return null; } })() : null;
     const supersedes = input.supersedes || carried ? this.getMemory(input.supersedes || carried) : null;
     if (supersedes && supersedes.projectId !== projectId) throw new Error('Superseded memory belongs to another project');
-    if (supersedes && (supersedes.id === input.memoryId || (supersedes.status !== 'active' && !carried))) throw new Error('Only another approved claim can be superseded; revise a claim to change it');
+    if (supersedes && (supersedes.id === input.memoryId || (supersedes.status !== 'active' && !carried))) throw new Error('Only another remembered note can be replaced; revise a note to change it');
     if (category === 'brief' && area) throw new Error('Project briefs apply to the whole checkout; leave the area empty');
     if (input.source?.kind === 'git' && PLACEHOLDER.test(statement)) throw new Error('Replace the bracketed placeholders before saving the update');
     const source = captureEvidence(project, input.source);
@@ -315,18 +315,18 @@ export class JournalStore {
   // Git refuses to check out a branch that another worktree has checked out.
   wrongBranch(projectId, branch, verb) {
     const open = this.db.prepare(`SELECT 1 FROM workspaces WHERE project_id=? AND json_extract(body,'$.branch')=? AND json_extract(body,'$.state')='ready'`).get(projectId, branch);
-    return new Error(open ? `This note belongs to branch ${branch}, which is open in a separate copy (worktree); ${verb === 'approve' ? 'approving' : 'revising'} it from there is not available yet. You can reject it.`
-      : `This note belongs to branch ${branch}; check out that branch to ${verb} it`);
+    return new Error(open ? `This note belongs to branch ${branch}, which is open in a separate copy (worktree); ${verb === 'approve' ? 'remembering' : 'revising'} it from there is not available yet. You can reject it.`
+      : `This note belongs to branch ${branch}; check out that branch to ${verb === 'approve' ? 'remember' : verb} it`);
   }
   setMemoryStatus(id, status, { reason = null } = {}) {
     choice(status, ['active', 'rejected', 'archived'], 'status');
     if (reason !== null) choice(reason, ['incorrect', 'superseded', 'withdrawn'], 'reason');
     const memory = this.getMemory(id);
-    if (status === 'active' && memory.status !== 'candidate') throw new Error('Only a candidate can be approved');
+    if (status === 'active' && memory.status !== 'candidate') throw new Error('Only a note waiting for review can be remembered');
     if (status === 'active') {
       const validation = this.validation(this.project(memory.projectId), memory);
       if (validation === 'wrong-branch') throw this.wrongBranch(memory.projectId, memory.branch, 'approve');
-      if (validation !== 'current') throw new Error('Evidence or branch changed; revise before approving');
+      if (validation !== 'current') throw new Error('Evidence or branch changed; revise the note before remembering it');
     }
     this.transaction(() => {
       this.db.prepare('UPDATE memories SET status=?, pinned=CASE WHEN ?=\'active\' THEN pinned ELSE 0 END WHERE id=?').run(status, status, id);
@@ -340,7 +340,7 @@ export class JournalStore {
   setPinned(id, pinned) {
     const memory = this.getMemory(id);
     if (typeof pinned !== 'boolean') throw new Error('Invalid pin');
-    if (pinned && memory.status !== 'active') throw new Error('Only an approved claim can be pinned');
+    if (pinned && memory.status !== 'active') throw new Error('Only a remembered note can be pinned');
     this.db.prepare('UPDATE memories SET pinned=? WHERE id=?').run(pinned ? 1 : 0, id); this.audit(pinned ? 'memory-pinned' : 'memory-unpinned', { id });
     return this.getMemory(id);
   }
@@ -348,7 +348,7 @@ export class JournalStore {
   // still needs review; the branch claim stays as it is.
   proposePromotion(id) {
     const memory = this.getMemory(id);
-    if (memory.scope !== 'branch' || memory.status !== 'active') throw new Error('Only an approved branch claim can be proposed for all branches');
+    if (memory.scope !== 'branch' || memory.status !== 'active') throw new Error('Only a remembered note on one branch can be proposed for all branches');
     if (memory.category === 'brief') throw new Error('Branch updates describe one branch; write a repo overview instead');
     const source = memory.source.kind === 'file' ? { kind: 'file', path: memory.source.path, startLine: memory.source.startLine, endLine: memory.source.endLine }
       : { kind: 'user', note: `${memory.source.note ?? 'Reviewed claim'} (promoted from branch ${memory.branch})`.slice(0, 2000) };
@@ -634,7 +634,7 @@ export class JournalStore {
   // Accepting creates a candidate (still unapproved); status proposals open the helper instead.
   acceptProposal(id) {
     const proposal = this.getProposal(id);
-    if (proposal.state !== 'open') throw new Error('This proposal was already handled');
+    if (proposal.state !== 'open') throw new Error('This suggestion was already handled');
     if (proposal.kind === 'branch-status') throw new Error('Use Propose branch update for status proposals');
     if (proposal.scope === 'branch' && !proposal.branch) throw new Error('This suggestion was made without a branch checked out, so Journal cannot tell which branch it belongs to. Dismiss it to clear it from your suggestions.');
     if (proposal.evidence?.sessionId) this.getSession(proposal.evidence.sessionId);

@@ -73,7 +73,7 @@ export class TerminalManager extends EventEmitter {
   async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, plan = false, disabled = [], references = [] }) {
     if (!PROVIDERS.includes(provider)) throw new Error('Unknown agent provider');
     if (typeof research !== 'boolean' || typeof plan !== 'boolean') throw new Error('Invalid mode option');
-    if (plan && provider === 'codex') throw new Error('Codex has no plan mode; use Research for its read-only sandbox');
+    if (plan && provider === 'codex') throw new Error('Codex has no plan mode; use Read-only instead');
     if (research) plan = false;
     task = text(task, 'task', 4000, true);
     let prior = null;
@@ -82,7 +82,7 @@ export class TerminalManager extends EventEmitter {
       if (prior.projectId !== projectId || prior.provider !== provider) throw new Error('Session belongs to another project or provider');
       // Native conversations are tied to their working directory: resume in place.
       workspaceId = prior.workspaceId ?? null; research = !!prior.research; plan = !research && !!prior.plan;
-      if (!prior.nativeIdConfirmed || !UUID.test(prior.nativeId ?? '')) throw new Error('Confirm the exact native session ID before resuming');
+      if (!prior.nativeIdConfirmed || !UUID.test(prior.nativeId ?? '')) throw new Error('Confirm the conversation ID before continuing');
       if (this.liveEntries().some(entry => entry.session.provider === provider && entry.session.nativeId === prior.nativeId)) throw new Error('This native conversation is already open in another session');
       // An orphan may still be writing to the same conversation outside Journal.
       const orphans = await this.store.activeSessions?.() ?? [];
@@ -96,7 +96,7 @@ export class TerminalManager extends EventEmitter {
       cursor = await this.cursor.find();
       if (!cursor?.path || !cursor.cursor) throw new Error('Cursor CLI is not installed. Install it from the Cursor provider row, then try again.');
       if (!cursor.supports?.resume || !cursor.supports?.createChat) throw new Error('This Cursor CLI version cannot open a chat by its exact ID. Update it with "agent update".');
-      if ((research || plan) && !cursor.supports?.mode) throw new Error(`This Cursor CLI version has no ${research ? 'Ask' : 'Plan'} mode. Update it with "agent update", or start without ${research ? 'Research' : 'Plan'}.`);
+      if ((research || plan) && !cursor.supports?.mode) throw new Error(`This Cursor CLI version has no ${research ? 'Ask' : 'Plan'} mode. Update it with "agent update", or start without ${research ? 'Read-only' : 'Plan'}.`);
     }
     // Always reselect and revalidate here; a stale preview never authorizes delivery.
     const oldReceipt = prior ? await this.store.latestNativeReceipt(projectId, provider, prior.nativeId) : null;
@@ -290,7 +290,7 @@ export class TerminalManager extends EventEmitter {
   async confirmNativeId(id, nativeId) {
     if (!UUID.test(nativeId ?? '')) throw new Error('Enter the exact native session ID (UUID)');
     const session = await this.store.getSession(id);
-    if (isLive(session.status) || session.status === 'orphaned') throw new Error('Stop this session before confirming its resume ID');
+    if (isLive(session.status) || session.status === 'orphaned') throw new Error('Stop this session before confirming its conversation ID');
     session.nativeId = nativeId; session.nativeIdConfirmed = true;
     // Keep a retained in-memory copy in step so a later save cannot revert it.
     const entry = this.entries.get(id); if (entry) Object.assign(entry.session, { nativeId, nativeIdConfirmed: true });
@@ -304,7 +304,7 @@ export class TerminalManager extends EventEmitter {
     // onto a confirmed parent or silently restore confidence on a later hook.
     if (nativeId !== session.nativeId && !entry.identityAmbiguous) {
       entry.identityAmbiguous = true;
-      this.emit('event', { type: 'error', sessionId: id, message: 'Native session identity changed. Stop the terminal and confirm its exact resume ID before resuming.' });
+      this.emit('event', { type: 'error', sessionId: id, message: 'Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.' });
     }
     session.nativeIdConfirmed = !entry.identityAmbiguous;
     if (!entry.stopping && status) session.status = status;

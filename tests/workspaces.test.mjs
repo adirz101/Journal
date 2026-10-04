@@ -125,7 +125,7 @@ test('review fixes: create the reviewed plan exactly; removed worktrees leave re
   assert.equal(changes.available, false); assert.match(changes.reason, /no longer available/);
   const keep = f.store.proposeMemory(f.project.id, { statement: 'Keep me', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'n' } });
   f.store.setMemoryStatus(keep.id, 'active');
-  assert.throws(() => f.store.proposeMemory(f.project.id, { memoryId: keep.id, supersedes: keep.id, statement: 'Self', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'n' } }), /another approved claim/);
+  assert.throws(() => f.store.proposeMemory(f.project.id, { memoryId: keep.id, supersedes: keep.id, statement: 'Self', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'n' } }), /Only another remembered note can be replaced; revise a note to change it/);
 });
 
 test('a plan ID cannot be replayed to overwrite a workspace, and revisions keep what they replace', t => {

@@ -21,7 +21,7 @@ export function buildAgentLaunch(request) {
     const mode = research ? ['--mode=ask'] : plan ? ['--mode=plan'] : [];
     return { executable, argv: [...(nativeId ? [`--resume=${nativeId}`] : []), ...mode, ...(prompt ? ['--', prompt] : [])] };
   }
-  if (plan && provider === 'codex') throw new Error('Codex has no plan mode; use Research for its read-only sandbox');
+  if (plan && provider === 'codex') throw new Error('Codex has no plan mode; use Read-only instead');
 
   const sessionArgs = provider === 'codex'
     ? (resume ? ['resume', nativeId] : [])
