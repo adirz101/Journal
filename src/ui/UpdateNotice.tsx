@@ -16,8 +16,8 @@ export function useUpdateState() {
 
 // Update notice, shown only when there is something to do: a download in
 // progress, an update ready to install, or a version to download by hand (the
-// portable build). It sits at the right of the terminal's bottom bar, or in the
-// sidebar while no project is open. Journal never restarts on its own.
+// portable build). It sits at the right of the session's status bar, or in the
+// sidebar footer while no session is shown. Journal never restarts on its own.
 export function UpdateNotice({ state, onError, compact = false }: { state: UpdateState | null; onError: (error: unknown) => void; compact?: boolean }) {
   // Pending covers the session question; the main process reports the shutdown itself.
   const [pending, setPending] = useState(false); const [attempted, setAttempted] = useState(false);
@@ -37,7 +37,7 @@ export function UpdateNotice({ state, onError, compact = false }: { state: Updat
   return null;
 }
 
-// Updates section of the data dialog: version, manual check, automatic checks.
+// Updates section of the Settings dialog: version, manual check, automatic checks.
 export function UpdateSettings({ state }: { state: UpdateState | null }) {
   const [checked, setChecked] = useState(false); const [error, setError] = useState('');
   if (!state) return null;

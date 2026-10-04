@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { hotkeysCoreFeature, searchFeature, selectionFeature, syncDataLoaderFeature, type ItemInstance } from '@headless-tree/core';
 import { useTree } from '@headless-tree/react';
 import { menuPosition, showMenu, type MenuItem } from './menu';
-import { copy } from './copy';
+import { copy, shell, tip } from './copy';
 import { api, isLive, type DirectoryListing, type FilePreviewData, type FileReference, type FileRoot, type FileStatus, type GitKind, type Project, type Session } from './types';
 import type { LineRange } from './FilePreview';
 
@@ -30,8 +30,8 @@ function lookup(status: FileStatus | undefined) {
   };
 }
 
-export function ExplorerPanel({ project, session, rootsVersion, revealLabel, focusSignal, onPreviewing, onAddReference, onSaveEvidence, onError }: {
-  project: Project; session: Session | null; rootsVersion: string; revealLabel: string; focusSignal: number;
+export function ExplorerPanel({ project, session, rootsVersion, revealLabel, focusSignal, onFocusHandled, onPreviewing, onAddReference, onSaveEvidence, onError }: {
+  project: Project; session: Session | null; rootsVersion: string; revealLabel: string; focusSignal: number; onFocusHandled?: () => void;
   onPreviewing: (previewing: boolean) => void; onAddReference: (reference: FileReference) => Promise<void>;
   onSaveEvidence: (source: { rootKey: string; path: string; startLine: number; endLine: number }) => void; onError: (error: unknown) => void;
 }) {
@@ -238,7 +238,8 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
     const node = scroller.current; if (!node) return;
     const observer = new ResizeObserver(() => setHeight(node.clientHeight)); observer.observe(node); return () => observer.disconnect();
   }, [preview, filter]);
-  useEffect(() => { if (focusSignal) { if (preview) closePreview(); else requestAnimationFrame(() => { const focused = tree.getFocusedItem?.(); (focused?.getElement() ?? scroller.current?.querySelector<HTMLElement>('[role=treeitem]'))?.focus(); }); } }, [focusSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+  // One-shot: App clears the signal once handled, so a remount (a tab switch) never takes focus.
+  useEffect(() => { if (focusSignal) { onFocusHandled?.(); if (preview) closePreview(); else requestAnimationFrame(() => { const focused = tree.getFocusedItem?.(); (focused?.getElement() ?? scroller.current?.querySelector<HTMLElement>('[role=treeitem]'))?.focus(); }); } }, [focusSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const rows = tree.getItems();
   const first = Math.max(0, Math.floor(top / ROW) - 8); const last = Math.min(rows.length, Math.ceil((top + height) / ROW) + 8);
@@ -257,7 +258,7 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
         </select></label>
       <div className="explorer-tools" role="group" aria-label="Show">
         <button aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>All</button>
-        <button aria-pressed={filter === 'changed'} onClick={() => setFilter('changed')}>Changed{changedRows.length ? ` ${changedRows.length}` : ''}</button>
+        <button aria-pressed={filter === 'changed'} title={tip.uncommitted} onClick={() => setFilter('changed')}>{shell.uncommitted}{changedRows.length ? ` ${changedRows.length}` : ''}</button>
         <button aria-label="Refresh files" title="Refresh" onClick={() => { generation.current++; children.current.clear(); loading.current.clear(); tree.rebuildTree(); setVersion(v => v + 1); void refreshStatus(); for (const id of expanded) void load(id); }}>↻</button>
       </div>
     </div>
@@ -312,7 +313,7 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
     </ul>
 
     : <div className="file-tree" ref={scroller} onScroll={event => setTop(event.currentTarget.scrollTop)}>
-      {tree.isSearchOpen() && <input {...tree.getSearchInputElementProps()} className="tree-search" aria-label="Find in loaded files" placeholder="Find in open folders" />}
+      {tree.isSearchOpen() && <input {...tree.getSearchInputElementProps()} className="tree-search" onKeyDown={event => { if (event.key === 'Escape') event.preventDefault(); /* the tree closes its search; the overlay stays */ }} aria-label="Find in loaded files" placeholder="Find in open folders" />}
       <div {...tree.getContainerProps('Files')} className="tree-rows" style={{ height: rows.length * ROW }}>
         {rows.slice(first, last).map(item => {
           const data = item.getItemData(); const meta = item.getItemMeta(); const state = stateOf(data); const dot = folderKind(data);

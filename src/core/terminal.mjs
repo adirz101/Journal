@@ -119,7 +119,7 @@ export class TerminalManager extends EventEmitter {
     this.reservedSlots.add(slot);
     try { return await this.launch({ ...request, slot }); } finally { this.reservedSlots.delete(slot); }
   }
-  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, plan = false, disabled = [], references = [], slot = null }) {
+  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, plan = false, disabled = [], references = [], slot = null, cliVersion = null }) {
     if (!PROVIDERS.includes(provider)) throw new Error('Unknown agent provider');
     if (typeof research !== 'boolean' || typeof plan !== 'boolean') throw new Error('Invalid mode option');
     if (plan && provider === 'codex') throw new Error('Codex has no plan mode; use Read-only instead');
@@ -163,7 +163,9 @@ export class TerminalManager extends EventEmitter {
       status: 'starting', receiptId: receipt.id, resumedFrom: prior?.id ?? null, createdAt: now, lastActivityAt: now,
       // An additional-folder session runs in that folder with its own Git identity (if any).
       branch: project.cwd ? project.cwdBranch ?? null : project.branch, head: project.cwd ? project.cwdHead ?? null : project.head, cwd, workspaceId, research, plan, baseline, runtimeId: this.runtimeId, activity: null,
-      slot, nativeIdSource, identityMismatch: false, lastOutputAt: null, pending: null };
+      slot, nativeIdSource, identityMismatch: false, lastOutputAt: null, pending: null,
+      // The CLI version main detected for this launch (a resume records the version at resume time).
+      cliVersion: typeof cliVersion === 'string' ? cliVersion.slice(0, 64) : null };
     let prompt = task;
     if (receipt.packet || (prior && (oldReceipt?.hadKnowledge || oldReceipt?.items.length))) {
       const withdrawn = oldReceipt?.items.filter(item => !receipt.items.some(current => current.revisionId === item.revisionId)) ?? [];
@@ -528,7 +530,7 @@ export class TerminalManager extends EventEmitter {
   }
   record(sessionId, kind, body) {
     const event = { sessionId, kind, at: new Date().toISOString(), body };
-    try { Promise.resolve(this.store.appendEvent?.(sessionId, kind, body)).catch(() => {}); } catch { /* timeline is best effort */ }
+    try { Promise.resolve(this.store.appendEvent?.(sessionId, kind, body, event.at)).catch(() => {}); } catch { /* timeline is best effort */ }
     if (!this.disposed) this.emit('event', { type: 'timeline', event });
   }
   attach(id) {

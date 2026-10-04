@@ -94,7 +94,32 @@ Plan: [docs/superpowers/plans/2026-10-04-ux-redesign-phase-1.md](superpowers/pla
 - Provider marks (Simple Icons, CC0) next to provider names, with attribution in the third-party notices. Open item D9a: the OpenAI mark (used for Codex) comes from Simple Icons 15.22.0 because later releases removed it; check the OpenAI brand page and the source before a release.
 - App shortcuts are routed in the main process and work while the terminal has focus (BUG-7), and the router steps aside while a dialog is open (the renderer reports dialog state). Button labels, tooltips and `aria-keyshortcuts` show the same keys (the application menu does not list them). macOS: Cmd+N, Cmd+O, Cmd+1-4, Shift+Cmd+K, Cmd+E, Cmd+I, Option+Cmd+1-3. Windows and Linux: Ctrl+Shift+N, Ctrl+O (outside the terminal), Alt+1-4, Ctrl+Shift+K, Ctrl+Shift+E, Ctrl+Shift+B, Alt+Shift+1-3. Other terminal keys (Ctrl+C, Ctrl+R, Ctrl+O, Alt+letter…) go to the terminal; standard window keys such as Cmd+W (Ctrl+W on Windows and Linux) still belong to the app menu. Slot shortcuts are ignored while a switch is in progress.
 
-Still open: the Windows items in [WINDOWS](WINDOWS.md) (shortcut pass, Alt menu-bar focus, ConPTY keys) need a real Windows machine; the Linux Ctrl+O desktop check runs for the first time in CI; the box-drawing check against real Claude Code and Codex sessions has not been done (fixtures only); the terminal shows three rows at 900x640 with widened sidebars until Phase 3 moves the composer.
+Still open: the Windows items in [WINDOWS](WINDOWS.md) (shortcut pass, Alt menu-bar focus, ConPTY keys) need a real Windows machine; the Linux Ctrl+O desktop check runs for the first time in CI; the box-drawing check against real Claude Code and Codex sessions has not been done (fixtures only). The three-row terminal at 900x640 is fixed in Phase 3.
+
+## UX redesign - Phase 2 (honest session model)
+
+Plan: [docs/superpowers/plans/2026-10-04-ux-redesign-phase-2.md](superpowers/plans/2026-10-04-ux-redesign-phase-2.md).
+
+- Stable slots: the runtime gives each live session a slot (1-4) that it keeps until it ends, across renderer reloads and when another session stops; the slot shortcuts (Cmd+1-4, Alt+1-4) follow these slots. A fifth start is refused with the `SLOTS_FULL` code, which crosses the preload bridge with the other error codes. Runtime protocol 4.
+- Honest per-provider states (`sessionState.ts`): Claude reports Working, Needs approval (with the redacted command or path it asks about) and Your turn through its hooks; Codex and Cursor report no state, so Journal shows Running with the time of their last output ("output just now", "quiet 2m") and marks the status as limited, with a tooltip saying Journal sees output, not the agent's state.
+- Next needs-you (Cmd+J, Ctrl+Shift+J on Windows and Linux; Ctrl+J stays with the terminal) jumps to the next session waiting for approval, then orphaned ones.
+- Notifications: one OS notification per approval episode while the window is unfocused, with the session name (credentials redacted) and, only if the user opts in, the command. Clicking it selects that session, except while a dialog is open. The macOS Dock badge and the Windows taskbar flash count sessions waiting for approval and orphaned sessions. Headless test runs never reach the OS notification, badge or taskbar. The two preferences (notifications, include the command) are stored in `preferences.json`; they started as application-menu checkboxes and moved to Settings in Phase 3.
+
+Native checks still open: see [NATIVE-VALIDATION](NATIVE-VALIDATION.md) "To verify" (packaged notifications and badge on macOS and Windows, the Windows portable build's toasts, Codex and Cursor idle repaints).
+
+## UX redesign - Phase 3 (shell)
+
+Plan: [docs/superpowers/plans/2026-10-04-ux-redesign-phase-3.md](superpowers/plans/2026-10-04-ux-redesign-phase-3.md). Boards B4, B10 and B11; fixture-only, no new provider behaviour.
+
+- Sidebar: a project switcher (native menu: open, switch, pin order with a `Pinned` label, manage; it lists projects even when none is open, at most 28 because main caps menus at 40 items and 40-character IDs) with the current branch; New session; Active sessions by slot with a 4-slot meter; Recent grouped by day; Archived on request; a footer with Project memory (suggestion count in the accent colour), Settings and the runtime line. Right-click on the switcher acts on the current project.
+- Settings (Cmd+, / Ctrl+,, also the app menu on macOS and the File menu elsewhere) holds Appearance, Notifications (the Phase 2 preferences, which left the menu), Updates and Data and backups.
+- The main column has two views. New session holds the previous launch bar (task, references, Start buttons, Preview context, workspace and modes) and stays available with all four slots in use, where Start is disabled and says why. Session shows a header (title, provider and CLI version recorded at launch, workspace, mode, start time, state, Interrupt, Stop, Continue, Archive and a menu), Claude's attention banner, the terminal and a status bar (what was sent, changes since start, update notice, "Native permissions · Output not saved").
+- Inspector with three tabs: Session (what the agent knows, then what it did: Claude's commands, edits and approvals from hooks; Codex and Cursor say their activity is not visible and keep "Show full timeline"), Files (Changed since start or All files; the explorer's own filter is now "Uncommitted") and Memory. Cmd+Option+1-3 / Alt+Shift+1-3 select tabs.
+- Layout modes: wide (1440 px and over) docks a 264 px sidebar and a 384 px inspector; medium (1180-1439 px) keeps a 248 px sidebar and folds the inspector into a 44 px rail; narrow folds both into rails. Rail buttons open an overlay that never refits the terminal; Esc closes it only from inside, a pointer press elsewhere closes it too. Cmd+I / Ctrl+Shift+B toggles the inspector and Cmd+\ / Ctrl+Shift+\ the sidebar (Ctrl+\ stays with the terminal). Nothing here animates.
+- Fixes found while finishing the phase: stored and live timeline events share a timestamp so they no longer show twice; the timeline is fetched again when the session's status or the runtime connection changes, so a runtime crash shows "Recovered after the runtime stopped"; the Changed view refreshes when shown and after Claude command-end events (shell commands change files without a file event); the update notice sits in the sidebar footer whenever no status bar is shown.
+- Fixture results (local macOS): at 900x640 the terminal keeps at least 10 rows and at 1280x800 at least 100 columns, and opening the overlay does not refit it. Two long desktop specs have 120 s timeouts.
+
+Native checks still open: see [NATIVE-VALIDATION](NATIVE-VALIDATION.md) "To verify" (the banner's command from a real `PermissionRequest`; Windows Settings and sidebar keys and the default window size).
 
 ## UX redesign - Phase 4 (composer)
 
@@ -109,9 +134,9 @@ Plan: [docs/superpowers/plans/2026-10-04-ux-redesign-phase-4.md](superpowers/pla
 
 | Check | Result |
 | --- | --- |
-| `npm test` | 284 passed |
-| `npm run check`, `npm run build` | Passed (the existing ~545 KiB chunk warning remains) |
-| `npm run test:desktop` | 18 passed, 1 skipped (headless): real Electron, runtime and node-pty with fixture CLIs, covering four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches, project management, right-click menus, the file explorer, keyboard shortcuts while the terminal has focus (slots, focus, new session, panel tabs) and the Cursor provider (install, sign-in, launch, resume) |
+| `npm test` | 455 passed (4 October 2026, Phase 3 branch with Phase 6 core merged) |
+| `npm run check`, `npm run build` | Passed (the large-chunk warning remains: the main chunk is now 716 kB) |
+| `npm run test:desktop` | 42 passed, 1 skipped (the Linux-only Ctrl+O check), twice in a row (headless, 4 October 2026, Phase 3 branch after the review fixes): real Electron, runtime and node-pty with fixture CLIs, covering the sidebar, Settings, the session header and status bar, the inspector, layout modes and small windows, notifications, updates, four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches, project management, right-click menus, the file explorer, keyboard shortcuts while the terminal has focus (slots, focus, new session, panel tabs) and the Cursor provider (install, sign-in, launch, resume) |
 | `npm run dist:dir` | Observed 4 October 2026 on an Apple M4 Pro (arm64), macOS 27.0.1, with `DEVELOPER_DIR` set to Xcode (needs Xcode 26 or later, see [RELEASING](RELEASING.md)): the unsigned app builds; `release:audit` passes (301 packed and 54 unpacked files, including the bundled JetBrains Mono font files); `smoke:packaged` passes |
 | GitHub Actions | Active since 4 October 2026 (the `workflow` scope was granted): fixture CI on macOS, Linux and experimental Windows; results per GitHub Actions |
 

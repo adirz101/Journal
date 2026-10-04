@@ -815,6 +815,23 @@ test('Esc while idle or for Codex changes nothing', async t => {
   assert.equal(f.store.getSession(codex.id).status, 'running'); assert.equal(f.store.getSession(codex.id).activity, null);
 });
 
+test('start stores the CLI version main detected and persists it; resume records the version at resume time', async t => {
+  const f = runtime(t);
+  const started = await f.manager.start({ projectId: f.project.id, provider: 'claude', task: 'Version task', cliVersion: '2.1.0 (Claude Code)' });
+  assert.equal(started.session.cliVersion, '2.1.0 (Claude Code)');
+  assert.equal(f.store.getSession(started.session.id).cliVersion, '2.1.0 (Claude Code)', 'kept in the stored session body');
+  f.callbacks.exit({ exitCode: 0 });
+  const resumed = await f.manager.start({ projectId: f.project.id, provider: 'claude', resumeId: started.session.id, cliVersion: '2.2.0 (Claude Code)' });
+  assert.equal(resumed.session.cliVersion, '2.2.0 (Claude Code)');
+});
+
+test('a missing or non-string CLI version becomes null, and a long one is cut to 64 characters', async t => {
+  const f = runtime(t);
+  assert.equal((await f.manager.start({ projectId: f.project.id, provider: 'codex', task: 'a' })).session.cliVersion, null);
+  assert.equal((await f.manager.start({ projectId: f.project.id, provider: 'codex', task: 'b', cliVersion: { evil: true } })).session.cliVersion, null);
+  assert.equal((await f.manager.start({ projectId: f.project.id, provider: 'codex', task: 'c', cliVersion: 'x'.repeat(200) })).session.cliVersion.length, 64);
+});
+
 // ----- Phase 6: retained buffers (BUG-8), the end snapshot (D11) and BUG-9 -----
 
 test('a ninth exited session releases the oldest buffer', async t => {

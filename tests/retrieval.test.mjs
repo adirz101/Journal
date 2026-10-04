@@ -104,6 +104,11 @@ test('a version 1 database migrates in place and keeps knowledge searchable', t 
   reopened.setMemoryStatus(memory.id, 'active');
   assert.equal(reopened.prepareContext(project.id, 'payment retrying').items[0]?.id, memory.id);
   reopened.appendEvent('s1', 'start', {}); assert.throws(() => reopened.appendEvent('s1', 'made-up', {}), /event kind/);
+  // The caller's timestamp is kept, so the window merges the stored and live copies.
+  reopened.appendEvent('s1', 'stop', {}, '2026-10-04T10:00:00.123Z'); reopened.appendEvent('s1', 'exit', {}, 'not a time');
+  const events = reopened.db.prepare("SELECT kind, at FROM events WHERE session_id='s1'").all();
+  assert.equal(events.find(e => e.kind === 'stop').at, '2026-10-04T10:00:00.123Z');
+  assert.ok(Number.isFinite(Date.parse(events.find(e => e.kind === 'exit').at)));
 });
 
 test('session changes compare with the starting commit and label pre-existing edits', t => {

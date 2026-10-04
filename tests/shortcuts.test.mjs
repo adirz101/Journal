@@ -11,18 +11,18 @@ const key = (spec, extra = {}) => {
 };
 
 const ROUTED = {
-  darwin: [['Meta+N', 'new-session'], ['Meta+O', 'open-project'], ['Meta+Shift+K', 'add-note'], ['Meta+E', 'focus-terminal'], ['Meta+I', 'toggle-inspector'],
-    ['Meta+1', 'slot-1'], ['Meta+4', 'slot-4'], ['Meta+J', 'next-needs-you'], ['Meta+Alt+1', 'tab-session'], ['Meta+Alt+2', 'tab-files'], ['Meta+Alt+3', 'tab-memory']],
-  win32: [['Control+Shift+N', 'new-session'], ['Control+Shift+K', 'add-note'], ['Control+Shift+E', 'focus-terminal'], ['Control+Shift+B', 'toggle-inspector'],
-    ['Alt+1', 'slot-1'], ['Alt+4', 'slot-4'], ['Control+Shift+J', 'next-needs-you'], ['Alt+Shift+1', 'tab-session'], ['Alt+Shift+2', 'tab-files'], ['Alt+Shift+3', 'tab-memory']],
+  darwin: [['Meta+N', 'new-session'], ['Meta+O', 'open-project'], ['Meta+Shift+K', 'add-note'], ['Meta+E', 'focus-terminal'], ['Meta+I', 'toggle-inspector'], ['Meta+\\', 'toggle-sidebar'],
+    ['Meta+1', 'slot-1'], ['Meta+4', 'slot-4'], ['Meta+J', 'next-needs-you'], ['Meta+Alt+1', 'tab-session'], ['Meta+Alt+2', 'tab-files'], ['Meta+Alt+3', 'tab-memory'], ['Meta+,', 'settings']],
+  win32: [['Control+Shift+N', 'new-session'], ['Control+Shift+K', 'add-note'], ['Control+Shift+E', 'focus-terminal'], ['Control+Shift+B', 'toggle-inspector'], ['Control+Shift+\\', 'toggle-sidebar'],
+    ['Alt+1', 'slot-1'], ['Alt+4', 'slot-4'], ['Control+Shift+J', 'next-needs-you'], ['Alt+Shift+1', 'tab-session'], ['Alt+Shift+2', 'tab-files'], ['Alt+Shift+3', 'tab-memory'], ['Control+,', 'settings']],
 };
 ROUTED.linux = ROUTED.win32;
 
 // Keys the terminal and its CLI own: never intercepted.
 const TERMINAL = {
-  darwin: ['Control+C', 'Control+D', 'Control+Z', 'Control+L', 'Control+R', 'Control+O', 'Control+A', 'Control+E', 'Control+K', 'Control+U', 'Control+W', 'Control+1', 'Alt+1', 'Alt+B', 'Meta+C', 'Meta+V', 'Meta+Q', 'Meta+W', 'Meta+R', 'Meta+5', 'Meta+K', 'Meta+P', 'Meta+Enter', 'Meta+Shift+J', 'Control+J'],
+  darwin: ['Control+C', 'Control+D', 'Control+Z', 'Control+L', 'Control+R', 'Control+O', 'Control+A', 'Control+E', 'Control+K', 'Control+U', 'Control+W', 'Control+1', 'Alt+1', 'Alt+B', 'Meta+C', 'Meta+V', 'Meta+Q', 'Meta+W', 'Meta+R', 'Meta+5', 'Meta+K', 'Meta+P', 'Meta+Enter', 'Meta+Shift+J', 'Control+J', 'Meta+Shift+,', 'Control+,', 'Control+\\', 'Meta+Shift+\\'],
   win32: ['Control+C', 'Control+D', 'Control+Z', 'Control+L', 'Control+R', 'Control+O', 'Control+N', 'Control+P', 'Control+K', 'Control+W', 'Control+E', 'Control+B', 'Control+A', 'Control+U',
-    'Control+1', 'Control+Enter', 'Control+J', 'Alt+J', 'Alt+B', 'Alt+F', 'Alt+5', 'Control+Alt+2', 'Control+Shift+C', 'Control+Shift+V', 'Control+Shift+P', 'Control+Shift+T', 'Control+Shift+W', 'Control+Shift+F', 'Control+Shift+X', 'Control+Shift+Z', 'Control+Shift+A', 'Meta+1', 'Meta+N'],
+    'Control+1', 'Control+Enter', 'Control+J', 'Alt+J', 'Alt+B', 'Alt+F', 'Alt+5', 'Control+Alt+2', 'Control+Shift+C', 'Control+Shift+V', 'Control+Shift+P', 'Control+Shift+T', 'Control+Shift+W', 'Control+Shift+F', 'Control+Shift+X', 'Control+Shift+Z', 'Control+Shift+A', 'Meta+1', 'Meta+N', 'Control+Shift+,', 'Meta+,', 'Control+\\', 'Meta+\\'],
 };
 TERMINAL.linux = TERMINAL.win32;
 
@@ -72,6 +72,22 @@ test('punctuation is never mistaken for a letter by its physical position', () =
   assert.equal(matchShortcut({ ...key('Meta+E'), key: 'у' }, 'darwin'), 'focus-terminal');
 });
 
+test('the backslash shortcut works on ISO keyboards and Ctrl+\\ stays with the terminal', () => {
+  // UK ISO: the \\ key beside left Shift reports IntlBackslash; the key where US has \\ types #.
+  for (const platform of ['win32', 'linux']) {
+    assert.equal(matchShortcut({ ...key('Control+Shift+\\'), code: 'IntlBackslash', key: '|' }, platform), 'toggle-sidebar', platform);
+    assert.equal(matchShortcut({ ...key('Control+Shift+\\'), code: 'IntlBackslash', key: '\\' }, platform), 'toggle-sidebar', platform);
+    // Another layout that puts \\ on some other key is matched by its character.
+    assert.equal(matchShortcut({ ...key('Control+Shift+\\'), code: 'Quote', key: '|' }, platform), 'toggle-sidebar', platform);
+    // Without Shift it is SIGQUIT for the terminal, whichever key produces it.
+    assert.equal(matchShortcut({ ...key('Control+\\'), code: 'IntlBackslash' }, platform), null, platform);
+    assert.equal(matchShortcut({ ...key('Control+\\'), code: 'Quote' }, platform), null, platform);
+  }
+  assert.equal(matchShortcut({ ...key('Meta+\\'), code: 'Backquote' }, 'darwin'), 'toggle-sidebar');
+  assert.equal(matchShortcut({ ...key('Control+\\'), code: 'Backquote' }, 'darwin'), null);
+  assert.equal(matchShortcut({ ...key('Meta+\\'), code: 'IntlBackslash', key: '§' }, 'darwin'), null, 'the Mac ISO § key');
+});
+
 test('auto-repeat is still claimed but not dispatched', () => {
   const repeat = key('Meta+N', { isAutoRepeat: true });
   assert.equal(matchShortcut(repeat, 'darwin'), 'new-session');
@@ -91,7 +107,7 @@ test('aria-keyshortcuts strings name the same keys as each row', () => {
   for (const platform of ['darwin', 'win32', 'linux']) {
     for (const row of shortcutRows(platform)) {
       const modifiers = [row.alt && 'Alt', row.control && 'Control', row.meta && 'Meta', row.shift && 'Shift'].filter(Boolean);
-      const name = row.code ? row.code.replace(/^Digit/, '') : row.key.toUpperCase();
+      const name = row.code ? ({ Comma: ',', Backslash: '\\' }[row.code] ?? row.code.replace(/^Digit/, '')) : row.key.toUpperCase();
       assert.equal(row.aria, [...modifiers, name].join('+'), `${platform} ${row.id}`);
     }
     const keys = shortcutKeys(platform);

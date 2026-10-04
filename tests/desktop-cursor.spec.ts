@@ -2,7 +2,7 @@ import { test, expect, type ElectronApplication, _electron as electron } from '@
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { inspectorTab, sessionStatus } from './support/ui';
+import { filesView, inspectorTab, newSession, sessionStatus } from './support/ui';
 
 // Cursor as a third provider with fake CLIs: install (confirmed, visible,
 // failure and success), PATH not refreshed, sign-in, launch with an exact chat
@@ -92,14 +92,14 @@ console.log('Installed to ~/.local/bin/agent. Add ~/.local/bin to your PATH.');`
 
     // Launch with an exact chat ID in Ask mode, beside a Claude session.
     await page.getByLabel('Read-only', { exact: true }).check();
-    await page.getByLabel('Initial task').fill('Summarise the readme');
+    await newSession(page); await page.getByLabel('Initial task').fill('Summarise the readme');
     await page.getByRole('button', { name: 'Start Cursor' }).click();
     await expect(page.locator('.terminal-surface')).toContainText(`RAN ["--resume=${CHAT}","--mode=ask"]`);
-    await expect(sessionStatus(page)).toContainText('read-only');
+    await expect(sessionStatus(page)).toContainText('Read-only');
     const cursorLaunch = launches().find(l => l.bin === 'agent')!;
     expect(cursorLaunch.argv.slice(-2)).toEqual(['--', 'Summarise the readme']); // no approved knowledge yet: the task alone
     expect(cursorLaunch.argv).not.toContain('--force');
-    await page.getByLabel('Read-only', { exact: true }).uncheck();
+    await newSession(page); await page.getByLabel('Read-only', { exact: true }).uncheck();
     await page.getByLabel('Initial task').fill('Claude side task');
     await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
     await expect(page.getByRole('button', { name: /^Cursor: Summarise the readme/ })).toBeVisible();
@@ -107,7 +107,7 @@ console.log('Installed to ~/.local/bin/agent. Add ~/.local/bin to your PATH.');`
 
     // A File Explorer reference is copied (never typed) and the Cursor terminal gets focus.
     await page.getByRole('button', { name: /^Cursor: Summarise the readme/ }).click();
-    await inspectorTab(page, 'Files');
+    await inspectorTab(page, 'Files'); await filesView(page, 'all');
     await menu(app, 'refSession'); await page.getByRole('treeitem', { name: /^README\.md/ }).click({ button: 'right' });
     await expect(page.locator('.explorer-note')).toContainText('Copied README.md');
     await expect(page.locator('.explorer-note')).toContainText('Journal cannot see when Cursor is ready');

@@ -54,7 +54,8 @@ export function TerminalPane({ sessionId, live, appearance, onError }: { session
     }).catch(failed);
     attach();
     const input = terminal.onData(data => { if (acceptInput && liveRef.current) void api('write', { id: sessionId, data }).catch(failed); });
-    const focus = (event: Event) => { if ((event as CustomEvent).detail === sessionId) terminal.focus(); };
+    // No session ID: whichever terminal is shown (an overlay returning focus).
+    const focus = (event: Event) => { const target = (event as CustomEvent).detail; if (target === undefined || target === sessionId) terminal.focus(); };
     window.addEventListener('journal:focus-terminal', focus);
     // Only a changed size is sent: the runtime treats output right after a resize
     // as a repaint, not agent output, so layout changes that keep the size must not count.

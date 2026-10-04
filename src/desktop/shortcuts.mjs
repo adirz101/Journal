@@ -11,6 +11,8 @@
 // Add a row only together with the renderer code that handles its id: a row
 // without a handler would swallow a key and do nothing.
 //
+// code: a physical key; codes and chars: other physical keys and characters that
+// also match (the modifiers must still match exactly).
 // label: shown in tooltips and <kbd>. aria: the same keys in the format of the
 // aria-keyshortcuts attribute (modifiers Alt, Control, Meta, Shift, then the key).
 const digit = n => `Digit${n}`;
@@ -20,9 +22,14 @@ const MAC = [
   { id: 'add-note', meta: true, shift: true, key: 'k', label: '⇧⌘K', aria: 'Meta+Shift+K' },
   { id: 'focus-terminal', meta: true, key: 'e', label: '⌘E', aria: 'Meta+E' },
   { id: 'toggle-inspector', meta: true, key: 'i', label: '⌘I', aria: 'Meta+I' },
+  // Matched by the character too: ISO and other layouts put \ on another key.
+  // (On a Mac ISO keyboard IntlBackslash is the § key, so it is not listed.)
+  { id: 'toggle-sidebar', meta: true, code: 'Backslash', chars: ['\\'], label: '⌘\\', aria: 'Meta+\\' },
   ...[1, 2, 3, 4].map(n => ({ id: `slot-${n}`, meta: true, code: digit(n), label: `⌘${n}`, aria: `Meta+${n}` })),
   { id: 'next-needs-you', meta: true, key: 'j', label: '⌘J', aria: 'Meta+J' },
   ...['session', 'files', 'memory'].map((tab, i) => ({ id: `tab-${tab}`, meta: true, alt: true, code: digit(i + 1), label: `⌥⌘${i + 1}`, aria: `Alt+Meta+${i + 1}` })),
+  // Punctuation matches its physical key: letter() never matches it.
+  { id: 'settings', meta: true, code: 'Comma', label: '⌘,', aria: 'Meta+,' },
 ];
 const OTHER = [
   { id: 'new-session', control: true, shift: true, key: 'n', label: 'Ctrl+Shift+N', aria: 'Control+Shift+N' },
@@ -30,10 +37,14 @@ const OTHER = [
   { id: 'focus-terminal', control: true, shift: true, key: 'e', label: 'Ctrl+Shift+E', aria: 'Control+Shift+E' },
   // Ctrl+Shift+I opens developer tools in development builds.
   { id: 'toggle-inspector', control: true, shift: true, key: 'b', label: 'Ctrl+Shift+B', aria: 'Control+Shift+B' },
+  // Ctrl+\ without Shift sends SIGQUIT and stays with the terminal.
+  // UK and other ISO keyboards report the \ key beside left Shift as IntlBackslash.
+  { id: 'toggle-sidebar', control: true, shift: true, code: 'Backslash', codes: ['IntlBackslash'], chars: ['\\', '|'], label: 'Ctrl+Shift+\\', aria: 'Control+Shift+\\' },
   ...[1, 2, 3, 4].map(n => ({ id: `slot-${n}`, alt: true, code: digit(n), label: `Alt+${n}`, aria: `Alt+${n}` })),
   // Ctrl+J without Shift is a newline in shells and stays with the terminal.
   { id: 'next-needs-you', control: true, shift: true, key: 'j', label: 'Ctrl+Shift+J', aria: 'Control+Shift+J' },
   ...['session', 'files', 'memory'].map((tab, i) => ({ id: `tab-${tab}`, alt: true, shift: true, code: digit(i + 1), label: `Alt+Shift+${i + 1}`, aria: `Alt+Shift+${i + 1}` })),
+  { id: 'settings', control: true, code: 'Comma', label: 'Ctrl+,', aria: 'Control+,' },
 ];
 export const shortcutRows = platform => platform === 'darwin' ? MAC : OTHER;
 
@@ -61,7 +72,7 @@ export function matchShortcut(input, platform) {
   const pressed = letter(input);
   for (const row of shortcutRows(platform)) {
     if (!!row.meta !== !!input.meta || !!row.control !== !!input.control || !!row.alt !== !!input.alt || !!row.shift !== !!input.shift) continue;
-    if (row.code ? input.code === row.code : pressed === row.key) return row.id;
+    if (row.code ? input.code === row.code || row.codes?.includes(input.code) || row.chars?.includes(input.key) : pressed === row.key) return row.id;
   }
   return null;
 }

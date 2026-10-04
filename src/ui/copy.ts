@@ -76,6 +76,8 @@ export const shell = {
   appearance: 'Appearance', dark: 'Dark', light: 'Light', notifications: 'Notifications',
   notifyApproval: 'Notify me when Claude needs approval', notifyCommand: 'Show the command in notifications',
   notifyCommandHint: 'Notifications can appear on the lock screen.', dataAndBackups: 'Data and backups', updates: 'Updates',
+  // The switcher menu lists at most 28 projects; Open project… on a known folder reopens it.
+  moreProjects: (n: number) => `${count(n, 'more project')} not listed · use Open project… to reach one`,
   // B: header, banner, status bar, inspector
   buildMode: 'Build mode', planMode: 'Plan mode', started: (ago: string) => `Started ${ago} ago`, limitedStatus: 'Limited status',
   interrupt: 'Interrupt', approvalTitle: 'Claude is waiting for your approval', answerInTerminal: 'Answer in the terminal.',

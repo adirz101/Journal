@@ -12,7 +12,7 @@ test('Check for Updates… sits in the app menu on macOS and in Help on Windows'
   assert.deepEqual(mac[0].submenu.filter(item => item.role).map(item => item.role), ['about', 'services', 'hide', 'hideOthers', 'unhide', 'quit'], 'The standard app menu stays');
   assert.deepEqual(mac.slice(1, 5).map(item => item.role), ['fileMenu', 'editMenu', 'viewMenu', 'windowMenu']);
   const win = menuTemplate({ ...options, platform: 'win32' });
-  assert.deepEqual(win.map(item => item.role), ['fileMenu', 'editMenu', 'viewMenu', 'windowMenu', 'help']);
+  assert.deepEqual(win.map(item => item.role ?? item.label), ['File', 'editMenu', 'viewMenu', 'windowMenu', 'help']);
   assert.equal(win[4].submenu[0].label, 'Check for Updates…');
   find(mac, 'check-for-updates').click(); find(win, 'check-for-updates').click(); assert.deepEqual(calls, ['check', 'check']);
   win[4].submenu.at(-2).click(); win[4].submenu.at(-1).click(); assert.deepEqual(opened, [PROJECT_URL, `${PROJECT_URL}/releases`]);
@@ -45,29 +45,34 @@ test('released builds have no Reload or developer tools in the View menu', () =>
   }
 });
 
-test('notification preferences are menu checkboxes until the Settings dialog exists', () => {
-  const options = { name: 'Journal', checkForUpdates() {}, openUrl() {} };
+test('Settings… sits in the app menu on macOS and in File on Windows and Linux', () => {
   for (const platform of ['darwin', 'win32', 'linux']) {
-    const changes = [];
-    const setPreference = (key, value) => changes.push([key, value]);
-    const on = menuTemplate({ ...options, platform, preferences: { notifications: true, notificationCommand: false }, setPreference });
-    const approval = find(on, 'notify-approval'); const command = find(on, 'notify-command');
-    assert.equal(approval.type, 'checkbox', platform); assert.equal(command.type, 'checkbox', platform);
-    assert.equal(approval.label, 'Notify When Claude Needs Approval'); assert.equal(command.label, 'Show Commands in Notifications');
-    assert.equal(approval.checked, true, platform); assert.equal(command.checked, false, platform); assert.equal(command.enabled, true, platform);
-    const parent = on.find(item => item.submenu?.includes(approval));
-    assert.ok(parent.submenu.includes(command));
-    if (platform === 'darwin') assert.equal(parent, on[0], 'macOS: the app menu');
-    else assert.equal(parent.role, 'windowMenu', `${platform}: the Window menu`);
-    approval.click(); command.click();
-    assert.deepEqual(changes, [['notifications', false], ['notificationCommand', true]], platform);
-
-    const off = menuTemplate({ ...options, platform, preferences: { notifications: false, notificationCommand: true }, setPreference });
-    assert.equal(find(off, 'notify-approval').checked, false, platform);
-    assert.equal(find(off, 'notify-command').checked, true, platform);
-    assert.equal(find(off, 'notify-command').enabled, false, `${platform}: disabled while notifications are off`);
+    let opened = 0;
+    const template = menuTemplate({ name: 'Journal', checkForUpdates() {}, openUrl() {}, openSettings: () => opened++, platform });
+    const settings = find(template, 'settings');
+    assert.equal(settings.label, 'Settings…', platform);
+    assert.equal(settings.accelerator, 'CmdOrCtrl+,', platform);
+    assert.equal(settings.registerAccelerator, false, `${platform}: the shortcut router owns the key`);
+    settings.click(); assert.equal(opened, 1, platform);
+    const parent = template.find(item => item.submenu?.includes(settings));
+    if (platform === 'darwin') {
+      assert.equal(parent, template[0], 'macOS: the app menu');
+      const items = parent.submenu.map(item => item.role ?? item.label ?? item.type);
+      assert.deepEqual(items.slice(0, 4), ['about', 'Check for Updates…', 'Settings…', 'separator']);
+      assert.equal(template[1].role, 'fileMenu');
+    } else {
+      assert.equal(parent.label, 'File', platform);
+      assert.deepEqual(parent.submenu.map(item => item.id ?? item.role ?? item.type), ['settings', 'separator', 'quit'], platform);
+    }
   }
-  // The Window menu keeps its standard items.
-  const win = menuTemplate({ ...options, platform: 'win32', preferences: { notifications: true, notificationCommand: false }, setPreference() {} });
-  assert.deepEqual(win[3].submenu.filter(item => item.role).map(item => item.role), ['minimize', 'zoom', 'close']);
+});
+
+test('no notification checkboxes remain in the menu', () => {
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    const template = menuTemplate({ name: 'Journal', checkForUpdates() {}, openUrl() {}, platform });
+    assert.equal(find(template, 'notify-approval'), undefined, platform); assert.equal(find(template, 'notify-command'), undefined, platform);
+    assert.ok(!template.flatMap(item => item.submenu ?? []).some(item => item.type === 'checkbox'), platform);
+  }
+  // The Window menu is the standard one again.
+  assert.equal(menuTemplate({ name: 'Journal', checkForUpdates() {}, openUrl() {}, platform: 'win32' })[3].submenu, undefined);
 });

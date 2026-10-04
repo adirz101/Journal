@@ -58,21 +58,34 @@ test('states: primary hover keeps its text readable, selection survives hover an
   assert.doesNotMatch(styles, /filter:brightness\(1/);
   assert.ok(rulesFor('button.primary:not(:disabled):hover').some(rule => declares(rule, 'background', 'var(--accbtn-hover)')));
   const selectedHover = RULES.filter(rule => declares(rule, 'background', 'var(--sel-hover)')).flatMap(rule => rule.selectors);
-  for (const selector of ['.project-link.selected:not(:disabled):hover', '.session-select.selected:not(:disabled):hover', '.explorer-tools button[aria-pressed=true]:not(:disabled):hover', '.segmented button[aria-pressed=true]:not(:disabled):hover'])
+  for (const selector of ['.session-select.selected:not(:disabled):hover', '.rail-tile[aria-current=true]:not(:disabled):hover', '.explorer-tools button[aria-pressed=true]:not(:disabled):hover', '.segmented button[aria-pressed=true]:not(:disabled):hover'])
     assert.ok(selectedHover.includes(selector), `${selector} uses --sel-hover`);
   // The generic button hover (0,2,1) would replace the approve button's accent tint with grey.
   assert.ok(rulesFor('.memory-actions .approve:not(:disabled):hover').some(rule => declares(rule, 'background', 'var(--accsoft-hover)') && rule.at.some(at => /hover:hover/.test(at) && /pointer:fine/.test(at))), 'approve keeps an accent hover');
   // Selected rows carry an accent bar as a ::before, not a box-shadow, so focus styles and the
   // rounded corners never fight it; it is out of flow and inside the row.
-  for (const host of ['.project-link', '.session-select']) {
+  // Session rows mark the selection with .selected, rail tiles with aria-current.
+  for (const [host, selected] of [['.session-select', '.session-select.selected'], ['.rail-tile', '.rail-tile[aria-current=true]']]) {
     assert.ok(rulesFor(host).some(rule => declares(rule, 'position', 'relative')), `${host} positions its bar`);
-    assert.ok(!rulesFor(`${host}.selected`).some(rule => declares(rule, 'box-shadow')), `${host}.selected has no box-shadow`);
-    const bar = rulesFor(`${host}.selected::before`).filter(rule => rule.at.length === 0);
+    assert.ok(!rulesFor(selected).some(rule => declares(rule, 'box-shadow')), `${selected} has no box-shadow`);
+    const bar = rulesFor(`${selected}::before`).filter(rule => rule.at.length === 0);
     for (const [property, value] of [['content', '""'], ['position', 'absolute'], ['inset-block', '6px'], ['left', '0'], ['width', '2px'], ['border-radius', '1px'], ['background', 'var(--acc)']])
-      assert.ok(bar.some(rule => declares(rule, property, value)), `${host}.selected::before ${property}:${value}`);
+      assert.ok(bar.some(rule => declares(rule, property, value)), `${selected}::before ${property}:${value}`);
     // Forced colors replace backgrounds with Canvas; the bar opts out and uses the system highlight.
-    assert.ok(rulesFor(`${host}.selected::before`).some(rule => rule.at.some(at => /forced-colors:\s*active/.test(at)) && declares(rule, 'forced-color-adjust', 'none') && declares(rule, 'background', 'Highlight')), `${host} bar in forced colors`);
+    assert.ok(rulesFor(`${selected}::before`).some(rule => rule.at.some(at => /forced-colors:\s*active/.test(at)) && declares(rule, 'forced-color-adjust', 'none') && declares(rule, 'background', 'Highlight')), `${host} bar in forced colors`);
   }
+});
+
+test('row states: attention rows are amber and never take the selection fill; rail tiles select like rows', () => {
+  const attention = rulesFor('.session-select.attention').filter(rule => rule.at.length === 0);
+  assert.ok(attention.some(rule => declares(rule, 'background', 'var(--ambsoft)') && declares(rule, 'border-color', 'var(--ambline)')), '.session-select.attention');
+  assert.ok(!attention.some(rule => /var\(--sel/.test(rule.body)), '.session-select.attention never uses --sel');
+  // An attention row that is also selected stays amber (the accent bar marks the selection), on hover too.
+  assert.ok(rulesFor('.session-select.attention.selected').some(rule => declares(rule, 'background', 'var(--ambsoft)')));
+  assert.ok(rulesFor('.session-select.attention.selected:not(:disabled):hover').some(rule => declares(rule, 'background', 'var(--ambsoft)') && rule.at.some(at => /pointer:fine/.test(at))));
+  assert.ok(rulesFor('.rail-tile[aria-current=true]').some(rule => rule.at.length === 0 && declares(rule, 'background', 'var(--sel)')), '.rail-tile[aria-current=true]');
+  assert.ok(rulesFor('.rail-tile.attention').some(rule => declares(rule, 'background', 'var(--ambsoft)')), '.rail-tile.attention');
+  assert.ok(rulesFor('.tree-row.selected:hover').some(rule => declares(rule, 'background', 'var(--sel-hover)') && rule.at.some(at => /pointer:fine/.test(at))), '.tree-row.selected:hover');
 });
 
 test('borderless tab and link buttons hover by color, not with the generic background patch', () => {
@@ -85,7 +98,7 @@ test('borderless tab and link buttons hover by color, not with the generic backg
 });
 
 test('accent badges share one fill', () => {
-  for (const selector of ['.branch-badge', '.local-tag']) assert.ok(rulesFor(selector).some(rule => rule.at.length === 0 && declares(rule, 'background', 'var(--accsoft)')), selector);
+  for (const selector of ['.branch-badge', '.count-badge']) assert.ok(rulesFor(selector).some(rule => rule.at.length === 0 && declares(rule, 'background', 'var(--accsoft)')), selector);
 });
 
 test('focus rings inside scroll and clipping containers are drawn where they cannot be clipped', () => {
@@ -106,7 +119,7 @@ test('focus rings inside scroll and clipping containers are drawn where they can
 });
 
 test('accent containers keep an accent border', () => {
-  for (const selector of ['.memory-actions .approve', '.branch-badge', '.local-tag', '.receipt-meta>span', '.draft-basis', '.explorer-note', '.update-notice', '.reference-chips li', '.proposal-inbox']) {
+  for (const selector of ['.memory-actions .approve', '.branch-badge', '.count-badge', '.receipt-meta>span', '.draft-basis', '.explorer-note', '.update-notice', '.reference-chips li', '.proposal-inbox']) {
     assert.ok(rulesFor(selector).some(rule => /(?:^|;)\s*border(?:-color)?\s*:[^;]*var\(--accline\)/.test(rule.body)), selector);
   }
 });

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, type Session, type TimelineEvent } from './types';
-import { count, deliveryState } from './copy';
+import type { TimelineEvent } from './types';
+import { count, deliveryState, shell } from './copy';
 
 interface Command { toolUseId: string; command: string; cwd: string | null; test: boolean; at: string; status: string; exitCode: number | null; durationMs: number | null; endedAt: string | null; }
 
@@ -29,7 +29,7 @@ const describe = (event: TimelineEvent) => {
 
 const ROW = 26;
 // Fixed-height rows rendered for the visible window only.
-function Timeline({ events }: { events: TimelineEvent[] }) {
+export function Timeline({ events }: { events: TimelineEvent[] }) {
   const box = useRef<HTMLDivElement>(null); const [top, setTop] = useState(0); const [height, setHeight] = useState(320);
   const stick = useRef(true);
   useEffect(() => {
@@ -48,39 +48,45 @@ function Timeline({ events }: { events: TimelineEvent[] }) {
   </div>;
 }
 
-export function ActivityPanel({ session, live }: { session: Session; live: TimelineEvent[] }) {
-  const [stored, setStored] = useState<TimelineEvent[]>([]); const [error, setError] = useState('');
-  useEffect(() => { let cancelled = false; setStored([]); void api<TimelineEvent[]>('sessionEvents', { id: session.id }).then(e => { if (!cancelled) setStored(e); }).catch(e => setError(String(e.message ?? e))); return () => { cancelled = true; }; }, [session.id]);
-  const events = useMemo(() => {
-    const latest = stored.at(-1)?.at ?? '';
-    return [...stored, ...live.filter(e => e.sessionId === session.id && e.at > latest)];
-  }, [stored, live, session.id]);
-  const commands = useMemo(() => {
-    const map = new Map<string, Command>();
-    for (const event of events) {
-      const b = event.body as Record<string, any>;
-      if (event.kind === 'command-start') map.set(b.toolUseId, { toolUseId: b.toolUseId, command: b.command, cwd: b.cwd ?? null, test: !!b.test, at: event.at, status: b.background ? 'background' : 'running', exitCode: null, durationMs: null, endedAt: null });
-      if (event.kind === 'command-end' && map.has(b.toolUseId)) Object.assign(map.get(b.toolUseId)!, { status: b.status, exitCode: b.exitCode, durationMs: b.durationMs, endedAt: event.at });
-    }
-    return [...map.values()].reverse();
-  }, [events]);
+// Commands Claude ran, newest first, with their exits (Claude hooks).
+export function commandsFrom(events: TimelineEvent[]) {
+  const map = new Map<string, Command>();
+  for (const event of events) {
+    const b = event.body as Record<string, any>;
+    if (event.kind === 'command-start') map.set(b.toolUseId, { toolUseId: b.toolUseId, command: b.command, cwd: b.cwd ?? null, test: !!b.test, at: event.at, status: b.background ? 'background' : 'running', exitCode: null, durationMs: null, endedAt: null });
+    if (event.kind === 'command-end' && map.has(b.toolUseId)) Object.assign(map.get(b.toolUseId)!, { status: b.status, exitCode: b.exitCode, durationMs: b.durationMs, endedAt: event.at });
+  }
+  return [...map.values()].reverse();
+}
+
+const exitChip = (c: Command) => `${c.status === 'succeeded' ? 'exit 0' : c.exitCode !== null ? `exit ${c.exitCode}` : c.status}${c.durationMs !== null ? ` · ${(c.durationMs / 1000).toFixed(1)} s` : ''}`;
+const MAX_ROWS = 30;
+
+// "What it did" (Session tab): Claude's commands, edits and approval prompts,
+// newest last, at most 30; the full timeline and test summary on request.
+// observable false (Codex, Cursor): only Journal's own timeline, on request.
+export function ActivitySummary({ events, observable = true }: { events: TimelineEvent[]; observable?: boolean }) {
+  const [full, setFull] = useState(false);
+  const commands = useMemo(() => commandsFrom(events), [events]);
+  const byId = useMemo(() => new Map(commands.map(c => [c.toolUseId, c])), [commands]);
+  const rows = useMemo(() => events.filter(e => e.kind === 'command-start' || e.kind === 'file' || e.kind === 'permission').slice(-MAX_ROWS), [events]);
   const tests = commands.filter(c => c.test);
-  const observable = session.provider === 'claude';
-  return <div className="panel-content activity-content">
-    <div className="section-heading"><div><span className="eyebrow">Observed activity</span><h2>Commands and timeline</h2></div></div>
-    <p className="muted panel-intro">{observable ? 'Commands and exit codes come from Claude Code hooks. Running commands without a reported exit are shown as running or unknown.' : `${session.provider === 'cursor' ? 'Cursor' : 'Codex'} does not expose command events to Journal in this mode, so commands and test results are unknown. The timeline shows what Journal itself observed.`}</p>
-    {error && <p className="form-error" role="alert">{error}</p>}
-    {observable && <section aria-label="Tests" className="test-summary">
-      <span className="eyebrow">Test commands</span>
-      {tests.length ? <p>{tests.filter(t => t.status === 'succeeded').length} exited 0 · {tests.filter(t => t.status === 'failed').length} failed · {tests.filter(t => !['succeeded', 'failed'].includes(t.status)).length} running or unknown</p> : <p className="muted">No test commands observed.</p>}
-      <small>Exit status only, from Claude Code hooks. Journal does not parse test reports or infer results from agent text, and does not store command output.</small>
-    </section>}
-    {observable && <section aria-label="Commands"><span className="eyebrow">Commands</span>
-      {commands.length ? <ul className="command-list">{commands.slice(0, 100).map(c => <li key={c.toolUseId}>
-        <code title={`${c.command}\nin ${c.cwd ?? 'unknown directory'} · started ${new Date(c.at).toLocaleTimeString()}${c.endedAt ? ` · ended ${new Date(c.endedAt).toLocaleTimeString()}` : ''} · output not stored`}>{c.cwd && c.cwd !== '.' ? `${c.cwd} $ ` : ''}{c.command}</code>
-        <span className={`command-status ${c.status}`}>{c.status === 'succeeded' ? 'exit 0' : c.exitCode !== null ? `exit ${c.exitCode}` : c.status}{c.durationMs !== null ? ` · ${(c.durationMs / 1000).toFixed(1)}s` : ''}{c.test ? ' · test' : ''}</span>
-      </li>)}</ul> : <p className="muted">No commands observed yet.</p>}
-    </section>}
-    <section aria-label="Timeline" className="timeline-section"><span className="eyebrow">Timeline · {events.length}</span><Timeline events={events} /></section>
-  </div>;
+  return <>
+    {observable && (rows.length ? <ul className="did-list" aria-label="What it did">{rows.map((event, index) => {
+      const b = event.body as Record<string, any>; const command = event.kind === 'command-start' ? byId.get(b.toolUseId) : undefined;
+      return <li key={event.id ?? `${event.at}-${index}`}>
+        <time dateTime={event.at}>{new Date(event.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
+        <span className={`chip kind-${event.kind}`}>{event.kind === 'command-start' ? 'command' : event.kind === 'file' ? 'edit' : 'approval'}</span>
+        <code title={command ? `${command.command}\nin ${command.cwd ?? 'unknown directory'} · output not stored` : undefined}>{event.kind === 'command-start' ? b.command : event.kind === 'file' ? b.path : b.command ?? b.path ?? b.tool ?? 'permission'}</code>
+        {command && command.status !== 'running' && <span className={`chip command-status ${command.status}`}>{exitChip(command)}</span>}
+      </li>;
+    })}</ul> : <p className="muted">No commands or edits observed yet.</p>)}
+    <button className="text-button" aria-expanded={full} onClick={() => setFull(!full)}>{full ? 'Hide full timeline' : shell.showTimeline}</button>
+    {full && <>
+      {observable && <section aria-label="Tests" className="test-summary"><span className="eyebrow">Test commands</span>
+        {tests.length ? <p>{tests.filter(t => t.status === 'succeeded').length} exited 0 · {tests.filter(t => t.status === 'failed').length} failed · {tests.filter(t => !['succeeded', 'failed'].includes(t.status)).length} running or unknown</p> : <p className="muted">No test commands observed.</p>}
+        <small>Exit status only, from Claude Code hooks. Journal does not parse test reports or infer results from agent text, and does not store command output.</small></section>}
+      <section aria-label="Timeline" className="timeline-section"><span className="eyebrow">Timeline · {events.length}</span><Timeline events={events} /></section>
+    </>}
+  </>;
 }

@@ -2,6 +2,7 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { manageProject, newSession, openSettings } from './support/ui';
 
 // Approval notifications and the badge, end to end: real Electron, runtime and
 // node-pty, a fixture Claude CLI, and Journal's real observer hook. Electron's
@@ -81,7 +82,7 @@ const notifications = (app: ElectronApplication) => app.evaluate(() => (globalTh
 const badges = (app: ElectronApplication) => app.evaluate(() => (globalThis as any).__badges as number[]);
 
 async function startClaude(page: Page, task: string) {
-  await page.getByLabel('Initial task').fill(task);
+  await newSession(page); await page.getByLabel('Initial task').fill(task);
   await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
   await expect(page.locator('.terminal-surface')).toContainText(`TASK ${task}`);
   const live = await page.evaluate(async () => (await (window as any).journal.request('sessions')).live);
@@ -123,10 +124,13 @@ test('an unfocused window gets one notification per episode, without the command
     await expect.poll(() => badges(app)).toEqual([1, 0]);
     expect((await notifications(app))[0].closed).toBe(true);
 
-    // Opting in through the menu shows the (redacted) command in the next episode.
-    await app.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById('notify-command')!.click());
-    expect(JSON.parse(readFileSync(resolve(f.root, 'data/preferences.json'), 'utf8'))).toEqual({ notifications: true, notificationCommand: true });
-    await expect.poll(() => app.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById('notify-command')!.checked)).toBe(true);
+    // Opting in through Settings shows the (redacted) command in the next episode.
+    await openSettings(page, 'notifications');
+    const settings = page.getByRole('dialog', { name: 'Settings' });
+    await settings.getByRole('checkbox', { name: 'Show the command in notifications' }).check();
+    await expect(settings.getByRole('checkbox', { name: 'Show the command in notifications' })).toBeChecked();
+    await expect.poll(() => JSON.parse(readFileSync(resolve(f.root, 'data/preferences.json'), 'utf8'))).toEqual({ notifications: true, notificationCommand: true });
+    await settings.getByRole('button', { name: 'Done', exact: true }).click();
     hook(f.root, f.project, session, 'PreToolUse', bash('t3'));
     hook(f.root, f.project, session, 'PermissionRequest', bash('t3'));
     await expect.poll(async () => (await notifications(app)).length).toBe(2);
@@ -136,8 +140,11 @@ test('an unfocused window gets one notification per episode, without the command
 
     // Turning notifications off: the next episode is silent; the badge still counts it.
     hook(f.root, f.project, session, 'PostToolUse', bash('t3'));
-    await app.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById('notify-approval')!.click());
-    await expect.poll(() => app.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById('notify-command')!.enabled)).toBe(false);
+    await openSettings(page, 'notifications');
+    await settings.getByRole('checkbox', { name: 'Notify me when Claude needs approval' }).uncheck();
+    await expect(settings.getByRole('checkbox', { name: 'Show the command in notifications' })).toBeDisabled();
+    await expect.poll(() => JSON.parse(readFileSync(resolve(f.root, 'data/preferences.json'), 'utf8')).notifications).toBe(false);
+    await settings.getByRole('button', { name: 'Done', exact: true }).click();
     hook(f.root, f.project, session, 'PreToolUse', bash('t4'));
     hook(f.root, f.project, session, 'PermissionRequest', bash('t4'));
     await expect.poll(() => badges(app)).toEqual([1, 0, 1, 0, 1]);
@@ -192,7 +199,7 @@ test('clicking the notification selects its session in the renderer, but not whi
     hook(f.root, f.project, first, 'PermissionRequest', bash('s1'));
     await expect.poll(async () => (await notifications(app)).length).toBe(1);
     // An open dialog owns the window: the click must not switch the session behind it.
-    await page.getByRole('button', { name: /^Manage / }).click();
+    await manageProject(app, page, 'notify project');
     await expect(page.locator('dialog[open]')).toHaveCount(1);
     await app.evaluate(() => (globalThis as any).__notifications[0].handlers.click());
     await expect.poll(() => app.evaluate(() => (globalThis as any).__focusEvents.length)).toBe(1);

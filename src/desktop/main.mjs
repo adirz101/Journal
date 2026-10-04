@@ -216,6 +216,9 @@ const actions = {
     if (typeof open !== 'boolean') throw new Error('Invalid dialog state');
     modalOpen = open;
   },
+  // Notification preferences (Settings). writePreferences accepts only known keys with boolean values.
+  preferences: () => preferences,
+  setPreference: ({ key, value }) => { if (typeof key !== 'string') throw new Error('Invalid preference'); preferences = writePreferences(preferencesFile, { [key]: value }); return preferences; },
   bootstrap: async () => ({ projects: await store.listProjects(), agents, platform: process.platform, shortcuts: shortcutKeys(process.platform), runtime: { state: runtimeState, warning: runtimeWarning },
     live: runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [], active: await store.activeSessions() }),
   openProject: async () => {
@@ -333,8 +336,9 @@ const actions = {
     if (result.inserted) return { inserted: true, text: textValue };
     clipboard.writeText(textValue);
     const event = referenceEvent(record, 'copied');
-    await store.appendEvent(id, 'reference', event).catch(() => {});
-    send({ type: 'timeline', event: { sessionId: id, kind: 'reference', at: new Date().toISOString(), body: event } });
+    const at = new Date().toISOString();
+    await store.appendEvent(id, 'reference', event, at).catch(() => {});
+    send({ type: 'timeline', event: { sessionId: id, kind: 'reference', at, body: event } });
     return { inserted: false, copied: true, reason: result.reason, text: textValue };
   },
   // A reference chosen for the next task: validated and fingerprinted now,
@@ -453,7 +457,9 @@ const actions = {
     // A runtime from another build may not understand newer launch options;
     // never let it silently run in the wrong workspace or mode.
     if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.plan || input.provider === 'cursor' || input.disabled?.length || input.references?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, read-only or plan mode, Cursor, leave-out or file references.');
-    return runtime.call('start', input);
+    // The CLI version comes from main's own provider detection, never from the renderer.
+    const { cliVersion: _ignored, ...request } = input;
+    return runtime.call('start', { ...request, cliVersion: agents.find(agent => agent.provider === input.provider)?.version ?? null });
   },
   // ----- Cursor CLI: install and sign in run visibly, only after the user asks. -----
   providerStatus: ({ provider, fresh }) => { if (provider !== 'cursor') throw new Error('Only Cursor needs a status check'); return refreshCursor({ fresh: fresh === true }); },
@@ -542,15 +548,8 @@ async function checkForUpdatesFromMenu() {
   if (outcome.kind === 'ready') await actions.installUpdate().catch(error => dialog.showErrorBox('Could not install the update', error.message));
   if (outcome.kind === 'available') actions.openUpdateRelease();
 }
-// Rebuilt after each preference change so the checkboxes show the stored values.
-const buildMenu = () => Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate({ platform: process.platform, name: app.name, packaged: app.isPackaged, devTools: process.env.JOURNAL_DEVTOOLS === '1',
-  checkForUpdates: () => void checkForUpdatesFromMenu().catch(() => {}), openUrl: url => void shell.openExternal(url), preferences, setPreference })));
-function setPreference(key, value) {
-  try { preferences = writePreferences(preferencesFile, { [key]: value }); }
-  catch (error) { dialog.showErrorBox('Could not save the setting', error.message); }
-  buildMenu();
-}
-buildMenu();
+Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate({ platform: process.platform, name: app.name, packaged: app.isPackaged, devTools: process.env.JOURNAL_DEVTOOLS === '1',
+  checkForUpdates: () => void checkForUpdatesFromMenu().catch(() => {}), openUrl: url => void shell.openExternal(url), openSettings: () => send({ type: 'command', id: 'settings' }) })));
 // Release smoke checks of builds that cannot be driven by automation (the
 // Windows portable EXE relaunches itself): report basic health, then quit.
 // Packaged builds only; contains no project or user content.
