@@ -414,6 +414,14 @@ test('with two open prompts one answer waits for a tool event to settle one of t
   assert.equal(state(), 'running/working');
 });
 
+test('at most 100 open prompts are tracked; the oldest are dropped', async t => {
+  const { send, f, session } = await hooked(t);
+  for (let i = 0; i < 105; i++) send('PermissionRequest', { tool: 'Bash', toolUseId: `b${i}` });
+  const { pending } = f.manager.entries.get(session.id);
+  assert.equal(pending.length, 100);
+  assert.equal(pending[0].toolUseId, 'b5'); assert.equal(pending[99].toolUseId, 'b104');
+});
+
 test('an answer is consumed by the prompt its tool resolved', async t => {
   const { send, state, write } = await hooked(t);
   send('PreToolUse', { tool: 'Bash', toolUseId: 'a1', command: 'a' });

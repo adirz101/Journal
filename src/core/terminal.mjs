@@ -346,7 +346,7 @@ export class TerminalManager extends EventEmitter {
           && (!event.command || tool.command === event.command) && (!event.filePath || tool.filePath === event.filePath));
         const toolUseId = event.toolUseId ?? (candidates.length === 1 ? candidates[0][0] : null);
         if (toolUseId && entry.tools.has(toolUseId)) entry.tools.get(toolUseId).asked = true;
-        entry.pending.push({ toolUseId, tool: event.tool ?? null }); entry.answered = false;
+        entry.pending.push({ toolUseId, tool: event.tool ?? null }); if (entry.pending.length > 100) entry.pending.shift(); entry.answered = false;
         this.observe(id, event.nativeId, 'waiting', 'permission'); this.record(id, 'permission', { tool: event.tool ?? null }); break;
       }
       case 'Stop': entry.pending = []; entry.answered = false; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'idle'); this.record(id, 'turn-end', {}); break;
