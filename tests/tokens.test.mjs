@@ -93,6 +93,14 @@ for (const [name, t] of Object.entries(themes)) {
     assert.deepEqual(low, []);
   });
 
+  // WCAG 1.4.11: the boundary of an input is at least 3:1 against what it sits on and against its fill.
+  // --line2 (about 1.4 to 1.6:1) stays for decorative dividers and panel borders.
+  test(`${name} theme: the input border token is at least 3:1 on every surface an input sits on`, () => {
+    assert.match(t['line-field'] ?? '', /^#[0-9a-f]{6}$/i, '--line-field must be an opaque #RRGGBB');
+    const low = ['field', 'bg', 'side', 'panel', 'raised'].map(surface => [surface, contrast(mix(t['line-field'], rgba(t.bg).slice(0, 3)), mix(t[surface], rgba(t.bg).slice(0, 3)))]).filter(([, ratio]) => ratio < 3);
+    assert.deepEqual(low, []);
+  });
+
   test(`${name} theme: a translucent tint or line is its base color with alpha`, () => {
     const bases = { accsoft: 'acc', accline: 'acc', ambsoft: 'amb', ambline: 'amb', grnsoft: 'grn', redsoft: 'red', redline: 'red', 'claude-soft': 'claude' };
     for (const [tint, base] of Object.entries(bases)) {

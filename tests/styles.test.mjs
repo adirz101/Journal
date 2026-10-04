@@ -60,3 +60,8 @@ test('motion and hover: no transition on everything, hover only for fine pointer
   }
   assert.deepEqual(hovers, []);
 });
+
+test('inputs, text areas and selects use the stronger field border (WCAG 1.4.11)', () => {
+  const at = styles.indexOf('input,textarea,select{color'); assert.ok(at >= 0);
+  assert.match(styles.slice(at, styles.indexOf('}', at)), /border:1px solid var\(--line-field\)/);
+});
