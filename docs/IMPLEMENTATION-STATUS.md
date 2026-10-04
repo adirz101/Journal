@@ -172,6 +172,27 @@ Plan: [docs/superpowers/plans/2026-10-04-ux-redesign-phase-7.md](superpowers/pla
 - A folder dropped on the window opens like the open dialog. Windows network paths (`\\host\share`, `//host/share`) are refused before any file system call.
 - "Getting to know your project" drafts are made once per project. They carry the HEAD and branch they were made on; remembering refuses after a new commit or a switch to another branch, and a draft Git could not produce is reported as failed with a plain message.
 
+## UX redesign - Phase 8 Group A (palette and states, core)
+
+Plan: [docs/superpowers/plans/2026-10-04-ux-redesign-phase-8.md](superpowers/plans/2026-10-04-ux-redesign-phase-8.md), sections 1 (A0) and 2 (Group A). Core, runtime, desktop and the renderer seams only. The palette, recovery panel, banner and StartError UI is Group B. All of this is fixture acceptance; no provider argv, native settings, permissions or exact-ID resume changed.
+
+- A0 seams: `command-palette` (⌘K, plus ⇧⌘P as an alias that is never used as a label; Ctrl+Shift+P on Windows and Linux) and `open-file` (⌘P; Ctrl+Shift+O). Ctrl+K and Ctrl+P stay with the terminal. The types `FileHit`, `FileSearch`, `RecoveredSession`, `Recovery` and `Bootstrap.recovery` are added. Copy gains the `palette` and `states` objects. App opens a stub `CommandPalette` (a dialog with one input; Escape closes it). `styles.css` gains the Phase 8 section marker. The preload adds `searchFiles`, `acknowledgeRecovery` and `reconnectRuntime` as separate `allowed.add` statements.
+- Open-file search (`src/core/files.mjs`): `git ls-files` only (tracked and untracked, never ignored; a non-Git folder reports `not-git`; a Git failure reports `failed` without Git's message). Sensitive paths are dropped by both relative forms. Literal pathspecs are used, and no file is read. The listing is capped at 200,000 files and says when it is truncated. `rankFiles` is pure and deterministic, and returns merged spans. Main caches each root's listing for 30 s (at most four roots) and drops it on workspace or folder changes and on watcher events. It ranks in 20,000-path slices that yield between them.
+- Crash recovery: the runtime reports `recovery: { at, runtimeId, sessions }` in the hello until `acknowledgeRecovery({ at })`; a stale `at` changes nothing. The protocol stays at 4 (an optional field and a new method). Main keeps its own copy for `bootstrap` and the `runtime` event, and remembers acknowledgements across reconnects.
+- Reconnect now: `RuntimeClient.retryNow()` wakes the pause between attempts (the protocol-mismatch wait included), resets the three-launch counter and lets a connect in progress launch at once. `reconnect()` runs one loop at a time and emits `reconnected` once.
+- View menu: Command Palette… and Open File…, with the router's keys shown but not registered.
+- Measured (`tests/files-search.test.mjs`, synthetic 200,000 paths, local macOS): `rankFiles` in one block takes 3-13 ms for typical queries and 32 ms for a query matching over half of the paths. That exceeds the plan's 30 ms threshold, so `searchFiles` ranks in slices instead of moving to a worker (see deviations).
+- Tests: `tests/files-search.test.mjs` (10, new), `tests/runtime-client.test.mjs` (4, new), `tests/runtime.test.mjs` (+4), `tests/shortcuts.test.mjs` (+4), `tests/menu.test.mjs` (+1), and `tests/desktop-search-recovery.spec.ts` (3, new). The desktop spec covers IPC search and validation, the watcher dropping the cache, the keys and menu items, and recovery after a real runtime SIGKILL until it is acknowledged, including after a reload and an app restart onto the same runtime.
+- Fixture results (local macOS, 4 October 2026, branch `claude/ux-redesign-p8a`): `npm test` 546 passed; `npm run check` and `npm run build` passed; `npx playwright test` 68 passed and 1 skipped (the Windows/Linux-only Ctrl+O test), exit 0 (3.6 minutes). The A0 and runtime commits each passed all four checks: A0 had 527 unit tests and 65 desktop passed with 1 skipped; the runtime commit had 545 unit tests and 65 desktop passed with 1 skipped.
+- Deviations:
+  - `tests/shortcuts.test.mjs`' lists of terminal keys drop Meta+K, Meta+P (macOS) and Control+Shift+P (Windows and Linux), which the palette now claims. The other existing tests are unedited.
+  - The preload uses three `allowed.add` lines instead of one `for` line.
+  - Development builds' View menu keeps the `viewMenu` role, but lists its default items explicitly, because a role's submenu replaces the defaults.
+  - `searchFiles` slices its ranking, as described above.
+  - There is no `JOURNAL_RUNTIME_LAUNCH_DELAY` test hook. Group B's Reconnect now scenario uses the fallback that the plan names.
+
+Native checks still open: see [NATIVE-VALIDATION](NATIVE-VALIDATION.md) "To verify" (Phase 8 entries).
+
 ## Observed validation (local macOS)
 
 | Check | Result |
