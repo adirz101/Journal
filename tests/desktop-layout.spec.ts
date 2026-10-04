@@ -23,6 +23,13 @@ test('both sidebars resize by pointer and keyboard, persist, and leave room for 
       .filter(element => !element.closest('.xterm') && element.getClientRects().length && parseFloat(getComputedStyle(element).fontSize) < 11)
       .map(element => `${element.tagName.toLowerCase()}.${element.className}`))).toEqual([]);
     const width = (selector: string) => page.locator(selector).evaluate(element => element.getBoundingClientRect().width);
+    // The sessions caption ("SESSIONS", "n/4 active", New) keeps its parts apart instead of running them together.
+    const captionGaps = () => page.locator('.sessions-caption').evaluate(caption => {
+      const range = document.createRange(); range.selectNodeContents([...caption.childNodes].find(node => node.nodeType === Node.TEXT_NODE)!);
+      const [label, count, button, box] = [range.getBoundingClientRect(), caption.querySelector('span')!.getBoundingClientRect(), caption.querySelector('button')!.getBoundingClientRect(), caption.getBoundingClientRect()];
+      return Math.min(count.left - label.right, button.left - count.right, box.right - button.right) >= 0 && count.left - label.right >= 6;
+    });
+    expect(await captionGaps()).toBe(true);
     const drag = async (handle: typeof left, distance: number) => {
       const box = await handle.boundingBox(); expect(box).not.toBeNull();
       const x = box!.x + box!.width / 2; const y = box!.y + 180;
@@ -49,6 +56,7 @@ test('both sidebars resize by pointer and keyboard, persist, and leave room for 
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(900, 640));
     await expect.poll(() => width('.workspace')).toBeGreaterThanOrEqual(340);
     expect(await page.locator('.app-shell').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(await captionGaps()).toBe(true);
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 900));
     await expect.poll(() => width('.sidebar')).toBe(initialLeft + 62);
     await expect.poll(() => width('.knowledge-panel')).toBe(initialRight + 82);
