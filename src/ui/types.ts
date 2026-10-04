@@ -43,7 +43,7 @@ export interface Session { id: string; projectId: string; provider: Provider; na
 // Command, path and tool are redacted or workspace-relative by the runtime; inferred: taken from the in-flight tool.
 export interface PendingApproval { tool: string | null; command: string | null; path: string | null; at: string; inferred?: boolean; }
 export interface TimelineEvent { id?: number; sessionId?: string; at: string; kind: string; body: Record<string, unknown>; }
-export type TerminalEvent = { type: 'output'; sessionId: string; sequence: number; data: string } | { type: 'gap'; sessionId: string } | { type: 'status'; session: Session } | { type: 'error'; message: string; sessionId?: string }
+export type TerminalEvent = { type: 'output'; sessionId: string; sequence: number; data: string } | { type: 'gap'; sessionId: string } | { type: 'status'; session: Session } | { type: 'error'; message: string; sessionId?: string; code?: typeof IDENTITY_CHANGED }
   | { type: 'timeline'; event: TimelineEvent } | { type: 'proposals'; projectId: string; count: number } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; recovered?: boolean }
   | { type: 'files'; key: string; folders: string[]; overflow: boolean; stopped?: boolean }
   | { type: 'update'; state: UpdateState } | { type: 'providers'; agents: AgentInfo[] } | { type: 'command'; id: CommandId }
@@ -88,6 +88,8 @@ export type Settled = { ok: true; value: unknown } | { ok: false; error: string;
 // ERROR_CODES (src/core/terminal.mjs) count; any other or missing code is no code.
 export const ERROR_CODES = ['SLOTS_FULL', 'SHUTTING_DOWN', 'PROVIDER_MISSING', 'PROVIDER_UNSUPPORTED', 'ID_UNCONFIRMED', 'CONVERSATION_OPEN', 'ORPHAN_RUNNING', 'START_FAILED', 'NOT_LIVE'] as const;
 export type ErrorCode = typeof ERROR_CODES[number];
+// The error event's code when a hook reports another native session ID (IDENTITY_CHANGED in src/core/terminal.mjs).
+export const IDENTITY_CHANGED = 'IDENTITY_CHANGED' as const;
 export function errorCode(error: unknown): ErrorCode | null {
   const code = error instanceof Error ? (error as Error & { code?: unknown }).code : undefined;
   return ERROR_CODES.find(known => known === code) ?? null;

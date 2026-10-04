@@ -1,11 +1,13 @@
 // Desktop notifications and the Dock/taskbar badge. Pure: Electron's
 // Notification, focus and badge calls are injected, so tests drive it directly.
 //
-// Privacy: a notification names the session only. The pending command or path
+// Privacy: a notification names the session only, with credentials in its
+// name redacted (a title can come from the task text). The pending command or path
 // (already redacted by the runtime) is added only when the user turned on
 // "Show Commands in Notifications". Nothing here is persisted except the two
 // preferences, written by writePreferences.
 import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { redact } from '../core/validation.mjs';
 
 // Windows attributes toasts to this ID. It must equal `appId` in
 // electron-builder.config.cjs (tests/release.test.mjs keeps them equal).
@@ -62,6 +64,7 @@ export function createNotifier({ Notification, isSupported = () => true, isFocus
     let title;
     try { title = await titleFor(session); } catch { title = null; }
     if (typeof title !== 'string' || !title) title = session.title ?? 'Claude session';
+    title = redact(String(title), 200) || 'Claude session';
     // The episode may have ended (or the notifier closed) while the name was read.
     if (disposed || episodes.get(session.id) !== episode) return;
     const prefs = preferences();
@@ -111,6 +114,29 @@ export function createNotifier({ Notification, isSupported = () => true, isFocus
     dispose() {
       disposed = true;
       for (const id of [...episodes.keys()]) endEpisode(id);
+    },
+  };
+}
+
+// The OS side of the notifier. Headless test runs (JOURNAL_HEADLESS=1) never
+// reach the OS: a test's stand-ins (__journalNotification, __journalBadge,
+// __journalFocused, read through `hook`) receive the calls, and without them
+// notifications are unsupported, the real constructor refuses, and the badge
+// and taskbar flash do nothing. `hook` returns null outside headless runs.
+export function systemSurface({ headless, hook, Notification, setBadgeCount, flashFrame, isFocused }) {
+  return {
+    // Constructing through a plain function lets a test install its stand-in after launch.
+    Notification: function JournalNotification(options) {
+      const Stand = hook('__journalNotification'); if (Stand) return new Stand(options);
+      if (headless) throw new Error('Headless runs never create a real notification');
+      return new Notification(options);
+    },
+    isSupported: () => !!hook('__journalNotification') || (!headless && Notification.isSupported()),
+    isFocused: () => { const focused = hook('__journalFocused'); return focused ? !!focused() : isFocused(); },
+    setBadge: count => {
+      const badge = hook('__journalBadge'); if (badge) { badge(count); return; }
+      if (headless) return;
+      setBadgeCount(count); flashFrame(count);
     },
   };
 }

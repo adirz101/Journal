@@ -17,6 +17,7 @@ export function noteIds(ids) {
 export const ORIGIN_PROPOSALS_SQL = `SELECT body FROM proposals WHERE +project_id=? AND json_extract(body,'$.memoryId') IN (SELECT value FROM json_each(?))`;
 
 const knownProvider = value => PROVIDERS.includes(value) ? value : null;
+const handledAt = proposal => typeof proposal.handledAt === 'string' && proposal.handledAt ? proposal.handledAt : null;
 const day = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : null;
 
 // Suggestions purged before Phase 5 kept neither field: read them from the wording proposals.mjs wrote.
@@ -24,7 +25,7 @@ function purgedSession(proposal) {
   const evidence = proposal.evidence ?? {};
   const parsed = proposal.kind === 'rule' ? /in the task of a (\w+) session on (\d{4}-\d{2}-\d{2})/.exec(proposal.source?.note ?? '')
     : /observed in a (\w+) session on (\d{4}-\d{2}-\d{2})/.exec(proposal.statement ?? '');
-  const provider = evidence.provider !== undefined ? knownProvider(evidence.provider) : knownProvider(parsed?.[1]);
+  const provider = knownProvider(evidence.provider) ?? knownProvider(parsed?.[1]);
   const date = day(evidence.sessionDate) ?? parsed?.[2] ?? day(proposal.createdAt);
   return { id: null, title: null, provider, date, state: 'purged' };
 }
@@ -38,8 +39,9 @@ export function memoryOrigins(store, projectId, ids) {
   for (const row of store.db.prepare(ORIGIN_PROPOSALS_SQL).all(projectId, list)) {
     const proposal = JSON.parse(row.body);
     if (!['rule', 'test-command'].includes(proposal.kind)) continue;
-    const prior = linked.get(proposal.memoryId);
-    if (!prior || String(proposal.handledAt ?? '') < String(prior.handledAt ?? '')) linked.set(proposal.memoryId, proposal);
+    // The earliest handled suggestion wins; one without a handled time never displaces another.
+    const prior = linked.get(proposal.memoryId); const at = handledAt(proposal);
+    if (!prior || (at && (!handledAt(prior) || at < handledAt(prior)))) linked.set(proposal.memoryId, proposal);
   }
   const sessionIds = [...new Set([...linked.values()].map(p => p.evidence?.sessionId).filter(id => typeof id === 'string'))];
   const sessions = new Map(sessionIds.length ? store.db.prepare('SELECT id, body FROM sessions WHERE id IN (SELECT value FROM json_each(?))').all(JSON.stringify(sessionIds)).map(row => [row.id, JSON.parse(row.body)]) : []);
@@ -72,8 +74,8 @@ export function deliveryCounts(store, projectId, ids) {
   const foreign = new Set(store.db.prepare('SELECT id FROM memories WHERE project_id<>? AND id IN (SELECT value FROM json_each(?))').all(projectId, list).map(row => row.id));
   const counts = Object.fromEntries(ids.filter(id => !foreign.has(id)).map(id => [id, 0]));
   for (const row of store.db.prepare(`SELECT d.memory_id AS id, count(DISTINCT CASE
-      WHEN json_extract(s.body,'$.nativeId') IS NOT NULL THEN json_extract(s.body,'$.provider')||':'||json_extract(s.body,'$.nativeId')
-      WHEN d.native_id IS NOT NULL THEN d.provider||':'||d.native_id
+      WHEN json_extract(s.body,'$.nativeId') IS NOT NULL THEN coalesce(json_extract(s.body,'$.provider'),'')||':'||json_extract(s.body,'$.nativeId')
+      WHEN d.native_id IS NOT NULL THEN coalesce(d.provider,'')||':'||d.native_id
       WHEN d.session_id IS NOT NULL THEN 'session:'||d.session_id
       ELSE 'receipt:'||d.receipt_id END) AS n
     FROM deliveries d LEFT JOIN sessions s ON s.id=d.session_id

@@ -167,7 +167,7 @@ test('a foreign hook UUID cannot silently replace the native resume identity', a
   const errors = []; f.manager.on('event', e => { if (e.type === 'error') errors.push(e); });
   assert.equal(started.session.identityMismatch, false);
   f.manager.observe(started.session.id, 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', 'waiting');
-  assert.deepEqual(errors.map(e => [e.message, e.code]), [['Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.', 'IDENTITY_CHANGED']]);
+  assert.deepEqual(errors.map(e => [e.message, e.code]), [['Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.', (await import('../src/core/terminal.mjs')).IDENTITY_CHANGED]]);
   assert.equal(f.store.getSession(started.session.id).identityMismatch, true);
   assert.equal(f.manager.entry(started.session.id).session.nativeId, nativeId);
   assert.equal(f.manager.entry(started.session.id).session.nativeIdConfirmed, false);
@@ -508,6 +508,38 @@ test('a missing executable gives PROVIDER_MISSING', async t => {
   await assert.rejects(f.start(), error => error.code === 'PROVIDER_MISSING' && /Could not start/.test(error.message));
 });
 
+test('a start whose process is already running counts once toward capacity', async t => {
+  const f = multi(t);
+  await f.start(); await f.start();
+  // Hold the third launch after its process started (its entry exists) and before it settles.
+  let release; const held = new Promise(resolve => { release = resolve; });
+  const update = f.store.updateReceiptState.bind(f.store); let first = true;
+  f.store.updateReceiptState = async (...args) => { if (first) { first = false; await held; } return update(...args); };
+  const third = f.start();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(f.procs.length, 3);
+  const fourth = await f.start();
+  release();
+  assert.deepEqual([(await third).slot, fourth.slot].sort(), [3, 4]);
+  await assert.rejects(f.start(), error => error.code === 'SLOTS_FULL');
+});
+
+test('ENOENT after the process started is START_FAILED, not PROVIDER_MISSING', async t => {
+  const f = multi(t);
+  const update = f.store.updateReceiptState.bind(f.store); let first = true;
+  f.store.updateReceiptState = (...args) => { if (first) { first = false; throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' }); } return update(...args); };
+  await assert.rejects(f.start(), error => error.code === 'START_FAILED');
+  assert.equal(f.procs.length, 1);
+});
+
+test('shutting down during a launch says so, without blaming the CLI', async t => {
+  const f = multi(t);
+  const save = f.store.saveSession.bind(f.store); let first = true;
+  f.store.saveSession = session => { if (first) { first = false; void f.manager.dispose({ stopSessions: false }); } return save(session); };
+  await assert.rejects(f.start(), error => error.code === 'SHUTTING_DOWN' && error.message === 'Journal is shutting down');
+  assert.equal(f.procs.length, 0);
+});
+
 test('recovered sessions have no slot', async t => {
   const f = multi(t);
   const now = new Date().toISOString();
@@ -618,6 +650,21 @@ test('echo and resize repaint do not count as output', async t => {
   t.mock.timers.tick(2); f.data('real output');
   assert.notEqual(f.latest(), first);
   assert.equal(f.events.length, 2);
+});
+
+test('a resize to the current size is not a repaint window', async t => {
+  const f = await outputting(t);
+  f.data('before'); const first = f.latest();
+  t.mock.timers.tick(20_000);
+  // The PTY starts at 100x30: the same size changes nothing, so output right after it counts.
+  f.manager.resize(f.session.id, 100, 30); t.mock.timers.tick(10); f.data('output');
+  assert.notEqual(f.latest(), first);
+  const second = f.latest(); t.mock.timers.tick(20_000);
+  f.manager.resize(f.session.id, 120, 40); t.mock.timers.tick(10); f.data('repaint');
+  assert.equal(f.latest(), second, 'A changed size is a repaint');
+  t.mock.timers.tick(20_000);
+  f.manager.resize(f.session.id, 120, 40); t.mock.timers.tick(10); f.data('more output');
+  assert.notEqual(f.latest(), second, 'Repeating the size is not');
 });
 
 test('Claude sessions record lastOutputAt but emit no activity events', async t => {
@@ -736,6 +783,21 @@ test('Esc or Ctrl+C while working shows Your turn; a later tool event restores W
     write(key); assert.equal(state(), 'running/idle');
     send('PostToolUse', { tool: 'Read', toolUseId: 'r1' });
     assert.equal(state(), 'running/working', 'A completed tool also restores Working');
+  }
+});
+
+test('Esc or Ctrl+C after typing during the turn leaves Working (it may close a menu or leave vim insert mode)', async t => {
+  for (const [typed, key] of [['abc', '\x1b'], ['/co', '\x1b'], ['x', '\x03'], ['\x1b[200~pasted\x1b[201~', '\x1b']]) {
+    const { send, state, write } = await hooked(t);
+    write('typed before the turn');
+    send('UserPromptSubmit');
+    write(typed);
+    write(key);
+    assert.equal(state(), 'running/working', JSON.stringify([typed, key]));
+    // A new turn starts clean: only typing since the turn began counts.
+    send('Stop'); send('UserPromptSubmit');
+    write('\x1b[A'); write(key);
+    assert.equal(state(), 'running/idle', JSON.stringify([typed, key]));
   }
 });
 

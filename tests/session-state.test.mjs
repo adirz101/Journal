@@ -4,7 +4,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
-import { ERROR_CODES } from '../src/core/terminal.mjs';
+import { ERROR_CODES, IDENTITY_CHANGED } from '../src/core/terminal.mjs';
+import { settledError } from '../src/desktop/ipc-error.mjs';
 
 // Transpiles sessionState.ts with the two renderer modules it imports into one
 // temporary directory, so the test runs the renderer's own code.
@@ -98,7 +99,7 @@ test('Needs approval detail prefers command, then path, then tool', async t => {
   assert.equal(detail(undefined), null);
 });
 
-test('needsYou: blocked Claude, failed, orphaned and leftover processes; not Codex waiting, archived or removed', async t => {
+test('needsYou: blocked Claude, failed, orphaned and leftover processes; not Codex waiting, archived when ended, or removed', async t => {
   const { needsYou } = await load(t);
   assert.equal(needsYou(session({ status: 'waiting' })), true);
   assert.equal(needsYou(session({ status: 'failed' })), true);
@@ -106,7 +107,10 @@ test('needsYou: blocked Claude, failed, orphaned and leftover processes; not Cod
   assert.equal(needsYou(session({ status: 'stopped', survivors: [{ pid: 1, started: 'x', command: 'node' }] })), true);
   assert.equal(needsYou(session({ provider: 'codex', status: 'waiting' })), false);
   assert.equal(needsYou(session({ provider: 'cursor', status: 'waiting' })), false);
-  assert.equal(needsYou(session({ status: 'waiting', archived: true })), false);
+  // A live session needs the user even if archived (the badge counts it too); archive hides only ended ones.
+  assert.equal(needsYou(session({ status: 'waiting', archived: true })), true);
+  assert.equal(needsYou(session({ status: 'failed', archived: true })), false);
+  assert.equal(needsYou(session({ status: 'stopped', archived: true, survivors: [{ pid: 1, started: 'x', command: 'node' }] })), false);
   assert.equal(needsYou(session({ status: 'failed', removed: true })), false);
   assert.equal(needsYou(session({ status: 'running', activity: 'idle' })), false);
   assert.equal(needsYou(session({ status: 'stopped', survivors: [] })), false);
@@ -165,9 +169,20 @@ test('resumable needs an ended session with a confirmed native ID', async t => {
 test('the renderer branches only on the runtime error codes; any other code is no code', async t => {
   const { types } = await load(t);
   assert.deepEqual([...types.ERROR_CODES].sort(), Object.values(ERROR_CODES).sort());
+  // The identity-changed error event carries its own code, shared by name.
+  assert.equal(types.IDENTITY_CHANGED, IDENTITY_CHANGED);
   const coded = code => Object.assign(new Error('x'), { code });
   assert.equal(types.errorCode(coded('SLOTS_FULL')), 'SLOTS_FULL');
   for (const other of ['ENOENT', 42, { code: 'SLOTS_FULL' }, undefined, null, 'slots_full']) assert.equal(types.errorCode(coded(other)), null, String(other));
   assert.equal(types.errorCode('SLOTS_FULL'), null);
   assert.equal(types.errorCode({ code: 'SLOTS_FULL' }), null);
+});
+
+test('a failed desktop request carries only a bounded string code', () => {
+  const coded = code => Object.assign(new Error('nope'), { code });
+  assert.deepEqual(settledError(coded('SLOTS_FULL')), { ok: false, error: 'nope', code: 'SLOTS_FULL' });
+  assert.deepEqual(settledError(coded('X'.repeat(100))), { ok: false, error: 'nope', code: 'X'.repeat(40) });
+  for (const code of [42, { nested: 'SLOTS_FULL' }, null, undefined, ['SLOTS_FULL']]) assert.deepEqual(settledError(coded(code)), { ok: false, error: 'nope' }, String(code));
+  assert.deepEqual(settledError('plain'), { ok: false, error: 'Operation failed' });
+  assert.deepEqual(settledError(null), { ok: false, error: 'Operation failed' });
 });

@@ -334,11 +334,13 @@ test('slot shortcuts keep their session across a renderer reload and after anoth
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
     await startSession(page, 'SLOT_A', 'Claude'); await startSession(page, 'SLOT_B', 'Codex');
-    // Slot keys are ignored while a start or switch is still finishing; retry until it settles.
-    const select = async (key: string, task: string) => expect(async () => {
+    // Slot keys are ignored while a start or switch is still finishing (aria-busy);
+    // once that settles, the first press selects.
+    const select = async (key: string, task: string) => {
+      await expect(page.locator('main.workspace')).not.toHaveAttribute('aria-busy', 'true');
       await pressKey(app, key, [...slotKeys()]);
-      await expect(sessionButton(page, task)).toHaveAttribute('aria-current', 'true', { timeout: 1000 });
-    }).toPass();
+      await expect(sessionButton(page, task)).toHaveAttribute('aria-current', 'true');
+    };
     await select('1', 'SLOT_A'); await select('2', 'SLOT_B');
     await page.reload();
     await expect(slotsUsed(page, 2)).toBeVisible();
@@ -377,10 +379,10 @@ test('next needs-you jumps to a Claude session waiting for approval and shows wh
     await expect(asking).toContainText('TOKEN=[redacted] npm publish');
     await expect(asking).not.toContainText('abc123456');
     await expect(asking).toHaveAttribute('aria-label', /Needs approval, TOKEN=\[redacted\] npm publish.*needs attention/);
-    await expect(async () => {
-      await pressKey(app, 'J', [...next]);
-      await expect(asking).toHaveAttribute('aria-current', 'true', { timeout: 1000 });
-    }).toPass();
+    // Once the switch to CALM_ONE settles, the first press selects.
+    await expect(page.locator('main.workspace')).not.toHaveAttribute('aria-busy', 'true');
+    await pressKey(app, 'J', [...next]);
+    await expect(asking).toHaveAttribute('aria-current', 'true');
     // The only session that needs you is already selected: nothing moves.
     await pressKey(app, 'J', [...next]);
     await page.waitForTimeout(300);
@@ -405,11 +407,13 @@ test('Codex shows Running with output time and limited status', async () => {
     const row = sessionButton(page, 'CODEX_STATE');
     await expect(row).toContainText('Running');
     // Output 600 ms after the key is not an echo, so it counts as agent output. Output
-    // right after a resize is a repaint; the layout may still settle just after start.
-    await expect(async () => {
-      await typeLine(page, 'delay');
-      await expect(row).toContainText(/output just now|quiet/, { timeout: 2000 });
-    }).toPass({ timeout: 20000 });
+    // right after a real resize is a repaint (a same-size resize is ignored), so type
+    // once the terminal has reported its size and that repaint window has passed.
+    await expect(page.locator('main.workspace')).not.toHaveAttribute('aria-busy', 'true');
+    await expect.poll(async () => (await page.evaluate(async () => (await (window as any).journal.request('sessions')).live)).find((s: any) => s.title === 'CODEX_STATE')?.terminal).toBeTruthy();
+    await page.waitForTimeout(400);
+    await typeLine(page, 'delay');
+    await expect(row).toContainText(/output just now|quiet/, { timeout: 5000 });
     await expect(row).toHaveAttribute('aria-label', /Running, (output just now|quiet [^,]+), limited status/);
     await expect(row.locator('.session-status')).toHaveAttribute('title', /Journal sees output, not the agent's state/);
     // Codex rows are never amber: Journal cannot see their prompts.

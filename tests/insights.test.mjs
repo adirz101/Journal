@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { JournalStore } from '../src/core/store.mjs';
+import { JournalStore, RECORD_DELIVERIES, RECORD_RECEIPT_DELIVERIES } from '../src/core/store.mjs';
 import { ORIGIN_PROPOSALS_SQL } from '../src/core/insights.mjs';
 import { removeLater } from './support/cleanup.mjs';
 
@@ -283,4 +283,52 @@ test('setMemoryStatus records the approval time', t => {
   f.store.setMemoryStatus(note.id, 'archived');
   assert.deepEqual(read(), approved);
   assert.equal(f.store.memoryOrigins(f.project.id, [note.id])[note.id].approvedAt, approved.approved_at);
+});
+
+test('deliveries: a launch records through the receipts primary key; the backfill stays unfiltered', t => {
+  const f = fixture(t);
+  const plan = (sql, ...args) => f.store.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...args).map(row => row.detail);
+  const perLaunch = plan(RECORD_RECEIPT_DELIVERIES, 'receipt-id');
+  assert.ok(perLaunch.some(detail => /^SEARCH r USING (?:INDEX sqlite_autoindex_receipts_1|PRIMARY KEY) \(id=\?\)/.test(detail)), perLaunch.join('\n'));
+  assert.ok(!perLaunch.some(detail => /^SCAN r\b/.test(detail)), perLaunch.join('\n'));
+  assert.ok(plan(RECORD_DELIVERIES).some(detail => /^SCAN r\b/.test(detail)));
+  // And it still records exactly that launch.
+  f.approve('Docker runs the integration suite');
+  const other = f.deliver({ state: null }); const { receipt } = f.deliver();
+  assert.deepEqual(f.rows().map(row => row.receipt_id), [receipt.id]);
+  assert.equal(f.store.getReceipt(other.receipt.id).state, 'prepared');
+});
+
+test('deliveryCounts: a delivery without a provider still counts its conversation', t => {
+  const f = fixture(t); const note = f.approve('Docker runs the integration suite');
+  const insert = f.store.db.prepare('INSERT INTO deliveries(receipt_id, memory_id, revision, project_id, session_id, provider, native_id, at) VALUES(?,?,?,?,?,?,?,?)');
+  insert.run('r1', note.id, 1, f.project.id, null, null, 'native-1', SESSION_DATE);
+  insert.run('r2', note.id, 1, f.project.id, null, null, 'native-2', SESSION_DATE);
+  insert.run('r3', note.id, 1, f.project.id, null, null, 'native-2', SESSION_DATE);
+  assert.equal(f.count(note.id), 2);
+});
+
+test('memoryOrigins: a purged suggestion with a null provider reads the note text', t => {
+  const f = fixture(t); const { session, note, proposal } = sessionNote(f);
+  f.store.purgeSession(session);
+  f.store.db.prepare(`UPDATE proposals SET body=json_set(body,'$.evidence.provider',json('null')) WHERE id=?`).run(proposal.id);
+  assert.equal(f.store.memoryOrigins(f.project.id, [note.id])[note.id].session.provider, 'codex');
+});
+
+test('memoryOrigins: the earliest handled suggestion defines the origin; one without handledAt never wins', t => {
+  const f = fixture(t); const { session, note, proposal } = sessionNote(f, { title: 'First task' });
+  const body = { ...f.store.getProposal(proposal.id), id: 'late', fingerprint: 'late-fp', evidence: { ...f.store.getProposal(proposal.id).evidence, sessionId: 'another-session' } };
+  delete body.handledAt;
+  f.store.db.prepare('INSERT INTO proposals(id,project_id,fingerprint,body) VALUES(?,?,?,?)').run('late', f.project.id, 'late-fp', JSON.stringify(body));
+  assert.equal(f.store.memoryOrigins(f.project.id, [note.id])[note.id].session.id, session);
+  f.store.db.prepare(`UPDATE proposals SET body=json_set(body,'$.handledAt','') WHERE id='late'`).run();
+  assert.equal(f.store.memoryOrigins(f.project.id, [note.id])[note.id].session.id, session);
+});
+
+test('listMemoryPage: categoryCounts ignores categories named like object properties', t => {
+  const f = fixture(t); const note = f.approve('Docker runs the integration suite');
+  f.store.db.prepare(`UPDATE revisions SET body=json_set(body,'$.category','toString') WHERE memory_id=?`).run(note.id);
+  const { categoryCounts } = f.store.listMemoryPage(f.project.id, {});
+  assert.deepEqual(Object.keys(categoryCounts), ['all', 'brief', 'decision', 'constraint', 'convention', 'lesson', 'issue']);
+  assert.equal(categoryCounts.all, 1); assert.equal(categoryCounts.lesson, 0);
 });

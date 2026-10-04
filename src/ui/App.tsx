@@ -210,9 +210,10 @@ export default function App() {
     else if (id === 'tab-memory') { setPanel('memory'); layout.showInspector(); }
   };
   // === End region: command handler ===
-  // A notification click (main sends focus-session) selects its session like a click, busy or not.
+  // A notification click (main sends focus-session) selects its session like a click, busy or not,
+  // except while a dialog is open: like commands, it must not switch the session behind it.
   const focusSession = useRef<(id: string) => void>(() => {});
-  focusSession.current = id => { const target = sessions[id]; if (target) void selectSession(target); };
+  focusSession.current = id => { if (document.querySelector('dialog[open]')) return; const target = sessions[id]; if (target) void selectSession(target); };
   useEffect(() => window.journal?.onEvent(event => {
     if (event.type === 'command') command.current(event.id);
     else if (event.type === 'focus-session') focusSession.current(event.sessionId);
@@ -374,7 +375,7 @@ export default function App() {
       onExpand={layout.toggleSidebar} onShowRecent={() => { layout.openSidebar(); requestAnimationFrame(() => document.getElementById('sidebar-recent')?.scrollIntoView({ block: 'start' })); }} />}>
 
     {/* === Region B: main column (session view) === */}
-    <main className="workspace">
+    <main className="workspace" aria-busy={busy || undefined}>
       {runtime.state === 'disconnected' && <div className="error-banner" role="status"><span>The Journal runtime is not connected. Reconnecting… Running sessions are shown as disconnected until their state is known; nothing is resent.</span></div>}
       {runtime.warning && <div className="error-banner" role="status"><span>{runtime.warning}</span></div>}
       {error && <div className="error-banner" role="alert"><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
