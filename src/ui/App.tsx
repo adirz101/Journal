@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { TerminalPane } from './TerminalPane';
 import { KnowledgeForm } from './KnowledgeForm';
-import { KnowledgePanel } from './KnowledgePanel';
+import { KnowledgePanel, type MemoryFilters } from './KnowledgePanel';
 import { ResizableWorkspace } from './ResizableWorkspace';
 import { useShellLayout } from './useShellLayout';
 import { useProposals } from './useProposals';
@@ -55,6 +55,16 @@ export default function App() {
   const [panel, setPanel] = useState<InspectorTab>('memory');
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState<{ memory?: Memory; supersedes?: Memory; initialCategory?: string; draft?: StatusDraft; after?: () => void } | null>(null);
   const [knowledgeVersion, setKnowledgeVersion] = useState(0);
+  // Phase 5: note trust lines refetch on note changes and when a session starts running (a new delivery).
+  // statuses: each live session's last status, pruned when sessions disappear.
+  const [runVersion, setRunVersion] = useState(0); const statuses = useRef(new Map<string, string>());
+  const trustVersion = knowledgeVersion + runVersion;
+  useEffect(() => { for (const id of [...statuses.current.keys()]) if (!sessions[id]) statuses.current.delete(id); }, [sessions]);
+  // The Memory tab's filters: kept across tab switches, reset when the project changes
+  // (a return to an earlier project starts from the defaults too).
+  const [memoryFilters, setMemoryFilters] = useState<MemoryFilters | null>(null);
+  const filtersProject = state?.project.id ?? null; const [filtersFor, setFiltersFor] = useState<string | null>(filtersProject);
+  if (filtersFor !== filtersProject) { setFiltersFor(filtersProject); setMemoryFilters(null); }
   const [runtime, setRuntime] = useState<{ state: string; warning?: string | null }>({ state: 'connecting' });
   const [liveEvents, setLiveEvents] = useState<TimelineEvent[]>([]);
   // File and command-end events per session, counted as they arrive: liveEvents is capped, so its length stops changing.
@@ -184,6 +194,9 @@ export default function App() {
       if (event.type === 'activity') { noteActivity(event.sessionId, event.lastOutputAt); return; }
       if (event.type !== 'status') return;
       // Main strips user-owned fields (names, pins, archive, removal) from runtime sessions.
+      const before = statuses.current.get(event.session.id); statuses.current.set(event.session.id, event.session.status);
+      // A launch's first transition to running is a new delivery; waiting → running (an approval) is not.
+      if (event.session.status === 'running' && before !== 'running' && before !== 'waiting') setRunVersion(v => v + 1);
       merge([event.session]);
     });
   }, [refresh, reloadSessions, merge, noteActivity, failed]);
@@ -386,12 +399,15 @@ export default function App() {
   const filesView = filesChoice ?? (changed ? 'changed' : 'all');
   // A preview or an older record never feeds the status bar.
   const sessionReceipt = session && receipt?.id === session.receiptId ? receipt : null;
+  // A note's origin opens its session when it is loaded; otherwise the card shows no link.
+  const openSession = (id: string) => { const target = sessions[id]; if (target) void selectSession(target); };
   const showSent = () => { setPanel('session'); layout.showInspector(); setPacketRequest(n => (n ?? 0) + 1); };
   // === Region B: inspector ===
   const inspector = (pane: 'full' | 'rail', overlay: boolean) => state && <Inspector pane={pane} inOverlay={overlay} overlayOpen={layout.inspector === 'overlay'} tab={panel} onTab={setPanel} badges={{ files: changed, memory: proposals.length }} shortcuts={bootstrap?.shortcuts}
       
     onHide={overlay ? () => layout.closeOverlays(true) : layout.mode === 'wide' ? layout.toggleInspector : undefined} onShow={tab => tab ? layout.showInspector() : layout.toggleInspector()}>
       {panel === 'session' && <SessionTab session={session} events={events} now={now} onShowSent={showSent} context={<ContextPanel receipt={receipt} session={session} bootstrap={bootstrap} history={state.receipts} disabled={disabled} events={events} now={now} packetRequest={packetRequest} onPacketShown={() => setPacketRequest(null)}
+        project={state.project} trustVersion={trustVersion} sessions={ordered} onOpenSession={openSession}
         onToggle={id => { const next = disabled.includes(id) ? disabled.filter(x => x !== id) : [...disabled, id]; setDisabled(next); if (receipt?.state === 'prepared') void api<Receipt>('prepareContext', { projectId: state.project.id, task: receipt.query, workspaceId: workspaceId || null, disabled: next, references: referenceInputs }).then(setReceipt).catch(failed); }}
         onSelectReceipt={setReceipt} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />} />}
       {panel === 'files' && <FilesTab hasSession={!!session} view={filesView} onView={setFilesChoice} changed={changed}
@@ -404,7 +420,7 @@ export default function App() {
           setReferences(current => current.some(r => r.rootKey === described.rootKey && r.path === described.path && r.startLine === described.startLine && r.endLine === described.endLine) ? current : [...current, described].slice(-20));
         }}
         onSaveEvidence={source => setEvidenceSource({ kind: 'file', path: source.path, startLine: source.startLine, endLine: source.endLine, ...(source.rootKey.startsWith('root:') ? { rootId: source.rootKey.slice(5) } : {}) })} />} />}
-      {panel === 'memory' && <MemoryTab><KnowledgePanel project={state.project} workspaces={workspaces?.workspaces} version={knowledgeVersion} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} /></MemoryTab>}
+      {panel === 'memory' && <MemoryTab><KnowledgePanel project={state.project} workspaces={workspaces?.workspaces} version={knowledgeVersion} trustVersion={trustVersion} sessions={ordered} filters={memoryFilters} onFilters={setMemoryFilters} onOpenSession={openSession} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} /></MemoryTab>}
   </Inspector>;
   // === End region B: inspector ===
   // === Region C: the ResizableWorkspace wrapper (layout modes) ===

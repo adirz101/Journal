@@ -590,7 +590,9 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
     if (!validSender(event)) throw new Error('Untrusted desktop caller');
     if (!Object.hasOwn(actions, action) || !input || typeof input !== 'object' || Array.isArray(input) || JSON.stringify(input).length > 100000) throw new Error('Invalid desktop request');
     if (ROOT_CHANGES.has(action)) rootCache.clear();
-    try { return { ok: true, value: await actions[action](input) }; } finally { if (ROOT_CHANGES.has(action)) rootCache.clear(); }
+    // Headless test runs may wrap a request (globalThis.__journalRequestHook(action, run)) to count or delay it.
+    const hook = headless && typeof globalThis.__journalRequestHook === 'function' ? globalThis.__journalRequestHook : null;
+    try { return { ok: true, value: await (hook ? hook(action, () => actions[action](input)) : actions[action](input)) }; } finally { if (ROOT_CHANGES.has(action)) rootCache.clear(); }
   } catch (error) { return settledError(error); }
 });
 try { await runtime.connect(); runtimeState = 'connected'; await seedNotifier(); }
