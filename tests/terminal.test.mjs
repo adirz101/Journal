@@ -861,6 +861,41 @@ test('an entry with a pending survivor scan is not trimmed', async t => {
   assert.deepEqual(f.manager.attach(first.id), { chunks: [], gap: true, lastSequence: 0 }, 'trimmed once the scan finished');
 });
 
+test('detaching an exited buffer trims it at once', async t => {
+  const f = multi(t); const ids = [];
+  for (let i = 0; i < 9; i++) {
+    const session = await f.start(); ids.push(session.id);
+    f.procs[i].callbacks.data(`output ${i}\r\n`); f.manager.attach(session.id);
+    f.procs[i].callbacks.exit({ exitCode: 0 }); await f.manager.entry(session.id)?.changeSnapshot;
+  }
+  assert.ok(f.manager.entry(ids[0]), 'all nine are viewed, so all are kept');
+  f.manager.detach(ids[0]);
+  assert.equal(f.manager.entry(ids[0]), null, 'trimmed on detach, not on a later exit');
+  assert.ok(f.manager.entry(ids[1]));
+});
+
+test('a finished survivor scan or snapshot trims without a later exit', async t => {
+  const f = multi(t); let release; const blocked = new Promise(resolve => { release = resolve; });
+  let calls = 0; f.manager.table = () => (calls++ === 0 ? blocked : null);
+  const first = await f.start(); f.manager.entry(first.id).descendants.set('1:x', { pid: 1, started: 'x', command: 'child' });
+  f.procs[0].callbacks.exit({ exitCode: 0 });
+  const entry = f.manager.entry(first.id); await entry.changeSnapshot;
+  // The others are on screen, so only the scanned one can go.
+  for (let i = 1; i < 9; i++) { const s = await f.start(); f.manager.attach(s.id); f.procs[i].callbacks.exit({ exitCode: 0 }); await f.manager.entry(s.id)?.changeSnapshot; }
+  assert.ok(f.manager.entry(first.id), 'still scanning: kept');
+  release([]); await entry.survivorScan;
+  assert.equal(f.manager.entry(first.id), null, 'trimmed when the scan finished');
+  // The same for an end snapshot still being counted.
+  const g = multi(t); let finish; const counting = new Promise(resolve => { finish = resolve; });
+  const original = g.store.sessionChanges.bind(g.store); let first2 = true;
+  g.store.sessionChanges = id => (first2 ? (first2 = false, counting.then(() => original(id))) : original(id));
+  const slow = await g.start(); g.procs[0].callbacks.exit({ exitCode: 0 }); const slowEntry = g.manager.entry(slow.id);
+  for (let i = 1; i < 9; i++) { const s = await g.start(); g.manager.attach(s.id); g.procs[i].callbacks.exit({ exitCode: 0 }); await g.manager.entry(s.id)?.changeSnapshot; }
+  assert.ok(g.manager.entry(slow.id), 'still counting: kept');
+  finish(); await slowEntry.changeSnapshot;
+  assert.equal(g.manager.entry(slow.id), null, 'trimmed when the snapshot finished');
+});
+
 test('the change snapshot is saved at exit and survives later saves', async t => {
   const f = multi(t); let release; const blocked = new Promise(resolve => { release = resolve; });
   f.manager.table = () => blocked;

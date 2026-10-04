@@ -101,7 +101,7 @@ export function memoryChecks(store, projectId, { offset = 0, limit = MAX_CHECKS 
 
 // ----- Phase 6: the session wrap-up -----
 
-const RESUME_HOPS = 20; const MAX_STALE = 20; const MAX_CHANGED = 400;
+const RESUME_HOPS = 20; const MAX_STALE = 20; const MAX_CHANGED = 400; const STALE_DEADLINE_MS = 10_000;
 
 // The session and the earlier sessions of the same conversation, newest first,
 // following resumedFrom up to 20 hops and stopping at a missing (purged) row.
@@ -128,6 +128,11 @@ export function sessionProposals(store, session, state) {
     .map(row => JSON.parse(row.body)).map(proposal => ({ ...proposal, earlier: proposal.evidence?.sessionId !== session.id }));
 }
 
+// Without a baseline (an older session, or a folder that is not a Git repository) the
+// changes since the start cannot be told apart from those already there.
+const unbaselined = session => ({ available: false, additions: 0, deletions: 0, files: 0, preexisting: 0, paths: [], truncated: false,
+  at: session.changeStats?.at ?? session.endedAt ?? new Date().toISOString(), reason: 'Journal has no record of the checkout at this session\'s start, so its changes were not counted.' });
+
 // What happened in a session, from stored data only: no Git, no hashing.
 export function sessionSummary(store, id) {
   const session = store.getSession(id);
@@ -146,7 +151,7 @@ export function sessionSummary(store, id) {
   }
   const suggestions = store.db.prepare(`SELECT count(*) AS n ${SESSION_PROPOSALS}`).get(session.projectId, 'open', JSON.stringify(resumeChain(store, session))).n;
   return { status: session.status, exitCode: Number.isInteger(session.exitCode) ? session.exitCode : null, signal: session.signal ?? null,
-    durationMs: Number.isFinite(durationMs) ? durationMs : null, changes: session.changeStats ?? null, tests,
+    durationMs: Number.isFinite(durationMs) ? durationMs : null, changes: session.baseline ? session.changeStats ?? null : unbaselined(session), tests,
     identity: { nativeId: session.nativeId ?? null, confirmed: !!session.nativeIdConfirmed, source: session.nativeIdSource ?? null, mismatch: !!session.identityMismatch },
     suggestions };
 }
@@ -159,9 +164,20 @@ function changedPaths(store, session) {
   return live.available ? live.files.filter(file => !file.preexisting).map(({ path, from }) => ({ path, from: from ?? null })) : null;
 }
 
+// The current file's lines on screen: the new side of the hunks, or the "Now" block.
+function shownRange({ hunks, after }) {
+  if (hunks) {
+    const numbers = hunks.flatMap(hunk => hunk.lines.map(line => line.new)).filter(Number.isInteger);
+    return numbers.length ? { startLine: Math.min(...numbers), endLine: Math.max(...numbers) } : null;
+  }
+  return after?.lines.length ? { startLine: after.startLine, endLine: after.startLine + after.lines.length - 1 } : null;
+}
+
 // Remembered notes on files the session changed that are now out of date, with
-// what changed under their cited lines. At most 20 notes, one Git diff each.
-export function staleNotesForSession(store, sessionId) {
+// what changed under their cited lines. At most 20 notes, one Git diff each, and at
+// most about 10 s in all: past the deadline it stops early with truncated: true.
+export function staleNotesForSession(store, sessionId, { deadlineMs = STALE_DEADLINE_MS } = {}) {
+  const deadline = Date.now() + deadlineMs;
   const session = store.getSession(sessionId);
   const unavailable = { available: false, notes: [], truncated: false };
   const changed = changedPaths(store, session); if (!changed) return unavailable;
@@ -191,18 +207,21 @@ export function staleNotesForSession(store, sessionId) {
   const cache = new Map(); const notes = []; let truncated = false;
   const inWorktree = !!workspaceId && !folderId;
   for (const row of rows) {
+    if (Date.now() > deadline) { truncated = true; break; }
     const note = { ...JSON.parse(row.body), status: row.status, pinned: !!row.pinned };
     if (store.validation(view, note, cache) !== 'stale') continue;
     if (notes.length === MAX_STALE) { truncated = true; break; }
     const { path } = note.source; const { renamedTo } = byPath.get(path);
     const root = evidenceRoot(view, note.source.rootId ?? null);
-    let current = null;
-    if (root && existsSync(join(root.path, ...path.split('/')))) { try { current = readEvidenceFile(root.path, path, { tracked: root.git }).content; } catch { current = null; } }
+    // contentHash: the file as shown here; "Still true" saves evidence only while the file still has it.
+    let current = null; let contentHash = null;
+    if (root && existsSync(join(root.path, ...path.split('/')))) { try { ({ content: current, contentHash } = readEvidenceFile(root.path, path, { tracked: root.git })); } catch { current = null; contentHash = null; } }
     const missing = !root || !existsSync(join(root.path, ...path.split('/')));
-    const change = renamedTo || missing ? { hunks: null, before: { startLine: note.source.startLine, lines: String(note.source.excerpt ?? '').split(/\r?\n/) }, after: null, suggestedRange: null }
+    const change = renamedTo || missing ? { hunks: null, before: { startLine: note.source.startLine, lines: String(note.source.excerpt ?? '').split(/\r?\n/) }, after: null, suggestedRange: null, truncated: false }
       : noteChange({ root: root.path, git: root.git }, note.source, current);
     const reaffirm = missing ? { allowed: false, reason: 'file-missing' } : note.scope === 'checkout' && inWorktree ? { allowed: false, reason: 'separate-copy' } : { allowed: true, reason: null };
-    notes.push({ note: { ...note, validation: 'stale' }, path, renamedTo, ...change, reaffirm, workspaceId: note.scope === 'branch' && inWorktree ? workspaceId : null });
+    notes.push({ note: { ...note, validation: 'stale' }, path, renamedTo, ...change, shownRange: shownRange(change), contentHash: missing ? null : contentHash,
+      reaffirm, workspaceId: note.scope === 'branch' && inWorktree ? workspaceId : null });
   }
   return { available: true, notes, truncated };
 }

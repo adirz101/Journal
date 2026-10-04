@@ -78,9 +78,14 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
       ended.add(event.session.id);
       setTimeout(() => { try { observers.release(event.session.id); } catch (error) { log(`observer release failed: ${error.message}`); } }, 500).unref();
       // Deterministic proposals after a session ends; never blocks or fails the session.
-      // Always sent, naming the session and including zero, so the wrap-up stops looking at the real moment.
+      // Always sent, naming the session and including zero, so the wrap-up stops looking at the real moment;
+      // failed: generation threw, so "no suggestions" would be untrue.
       const { id: sessionId, projectId } = event.session;
-      setTimeout(() => { Promise.resolve().then(() => store.generateProposals?.(sessionId)).catch(() => []).then(created => { client?.send({ event: { type: 'proposals', projectId, sessionId, count: created?.length ?? 0 } }); }); }, 1500).unref();
+      setTimeout(() => {
+        Promise.resolve().then(() => store.generateProposals?.(sessionId))
+          .then(created => ({ count: created?.length ?? 0 }), error => { log(`proposals failed: ${error?.message ?? error}`); return { count: 0, failed: true }; })
+          .then(result => { client?.send({ event: { type: 'proposals', projectId, sessionId, ...result } }); });
+      }, 1500).unref();
     }
     client?.send({ event });
   });

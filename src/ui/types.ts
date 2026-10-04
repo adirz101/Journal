@@ -49,7 +49,7 @@ export interface ChangeStats { available: boolean; additions: number; deletions:
 // sessionSummary (src/core/insights.mjs): stored data only, no Git.
 export interface SessionSummary {
   status: SessionStatus; exitCode: number | null; signal: string | null; durationMs: number | null;
-  changes: ChangeStats | null;                     // the end snapshot (D11); null when none was taken
+  changes: ChangeStats | null;                     // the end snapshot (D11); null when none was taken; available: false without a start baseline
   tests: { passed: number; failed: number; unknown: number; commands: string[] } | null;   // null for Codex and Cursor
   identity: { nativeId: string | null; confirmed: boolean; source: Session['nativeIdSource']; mismatch: boolean };
   suggestions: number;                             // open suggestions of this session and its resume chain
@@ -62,15 +62,21 @@ export interface StaleNote {
   before: { startLine: number; lines: string[] } | null;   // fallback: the saved excerpt …
   after: { startLine: number; lines: string[] } | null;    // … and the current lines at the same place
   suggestedRange: { startLine: number; endLine: number } | null;  // where the cited lines are now, if they moved
+  // The hunks are a window around the note's lines (at most 3 hunks of 40 lines, 300 characters a line).
+  // truncated: part of the change was cut, so Still true must stay disabled until the full diff is shown.
+  truncated: boolean;
+  shownRange: { startLine: number; endLine: number } | null;  // the current file's lines on screen
+  contentHash: string | null;                      // the file as shown; reaffirmMemory's expectedHash
   reaffirm: { allowed: boolean; reason: null | 'wrong-branch' | 'separate-copy' | 'file-missing' };
   workspaceId: string | null;                      // the view to reaffirm in
 }
+// truncated: more than 20 notes, or the 10 s deadline was reached before all were checked.
 export interface StaleCatch { available: boolean; notes: StaleNote[]; truncated: boolean }
 // Command, path and tool are redacted or workspace-relative by the runtime; inferred: taken from the in-flight tool.
 export interface PendingApproval { tool: string | null; command: string | null; path: string | null; at: string; inferred?: boolean; }
 export interface TimelineEvent { id?: number; sessionId?: string; at: string; kind: string; body: Record<string, unknown>; }
 export type TerminalEvent = { type: 'output'; sessionId: string; sequence: number; data: string } | { type: 'gap'; sessionId: string } | { type: 'status'; session: Session } | { type: 'error'; message: string; sessionId?: string; code?: typeof IDENTITY_CHANGED }
-  | { type: 'timeline'; event: TimelineEvent } | { type: 'proposals'; projectId: string; count: number; sessionId?: string } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; recovered?: boolean }
+  | { type: 'timeline'; event: TimelineEvent } | { type: 'proposals'; projectId: string; count: number; sessionId?: string; failed?: boolean } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; recovered?: boolean }
   | { type: 'files'; key: string; folders: string[]; overflow: boolean; stopped?: boolean }
   | { type: 'update'; state: UpdateState } | { type: 'providers'; agents: AgentInfo[] } | { type: 'command'; id: CommandId }
   // Codex and Cursor output times, at most one per session every 5 s; main asks to show a session (notification click).
