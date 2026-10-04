@@ -103,7 +103,7 @@ Data remains in the `journal-desktop` directory under Electron's application-dat
 5. **Run several agents.** Start up to four sessions, across projects or providers. Each receives the current reviewed overview, applicable branch update, and relevant task knowledge for its own project and branch.
 6. **Resume explicitly.** Select the session and confirm its exact native ID where required. For Codex, confirm the UUID from the native CLI after stopping. Journal never falls back to the latest session.
 
-Keyboard shortcuts: Cmd/Ctrl+O opens a project, Cmd/Ctrl+N starts a new session (focuses the task), ⌘1–4 (macOS) or Alt+1–4 switches active sessions, and Cmd/Ctrl+Shift+K adds knowledge. Ctrl+C in the terminal or **Interrupt** sends an interrupt to the native process.
+Keyboard shortcuts work while the terminal has focus. macOS: ⌘N new session, ⌘O open a project, ⌘1–4 switch active sessions, ⇧⌘K add a note, ⌘E focus the terminal, ⌘I show or hide the side panel, ⌥⌘1–3 open Context, Files or Memory. Windows and Linux: Ctrl+Shift+N, Ctrl+O (outside the terminal), Alt+1–4, Ctrl+Shift+K, Ctrl+Shift+E, Ctrl+Shift+B and Alt+Shift+1–3. While a dialog is open, these keys work as usual inside it instead. Every other key, including Ctrl+C, goes to the terminal; **Interrupt** also sends an interrupt to the native process.
 
 Use **Light mode** / **Dark mode** in the sidebar to change appearance. Drag either sidebar's inner edge to resize it, or focus the divider and use arrow keys (Shift for larger steps), Home/End for limits, or Enter to reset. Double-click also resets. Theme and widths are saved locally.
 

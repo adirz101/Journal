@@ -22,7 +22,7 @@ import journalMarkDark from '../../assets/branding/journal-mark.png';
 import journalWordmark from '../../assets/branding/journal-wordmark.png';
 import { storedAppearance, type Appearance } from './theme';
 import { copy, tip } from './copy';
-import { api, isLive, PROVIDER_NAMES, type Bootstrap, type FileReference, type Memory, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
+import { api, isLive, PROVIDER_NAMES, type Bootstrap, type CommandId, type FileReference, type Memory, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
 
 const MAX_SESSIONS = 4;
 type Panel = 'files' | 'memory' | 'context' | 'changes' | 'activity';
@@ -155,26 +155,40 @@ export default function App() {
     });
   }
   function newSession() { userChose.current = true; setSelectedId(null); setPanel(current => current === 'changes' || current === 'activity' ? 'memory' : current); requestAnimationFrame(() => taskRef.current?.focus()); }
+  // App shortcuts arrive as commands from the main process (src/desktop/shortcuts.mjs),
+  // so they also work while the terminal has focus. The ref keeps the handler current.
+  const command = useRef<(id: CommandId) => void>(() => {});
+  command.current = id => {
+    // An open dialog owns the keyboard. Main stops claiming keys once it hears
+    // about the dialog (setModalOpen); this covers a key pressed before that.
+    if (document.querySelector('dialog[open]')) return;
+    const slot = /^slot-([1-4])$/.exec(id);
+    if (slot) { const target = activeOrder(ordered)[Number(slot[1]) - 1]; if (target && target.id !== selectedId) void selectSession(target); return; }
+    if (id === 'new-session') { newSession(); return; }
+    if (id === 'open-project') { void openProject(); return; }
+    if (!projectRef.current) return;
+    if (id === 'add-note') setForm({});
+    else if (id === 'toggle-inspector') setCollapsed(value => !value);
+    else if (id === 'focus-terminal') { if (session) window.dispatchEvent(new CustomEvent('journal:focus-terminal', { detail: session.id })); }
+    // Until the three-tab inspector (Phase 3): Session opens Context, Memory opens the Memory panel.
+    else if (id === 'tab-session') { setCollapsed(false); setPanel('context'); }
+    else if (id === 'tab-files') { setCollapsed(false); setPanel('files'); setExplorerFocus(n => n + 1); }
+    else if (id === 'tab-memory') { setCollapsed(false); setPanel('memory'); }
+  };
+  useEffect(() => window.journal?.onEvent(event => { if (event.type === 'command') command.current(event.id); }), []);
+  // Main stops claiming shortcut keys while a modal dialog is open, so they behave
+  // as usual inside it. Keep this in step with the dialogs rendered at the end.
+  const modalOpen = !!(manageId || renameTarget || processView || dataDialog || (state && (workspaceDialog || evidenceSource || form)));
+  useEffect(() => { void api('setModalOpen', { open: modalOpen }).catch(() => {}); }, [modalOpen]);
+  // Windows and Linux: Ctrl+O is not routed, because the CLI owns it while the
+  // terminal has focus (xterm stops the event there). Elsewhere it opens a project.
   useEffect(() => {
-    const keyboard = (event: KeyboardEvent) => {
-      const mod = event.metaKey || event.ctrlKey;
-      // Switch active sessions: ⌘1–4 on macOS, Alt+1–4 elsewhere (Ctrl+digit stays with the terminal).
-      const switching = bootstrap?.platform === 'darwin' ? event.metaKey && !event.altKey : event.altKey && !event.ctrlKey && !event.metaKey;
-      if (switching && /^[1-4]$/.test(event.key)) {
-        const target = activeOrder(ordered)[Number(event.key) - 1];
-        if (target) { event.preventDefault(); void selectSession(target); }
-        return;
-      }
-      if (!mod) return;
-      if (event.key.toLowerCase() === 'o') { event.preventDefault(); void openProject(); }
-      if (event.key.toLowerCase() === 'n' && !event.shiftKey) { event.preventDefault(); newSession(); }
-      if (event.shiftKey && event.key.toLowerCase() === 'k' && projectRef.current) { event.preventDefault(); setForm({}); }
-      // Files: ⌘⇧E / Ctrl+Shift+E. Side panel: ⌘⌥B / Ctrl+Alt+B.
-      if (event.shiftKey && event.key.toLowerCase() === 'e' && projectRef.current) { event.preventDefault(); setCollapsed(false); setPanel('files'); setExplorerFocus(n => n + 1); }
-      if (event.altKey && event.code === 'KeyB' && projectRef.current) { event.preventDefault(); setCollapsed(value => !value); }
+    if (!bootstrap || bootstrap.platform === 'darwin') return;
+    const open = (event: KeyboardEvent) => {
+      if (event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 'o') { event.preventDefault(); command.current('open-project'); }
     };
-    window.addEventListener('keydown', keyboard); return () => window.removeEventListener('keydown', keyboard);
-  });
+    window.addEventListener('keydown', open); return () => window.removeEventListener('keydown', open);
+  }, [bootstrap]);
   async function start(provider: Provider, resumeFrom?: Session) {
     const projectId = resumeFrom?.projectId ?? state?.project.id; if (!projectId) return;
     // Take the task now so text typed while this start finishes is never cleared.
@@ -265,10 +279,10 @@ export default function App() {
   return <ResizableWorkspace hasKnowledge={!!state} collapsed={collapsed} wide={previewing && panel === 'files'}>
     <aside className="sidebar" id="project-sidebar">
       <div className="brand"><img className="brand-icon" src={journalMark} alt="" width={32} height={32} /><div>Journal<small>PROJECT MEMORY</small></div><span className="local-tag">LOCAL</span></div>
-      <button className="open-project" onClick={() => void openProject()} disabled={busy}><span>＋</span> Open project <kbd>{bootstrap?.platform === 'darwin' ? '⌘' : 'Ctrl'} O</kbd></button>
+      <button className="open-project" onClick={() => void openProject()} disabled={busy}><span>＋</span> Open project {bootstrap?.shortcuts['open-project'] && <kbd>{bootstrap.shortcuts['open-project']}</kbd>}</button>
       <div className="nav-caption">PROJECTS <span>{projects.length}</span></div>
       <nav aria-label="Projects">{projects.map(project => <div key={project.id} className="project-row"><button className={`project-link ${state?.project.id === project.id ? 'selected' : ''}`} aria-current={state?.project.id === project.id ? 'true' : undefined} onClick={() => void chooseProject(project)} onContextMenu={event => { event.preventDefault(); void projectMenu(project, menuPosition(event)); }} title={project.root}><svg className="folder-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 11h18" /></svg><span className="project-name">{project.name}</span>{project.pinned && <span className="pin-mark"><span aria-hidden="true">⚲</span><span className="visually-hidden">pinned</span></span>}{ordered.some(s => s.projectId === project.id && needsAttention(s)) && <span className="attention" aria-label="needs attention">●</span>}</button><button className="project-manage" aria-label={`Manage ${project.name}`} onClick={() => setManageId(project.id)}>⋯</button></div>)}</nav>
-      <SessionList sessions={ordered} projects={projects} selectedId={selectedId} currentProjectId={state?.project.id ?? null} connected={connected} now={now} onSelect={next => void selectSession(next)} onMenu={(next, position) => void sessionMenu(next, position)} onNew={newSession} canStart={!!state && canStart} />
+      <SessionList sessions={ordered} projects={projects} selectedId={selectedId} currentProjectId={state?.project.id ?? null} connected={connected} now={now} onSelect={next => void selectSession(next)} onMenu={(next, position) => void sessionMenu(next, position)} onNew={newSession} newShortcut={bootstrap?.shortcuts['new-session']} canStart={!!state && canStart} />
       <div className="sidebar-footer">{!state && <UpdateNotice state={update} onError={failed} />}<button className="theme-toggle" aria-label={`Switch to ${appearance === 'dark' ? 'light' : 'dark'} mode`} onClick={() => setAppearance(value => value === 'dark' ? 'light' : 'dark')}><span aria-hidden="true">{appearance === 'dark' ? '☀' : '◐'}</span> {appearance === 'dark' ? 'Light mode' : 'Dark mode'}</button><button className="theme-toggle" onClick={() => setDataDialog(true)}><span aria-hidden="true">⛁</span> Data and backups</button><span className={`status-dot ${connected ? 'running' : 'waiting'}`} /> {connected ? 'Runtime connected' : runtime.state === 'connecting' ? 'Starting runtime…' : 'Runtime disconnected'}<small>No terminal transcripts saved</small></div>
     </aside>
 
@@ -317,7 +331,7 @@ export default function App() {
     </main>
 
     {state && collapsed && <aside className="knowledge-panel panel-rail" id="knowledge-sidebar" aria-label="Side panel (collapsed)">
-      <button className="rail-button" aria-label="Show side panel" title={`Show side panel (${bootstrap?.platform === 'darwin' ? '⌥⌘B' : 'Ctrl+Alt+B'})`} onClick={() => setCollapsed(false)}>‹</button>
+      <button className="rail-button" aria-label="Show side panel" title={`Show side panel (${bootstrap?.shortcuts['toggle-inspector'] ?? ''})`} onClick={() => setCollapsed(false)}>‹</button>
       {(['files', 'memory', 'context', 'changes', 'activity'] as Panel[]).map(name => <button key={name} className="rail-button rail-tab" disabled={!session && (name === 'changes' || name === 'activity')} onClick={() => { setPanel(name); setCollapsed(false); }} aria-label={`Open ${name}`} title={name[0].toUpperCase() + name.slice(1)}>{name[0].toUpperCase()}</button>)}
     </aside>}
     {state && !collapsed && <aside className="knowledge-panel" id="knowledge-sidebar"><div className="panel-tabs" role="tablist" aria-label="Project information">
@@ -326,7 +340,7 @@ export default function App() {
       <button role="tab" aria-selected={panel === 'context'} onClick={() => setPanel('context')}><span className="panel-tab-label">Context</span></button>
       <button role="tab" aria-selected={panel === 'changes'} disabled={!session} onClick={() => setPanel('changes')}><span className="panel-tab-label">Changes</span></button>
       <button role="tab" aria-selected={panel === 'activity'} disabled={!session} onClick={() => setPanel('activity')}><span className="panel-tab-label">Activity</span></button>
-      <button className="panel-collapse" aria-label="Hide side panel" title={`Hide side panel (${bootstrap?.platform === 'darwin' ? '⌥⌘B' : 'Ctrl+Alt+B'})`} onClick={() => setCollapsed(true)}>›</button></div>
+      <button className="panel-collapse" aria-label="Hide side panel" title={`Hide side panel (${bootstrap?.shortcuts['toggle-inspector'] ?? ''})`} onClick={() => setCollapsed(true)}>›</button></div>
       {panel === 'files' && <ExplorerPanel key={state.project.id} project={state.project} session={session} rootsVersion={workspaces?.workspaces.map(w => `${w.id}:${w.state}`).join(',') ?? ''} revealLabel={`Reveal in ${revealLabel}`} focusSignal={explorerFocus} onPreviewing={setPreviewing} onError={failed}
         onAddReference={async ref => {
           const projectId = state.project.id;

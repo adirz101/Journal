@@ -1941,6 +1941,8 @@ git commit -m "Add the app shortcut table and matcher for macOS, Windows and Lin
 ### Task 1.4b: Route shortcuts while the terminal has focus (BUG-7)
 
 > **Decision for this task:** while a dialog is open, commands are swallowed by the main-process `preventDefault` because the main process does not know about dialogs. Either accept and document that, or have the renderer report dialog state so the router lets keys through. The router must send a command only when `shouldDispatch(input)` is true (held keys are claimed but not repeated).
+>
+> **Chosen (implementation):** the renderer reports dialog state. `App.tsx` sends `setModalOpen({ open })` (a validated action on the preload allow-list) whenever one of its modal dialogs opens or closes; while it is open, the router claims no key, so shortcut keys behave natively inside the dialog. A reload resets the flag. The renderer still ignores a command that arrives while a `dialog[open]` exists (a key pressed before main heard about the dialog).
 
 **Files:**
 - Create: `tests/support/keys.ts`

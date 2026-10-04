@@ -20,7 +20,7 @@ Non-goals: editing; creating, deleting or renaming files; editor tabs; language 
 
 ## Behavior
 
-- **Panel:** the right panel is collapsible to a rail (⌥⌘B / Ctrl+Alt+B); ⌘⇧E / Ctrl+Shift+E opens Files and focuses the tree. Files sits first among Files, Knowledge, Context, Changes and Activity. A preview widens the panel to at most 720 px or half the window (not saved) and returns afterwards. No panel or tree animations: these are frequent, keyboard-driven actions.
+- **Panel:** the right panel is collapsible to a rail (⌘I / Ctrl+Shift+B); ⌥⌘2 / Alt+Shift+2 opens Files and focuses the tree. Files sits first among Files, Memory, Context, Changes and Activity. A preview widens the panel to at most 720 px or half the window (not saved) and returns afterwards. No panel or tree animations: these are frequent, keyboard-driven actions.
 - **Roots:** the explorer follows the selected session's workspace; with no session it shows the checkout. A root selector picks the checkout or a ready worktree ("Browsing", with a way back to "Follow"). Additional folders are separate top-level roots; worktrees are alternatives, never shown together.
 - **Tree:** folders load when expanded; `.git` is never listed; dotfiles are shown; ignored folders are dimmed and not scanned until expanded; links are marked and never followed; sensitive files carry a lock and cannot be previewed or referenced.
 - **Git decorations:** a letter plus color, never color alone: `!` conflict, `D` deleted (Changed filter only), `M` modified, `R` renamed (tooltip shows the source), `T` type change, `A` added, `U` untracked, `S` submodule; ignored names are dimmed. Folders show a dot in the color of their highest-priority changed descendant. Tooltips say staged or unstaged.

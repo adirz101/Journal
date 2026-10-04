@@ -20,6 +20,7 @@ import { launchTarget, resolveExecutable } from '../core/process.mjs';
 import { RootWatcher } from './watch.mjs';
 import { Updater, updateMode } from './updater.mjs';
 import { checkOutcome, menuTemplate } from './menu.mjs';
+import { matchShortcut, shortcutLabels, shouldDispatch } from './shortcuts.mjs';
 import electronUpdater from 'electron-updater';
 import { dataDirectory, unpackedPath, withGuiPath } from './environment.mjs';
 import { WINDOW_BACKGROUND } from './window-colors.mjs';
@@ -46,7 +47,8 @@ app.setPath('userData', userData);
 const appearancePrefs = join(userData, 'appearance.json');
 const lastAppearance = () => { try { return JSON.parse(readFileSync(appearancePrefs, 'utf8')).appearance === 'light' ? 'light' : 'dark'; } catch { return 'dark'; } };
 if (!app.requestSingleInstanceLock()) app.quit();
-let window; let store; let runtime; let updater; let updatePolicy = null; let closing = false; let closed = false; let runtimeState = 'connecting'; let runtimeWarning = null;
+// modalOpen: the renderer reports whether a modal dialog is open (setModalOpen).
+let window; let modalOpen = false; let store; let runtime; let updater; let updatePolicy = null; let closing = false; let closed = false; let runtimeState = 'connecting'; let runtimeWarning = null;
 const devUrl = process.env.JOURNAL_DEV_URL;
 // Automated tests run without visible windows or a Dock icon.
 const headless = process.env.JOURNAL_HEADLESS === '1';
@@ -89,8 +91,19 @@ function createWindow() {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('will-attach-webview', event => event.preventDefault());
+  // App shortcuts work while the terminal has focus (BUG-7): matched here, before
+  // the page sees the key, and sent as commands. A held key is claimed on every
+  // repeat (so it never leaks to the terminal) but sends its command once. While
+  // a modal dialog is open nothing is claimed: keys behave as usual inside it.
+  window.webContents.on('before-input-event', (event, input) => {
+    if (modalOpen) return;
+    const id = matchShortcut(input, process.platform);
+    if (!id) return;
+    event.preventDefault();
+    if (shouldDispatch(input)) send({ type: 'command', id });
+  });
   // A reloading renderer re-attaches; until then the runtime keeps buffering.
-  window.webContents.on('did-start-loading', () => { void runtime?.call('detach', {}).catch(() => {}); });
+  window.webContents.on('did-start-loading', () => { modalOpen = false; void runtime?.call('detach', {}).catch(() => {}); });
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   window.on('closed', () => { window = null; });
   if (devUrl) window.loadURL(devUrl); else window.loadFile(resolve(root, 'dist/index.html'));
@@ -165,7 +178,11 @@ const actions = {
     window?.setBackgroundColor(WINDOW_BACKGROUND[appearance]);
     try { writeFileSync(appearancePrefs, JSON.stringify({ appearance })); } catch { /* The next launch starts dark. */ }
   },
-  bootstrap: async () => ({ projects: await store.listProjects(), agents, platform: process.platform, runtime: { state: runtimeState, warning: runtimeWarning },
+  setModalOpen: ({ open }) => {
+    if (typeof open !== 'boolean') throw new Error('Invalid dialog state');
+    modalOpen = open;
+  },
+  bootstrap: async () => ({ projects: await store.listProjects(), agents, platform: process.platform, shortcuts: shortcutLabels(process.platform), runtime: { state: runtimeState, warning: runtimeWarning },
     live: runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [], active: await store.activeSessions() }),
   openProject: async () => {
     const result = await dialog.showOpenDialog(window, { title: 'Open a Git project', properties: ['openDirectory'] });

@@ -2,6 +2,7 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { pressKey } from './support/keys';
 
 // Real Electron, real runtime process and node-pty, controlled fixture CLIs.
 test.skip(process.platform === 'win32', 'POSIX fixture CLIs; native Windows is verified separately');
@@ -89,9 +90,34 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     await sessionButton(page, 'TASK_2').click();
     await expect(page.locator('.terminal-surface')).toContainText('TASK TASK_2');
     await expect(page.locator('.terminal-surface')).not.toContainText('ECHO only-in-one');
-    // Keyboard switching: ⌘1–4 on macOS, Alt+1–4 elsewhere.
-    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+4' : 'Alt+4');
-    await expect(page.locator('.terminal-label')).toBeVisible();
+    // Slot shortcuts work while the terminal has focus (BUG-7): ⌘1–4 on macOS, Alt+1–4 elsewhere.
+    const mac = process.platform === 'darwin'; const slot = [mac ? 'meta' : 'alt'] as const;
+    await expect(sessionButton(page, 'TASK_2')).toHaveAttribute('aria-current', 'true');
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused();
+    await pressKey(app, '4', [...slot]); // Active sessions are newest first: slot 4 is TASK_0.
+    await expect(sessionButton(page, 'TASK_0')).toHaveAttribute('aria-current', 'true');
+    await expect(page.locator('.terminal-surface')).toContainText('TASK TASK_0');
+    // Keys that are not app shortcuts still reach the CLI.
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused();
+    await pressKey(app, 'C', ['control']);
+    await expect(page.locator('.terminal-surface')).toContainText('INTERRUPTED');
+    // While a dialog is open, shortcut keys are not claimed: they reach the dialog
+    // like any other key, and no command runs.
+    await page.evaluate(() => { const keys: string[] = (window as any).__keys = []; window.addEventListener('keydown', event => keys.push(event.key)); });
+    await pressKey(app, 'K', mac ? ['meta', 'shift'] : ['control', 'shift']);
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(async () => {
+      await pressKey(app, '1', [...slot]);
+      expect(await page.evaluate(() => (window as any).__keys)).toContain('1');
+    }).toPass();
+    await expect(sessionButton(page, 'TASK_0')).toHaveAttribute('aria-current', 'true');
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    // Closing the dialog gives the shortcuts back.
+    await expect(async () => {
+      await pressKey(app, '3', [...slot]);
+      await expect(sessionButton(page, 'TASK_1')).toHaveAttribute('aria-current', 'true', { timeout: 1000 });
+    }).toPass();
     await page.reload();
     await expect(page.getByText('4/4 active')).toBeVisible();
     await sessionButton(page, 'TASK_1').click();

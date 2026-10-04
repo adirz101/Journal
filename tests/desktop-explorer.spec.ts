@@ -2,6 +2,7 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, symlinkSync, unlinkSync, readFileSync, existsSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { pressKey } from './support/keys';
 
 // Real Electron, runtime and node-pty with fixture CLIs. Native menus are
 // driven through the headless menu hook (see desktop-context-menus.spec.ts).
@@ -153,10 +154,12 @@ test('the explorer browses, decorates, previews and references files without edi
     await expect(row(page, /^extra/)).toBeVisible();
     await row(page, /^extra/).click(); await expect(row(page, /^notes\.md/)).toBeVisible();
 
-    // Collapse and restore the side panel from the keyboard.
-    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Alt+KeyB' : 'Control+Alt+KeyB');
+    // Collapse the side panel and open Files from the keyboard: ⌘I and ⌥⌘2 on macOS,
+    // Ctrl+Shift+B and Alt+Shift+2 elsewhere.
+    const mac = process.platform === 'darwin';
+    await pressKey(app, mac ? 'I' : 'B', mac ? ['meta'] : ['control', 'shift']);
     await expect(page.getByRole('button', { name: 'Show side panel' })).toBeVisible();
-    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+KeyE' : 'Control+Shift+KeyE');
+    await pressKey(app, '2', mac ? ['meta', 'alt'] : ['alt', 'shift']);
     await expect(page.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true');
 
     // Another project shows only its own files: no stale tree, preview or reference carries over.
