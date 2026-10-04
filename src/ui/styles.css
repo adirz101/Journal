@@ -177,8 +177,8 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .note-card>.memory-actions{margin-top:6px}
 .note-card .memory-actions kbd{margin-left:4px;padding:0 4px}
 /* hover and preview: one line per row, the full text in the title. */
-.note-card.hover>.note-statement,.note-card.preview>.note-statement,.note-card.hover .note-line,.note-card.preview .note-line,.note-card.hover .note-scope,.note-card.preview .note-scope{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}
-.note-card.hover .note-origin button.link,.note-card.preview .note-origin button.link{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.note-card.compact>.note-statement,.note-card.compact .note-line,.note-card.compact .note-scope{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}
+.note-card.compact .note-origin button.link{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Memory tab filters (F16): search and Add, category chips, then status tabs and two attention toggles. */
 .memory-search{display:flex;gap:8px;margin-top:14px}
 .memory-search .knowledge-search{flex:1}
@@ -188,6 +188,7 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .category-chips button span{color:var(--tx3);margin-left:2px}
 .category-chips button[aria-pressed=true]{background:var(--accsoft);border-color:var(--accline);color:var(--acc)}
 .category-chips button[aria-pressed=true] span{color:inherit}
+@media(forced-colors:active){.category-chips button[aria-pressed=true]{border-color:Highlight;outline:1px solid Highlight;outline-offset:1px}.category-chips button[aria-pressed=true]:focus-visible{outline:3px solid Highlight;outline-offset:2px}}
 .filter-tabs .filter-gap{flex:1;margin:0;padding:0;background:transparent}
 .filter-tabs .attention-toggle.amber{color:var(--amb)}
 .filter-tabs .attention-toggle.amber span{background:var(--ambsoft)}

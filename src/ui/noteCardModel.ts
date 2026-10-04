@@ -48,10 +48,14 @@ const short = (sha: string | null | undefined) => (sha ?? '').slice(0, 7);
 // Where the note came from. Remembered (active) notes say who remembered it and when;
 // other states give the same origin without that, since the status chip says the state.
 // null while the origin is loading or unavailable. sessionId: a present session App can open.
-export function originLine(note: Pick<Memory, 'status'>, origin: MemoryOrigin | null | undefined, now: number): { text: string; sessionId: string | null } | null {
+// variant 'receipt': a delivered snapshot shows the approval time only when the current
+// approval is of the delivered revision (origin.approvedRevision === note.revision), so a
+// later revision's approval never reads as part of what was sent.
+export function originLine(note: Pick<Memory, 'status'> & Partial<Pick<Memory, 'revision'>>, origin: MemoryOrigin | null | undefined, now: number, variant?: NoteCardVariant): { text: string; sessionId: string | null } | null {
   if (!origin) return null;
   const active = note.status === 'active';
-  const at = origin.approvedAt ? whenText(origin.approvedAt, now) : '';
+  const sameRevision = variant !== 'receipt' || (origin.approvedRevision !== null && origin.approvedRevision !== undefined && origin.approvedRevision === note.revision);
+  const at = origin.approvedAt && sameRevision ? whenText(origin.approvedAt, now) : '';
   const remembered = at ? `${t.rememberedBy} ${/\d{4}$/.test(at) ? t.onDate(at) : at}` : t.rememberedBy;
   const credit = active ? t.rememberedSuffix : '';
   const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
@@ -82,14 +86,16 @@ export function originLine(note: Pick<Memory, 'status'>, origin: MemoryOrigin | 
 // Git and statements are covered by the origin line). rootName: the folder of a folder
 // source. A delivered snapshot (receipt) only knows its sources were current at launch.
 // title: the full location, also for "Check needed", whose text leaves the path out.
-export function evidenceLine(note: Memory, rootName?: string, variant?: NoteCardVariant): { text: string; tone: 'quiet' | 'amber'; title: string } | null {
+// receiptState: a failed launch never started a session, so its sources read as checked
+// when the launch was prepared.
+export function evidenceLine(note: Memory, rootName?: string, variant?: NoteCardVariant, receiptState?: string): { text: string; tone: 'quiet' | 'amber'; title: string } | null {
   const source = note.source;
   if (source.kind !== 'file' || !source.path) return null;
   const start = source.startLine; const end = source.endLine ?? start;
   const lines = start ? end && end !== start ? `:${start}–${end}` : `:${start}` : '';
   const where = `${rootName ? `${rootName}/` : ''}${source.path}${lines}`;
   const based = (suffix: string) => ({ text: `${t.basedOn(where)} · ${suffix}`, tone: 'quiet' as const, title: where });
-  if (variant === 'receipt') return based(t.atStart);
+  if (variant === 'receipt') return based(receiptState === 'failed' ? t.atPrepared : t.atStart);
   switch (note.validation) {
     case 'stale': return { text: `${copy.checkNeeded} · ${t.fileChanged}`, tone: 'amber', title: where };
     case 'wrong-branch': return based(t.onlyOn(note.branch ?? t.anotherBranch));

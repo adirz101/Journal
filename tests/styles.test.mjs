@@ -168,3 +168,14 @@ test('Phase 5 notes: Check needed is amber everywhere, never animated; note hove
   for (const selector of ['.category-chips button:not([aria-pressed=true]):not(:disabled):hover', '.category-chips button[aria-pressed=true]:not(:disabled):hover', '.note-origin button.link:not(:disabled):hover'])
     assert.ok(rulesFor(selector).some(rule => rule.at.some(at => /hover:hover/.test(at) && /pointer:fine/.test(at))), selector);
 });
+
+test('Phase 5 notes: only compact cards keep one line; pressed chips stay visible in forced colors', () => {
+  // A preview card (the Session tab before a start) wraps its statement; compact (hover by default) keeps one line.
+  const oneLine = RULES.filter(rule => declares(rule, 'white-space', 'nowrap') && rule.selectors.some(selector => selector.startsWith('.note-card')));
+  assert.ok(oneLine.some(rule => rule.selectors.includes('.note-card.compact>.note-statement')), 'compact statement is one line');
+  assert.deepEqual(oneLine.flatMap(rule => rule.selectors).filter(selector => /\.(?:preview|hover|memory|receipt)\b/.test(selector)), []);
+  // Forced colors drop the accent tint: a pressed chip keeps a Highlight border and an outline.
+  const forced = rulesFor('.category-chips button[aria-pressed=true]').filter(rule => rule.at.some(at => /forced-colors:\s*active/.test(at)));
+  assert.ok(forced.some(rule => declares(rule, 'border-color', 'Highlight') && declares(rule, 'outline', '1px solid Highlight')), 'pressed chip in forced colors');
+  assert.ok(rulesFor('.category-chips button[aria-pressed=true]:focus-visible').some(rule => rule.at.some(at => /forced-colors/.test(at)) && declares(rule, 'outline', '3px solid Highlight')), 'focus stays distinct from pressed');
+});

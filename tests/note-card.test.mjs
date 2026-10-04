@@ -10,12 +10,14 @@ import ts from 'typescript';
 async function load(t) {
   mkdirSync(resolve('.cache/tmp'), { recursive: true });
   const dir = mkdtempSync(resolve('.cache/tmp', 'note-card-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
-  for (const name of ['types', 'copy', 'noteCardModel']) {
+  for (const name of ['types', 'copy', 'noteCardModel', 'memoryChecksModel']) {
     const source = readFileSync(new URL(`../src/ui/${name}.ts`, import.meta.url), 'utf8');
     const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
     writeFileSync(join(dir, `${name}.mjs`), outputText.replace(/from '\.\/(types|copy)'/g, "from './$1.mjs'"));
   }
-  return import(pathToFileURL(join(dir, 'noteCardModel.mjs')).href);
+  const model = await import(pathToFileURL(join(dir, 'noteCardModel.mjs')).href);
+  const checks = await import(pathToFileURL(join(dir, 'memoryChecksModel.mjs')).href);
+  return { ...model, ...checks };
 }
 
 // The words tests/copy.test.mjs keeps out of visible text, plus "used": Journal sees delivery only.
@@ -138,4 +140,58 @@ test('the Session tab shows a delivered snapshot as a receipt and a preview as a
   const { receiptVariant } = await load(t);
   assert.equal(receiptVariant('prepared'), 'preview');
   for (const state of ['submitted', 'uncertain', 'failed']) assert.equal(receiptVariant(state), 'receipt');
+});
+
+test('a delivered snapshot shows the approval time only for the delivered revision', async t => {
+  const { originLine } = await load(t);
+  const from = origin({ kind: 'session', approvedRevision: 2, session: session() });
+  // Approved again at revision 2 today; the receipt carried revision 1: no time from the current approval.
+  assert.equal(originLine({ status: 'active', revision: 1 }, from, NOW, 'receipt').text, "You remembered this, from the session 'Fix the Docker tests' (Claude Code)");
+  assert.equal(originLine({ status: 'active', revision: 2 }, from, NOW, 'receipt').text, "You remembered this today, from the session 'Fix the Docker tests' (Claude Code)");
+  assert.equal(originLine({ status: 'active', revision: 1 }, origin({ kind: 'session', approvedRevision: null, session: session() }), NOW, 'receipt').text, "You remembered this, from the session 'Fix the Docker tests' (Claude Code)");
+  // The Memory tab shows the current state.
+  assert.equal(originLine({ status: 'active', revision: 1 }, from, NOW, 'memory').text, "You remembered this today, from the session 'Fix the Docker tests' (Claude Code)");
+  assert.equal(originLine({ status: 'active', revision: 1 }, from, NOW).text, "You remembered this today, from the session 'Fix the Docker tests' (Claude Code)");
+});
+
+test('a failed launch never says the session started', async t => {
+  const { evidenceLine } = await load(t);
+  assert.equal(evidenceLine(note(), undefined, 'receipt', 'failed').text, 'Based on tests.md:3–5 · checked when this launch was prepared');
+  for (const state of ['submitted', 'uncertain', undefined]) assert.equal(evidenceLine(note(), undefined, 'receipt', state).text, 'Based on tests.md:3–5 · checked when the session started');
+  assert.doesNotMatch(evidenceLine(note(), undefined, 'receipt', 'failed').text, BANNED);
+  // A removed folder: no root name (NoteCard passes none), the path alone.
+  assert.equal(evidenceLine(note({ validation: 'folder-removed' })).text, 'Based on tests.md:3–5 · its folder was removed from the project');
+});
+
+test('Check needed counts only this project\'s current notes from the visible page', async t => {
+  const { seedStale } = await load(t);
+  const page = [
+    note({ id: 'a', projectId: 'p', validation: 'stale' }),
+    note({ id: 'b', projectId: 'p', validation: 'stale', status: 'candidate' }),
+    note({ id: 'c', projectId: 'p', validation: 'stale', status: 'archived' }),   // History: forgotten
+    note({ id: 'd', projectId: 'p', validation: 'stale', status: 'rejected' }),   // History: rejected
+    note({ id: 'e', projectId: 'p', validation: 'current' }),
+    note({ id: 'f', projectId: 'old', validation: 'stale' }),                     // the previous project's page, still on screen
+  ];
+  assert.deepEqual(seedStale(page, 'p'), ['a', 'b']);
+  assert.deepEqual(seedStale(page, 'old'), ['f']);
+  assert.deepEqual(seedStale(page, 'new'), [], 'a project switch never counts the old page');
+  assert.deepEqual(seedStale(page, null), []);
+});
+
+test('Check needed keeps the last count during a rescan and ignores a focus storm', async t => {
+  const { shownStale, finishedStale, focusStartsScan, FOCUS_QUIET_MS } = await load(t);
+  // Before any result: the visible page. During a rescan: the last result plus the page. After: the result.
+  assert.deepEqual([...shownStale(null, ['a'], true)], ['a']);
+  assert.deepEqual([...shownStale(new Set(['x']), ['a'], true)].sort(), ['a', 'x']);
+  assert.deepEqual([...shownStale(new Set(['x']), ['a'], false)], ['x']);
+  // A scan that covered every note is exact; one that stopped short adds the page's notes.
+  assert.deepEqual([...finishedStale(['x'], ['a'], true)], ['x']);
+  assert.deepEqual([...finishedStale(['x'], ['a'], false)].sort(), ['a', 'x']);
+  // Focus: never while scanning, not within 5 s of the last finished scan.
+  assert.equal(FOCUS_QUIET_MS, 5000);
+  assert.equal(focusStartsScan(undefined, 10_000, false), true);
+  assert.equal(focusStartsScan(null, 10_000, true), false);
+  assert.equal(focusStartsScan(8_000, 10_000, false), false);
+  assert.equal(focusStartsScan(5_000, 10_000, false), true);
 });

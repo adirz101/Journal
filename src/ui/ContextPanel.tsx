@@ -4,7 +4,7 @@ import { api, PROVIDER_NAMES, type Bootstrap, type FileReference, type Project, 
 import { copy, count, deliveryState, excludedReason, shell, warningText } from './copy';
 import { NoteCard } from './NoteCard';
 import { receiptVariant } from './noteCardModel';
-import { useNoteTrust } from './useNoteTrust';
+import { useNoteTrust, useOpenable } from './useNoteTrust';
 import { relativeTime } from './sidebarModel';
 
 // Files the user referenced, with whether each still matches what was referenced.
@@ -56,7 +56,7 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, e
   }, [packetRequest]); // eslint-disable-line react-hooks/exhaustive-deps
   const preview = receipt?.state === 'prepared';
   const trust = useNoteTrust(project?.id ?? null, useMemo(() => receipt?.items.map(item => item.id) ?? [], [receipt]), trustVersion);
-  const openable = new Set(sessions.map(item => item.id));
+  const openable = useOpenable(sessions);
   // The selected session's own record reads as what this agent knows; an
   // uncertain delivery never reads as sent.
   const own = !!session && receipt?.id === session.receiptId;
@@ -78,7 +78,7 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, e
           {open === item.id && <div className="evidence-details"><pre dir="auto">{item.source.excerpt ?? item.source.note ?? `${item.source.base ?? ''} → ${item.source.head ?? ''}`}</pre></div>}</>;
         const sessionId = trust[item.id]?.origin?.session?.id;
         // A delivered snapshot never changes; a preview's notes are checked again at the start.
-        return <li key={item.id}>{project ? <NoteCard note={item} project={project} variant={receiptVariant(receipt.state)} trust={trust[item.id]} onOpenSession={sessionId && openable.has(sessionId) ? onOpenSession : undefined} actions={actions}>{details}</NoteCard>
+        return <li key={item.id}>{project ? <NoteCard note={item} project={project} variant={receiptVariant(receipt.state)} receiptState={receipt.state} trust={trust[item.id]} onOpenSession={sessionId && openable.has(sessionId) ? onOpenSession : undefined} actions={actions}>{details}</NoteCard>
           : <><p dir="auto">{item.statement}</p>{details}<div className="memory-actions">{actions}</div></>}</li>;
       })}</ol>
       {receipt.references?.length ? <References title={`Referenced for this task · ${receipt.references.length}`} projectId={(receipt as any).projectId} workspaceId={receipt.workspaceId ?? null} references={receipt.references} /> : null}

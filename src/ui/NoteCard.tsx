@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import type { Memory, NoteTrust, Project } from './types';
+import { memo, type ReactNode } from 'react';
+import type { Memory, NoteTrust, Project, Receipt } from './types';
 import { category, composer, copy, memoryState, selectionReason } from './copy';
 import { evidenceLine, originLine, sentLine, shownNote, stateClass, type NoteCardVariant } from './noteCardModel';
 
@@ -9,10 +9,12 @@ export type { NoteCardVariant } from './noteCardModel';
 // tab's delivered notes, the composer's hover card and context previews.
 // Rows: meta (category · matched words · pinned; status or why it was selected), the
 // statement, scope, where it came from, what it is based on, how many conversations it
-// was sent to, then children and actions. hover and preview keep one line each (the
-// full text is in the title); memory and receipt wrap. No animation: cards re-render
-// with typing and terminal events.
-export function NoteCard({ note, project, variant, trust, matched, checkNeeded, onOpenSession, onLeaveOut, actions, children }: {
+// was sent to, then children and actions. A compact card (hover by default) keeps one
+// line per row, with the full text in the title; every other card wraps, preview
+// included. No animation: cards re-render with typing and terminal events.
+// Memoized: a card with stable props (hover, preview without fresh actions) skips
+// re-renders; cards given new actions or children each render still re-render.
+export const NoteCard = memo(function NoteCard({ note, project, variant, trust, matched, checkNeeded, onOpenSession, onLeaveOut, actions, children, compact: compactProp, receiptState }: {
   note: Memory;                              // current note (memory, hover, preview) or a delivered snapshot (receipt)
   project: Project;                          // root names for folder evidence, current branch
   variant: NoteCardVariant;
@@ -23,20 +25,23 @@ export function NoteCard({ note, project, variant, trust, matched, checkNeeded, 
   onLeaveOut?(): void;                       // preview and hover: "Leave out ⌫"
   actions?: ReactNode;
   children?: ReactNode;
+  compact?: boolean;                         // one line per row; default: only the hover variant
+  receiptState?: Receipt['state'];           // receipt: a failed launch says when its sources were checked
 }) {
-  const compact = variant === 'hover' || variant === 'preview';
+  const compact = compactProp ?? variant === 'hover';
   const shown = shownNote(note, checkNeeded, variant);
   const label = category(note.category, note.scope);
-  const rootName = note.source.rootId ? project.roots?.find(root => root.id === note.source.rootId)?.name ?? copy.folderRemoved.toLowerCase() : undefined;
-  const origin = originLine(note, trust?.origin, Date.now());
-  const evidence = evidenceLine(shown, rootName, variant);
+  // A removed folder has no name to show: the path stands alone (the line says the folder was removed).
+  const rootName = note.source.rootId ? project.roots?.find(root => root.id === note.source.rootId)?.name : undefined;
+  const origin = originLine(note, trust?.origin, Date.now(), variant);
+  const evidence = evidenceLine(shown, rootName, variant, receiptState);
   const sent = sentLine(trust?.sent);
   const scope = `${note.scope === 'branch' ? `⑂ ${copy.onlyOn(note.branch)}` : copy.allBranches}${note.area ? ` · ${note.area}` : ''}${note.environment ? ` · applies when: ${note.environment}` : ''} · r${note.revision}`;
   // One-line rows carry their full text as a tooltip.
   const full = (text: string) => compact ? text : undefined;
   const side = variant === 'memory' ? <span className={`memory-state ${stateClass(shown)}`}>{memoryState(shown)}</span>
     : variant === 'hover' ? null : <span>{selectionReason(note.selection?.reason, note.area)}{note.selection ? ` · ${note.selection.bytes} B` : ''}</span>;
-  return <article className={`note-card ${variant}${variant === 'memory' ? ' memory-card' : ''}`} aria-label={`${label}: ${note.statement.slice(0, 80)}`}>
+  return <article className={`note-card ${variant}${variant === 'memory' ? ' memory-card' : ''}${compact ? ' compact' : ''}`} aria-label={`${label}: ${note.statement.slice(0, 80)}`}>
     <div className="memory-meta note-meta"><span>{label}{matched?.length ? ` · ${composer.matches} ${matched.join(' ')}` : ''}{note.pinned ? ' · pinned' : ''}</span>{side}</div>
     <p className="note-statement" dir="auto" title={full(note.statement)}>{note.statement}</p>
     <div className="memory-scope note-scope" title={full(scope)}>{scope}</div>
@@ -47,4 +52,4 @@ export function NoteCard({ note, project, variant, trust, matched, checkNeeded, 
     {children}
     {(actions || onLeaveOut) && <div className="memory-actions">{actions}{onLeaveOut && <button type="button" onClick={onLeaveOut} aria-keyshortcuts="Backspace Delete">{composer.leaveOutShort} <kbd aria-hidden="true">⌫</kbd></button>}</div>}
   </article>;
-}
+});
