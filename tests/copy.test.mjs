@@ -149,3 +149,33 @@ test('every warning and reason core can produce has a plain-language mapping', (
   for (const code of codes) assert.notEqual(excludedReason(code), code, `unmapped excluded code: ${code}`);
   for (const reason of core.selection) assert.notEqual(selectionReason(reason, '1'), reason, `unmapped selection reason: ${reason}`);
 });
+
+// Native dialogs in the desktop main process: every string in a dialog call,
+// and in variables those calls interpolate (such as a list of counts).
+function dialogStrings() {
+  const source = ts.createSourceFile('main.mjs', readFileSync(new URL('../src/desktop/main.mjs', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const calls = []; const names = new Set(); const found = [];
+  const findCalls = node => {
+    if (ts.isCallExpression(node) && /^dialog\.show\w+$/.test(node.expression.getText())) calls.push(node);
+    ts.forEachChild(node, findCalls);
+  };
+  findCalls(source);
+  const collect = node => {
+    if (ts.isIdentifier(node)) names.add(node.text);
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) { if (node.text.trim()) found.push([`main.mjs:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}`, node.text.trim()]); }
+    ts.forEachChild(node, collect);
+  };
+  for (const call of calls) call.arguments.forEach(collect);
+  const declarations = node => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && names.has(node.name.text) && node.initializer) collect(node.initializer);
+    ts.forEachChild(node, declarations);
+  };
+  declarations(source);
+  return { calls: calls.length, found };
+}
+
+test('native dialogs use the plain vocabulary', () => {
+  const { calls, found } = dialogStrings();
+  assert.ok(calls >= 10 && found.some(([, text]) => text.startsWith('Your files will not be deleted')), 'the scan found the dialogs');
+  assert.deepEqual(found.filter(([, text]) => OLD_TERMS.test(text)).map(([at, text]) => `${at}: ${text}`), []);
+});

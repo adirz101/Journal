@@ -183,14 +183,14 @@ const actions = {
     if (!root) throw new Error('Unknown folder');
     const { response } = await dialog.showMessageBox(window, { type: 'question', buttons: ['Remove folder from project', 'Cancel'], defaultId: 1, cancelId: 1,
       message: `Remove ${root.name} from ${details.project.name}?`,
-      detail: `Your files will not be deleted. Journal stops using ${root.path} as part of this project.${root.knowledge ? ` ${root.knowledge} knowledge claim${root.knowledge === 1 ? '' : 's'} from this folder will be kept but excluded until you add the same folder again.` : ''}` });
+      detail: `Your files will not be deleted. Journal stops using ${root.path} as part of this project.${root.knowledge ? ` ${root.knowledge} note${root.knowledge === 1 ? '' : 's'} from this folder will be kept but not included until you add the same folder again.` : ''}` });
     return response === 0 ? store.removeProjectRoot(id, rootId) : null;
   },
   // Removing never deletes files; the second option deletes Journal's own records for the project.
   removeProject: async ({ id }) => {
     const { project, counts } = await store.projectDetails(id);
     if (counts.liveSessions) throw new Error('Stop this project\'s running sessions first');
-    const data = [`${counts.knowledge} knowledge claim${counts.knowledge === 1 ? '' : 's'}`, `${counts.sessions} session record${counts.sessions === 1 ? '' : 's'}`, `${counts.receipts} context receipt${counts.receipts === 1 ? '' : 's'}`, `${counts.events} timeline event${counts.events === 1 ? '' : 's'}`, `${counts.proposals} open proposal${counts.proposals === 1 ? '' : 's'}`].join(', ');
+    const data = [`${counts.knowledge} note${counts.knowledge === 1 ? '' : 's'}`, `${counts.sessions} session record${counts.sessions === 1 ? '' : 's'}`, `${counts.receipts} record${counts.receipts === 1 ? '' : 's'} of what was sent`, `${counts.events} timeline event${counts.events === 1 ? '' : 's'}`, `${counts.proposals} open suggestion${counts.proposals === 1 ? '' : 's'}`].join(', ');
     const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Remove from Journal', 'Remove and delete Journal data', 'Cancel'], defaultId: 2, cancelId: 2,
       message: `Remove ${project.name} from Journal?`,
       detail: `Your files will not be deleted. Nothing in ${project.root} or its Git repository is touched.\n\nRemove from Journal: hides the project. Its Journal data (${data}) is kept, and opening the folder again restores everything.\n\nRemove and delete Journal data: permanently deletes that Journal data from this computer. This cannot be undone.${counts.worktrees ? `\n\nThis project has ${counts.worktrees} Journal worktree${counts.worktrees === 1 ? '' : 's'}; remove ${counts.worktrees === 1 ? 'it' : 'them'} under Workspaces before deleting data.` : ''}` });
@@ -284,7 +284,7 @@ const actions = {
     return result.canceled ? null : store.backup(result.filePath);
   },
   exportBrain: async ({ projectId }) => {
-    const result = await dialog.showSaveDialog(window, { title: 'Export project knowledge', defaultPath: 'journal-knowledge.json', filters: [{ name: 'Journal knowledge', extensions: ['json'] }] });
+    const result = await dialog.showSaveDialog(window, { title: 'Export project memory', defaultPath: 'journal-project-memory.json', filters: [{ name: 'Journal project memory', extensions: ['json'] }] });
     if (result.canceled) return null;
     const { json, markdown } = await store.exportBrain(projectId);
     writeFileSync(result.filePath, JSON.stringify(json, null, 2));
@@ -294,7 +294,7 @@ const actions = {
     return { path: result.filePath, memories: json.memories.length, markdown: wroteMarkdown ? mdPath : null };
   },
   importBrain: async ({ projectId }) => {
-    const result = await dialog.showOpenDialog(window, { title: 'Import project knowledge', properties: ['openFile'], filters: [{ name: 'Journal knowledge', extensions: ['json'] }] });
+    const result = await dialog.showOpenDialog(window, { title: 'Import project memory', properties: ['openFile'], filters: [{ name: 'Journal project memory', extensions: ['json'] }] });
     if (result.canceled) return null;
     if (statSync(result.filePaths[0]).size > 5 * 1024 * 1024) throw new Error('Import file is larger than 5 MiB');
     return store.importBrain(projectId, readFileSync(result.filePaths[0], 'utf8'));
@@ -346,7 +346,7 @@ const actions = {
       if (after.survivors?.length) throw new Error(`The agent stopped, but ${after.survivors.length} child process${after.survivors.length === 1 ? '' : 'es'} kept running. The session was kept so you can end them from its header.`);
     } else {
       const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Remove from Journal', 'Remove and delete history', 'Cancel'], defaultId: 2, cancelId: 2, message: `Remove "${label}" from Journal?`,
-        detail: `Remove from Journal hides it and deletes its timeline; its context receipts are kept so the native conversation can still be resumed exactly. Remove and delete history also deletes its receipts (refused if other sessions continue the same native conversation). ${files}` });
+        detail: `Remove from Journal hides it and deletes its timeline; its records of what was sent are kept so you can still continue the native conversation. Remove and delete history also deletes those records (refused if other sessions continue the same native conversation). ${files}` });
       if (response === 2) return null;
       if (response === 1) { await runtime.call('release', { id }).catch(() => {}); await store.purgeSession(id); return { id, removed: true }; }
     }
