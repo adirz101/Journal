@@ -24,7 +24,7 @@ import { APP_USER_MODEL_ID, createNotifier, readPreferences, systemSurface, writ
 import { matchShortcut, shortcutKeys, shouldDispatch } from './shortcuts.mjs';
 import { settledError } from './ipc-error.mjs';
 import electronUpdater from 'electron-updater';
-import { dataDirectory, unpackedPath, withGuiPath } from './environment.mjs';
+import { dataDirectory, isNetworkPath, unpackedPath, withGuiPath } from './environment.mjs';
 import { WINDOW_BACKGROUND } from './window-colors.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -516,6 +516,7 @@ const actions = {
   // then the store's own Git check. The same trust as the open dialog.
   openProjectPath: ({ path }) => {
     if (typeof path !== 'string' || !path || path.length > 4096 || !isAbsolute(path)) throw new Error('Drop a Git folder');
+    if (isNetworkPath(path)) throw new Error('Drop a folder on this computer, not a network share');
     let directory = false; try { directory = statSync(path).isDirectory(); } catch { /* missing */ }
     if (!directory) throw new Error('Drop a Git folder');
     return store.openProject(path);
