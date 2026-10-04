@@ -411,3 +411,13 @@ test('the proposals event names the session and reports zero', async t => {
   assert.deepEqual(by(plain.id), { type: 'proposals', projectId: f.project.id, sessionId: plain.id, count: 0 });
   assert.deepEqual(by(ruled.id), { type: 'proposals', projectId: f.project.id, sessionId: ruled.id, count: 1 });
 });
+
+test('the proposals event says when generating suggestions failed', async t => {
+  const f = fixture(t); f.store.generateProposals = () => { throw new Error('disk full'); };
+  const { fake } = await f.boot(); const c = client(f, t); await c.connect();
+  const events = []; c.on('event', e => { if (e.type === 'proposals') events.push(e); });
+  const session = (await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'Ship it.\nRule: Release tags must be signed by CI.' })).session;
+  fake.procs[0].exit({ exitCode: 0 });
+  await until(() => events.length === 1, 5000);
+  assert.deepEqual(events[0], { type: 'proposals', projectId: f.project.id, sessionId: session.id, count: 0, failed: true });
+});

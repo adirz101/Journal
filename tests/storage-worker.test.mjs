@@ -73,6 +73,7 @@ test('the Phase 6 session-end methods are callable through the worker', async t 
   await store.setMemoryStatus(file.id, 'active');
   writeFileSync(resolve(root, 'a.txt'), 'one\n2\n');
   // No baseline was recorded, so the live changes count every file against the empty tree.
-  assert.deepEqual((await store.staleNotesForSession(id)).notes.map(item => item.note.id), [file.id]);
-  assert.equal((await store.reaffirmMemory(file.id, {})).revision, 2);
+  const caught = await store.staleNotesForSession(id);
+  assert.deepEqual(caught.notes.map(item => item.note.id), [file.id]);
+  assert.equal((await store.reaffirmMemory(file.id, { expectedHash: caught.notes[0].contentHash })).revision, 2);
 });
