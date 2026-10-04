@@ -320,7 +320,8 @@ test('errors from core and the desktop main process use the plain vocabulary', (
 
 test('the wrap-up vocabulary avoids the old terms', () => {
   const samples = { exited: [0, '18m'], stopped: ['11m'], endedBy: ['SIGTERM', '3m'], alreadyChanged: [2], testsHidden: ['Codex'], passed: [3], failed: [1],
-    rememberAll: [3], branchUnreachable: ['feature/x'], staleHead: ['process.mjs', 1], whatChanged: ['process.mjs:41'], renamedTo: ['b.js'], ended: [2] };
+    rememberAll: [3], branchUnreachable: ['feature/x'], staleHead: ['process.mjs', 1], whatChanged: ['process.mjs:41'], renamedTo: ['b.js'], ended: [2],
+    unknown: [1], rangeLabel: ['First'], checkFailed: ['The file changed again; check it once more.'] };
   const values = Object.entries(wrapUp).flatMap(([key, value]) => typeof value === 'function' ? [[key, value(...(samples[key] ?? []))]]
     : typeof value === 'object' ? Object.entries(value).map(([inner, text]) => [`${key}.${inner}`, text]) : [[key, value]]);
   assert.ok(Object.entries(wrapUp).filter(([, value]) => typeof value === 'function').every(([key]) => key in samples), 'every function has sample arguments');

@@ -156,6 +156,15 @@ export const wrapUp = {
   notSaved: 'Terminal output is kept in memory only while Journal’s runtime runs. It was not saved and is no longer available.',
   lastOutput: 'Last thing in the terminal', copyOutput: 'Copy output', copied: 'Copied',
   ended: (suggestions: number) => `Session ended. ${count(suggestions, 'suggestion')}.`,
+  // --- Phase 6 Group B additions ---
+  unknown: (n: number) => `${n} without a result`, appliesAll: 'applies to all branches', cancel: 'Cancel',
+  showWholeChange: 'Show the whole change', wholeChangeNeeded: 'Part of this change is not shown. Show the whole change before you mark the note still true.',
+  wholeChangeTooLarge: 'This change is too large to show in full here. Update the note instead.', wholeChangeHidden: 'This file’s content is hidden because its name looks sensitive. Update the note instead.',
+  wholeChange: 'The whole change in this file since the session started',
+  linesTo: 'to', rangeInvalid: 'Choose 1 to 30 lines.', rangeLabel: (edge: string) => `${edge} line`,
+  confirmId: 'Confirm conversation ID', idLabel: 'Conversation ID', idPlaceholder: 'Exact ID from the agent’s own CLI', copyId: 'Copy ID',
+  fromSession: 'Suggested from this session', branchUpdate: 'Drafted from this branch’s commits · needs your two lines',
+  checkFailed: (message: string) => `Couldn’t mark it still true: ${message}`,
 } as const;
 
 // Phase 7: first run (boards 1, 2, 3 and 12). Voice (board 12): plain and calm, no exclamation
