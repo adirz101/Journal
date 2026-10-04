@@ -25,7 +25,8 @@ export function installCommand(platform = process.platform, env = process.env) {
   }
   const command = 'curl https://cursor.com/install -fsS | bash';
   // No startup files: --noprofile/--norc, and BASH_ENV/ENV are removed by the caller.
-  return { display: command, file: '/bin/bash', args: ['--noprofile', '--norc', '-c', command] };
+  // pipefail: a failed download fails the run instead of bash exiting 0 on empty input.
+  return { display: command, file: '/bin/bash', args: ['--noprofile', '--norc', '-o', 'pipefail', '-c', command] };
 }
 export const installEnv = env => { const next = { ...env }; delete next.BASH_ENV; delete next.ENV; delete next.ELECTRON_RUN_AS_NODE; return next; };
 

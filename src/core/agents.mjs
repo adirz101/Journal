@@ -86,7 +86,8 @@ export function installFor(provider, platform = process.platform, env = process.
     const shell = join(env.SystemRoot ?? env.windir ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
     return { display: entry.display, file: shell, args: ['-NoProfile', '-NonInteractive', '-Command', entry.display] };
   }
-  return { display: entry.display, file: '/bin/bash', args: ['--noprofile', '--norc', '-c', entry.display] };
+  // pipefail: a failed download (curl) fails the run instead of bash exiting 0 on empty input.
+  return { display: entry.display, file: '/bin/bash', args: ['--noprofile', '--norc', '-o', 'pipefail', '-c', entry.display] };
 }
 
 // The display strings the renderer shows (AgentInfo.commands).

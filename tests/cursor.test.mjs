@@ -48,7 +48,7 @@ function fixture(t) {
 test('install commands are the official ones, run without shell startup files or elevation', () => {
   const mac = installCommand('darwin', {});
   assert.equal(mac.display, 'curl https://cursor.com/install -fsS | bash');
-  assert.deepEqual(mac.args, ['--noprofile', '--norc', '-c', 'curl https://cursor.com/install -fsS | bash']); assert.equal(mac.file, '/bin/bash');
+  assert.deepEqual(mac.args, ['--noprofile', '--norc', '-o', 'pipefail', '-c', 'curl https://cursor.com/install -fsS | bash']); assert.equal(mac.file, '/bin/bash');
   const win = installCommand('win32', { SystemRoot: 'C:\\Windows' });
   assert.equal(win.display, "irm 'https://cursor.com/install?win32=true' | iex");
   assert.match(win.file, /powershell\.exe$/); assert.deepEqual(win.args, ['-NoProfile', '-NonInteractive', '-Command', "irm 'https://cursor.com/install?win32=true' | iex"]);

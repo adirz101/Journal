@@ -198,7 +198,7 @@ test('PROVIDER_COMMANDS login argv is constant', () => {
 test('install commands: official, verbatim, never elevated; missing tools fall back to the install page', () => {
   const claudeMac = module.installFor('claude', 'darwin', { PATH: '/usr/bin:/bin' }, { find: () => '/usr/bin/curl' });
   assert.equal(claudeMac.display, 'curl -fsSL https://claude.ai/install.sh | bash');
-  assert.equal(claudeMac.file, '/bin/bash'); assert.deepEqual(claudeMac.args, ['--noprofile', '--norc', '-c', claudeMac.display]);
+  assert.equal(claudeMac.file, '/bin/bash'); assert.deepEqual(claudeMac.args, ['--noprofile', '--norc', '-o', 'pipefail', '-c', claudeMac.display]);
   const claudeWin = module.installFor('claude', 'win32', { SystemRoot: 'C:\\Windows' }, { find: () => null });
   assert.equal(claudeWin.display, 'irm https://claude.ai/install.ps1 | iex');
   assert.match(claudeWin.file, /powershell\.exe$/); assert.deepEqual(claudeWin.args, ['-NoProfile', '-NonInteractive', '-Command', claudeWin.display]);
@@ -212,4 +212,16 @@ test('install commands: official, verbatim, never elevated; missing tools fall b
   for (const command of [claudeMac, claudeWin, codexMac]) assert.doesNotMatch(command.args.join(' '), /sudo|runas|-Verb|ExecutionPolicy/i);
   const rows = module.initialAgents('win32', { SystemRoot: 'C:\\Windows' });
   assert.equal(rows[1].commands.install, null); assert.equal(rows[0].commands.install, 'irm https://claude.ai/install.ps1 | iex');
+});
+
+test('install pipelines fail when their first stage fails (pipefail), through the same bash argv', { skip: process.platform === 'win32' }, async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { installCommand } = await import('../src/core/cursor.mjs');
+  const claude = module.installFor('claude', 'darwin', {}, { find: () => '/usr/bin/curl' }); const cursor = installCommand('darwin', {});
+  // A local stand-in for "curl fails | bash": no network, same flags, only the command text swapped.
+  for (const command of [claude, cursor]) {
+    const args = [...command.args.slice(0, -1), 'false | cat'];
+    assert.notEqual(spawnSync(command.file, args).status, 0);
+    assert.equal(spawnSync(command.file, args.filter(arg => arg !== '-o' && arg !== 'pipefail')).status, 0, 'without pipefail the same pipeline exits 0');
+  }
 });
