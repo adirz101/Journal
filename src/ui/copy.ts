@@ -242,7 +242,10 @@ export const palette = {
   move: 'move', open: 'open', commandsOnly: 'Type > for commands only', continueHint: 'Continue',
   fileHint: 'Type part of a file name', notGit: 'File search needs a Git folder. Use the Files tab.',
   fileFailed: 'Git couldn’t list the files in this folder. Use the Files tab.',
-  filesTruncated: (n: number) => `Only the first ${n.toLocaleString('en-US')} files are searched.`,
+  // n: the files listed (FileSearch.listed). A timeout says so: the limit is not the reason then.
+  filesTruncated: (n: number, by: 'timeout' | 'size' | 'limit' = 'limit') => by === 'timeout'
+    ? `Git took too long to list every file. Only the first ${n.toLocaleString('en-US')} files are searched.`
+    : `Only the first ${n.toLocaleString('en-US')} files are searched.`,
   // One label per routed command (CommandId) and per palette-only action.
   actions: {
     'new-session': 'New session', 'open-project': 'Open project…', 'add-note': 'Add a note', 'focus-terminal': 'Focus the terminal',
@@ -259,7 +262,11 @@ export const states = {
   lostTitle: 'Lost connection to the session runtime', lostBody: 'Your agents may still be running. Journal is trying again every few seconds.',
   reconnectNow: 'Reconnect now', reconnecting: 'Reconnecting…',
   crashTitle: 'The session runtime stopped unexpectedly',
-  crashBody: (n: number) => `${n === 1 ? '1 session was' : `${n} sessions were`} interrupted. Nothing was resent to the agents.`,
+  // Counts recovery.total: the sessions list stops at 100 rows.
+  crashBody: (recovery: { total?: number; sessions: readonly unknown[] }) => {
+    const n = recovery.total ?? recovery.sessions.length;
+    return `${n === 1 ? '1 session was' : `${n} sessions were`} interrupted. Nothing was resent to the agents.`;
+  },
   crashContinue: 'Continue each one when you’re ready; it reopens the same conversation.',
   needsId: 'Needs the conversation ID before continuing', confirmId: 'Confirm ID…', stillRunning: 'Still running outside Journal',
   leftover: (n: number) => n === 1 ? '1 leftover process still running' : `${n} leftover processes still running`, review: 'Review', done: 'Done',

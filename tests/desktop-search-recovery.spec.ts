@@ -80,7 +80,7 @@ test('open-file search runs in main from git ls-files, never lists sensitive or 
       { projectId: id, rootKey: '/etc', query: 'a' }]) {
       expect((await settle(page, 'searchFiles', input)).ok, JSON.stringify(input).slice(0, 80)).toBe(false);
     }
-    // The listing is cached; a watched root drops it when a file appears (no recursive watching on Linux).
+    // The listing is cached; a watched root marks it stale when a file appears, and a refresh finds the file (no recursive watching on Linux).
     if (process.platform !== 'linux') {
       await request(page, 'watchRoot', { projectId: id, rootKey: 'checkout' });
       writeFileSync(resolve(f.project, 'fresh-file.md'), 'new\n');

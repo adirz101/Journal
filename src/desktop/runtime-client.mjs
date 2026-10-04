@@ -6,16 +6,25 @@ import { buildId, frame, lineReader, nonce, proof, proofMatches, PROTOCOL } from
 import { isAlive } from '../core/process.mjs';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+// The pause between reconnect attempts: unref'd, and cleared when its signal aborts
+// (retryNow or close), so a woken pause leaves no timer behind.
+const pauseFor = (ms, signal) => new Promise(resolve => {
+  const timer = setTimeout(resolve, ms); timer.unref?.();
+  signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+});
 
 // The desktop app's connection to the runtime. It starts the runtime when none
 // is listening, reconnects after the runtime restarts, and reports a build
 // mismatch instead of silently mixing versions.
-// delay: the timer between reconnect attempts (tests inject one); retryNow() wakes it.
+// delay(ms, signal): the timer between reconnect attempts (tests inject one); retryNow()
+// wakes it and aborts signal.
 export class RuntimeClient extends EventEmitter {
-  constructor({ dataDir, launch, connectTimeoutMs = 15000, delay = wait }) {
+  constructor({ dataDir, launch, connectTimeoutMs = 15000, delay = pauseFor }) {
     super(); this.dataDir = dataDir; this.launch = launch; this.connectTimeoutMs = connectTimeoutMs; this.delay = delay;
     this.socket = null; this.pending = new Map(); this.sequence = 0; this.closing = false; this.info = null; this.connecting = null;
     this.launched = null; this.launches = 0;
+    // warning: the build-mismatch warning of the current connection, or null.
+    this.warning = null;
     // reconnecting: the one reconnect loop's promise; wake: ends its current pause; retry: a user retry
     // asks the connect() in progress to try launching again.
     this.reconnecting = null; this.wake = null; this.retry = false;
@@ -81,11 +90,13 @@ export class RuntimeClient extends EventEmitter {
       }
       throw new Error('Could not start the Journal runtime');
     })();
-    try { return await this.connecting; } finally { this.connecting = null; }
+    // A retry asked for during this connect() belongs to it alone.
+    try { return await this.connecting; } finally { this.connecting = null; this.retry = false; }
   }
   adopt({ socket, hello }) {
     this.socket = socket; this.info = hello;
-    if (hello.build !== buildId()) this.emit('warning', 'Sessions are running in a runtime from another Journal build. Stop them to switch to this build.');
+    this.warning = hello.build !== buildId() ? 'Sessions are running in a runtime from another Journal build. Stop them to switch to this build.' : null;
+    if (this.warning) this.emit('warning', this.warning);
     socket.on('close', () => {
       if (this.socket !== socket) return;
       this.socket = null;
@@ -112,8 +123,9 @@ export class RuntimeClient extends EventEmitter {
   pause(ms) {
     if (this.closing) return Promise.resolve();
     return new Promise(resolve => {
-      const done = () => { if (this.wake === done) this.wake = null; resolve(); };
-      this.wake = done; Promise.resolve(this.delay(ms)).then(done, done);
+      const controller = new AbortController();
+      const done = () => { if (this.wake === done) this.wake = null; controller.abort(); resolve(); };
+      this.wake = done; Promise.resolve(this.delay(ms, controller.signal)).then(done, done);
     });
   }
   // Reconnect now (the disconnected banner): try at once instead of after the

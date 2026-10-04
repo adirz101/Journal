@@ -4,6 +4,7 @@ import { constants, closeSync, fstatSync, lstatSync, openSync, readSync } from '
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { isSensitivePath } from './evidence.mjs';
+import { gitEnv } from './git-env.mjs';
 import { realPath } from './paths.mjs';
 
 // Read-only file access for the explorer. Roots are absolute paths resolved
@@ -153,8 +154,10 @@ export function fingerprintSync(root, path, startLine = null, endLine = null) {
 
 // run() settles with both the error and whatever was written; git() keeps output
 // it got even when Git then failed (diffs), listFiles() decides for itself.
+// gitEnv() drops GIT_DIR, GIT_INDEX_FILE and the other variables that would point
+// Git at another repository than the folder named with -C.
 const run = (gitRoot, args, maxBuffer) => new Promise(resolve => {
-  execFile('git', ['-C', gitRoot, ...args], { encoding: 'utf8', timeout: 8000, maxBuffer, windowsHide: true, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1' } },
+  execFile('git', ['-C', gitRoot, ...args], { encoding: 'utf8', timeout: 8000, maxBuffer, windowsHide: true, env: gitEnv() },
     (error, stdout) => resolve({ error, stdout: stdout ?? '' }));
 });
 const git = (gitRoot, args, maxBuffer = MAX_DIFF_BYTES * 4) => run(gitRoot, args, maxBuffer).then(({ error, stdout }) => { if (error && !stdout) throw error; return stdout; });
@@ -194,38 +197,121 @@ export const MAX_LISTED_FILES = 200_000;
 const MAX_LISTING_BYTES = 64 * 1024 * 1024;
 const MAX_QUERY = 200; const MAX_TOKENS = 8; const MAX_RANKED_PATH = 1024;
 
+// Git runs in the root folder itself (-C root.path), so ls-files prints paths
+// relative to the root and lists only below it: no prefix is stripped, and a
+// prefix spelled in another case (case-insensitive file systems) cannot hide
+// every entry. Tracked entries come with their mode (--stage) so submodule
+// gitlinks (mode 160000), which are folders of another repository rather than
+// files, are left out; untracked entries come from a second, parallel run.
 export async function listFiles(root) {
   if (!root?.git || !root.gitRoot) return { available: false, reason: 'not-git' };
-  const prefix = root.prefix ?? '';
-  const { error, stdout } = await run(root.gitRoot, ['ls-files', '-z', '--cached', '--others', '--exclude-standard', ...(prefix ? ['--', prefix] : [])], MAX_LISTING_BYTES);
+  // isSensitivePath is per segment, so a repository-relative path is sensitive exactly
+  // when the root's prefix or the root-relative path is: the prefix is checked once.
+  const prefix = (root.prefix ?? '').replace(/\/$/, '');
+  if (prefix && isSensitivePath(prefix)) return { available: true, paths: [], truncated: false };
+  const folder = root.path ?? root.gitRoot;
+  const [cached, others] = await Promise.all([run(folder, ['ls-files', '-z', '--stage'], MAX_LISTING_BYTES),
+    run(folder, ['ls-files', '-z', '--others', '--exclude-standard'], MAX_LISTING_BYTES)]);
   // A listing cut short by the size or time limit is used up to its last complete
-  // entry and reported as truncated. Any other failure is reported without Git's
-  // message, which may name paths outside this root.
-  const partial = !!error && !!stdout && (error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || error.killed === true);
-  if (error && !partial) return { available: false, reason: 'failed' };
-  return parseListing(stdout, prefix, { partial });
+  // entry and reported as truncated, with the reason. Any other failure is reported
+  // without Git's message, which may name paths outside this root.
+  const cut = ({ error, stdout }) => !error ? null : !stdout ? 'failed' : error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'size' : error.killed === true ? 'timeout' : 'failed';
+  const parts = [{ ...cached, staged: true, cut: cut(cached) }, { ...others, staged: false, cut: cut(others) }];
+  if (parts.some(part => part.cut === 'failed')) return { available: false, reason: 'failed' };
+  return parseListing(parts.map(({ stdout, staged, cut }) => ({ output: stdout, staged, cut })));
 }
 
-// ls-files -z output to root-relative paths, in order: the prefix stripped,
-// duplicates dropped (a path can be both cached and modified), sensitive paths
-// dropped by both their repository- and root-relative forms, and names the
-// explorer cannot address (control characters, backslashes, over 1024
-// characters) skipped. Stops at MAX_LISTED_FILES. partial: the output was cut
-// off, so its last entry may be incomplete.
-export function parseListing(output, prefix = '', { partial = false } = {}) {
-  const entries = output.split('\0'); entries.pop(); // empty after the final NUL, or a cut-off entry
-  const seen = new Set(); const paths = []; let truncated = partial;
-  for (const entry of entries) {
-    if (!entry.startsWith(prefix)) continue;
-    const path = entry.slice(prefix.length);
-    if (!path || seen.has(path)) continue;
-    seen.add(path);
-    if (isSensitivePath(entry) || isSensitivePath(path)) continue;
-    try { treePath(path); } catch { continue; }
-    if (paths.length === MAX_LISTED_FILES) { truncated = true; break; }
-    paths.push(path);
+// ls-files -z output (one string, or parts { output, staged, cut }) to
+// root-relative paths, in order: duplicates dropped (a path can be both cached
+// and modified, or listed per conflict stage), gitlinks dropped (staged parts),
+// sensitive paths dropped, and names the explorer cannot address (control
+// characters, backslashes, over 1024 characters) skipped. Stops at
+// MAX_LISTED_FILES. cut ('timeout' or 'size'): the output was cut off, so its
+// last entry may be incomplete.
+// It runs in main, which also routes every key press: entries are read in slices
+// with a yield between them, and the sensitivity of each folder is decided once
+// (a Map per listing), so an entry only tests its own name.
+// Result: { available, paths, truncated, truncatedBy?: 'timeout' | 'size' | 'limit' }.
+const PARSE_SLICE = 10_000;
+const STAGED_ENTRY = /^([0-7]{6}) [0-9a-f]+ \d\t/;
+const yieldToLoop = () => new Promise(resolve => setImmediate(resolve));
+export async function parseListing(input, { cut = null } = {}) {
+  const parts = typeof input === 'string' ? [{ output: input, staged: false, cut }] : input;
+  const seen = new Set(); const paths = []; const folders = new Map();
+  const sensitiveFolder = folder => { let verdict = folders.get(folder); if (verdict === undefined) { verdict = isSensitivePath(folder); folders.set(folder, verdict); } return verdict; };
+  let truncatedBy = parts.find(part => part.cut)?.cut ?? null; let count = 0;
+  outer: for (const { output, staged } of parts) {
+    // The text after the final NUL is empty, or a cut-off entry: never used.
+    for (let from = 0, end = output.indexOf('\0'); end >= 0; from = end + 1, end = output.indexOf('\0', from)) {
+      if (++count % PARSE_SLICE === 0) await yieldToLoop();
+      let path = output.slice(from, end);
+      if (staged) { const meta = STAGED_ENTRY.exec(path); if (!meta || meta[1] === '160000') continue; path = path.slice(meta[0].length); }
+      if (!path || seen.has(path)) continue;
+      seen.add(path);
+      const slash = path.lastIndexOf('/');
+      if ((slash > 0 && sensitiveFolder(path.slice(0, slash))) || isSensitivePath(path.slice(slash + 1))) continue;
+      try { treePath(path); } catch { continue; }
+      if (paths.length === MAX_LISTED_FILES) { truncatedBy = 'limit'; break outer; }
+      paths.push(path);
+    }
   }
-  return { available: true, paths, truncated };
+  return truncatedBy ? { available: true, paths, truncated: true, truncatedBy } : { available: true, paths, truncated: false };
+}
+
+// Main's open-file listings: one entry per root key, kept ttl ms and at most max
+// roots (the least recently used is dropped). At most one listing runs per key at
+// a time, even across clear(): a new run waits for the previous one to finish.
+// A watcher change marks the entry stale instead of dropping it: searches keep
+// getting the stale list while one refresh runs, the refresh starts only after
+// any run in flight has finished and at most once per refreshMs, and a change
+// during a run leaves the result stale, so the next search refreshes again.
+// clear() (a workspace or folder change, where a key may now name another
+// folder) drops every list: the next search waits for a new one.
+export class ListingCache {
+  constructor({ list = listFiles, ttl = 30_000, max = 4, refreshMs = 1500, now = Date.now } = {}) {
+    this.list = list; this.ttl = ttl; this.max = max; this.refreshMs = refreshMs; this.now = now;
+    this.entries = new Map(); this.running = new Map();
+  }
+  // A promise of the listing for key; root is resolved by the caller for this request.
+  get(key, root) {
+    let entry = this.entries.get(key);
+    if (entry) this.entries.delete(key);
+    else entry = { result: null, at: 0, stale: false, generation: 0, run: null, lastStart: -Infinity, timer: null };
+    this.entries.set(key, entry); entry.root = root;
+    while (this.entries.size > this.max) this.forget(this.entries.keys().next().value);
+    if (entry.result && !entry.stale && this.now() - entry.at < this.ttl) return Promise.resolve(entry.result);
+    if (!entry.result) return entry.run ?? this.start(key, entry);
+    // A stale or expired list is served while its refresh loads.
+    if (!entry.run) {
+      const wait = entry.lastStart + this.refreshMs - this.now();
+      if (wait <= 0) void this.start(key, entry);
+      else if (!entry.timer) { entry.timer = setTimeout(() => { entry.timer = null; if (this.entries.get(key) === entry && !entry.run) void this.start(key, entry); }, wait); entry.timer.unref?.(); }
+    }
+    return Promise.resolve(entry.result);
+  }
+  // A watcher batch for key: what was listed may be out of date.
+  invalidate(key) { const entry = this.entries.get(key); if (entry) { entry.stale = true; entry.generation++; } }
+  clear() { for (const key of [...this.entries.keys()]) this.forget(key); }
+  forget(key) { const entry = this.entries.get(key); if (entry?.timer) clearTimeout(entry.timer); this.entries.delete(key); }
+  start(key, entry) {
+    const previous = this.running.get(key); const generation = entry.generation;
+    const run = (async () => {
+      if (previous) await previous;
+      entry.lastStart = this.now();
+      try { return await this.list(entry.root); } catch { return { available: false, reason: 'failed' }; }
+    })();
+    const settled = run.then(result => {
+      if (this.running.get(key) === settled) this.running.delete(key);
+      entry.run = null;
+      if (this.entries.get(key) !== entry) return result; // cleared meanwhile: delivered, not kept
+      // A failed run is not kept; a stale list (if any) stays and is refreshed later.
+      if (!result.available && result.reason === 'failed') { if (!entry.result) this.entries.delete(key); return result; }
+      entry.result = result; entry.at = this.now(); entry.stale = entry.generation !== generation;
+      return result;
+    });
+    this.running.set(key, settled); entry.run = settled;
+    return settled;
+  }
 }
 
 // Lower-cased copies of listings, kept while main keeps the listing itself.
@@ -350,11 +436,15 @@ const RANK_SLICE = 20_000;
 export async function searchFiles(root, query, { limit = 50, list = listFiles } = {}) {
   const listing = await list(root);
   if (!listing.available) return { available: false, reason: listing.reason === 'not-git' ? 'not-git' : 'failed', hits: [], total: 0, truncated: false };
-  const { paths } = listing; const state = rankState(paths, query, limit);
-  if (!state) return { available: true, hits: [], total: 0, truncated: !!listing.truncated };
+  const { paths } = listing;
+  // A truncated listing says why (Git ran out of time, its output passed 64 MiB, or the
+  // 200,000-file cap) and how many files are searched.
+  const truncation = listing.truncated ? { truncated: true, truncatedBy: listing.truncatedBy ?? 'limit', listed: paths.length } : { truncated: false };
+  const state = rankState(paths, query, limit);
+  if (!state) return { available: true, hits: [], total: 0, ...truncation };
   for (let from = 0; from < paths.length; from += RANK_SLICE) {
-    if (from) await new Promise(resolve => setImmediate(resolve));
+    if (from) await yieldToLoop();
     rankRange(state, paths, from, Math.min(paths.length, from + RANK_SLICE));
   }
-  return { available: true, ...rankResult(state), truncated: !!listing.truncated };
+  return { available: true, ...rankResult(state), ...truncation };
 }

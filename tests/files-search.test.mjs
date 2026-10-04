@@ -7,7 +7,9 @@ import { execFileSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { JournalStore } from '../src/core/store.mjs';
 import { isSensitivePath } from '../src/core/evidence.mjs';
-import { listFiles, MAX_LISTED_FILES, parseListing, rankFiles, searchFiles } from '../src/core/files.mjs';
+import { listFiles, ListingCache, MAX_LISTED_FILES, parseListing, rankFiles, searchFiles } from '../src/core/files.mjs';
+import { gitEnv } from '../src/core/git-env.mjs';
+import { gitStatus } from '../src/core/git-status.mjs';
 import { removeLater } from './support/cleanup.mjs';
 
 const posix = process.platform !== 'win32';
@@ -141,25 +143,139 @@ test('Git failures are reported without the message', { skip: !posix }, async t 
 
 test('the listing is capped', async () => {
   const output = `${Array.from({ length: MAX_LISTED_FILES + 1 }, (_, i) => `src/f${i}.js`).join('\0')}\0`;
-  const listing = parseListing(output, '');
-  assert.equal(listing.paths.length, MAX_LISTED_FILES); assert.equal(listing.truncated, true);
-  assert.equal(parseListing('a.md\0b.md\0', '').truncated, false);
-  // A cut-off listing drops its partial last entry and says it is truncated.
-  assert.deepEqual(parseListing('a.md\0b.m', '', { partial: true }), { available: true, paths: ['a.md'], truncated: true });
+  const listing = await parseListing(output);
+  assert.equal(listing.paths.length, MAX_LISTED_FILES); assert.equal(listing.truncated, true); assert.equal(listing.truncatedBy, 'limit');
+  assert.deepEqual(await parseListing('a.md\0b.md\0'), { available: true, paths: ['a.md', 'b.md'], truncated: false });
+  // A cut-off listing drops its partial last entry and says why it is truncated.
+  assert.deepEqual(await parseListing('a.md\0b.m', { cut: 'timeout' }), { available: true, paths: ['a.md'], truncated: true, truncatedBy: 'timeout' });
   // Control characters and backslashes never reach the list.
-  assert.deepEqual(parseListing('ok.md\0bad\x01.md\0win\\path.md\0', '').paths, ['ok.md']);
-  // searchFiles reports a truncated listing it was handed, and its sliced ranking equals rankFiles.
+  assert.deepEqual((await parseListing('ok.md\0bad\x01.md\0win\\path.md\0')).paths, ['ok.md']);
+  // searchFiles reports a truncated listing it was handed, with its reason and count, and its sliced ranking equals rankFiles.
   const paths = Array.from({ length: MAX_LISTED_FILES }, (_, i) => `pkg${i % 50}/src/module${i}/index${i % 7}.ts`);
-  const list = async () => ({ available: true, paths, truncated: true });
+  const list = async () => ({ available: true, paths, truncated: true, truncatedBy: 'limit' });
   const result = await searchFiles(null, 'index3 module12', { list });
   assert.equal(result.truncated, true); assert.ok(result.total > 0); assert.ok(result.hits.length <= 50);
-  assert.deepEqual(result, { available: true, ...rankFiles(paths, 'index3 module12'), truncated: true });
-  // Measured, not asserted (plan A3). searchFiles yields every 20,000 paths, so
-  // main blocks for about a tenth of these times at most.
-  const timings = ['index3 module12', 'pkg4 idx', 'a', 'zzz'].map(query => {
-    const started = performance.now(); rankFiles(paths, query); return `${query}: ${(performance.now() - started).toFixed(1)} ms`;
-  });
-  console.log(`rankFiles over ${paths.length} paths in one block: ${timings.join(', ')}`);
+  assert.deepEqual(result, { available: true, ...rankFiles(paths, 'index3 module12'), truncated: true, truncatedBy: 'limit', listed: MAX_LISTED_FILES });
+  const timedOut = await searchFiles(null, '', { list: async () => ({ available: true, paths: paths.slice(0, 1234), truncated: true, truncatedBy: 'timeout' }) });
+  assert.deepEqual(timedOut, { available: true, hits: [], total: 0, truncated: true, truncatedBy: 'timeout', listed: 1234 });
+});
+
+// Realistic monorepo paths: packages, nested source folders, tests and assets.
+const realisticPaths = count => Array.from({ length: count }, (_, i) => {
+  const pkg = `packages/${['app', 'core', 'ui-kit', 'server', 'shared-utils'][i % 5]}-${i % 97}`;
+  const folder = ['src/components', 'src/hooks', 'src/lib/internal', 'tests/unit', 'assets/icons', 'docs/guides'][i % 6];
+  return `${pkg}/${folder}/${['Button', 'useSession', 'formatDate', 'terminal', 'index', 'README'][i % 6]}${i}.${['tsx', 'ts', 'mjs', 'svg', 'md'][i % 5]}`;
+});
+// The longest time the event loop went without running a timer while work ran.
+async function longestBlock(work) {
+  let longest = 0; let last = performance.now(); let running = true;
+  const tick = () => { const now = performance.now(); longest = Math.max(longest, now - last); last = now; if (running) setTimeout(tick, 0); };
+  setTimeout(tick, 0);
+  const started = performance.now(); const value = await work(); const total = performance.now() - started;
+  running = false; longest = Math.max(longest, performance.now() - last);
+  return { value, total, longest };
+}
+
+test('parsing and ranking 200,000 paths yield to the event loop', async () => {
+  const paths = realisticPaths(MAX_LISTED_FILES);
+  // Staged entries as ls-files --stage prints them, then untracked ones.
+  const staged = `${paths.slice(0, 150_000).map(path => `100644 ${'a'.repeat(40)} 0\t${path}`).join('\0')}\0`;
+  const others = `${paths.slice(150_000).join('\0')}\0`;
+  const parse = await longestBlock(() => parseListing([{ output: staged, staged: true }, { output: others, staged: false }]));
+  assert.equal(parse.value.paths.length, MAX_LISTED_FILES); assert.equal(parse.value.truncated, false);
+  // A query matching every path (every one starts with "packages/").
+  assert.equal(rankFiles(paths, 'pkg').total, MAX_LISTED_FILES);
+  const broad = await longestBlock(() => searchFiles(null, 'pkg', { list: async () => parse.value }));
+  assert.equal(broad.value.total, MAX_LISTED_FILES);
+  const narrow = await longestBlock(() => searchFiles(null, 'button 1234', { list: async () => parse.value }));
+  console.log(`200,000 paths: parse ${parse.total.toFixed(0)} ms (longest block ${parse.longest.toFixed(1)} ms); `
+    + `rank matching all ${broad.total.toFixed(0)} ms (longest block ${broad.longest.toFixed(1)} ms); `
+    + `rank "button 1234" ${narrow.total.toFixed(0)} ms (longest block ${narrow.longest.toFixed(1)} ms)`);
+  // Generous bounds for slow CI machines: one block was about 435 ms before parsing was sliced.
+  assert.ok(parse.longest < 150, `parse blocked ${parse.longest.toFixed(1)} ms`);
+  assert.ok(broad.longest < 150, `ranking blocked ${broad.longest.toFixed(1)} ms`);
+});
+
+test('the listing cache runs one listing per root at a time and serves a stale list while it refreshes', async () => {
+  let now = 0; let running = 0; let most = 0; let calls = 0; const pending = [];
+  const list = root => { calls++; running++; most = Math.max(most, running); return new Promise(resolve => pending.push(paths => { running--; resolve({ available: true, paths: [`${root}:${paths}`], truncated: false }); })); };
+  const cache = new ListingCache({ list, refreshMs: 1500, now: () => now });
+  const settle = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
+  // The first searches share one run.
+  const first = [cache.get('a', 'A'), cache.get('a', 'A')];
+  await settle(); assert.equal(calls, 1);
+  // A burst of watcher events and searches while it runs starts nothing new.
+  for (let i = 0; i < 20; i++) { cache.invalidate('a'); first.push(cache.get('a', 'A')); }
+  await settle(); assert.equal(calls, 1);
+  pending.shift()('v1');
+  for (const result of await Promise.all(first)) assert.deepEqual(result.paths, ['A:v1']);
+  // It was invalidated during the run, so the next search gets the stale list and starts one refresh.
+  now = 2000;
+  assert.deepEqual((await cache.get('a', 'A')).paths, ['A:v1']); await settle();
+  assert.equal(calls, 2);
+  for (let i = 0; i < 20; i++) { cache.invalidate('a'); assert.deepEqual((await cache.get('a', 'A')).paths, ['A:v1']); }
+  await settle(); assert.equal(calls, 2, 'one refresh at a time');
+  pending.shift()('v2'); await settle();
+  // Invalidated during the refresh: still stale, and the next refresh waits for the 1.5 s gap.
+  now = 2500;
+  assert.deepEqual((await cache.get('a', 'A')).paths, ['A:v2']); await settle();
+  assert.equal(calls, 2, 'refreshes at most every 1.5 s');
+  // An unchanged list is served without Git.
+  now = 3600; await new Promise(resolve => setTimeout(resolve, 1100)); await settle();
+  assert.equal(calls, 3, 'the waiting refresh ran after the gap'); pending.shift()('v3'); await settle();
+  assert.deepEqual((await cache.get('a', 'A')).paths, ['A:v3']); await settle(); assert.equal(calls, 3);
+  // Another root is independent; a clear() during a run never starts a parallel listing of the same root.
+  const b = cache.get('b', 'B'); await settle(); assert.equal(calls, 4);
+  cache.clear(); const b2 = cache.get('b', 'B2'); await settle();
+  assert.equal(calls, 4, 'the new listing waits for the one in flight'); assert.equal(most, 1);
+  pending.shift()('old'); assert.deepEqual((await b).paths, ['B:old']); await settle();
+  assert.equal(calls, 5); pending.shift()('new');
+  assert.deepEqual((await b2).paths, ['B2:new'], 'a cleared list is never served'); assert.equal(most, 1);
+});
+
+test('a folder root lists relative to itself whatever the case of its stored path', { skip: process.platform !== 'darwin' && process.platform !== 'win32' }, async t => {
+  const f = fixture(t);
+  const other = join(f.root, 'Cased'); const git = gitRepo(other);
+  write(other, 'Sub/inner.md'); write(other, 'Sub/.env'); write(other, 'top.md');
+  git('add', '.'); git('commit', '-qm', 'init');
+  // Stored with another case than on disk (the folder was picked as "sub"): the prefix no longer matches Git's spelling.
+  const listing = await listFiles({ git: true, gitRoot: other, prefix: 'sub/', path: join(other, 'sub') });
+  assert.deepEqual(listing.paths, ['inner.md']);
+});
+
+test('a sensitive folder root lists nothing', async t => {
+  const f = fixture(t);
+  const listing = await listFiles({ git: true, gitRoot: f.repo, prefix: '.aws/', path: join(f.repo, '.aws') });
+  assert.deepEqual(listing, { available: true, paths: [], truncated: false });
+});
+
+test('Git variables that point at another repository are ignored', async t => {
+  const f = fixture(t);
+  const decoy = join(f.root, 'decoy'); const git = gitRepo(decoy); write(decoy, 'decoy-only.md'); git('add', '.'); git('commit', '-qm', 'decoy');
+  const env = gitEnv({}, { PATH: 'x', GIT_DIR: join(decoy, '.git'), GIT_WORK_TREE: decoy, git_index_file: 'x', GIT_OBJECT_DIRECTORY: 'y', GIT_AUTHOR_NAME: 'kept' });
+  assert.deepEqual(Object.keys(env).filter(name => /^git_(?:dir|work_tree|index_file|object_directory)$/i.test(name)), []);
+  assert.equal(env.GIT_AUTHOR_NAME, 'kept'); assert.equal(env.GIT_LITERAL_PATHSPECS, '1');
+  const root = f.store.fileRoot(f.project.id, 'checkout'); const saved = { ...process.env };
+  Object.assign(process.env, { GIT_DIR: join(decoy, '.git'), GIT_WORK_TREE: decoy, GIT_INDEX_FILE: join(decoy, '.git', 'index') });
+  try {
+    const listing = await listFiles(root);
+    assert.ok(listing.paths.includes('src/core/terminal.mjs')); assert.ok(!listing.paths.includes('decoy-only.md'));
+    const status = await gitStatus(root.gitRoot);
+    assert.ok(status.entries.some(entry => entry.path === 'README.md')); assert.ok(!status.entries.some(entry => entry.path === 'decoy-only.md'));
+  } finally { for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) { if (name in saved) process.env[name] = saved[name]; else delete process.env[name]; } }
+});
+
+test('submodules are not listed as files', async t => {
+  const f = fixture(t);
+  const lib = join(f.root, 'lib'); const libGit = gitRepo(lib); write(lib, 'lib.md'); libGit('add', '.'); libGit('commit', '-qm', 'lib');
+  execFileSync('git', ['-C', f.repo, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', lib, 'vendor/lib'], { stdio: 'ignore' });
+  // An untracked nested repository is listed by Git as a folder ("nested/"), which is skipped too.
+  const nested = join(f.repo, 'nested'); const nestedGit = gitRepo(nested); write(nested, 'n.md'); nestedGit('add', '.'); nestedGit('commit', '-qm', 'n');
+  const listing = await listFiles(f.store.fileRoot(f.project.id, 'checkout'));
+  assert.ok(listing.paths.includes('.gitmodules')); assert.ok(listing.paths.includes('README.md'));
+  for (const path of ['vendor/lib', 'vendor/lib/lib.md', 'nested', 'nested/', 'nested/n.md']) assert.ok(!listing.paths.includes(path), path);
+  // Conflict stages list a path once.
+  assert.deepEqual((await parseListing([{ output: `100644 ${'a'.repeat(40)} 1\tc.md\x00100644 ${'b'.repeat(40)} 2\tc.md\x00160000 ${'c'.repeat(40)} 0\tsub\0`, staged: true }])).paths, ['c.md']);
 });
 
 test('listing never reads file contents', { skip: !posix || process.getuid?.() === 0 }, async t => {

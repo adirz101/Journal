@@ -75,8 +75,10 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
   // Phase 8: what this runtime recovered, reported in every hello until the app
   // acknowledges it. In memory only: the sessions themselves stay recorded as
   // interrupted or orphaned, so losing this list (an idle exit before any app
-  // connects) loses a convenience, not the record. At most 100 rows, like liveSessions.
-  let recovery = recovered.length ? { at: new Date().toISOString(), runtimeId,
+  // connects) loses a convenience, not the record. At most 100 rows, like liveSessions;
+  // total counts every recovered session, which the app shows, so the count stays right
+  // if the list is ever cut (today recover() itself sees at most 100 live sessions).
+  let recovery = recovered.length ? { at: new Date().toISOString(), runtimeId, total: recovered.length,
     sessions: recovered.slice(0, 100).map(session => ({ id: session.id, status: session.status, identityVerified: session.identityVerified ?? null })) } : null;
   let client = null; let lastClientAt = Date.now(); let closing = null; const ended = new Set();
   manager.on('event', event => {

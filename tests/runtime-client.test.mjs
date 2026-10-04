@@ -82,3 +82,49 @@ test('retryNow also wakes the protocol-mismatch wait and reports a remaining mis
   await until(() => pauses.length === 2);
   assert.equal(warnings.length, 2);
 });
+
+test('a retry asked for during a connect that then succeeds is not left for the next connect', async t => {
+  let launches = 0; let ready = false;
+  const { c } = client(t, { launch: () => { launches++; return { alive: () => true }; }, connectTimeoutMs: 5000 });
+  c.attempt = async () => ready ? { socket: fakeSocket(), hello: { runtimeId: 'r', build: buildId(), live: 0 } } : null;
+  const connecting = c.connect();
+  await until(() => launches === 1);
+  c.retryNow(); ready = true; // the retry's launch is not needed: the runtime answers first
+  await connecting;
+  assert.equal(c.retry, false);
+  // Disconnected again with the runtime still starting (alive): a new connect launches nothing.
+  c.socket = null; ready = false; c.launches = 0;
+  const again = c.connect().catch(() => {});
+  await wait(60); ready = true; await again;
+  assert.equal(launches, 1);
+});
+
+test('a woken pause clears its timer, and the default pause never holds the process open', async t => {
+  const signals = [];
+  const { c } = client(t, { delay: (ms, signal) => { signals.push(signal); return new Promise(() => {}); } });
+  c.attempt = async () => null;
+  void c.reconnect();
+  await until(() => signals.length === 1 && c.wake);
+  assert.equal(signals[0].aborted, false);
+  c.retryNow();
+  assert.equal(signals[0].aborted, true, 'the pause was told to stop its timer');
+  // The default pause: unref'd and cleared on abort.
+  const timers = []; const cleared = [];
+  const realSet = globalThis.setTimeout; const realClear = globalThis.clearTimeout;
+  t.mock.method(globalThis, 'setTimeout', (fn, ms, ...rest) => { const timer = realSet(fn, ms, ...rest); if (ms === 60_000) timers.push(timer); return timer; });
+  t.mock.method(globalThis, 'clearTimeout', timer => { cleared.push(timer); realClear(timer); });
+  const plain = new RuntimeClient({ dataDir: tmpdir(), launch: () => null });
+  const pause = plain.pause(60_000);
+  assert.equal(timers.length, 1); assert.equal(timers[0].hasRef(), false, 'unref\'d');
+  plain.wake(); await pause;
+  assert.ok(cleared.includes(timers[0]), 'no timer left after a wake');
+});
+
+test('the build-mismatch warning belongs to the current connection', async t => {
+  const { c } = client(t);
+  const socket = fakeSocket();
+  c.adopt({ socket, hello: { runtimeId: 'r', build: 'other', live: 1 } });
+  assert.match(c.warning, /another Journal build/);
+  c.socket = null; c.adopt({ socket: fakeSocket(), hello: { runtimeId: 'r', build: buildId(), live: 0 } });
+  assert.equal(c.warning, null);
+});

@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { posix } from 'node:path';
 import { isSensitivePath } from './evidence.mjs';
+import { gitEnv } from './git-env.mjs';
 
 // Working-tree status for the file explorer: one `git status --porcelain=v2 -z`
 // call per refresh. Untracked and ignored directories come back collapsed
@@ -85,7 +86,7 @@ export function gitStatus(gitRoot, { prefix = '', signal, timeout = 8000 } = {})
   const args = ['-C', gitRoot, '--no-optional-locks', 'status', '--porcelain=v2', '-z', '--branch', '--untracked-files=normal', '--ignored=matching', ...(prefix ? ['--', prefix] : [])];
   return new Promise((resolve, reject) => {
     execFile('git', args, { encoding: 'utf8', timeout, maxBuffer: 32 * 1024 * 1024, windowsHide: true, signal,
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1' } }, (error, stdout) => {
+      env: gitEnv() }, (error, stdout) => {
       if (error) { reject(error.name === 'AbortError' ? error : new Error('Git status is unavailable for this folder')); return; }
       const status = scopeStatus(parseStatusV2(stdout), prefix);
       for (const entry of status.entries) entry.sensitive = isSensitivePath(entry.path);

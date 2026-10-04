@@ -432,6 +432,7 @@ test('the hello reports sessions recovered from a crashed runtime', async t => {
   assert.equal(hello.protocol, 4, 'an optional field: no protocol change');
   assert.equal(hello.recovery.runtimeId, runtime.runtimeId); assert.ok(!Number.isNaN(Date.parse(hello.recovery.at)));
   assert.deepEqual(hello.recovery.sessions, [{ id: 'crashed', status: 'interrupted', identityVerified: null }]);
+  assert.equal(hello.recovery.total, 1);
   assert.equal(c.info.recovery.sessions[0].status, 'interrupted');
   assert.equal(f.store.getSession('crashed').status, 'interrupted');
 });

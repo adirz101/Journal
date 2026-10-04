@@ -138,11 +138,14 @@ export interface Bootstrap { projects: Project[]; agents: AgentInfo[]; platform:
 // Phase 8: open-file search (searchFiles). spans: matched character ranges in path, [start, end) and merged.
 export interface FileHit { path: string; score: number; spans: [number, number][] }
 // available false: not a Git folder (file search uses git ls-files), or Git failed (its message is never shown).
-// truncated: the listing stopped at 200,000 files, so some files are not searched.
-export interface FileSearch { available: boolean; reason?: 'not-git' | 'failed'; hits: FileHit[]; total: number; truncated: boolean }
+// truncated: the listing stopped early, so some files are not searched. truncatedBy says why (Git took
+// longer than 8 s, its output passed 64 MiB, or the 200,000-file limit) and listed how many files are searched.
+export interface FileSearch { available: boolean; reason?: 'not-git' | 'failed'; hits: FileHit[]; total: number; truncated: boolean;
+  truncatedBy?: 'timeout' | 'size' | 'limit'; listed?: number }
 // Phase 8: recovery in the runtime hello. status is the state at recovery time; the session row may have moved on since.
 export interface RecoveredSession { id: string; status: 'interrupted' | 'orphaned'; identityVerified: boolean | null }
-export interface Recovery { at: string; runtimeId: string; sessions: RecoveredSession[] }
+// sessions: at most 100 rows; total: every recovered session (a runtime from before total was added omits it).
+export interface Recovery { at: string; runtimeId: string; total?: number; sessions: RecoveredSession[] }
 export interface StatusDraft { scope: 'checkout' | 'branch'; memoryId: string | null; previousRevision: number | null; previousStatement: string | null; statement: string; source: { kind: 'git'; base: string | null };
   basis: { label: string; base: string | null; head: string; commitCount?: number; changedFiles?: number; uncommitted?: number; carried?: string[]; structureChanges?: string[]; unchanged?: boolean; notes: string[]; facts?: DraftFacts }; }
 declare global {

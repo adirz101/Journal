@@ -12,7 +12,7 @@ import { ProcessRunner } from './processes.mjs';
 import { homedir } from 'node:os';
 import { choice, relativePath, text } from '../core/validation.mjs';
 import { SESSION_USER_FIELDS, survivorScanPending } from '../core/sessions.mjs';
-import { headDiff, listDirectory, listFiles, locate, previewFile, searchFiles, treePath } from '../core/files.mjs';
+import { headDiff, listDirectory, ListingCache, locate, previewFile, searchFiles, treePath } from '../core/files.mjs';
 import { gitStatus } from '../core/git-status.mjs';
 import { formatReference, referenceEvent } from '../core/references.mjs';
 import { isSensitivePath } from '../core/evidence.mjs';
@@ -56,8 +56,18 @@ let preferences = readPreferences(preferencesFile);
 if (!app.requestSingleInstanceLock()) app.quit();
 // modalOpen: the renderer reports whether a modal dialog is open (setModalOpen).
 // recovery: sessions the runtime recovered from a crashed predecessor (its hello), until the renderer acknowledges them.
+// Acknowledgements are kept by runtime ID and time (at most 20, the oldest dropped), so one made while the
+// runtime was unreachable is sent again when that runtime is back, and never hides another runtime's recovery.
 let recovery = null; const acknowledgedRecovery = new Set();
-const recoveryFrom = hello => hello?.recovery && !acknowledgedRecovery.has(hello.recovery.at) ? hello.recovery : null;
+const recoveryKey = value => `${value?.runtimeId ?? ''}\u0000${value?.at ?? ''}`;
+const acknowledge = value => { acknowledgedRecovery.delete(value); acknowledgedRecovery.add(value); while (acknowledgedRecovery.size > 20) acknowledgedRecovery.delete(acknowledgedRecovery.values().next().value); };
+const recoveryFrom = hello => {
+  if (!hello?.recovery) return null;
+  if (!acknowledgedRecovery.has(recoveryKey(hello.recovery))) return hello.recovery;
+  // Acknowledged here while disconnected: tell the runtime now (an older runtime rejects the method).
+  runtime.call('acknowledgeRecovery', { at: hello.recovery.at }).catch(() => {});
+  return null;
+};
 let window; let modalOpen = false; let store; let runtime; let updater; let updatePolicy = null; let closing = false; let closed = false; let runtimeState = 'connecting'; let runtimeWarning = null;
 const devUrl = process.env.JOURNAL_DEV_URL;
 // Automated tests run without visible windows or a Dock icon.
@@ -160,8 +170,8 @@ runtime.on('event', event => {
 });
 // Explorer: one watched root, the status call per root shared while it runs,
 // and an external editor found on PATH (or named by JOURNAL_EDITOR).
-// A change in the watched root also drops its open-file listing, so a new file can be found at once.
-const watcher = new RootWatcher(change => { listings.delete(change.key); send({ type: 'files', ...change }); });
+// A change in the watched root also marks its open-file listing stale, so a new file is found after one refresh.
+const watcher = new RootWatcher(change => { listings.invalidate(change.key); send({ type: 'files', ...change }); });
 const statusCalls = new Map();
 // Resolved roots are cached briefly so browsing does not run Git in the store
 // worker for every request; any workspace or folder change clears the cache.
@@ -171,22 +181,14 @@ const fileRoot = async (projectId, rootKey) => {
   if (cached && Date.now() - cached.at < 5000) return cached.root;
   const root = await store.fileRoot(projectId, rootKey); rootCache.set(key, { root, at: Date.now() }); return root;
 };
-// Open-file (Phase 8): git ls-files listings per root, kept 30 s after they finish, at most
-// four roots (the oldest is dropped). One listing runs per root at a time; a failed one is
-// not kept. Workspace and folder changes drop them all, like the root cache.
-const listings = new Map();
-const LISTING_MS = 30_000; const MAX_LISTINGS = 4;
+// Open-file (Phase 8): git ls-files listings per root (ListingCache): kept 30 s, at most four
+// roots, one listing per root at a time. A watcher batch marks its root's list stale: searches get
+// the stale list while one refresh runs (at most every 1.5 s). Workspace and folder changes drop
+// them all, like the root cache.
+const listings = new ListingCache();
 const fileListing = async (projectId, rootKey) => {
-  const root = await fileRoot(projectId, rootKey); const key = `${projectId}\u0000${rootKey}`;
-  const cached = listings.get(key);
-  if (cached && (!cached.done || Date.now() - cached.at < LISTING_MS)) return cached.listing;
-  const entry = { at: Date.now(), done: false, listing: null };
-  const drop = () => { if (listings.get(key) === entry) listings.delete(key); };
-  entry.listing = listFiles(root).then(result => { entry.done = true; entry.at = Date.now(); if (!result.available && result.reason === 'failed') drop(); return result; },
-    () => { drop(); return { available: false, reason: 'failed' }; });
-  listings.delete(key); listings.set(key, entry);
-  while (listings.size > MAX_LISTINGS) listings.delete(listings.keys().next().value);
-  return entry.listing;
+  const root = await fileRoot(projectId, rootKey);
+  return listings.get(`${projectId}\u0000${rootKey}`, root);
 };
 const ROOT_CHANGES = new Set(['addProjectFolder', 'removeProjectFolder', 'removeProject', 'openProject', 'openProjectPath', 'createWorkspace', 'importWorkspace', 'removeWorkspace', 'forgetWorkspace']);
 const EDITORS = { code: line => file => ['--goto', `${file}:${line}`], cursor: line => file => ['--goto', `${file}:${line}`], zed: line => file => [`${file}:${line}`], subl: line => file => [`${file}:${line}`] };
@@ -201,7 +203,12 @@ const findEditor = () => {
 runtime.on('warning', message => { runtimeWarning = message; send({ type: 'runtime', state: runtimeState, warning: message }); });
 runtime.on('disconnected', () => { runtimeState = 'disconnected'; send({ type: 'runtime', state: 'disconnected' }); });
 runtime.on('failed', message => { runtimeWarning = message; send({ type: 'runtime', state: 'disconnected', warning: message }); });
-runtime.on('reconnected', hello => { runtimeState = 'connected'; recovery = recoveryFrom(hello); send({ type: 'runtime', state: 'connected', recovered: true, recovery }); void seedNotifier(); });
+// A warning from before the disconnect (a failed launch, a protocol mismatch) no longer applies;
+// a build mismatch of the new connection is kept (the client reports it again when adopting it).
+runtime.on('reconnected', hello => {
+  runtimeState = 'connected'; runtimeWarning = runtime.warning ?? null; recovery = recoveryFrom(hello);
+  send({ type: 'runtime', state: 'connected', recovered: true, recovery, ...(runtimeWarning ? { warning: runtimeWarning } : {}) }); void seedNotifier();
+});
 // Phase 7: every provider starts as "checking"; detection, help reads and sign-in
 // probes start at once when main loads (refreshProviders below), before the window
 // exists, and run asynchronously beside it, one check in flight per provider. Only signed in / signed out / unknown is kept.
@@ -279,7 +286,8 @@ const actions = {
   // apps. A runtime from before Phase 8 rejects the method: main's copy is cleared all the same.
   acknowledgeRecovery: async ({ at }) => {
     const value = text(at, 'recovery time', 40);
-    acknowledgedRecovery.add(value); if (recovery?.at === value) recovery = null;
+    // The acknowledgement names the recovery main holds (its runtime); a stale at is remembered for no runtime.
+    acknowledge(recoveryKey({ runtimeId: recovery?.at === value ? recovery.runtimeId : runtime.info?.runtimeId, at: value })); if (recovery?.at === value) recovery = null;
     if (!runtime.socket) return { cleared: false };
     try { return await runtime.call('acknowledgeRecovery', { at: value }); } catch { return { cleared: false }; }
   },
