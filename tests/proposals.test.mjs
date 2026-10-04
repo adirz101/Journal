@@ -87,18 +87,21 @@ test('a suggestion from a purged session can still be accepted; forged sessions 
   assert.throws(() => f.store.acceptProposal(forged.id), /Unknown session/);
 });
 
-test('purging detaches open test-command suggestions from the session and its events; handled ones are left alone', t => {
+test('purging detaches every suggestion from the session and its events; handled ones keep their outcome', t => {
   const f = fixture(t);
   const run = (s, id, text) => { f.store.appendEvent(s.id, 'command-start', { toolUseId: id, command: text, test: true }); f.store.appendEvent(s.id, 'command-end', { toolUseId: id, status: 'succeeded', exitCode: 0 }); };
-  const s = f.session('', { survivors: [] }); run(s, 'a', 'npm test'); run(s, 'b', 'node --test');
-  const [open, handled] = f.store.generateProposals(s.id).filter(p => p.kind === 'test-command');
+  const s = f.session('', { survivors: [] }); run(s, 'a', 'npm test'); run(s, 'b', 'node --test'); run(s, 'c', 'npx vitest');
+  const [open, accepted, dismissed] = f.store.generateProposals(s.id).filter(p => p.kind === 'test-command');
   assert.ok(open.evidence.eventId, 'the fixture links an event');
-  f.store.acceptProposal(handled.id);
+  const memory = f.store.acceptProposal(accepted.id); f.store.dismissProposal(dismissed.id);
   f.store.purgeSession(s.id);
-  const after = f.store.getProposal(open.id);
-  assert.equal(after.source.note, 'Observed command exit status from Claude Code hooks in a purged session.');
-  assert.equal(after.evidence.eventId, null); assert.equal(after.evidence.sessionId, null);
-  assert.equal(f.store.getProposal(handled.id).evidence.sessionId, s.id, 'Only open proposals are detached');
+  const note = 'Observed command exit status from Claude Code hooks in a purged session.';
+  for (const [proposal, state] of [[open, 'open'], [accepted, 'accepted'], [dismissed, 'dismissed']]) {
+    const after = f.store.getProposal(proposal.id);
+    assert.equal(after.state, state); assert.equal(after.statement, proposal.statement); assert.equal(after.source.note, note);
+    assert.equal(after.evidence.sessionId, null); assert.equal(after.evidence.eventId, null); assert.equal(after.evidence.sessionPurged, true);
+  }
+  assert.equal(f.store.getProposal(accepted.id).memoryId, memory.id, 'The accepted suggestion still links its note');
   assert.equal(f.store.acceptProposal(open.id).status, 'candidate');
 });
 

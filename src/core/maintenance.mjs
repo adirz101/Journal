@@ -126,12 +126,13 @@ export function purgeSession(store, sessionId) {
   store.transaction(() => {
     store.db.prepare('DELETE FROM events WHERE session_id=?').run(sessionId);
     store.db.prepare(`DELETE FROM receipts WHERE id=? OR json_extract(body,'$.sessionId')=?`).run(session.receiptId, sessionId);
-    // Open suggestions outlive their session: keep them acceptable, record why no session is linked, and
-    // drop what pointed at the purge ("session <id>" or the bare id in a note, the deleted event). Absent notes stay absent.
+    // Suggestions outlive their session: open ones stay acceptable, handled ones keep their state and note link.
+    // Record why no session is linked and drop what pointed at the purge ("session <id>" or the bare id in a note,
+    // the deleted event). Absent notes stay absent.
     store.db.prepare(`UPDATE proposals SET body=json_set(
         CASE WHEN json_extract(body,'$.source.note') IS NOT NULL THEN json_set(body,'$.source.note',replace(replace(json_extract(body,'$.source.note'),'session '||?1,'a purged session'),?1,'a purged session')) ELSE body END,
         '$.evidence.sessionId',NULL,'$.evidence.eventId',NULL,'$.evidence.sessionPurged',json('true'))
-      WHERE json_extract(body,'$.evidence.sessionId')=?1 AND json_extract(body,'$.state')='open'`).run(sessionId);
+      WHERE json_extract(body,'$.evidence.sessionId')=?1`).run(sessionId);
     store.db.prepare('DELETE FROM sessions WHERE id=?').run(sessionId);
     store.audit('session-purged', { sessionId });
   });
