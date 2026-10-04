@@ -42,7 +42,9 @@ export function stateFor(session: Session, now: number, connected: boolean): Ses
 }
 
 // Failed sessions and leftover processes stay "needs you" until archived or cleaned up.
-export const needsYou = (session: Session) => !session.removed && !session.archived
+// Archiving hides only ended sessions: a live one that waits still needs the user,
+// so the badge, the attention dot and the next-needs-you shortcut agree.
+export const needsYou = (session: Session) => !session.removed && (!session.archived || isLive(session))
   && ((session.provider === 'claude' && session.status === 'waiting') || session.status === 'failed' || session.status === 'orphaned' || !!session.survivors?.length);
 
 export const resumable = (session: Session) => !isLive(session) && session.status !== 'orphaned' && session.nativeIdConfirmed && !!session.nativeId;

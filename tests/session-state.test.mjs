@@ -98,7 +98,7 @@ test('Needs approval detail prefers command, then path, then tool', async t => {
   assert.equal(detail(undefined), null);
 });
 
-test('needsYou: blocked Claude, failed, orphaned and leftover processes; not Codex waiting, archived or removed', async t => {
+test('needsYou: blocked Claude, failed, orphaned and leftover processes; not Codex waiting, archived when ended, or removed', async t => {
   const { needsYou } = await load(t);
   assert.equal(needsYou(session({ status: 'waiting' })), true);
   assert.equal(needsYou(session({ status: 'failed' })), true);
@@ -106,7 +106,10 @@ test('needsYou: blocked Claude, failed, orphaned and leftover processes; not Cod
   assert.equal(needsYou(session({ status: 'stopped', survivors: [{ pid: 1, started: 'x', command: 'node' }] })), true);
   assert.equal(needsYou(session({ provider: 'codex', status: 'waiting' })), false);
   assert.equal(needsYou(session({ provider: 'cursor', status: 'waiting' })), false);
-  assert.equal(needsYou(session({ status: 'waiting', archived: true })), false);
+  // A live session needs the user even if archived (the badge counts it too); archive hides only ended ones.
+  assert.equal(needsYou(session({ status: 'waiting', archived: true })), true);
+  assert.equal(needsYou(session({ status: 'failed', archived: true })), false);
+  assert.equal(needsYou(session({ status: 'stopped', archived: true, survivors: [{ pid: 1, started: 'x', command: 'node' }] })), false);
   assert.equal(needsYou(session({ status: 'failed', removed: true })), false);
   assert.equal(needsYou(session({ status: 'running', activity: 'idle' })), false);
   assert.equal(needsYou(session({ status: 'stopped', survivors: [] })), false);
