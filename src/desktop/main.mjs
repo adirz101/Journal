@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, shell } from 'electron';
 import { spawn } from 'node:child_process';
-import { resolve, dirname, join, sep } from 'node:path';
+import { resolve, dirname, isAbsolute, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { StoreClient } from './store-client.mjs';
@@ -167,7 +167,7 @@ const fileRoot = async (projectId, rootKey) => {
   if (cached && Date.now() - cached.at < 5000) return cached.root;
   const root = await store.fileRoot(projectId, rootKey); rootCache.set(key, { root, at: Date.now() }); return root;
 };
-const ROOT_CHANGES = new Set(['addProjectFolder', 'removeProjectFolder', 'removeProject', 'openProject', 'createWorkspace', 'importWorkspace', 'removeWorkspace', 'forgetWorkspace']);
+const ROOT_CHANGES = new Set(['addProjectFolder', 'removeProjectFolder', 'removeProject', 'openProject', 'openProjectPath', 'createWorkspace', 'importWorkspace', 'removeWorkspace', 'forgetWorkspace']);
 const EDITORS = { code: line => file => ['--goto', `${file}:${line}`], cursor: line => file => ['--goto', `${file}:${line}`], zed: line => file => [`${file}:${line}`], subl: line => file => [`${file}:${line}`] };
 let editor;
 const findEditor = () => {
@@ -215,6 +215,9 @@ const refreshProvider = async (provider, { fresh = false } = {}) => {
 };
 const refreshProviders = () => Promise.all(PROVIDERS.map(provider => refreshProvider(provider).catch(() => {})));
 // The row to act on: the check in flight, else the last detected one.
+// Started at once and never awaited: detection runs beside the runtime connection and the
+// first window, and never delays either (Phase 7). Rows arrive as providers events.
+void refreshProviders();
 const currentRow = provider => checks.get(provider) ?? agents.find(agent => agent.provider === provider);
 // After an install or sign-in ends, main checks that provider again itself.
 const processes = new ProcessRunner(event => { send(event); if (event.type === 'process-exit') void refreshProvider(event.provider, { fresh: true }).catch(() => {}); },
@@ -232,7 +235,7 @@ const actions = {
     modalOpen = open;
   },
   bootstrap: async () => ({ projects: await store.listProjects(), agents, platform: process.platform, shortcuts: shortcutKeys(process.platform), runtime: { state: runtimeState, warning: runtimeWarning },
-    live: runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [], active: await store.activeSessions(), hasNotes: false }),
+    live: runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [], active: await store.activeSessions(), hasNotes: await store.hasActiveNotes() }),
   openProject: async () => {
     const result = await dialog.showOpenDialog(window, { title: 'Open a Git project', properties: ['openDirectory'] });
     return result.canceled ? null : store.openProject(result.filePaths[0]);
@@ -508,11 +511,20 @@ const actions = {
   },
   // The official page from the constant table; the renderer never supplies a URL.
   openInstallPage: ({ provider }) => { void shell.openExternal(PROVIDER_COMMANDS[choice(provider, PROVIDERS, 'provider')].installPage); },
-  // Phase 7 contract stubs (replaced in Group A).
-  openProjectPath: () => { throw new Error('Not available yet'); },
-  firstRunDrafts: () => null,
-  rememberDraft: () => { throw new Error('Not available yet'); },
-  skipOrientation: () => { throw new Error('Not available yet'); },
+  // ----- Phase 7: first run -----
+  // A folder dropped on the window (preload pathForFile): an absolute, existing directory,
+  // then the store's own Git check. The same trust as the open dialog.
+  openProjectPath: ({ path }) => {
+    if (typeof path !== 'string' || !path || path.length > 4096 || !isAbsolute(path)) throw new Error('Drop a Git folder');
+    let directory = false; try { directory = statSync(path).isDirectory(); } catch { /* missing */ }
+    if (!directory) throw new Error('Drop a Git folder');
+    return store.openProject(path);
+  },
+  // Gated in headless runs: many specs open a fresh repository and go straight to Start.
+  firstRunDrafts: ({ projectId }) => !headless || globalThis.__journalFirstRun === true ? store.firstRunDrafts(text(projectId, 'project ID', 100)) : null,
+  // via is fixed here; the renderer cannot label its own audit entries.
+  rememberDraft: ({ projectId, overview, branch }) => store.rememberDraft(text(projectId, 'project ID', 100), { overview: overview ?? null, branch: branch ?? null }, { via: 'first-run' }),
+  skipOrientation: ({ projectId }) => store.skipOrientation(text(projectId, 'project ID', 100)),
   processInput: ({ id, data }) => processes.write(text(id, 'process', 40), data),
   processResize: ({ id, cols, rows }) => processes.resize(text(id, 'process', 40), cols, rows),
   processStop: ({ id }) => processes.stop(text(id, 'process', 40)),
@@ -565,8 +577,6 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
 try { await runtime.connect(); runtimeState = 'connected'; await seedNotifier(); }
 catch (error) { runtimeState = 'disconnected'; console.error('Journal runtime unavailable:', error.message); void runtime.reconnect(); }
 createWindow();
-// Detection never delays the first window (Phase 7).
-void refreshProviders();
 // Updates: packaged builds only. The automatic-check preference lives in the data folder.
 const updatePrefs = join(userData, 'updates.json');
 const automaticUpdates = (() => { try { return JSON.parse(readFileSync(updatePrefs, 'utf8')).automatic !== false; } catch { return true; } })();
