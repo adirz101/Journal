@@ -118,6 +118,8 @@ test('first-run actions: dropped paths, the headless gate and remembering both d
   const { app, page } = await launch(f.env);
   try {
     expect((await request<{ hasNotes: boolean }>(page, 'bootstrap')).hasNotes).toBe(false);
+    // A synthetic File has no OS path; the preload's webUtils bridge says so with ''.
+    expect(await page.evaluate(() => window.journal!.pathForFile(new File(['x'], 'x.txt')))).toBe('');
     for (const path of ['relative/path', resolve(f.root, 'missing'), resolve(f.root, 'package.json'), 42]) await expect(request(page, 'openProjectPath', { path })).rejects.toThrow('Drop a Git folder');
     await expect(request(page, 'openProjectPath', { path: plain })).rejects.toThrow(/Git/);
     const project = await request<{ id: string }>(page, 'openProjectPath', { path: f.project });
