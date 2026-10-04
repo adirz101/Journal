@@ -30,10 +30,12 @@ test('update modes: packaged macOS and installed Windows update; portable notifi
   assert.equal(updateMode({ packaged: true, platform: 'darwin', env: { JOURNAL_DISABLE_UPDATES: '1' } }), 'off');
 });
 
-test('configures electron-updater: download in the background, never install on quit, one feed', () => {
+test('configures electron-updater: download in the background, never install on quit, never downgrade', () => {
   const { autoUpdater, updater } = make(); updater.start();
   assert.equal(autoUpdater.autoDownload, true); assert.equal(autoUpdater.autoInstallOnAppQuit, false);
-  assert.equal(autoUpdater.allowPrerelease, true, 'An alpha follows newer alphas'); assert.equal(autoUpdater.channel, 'latest');
+  assert.equal(autoUpdater.allowPrerelease, true, 'An alpha follows newer alphas');
+  // A channel would make the GitHub provider match only tags of that name (an alpha would find nothing) and allow downgrades.
+  assert.equal(autoUpdater.channel, undefined); assert.equal(autoUpdater.allowDowngrade, false);
   const stable = make({ version: '1.0.0' }); stable.updater.start(); assert.equal(stable.autoUpdater.allowPrerelease, false, 'A release ignores prereleases');
   const portable = make({ mode: 'notify' }); portable.updater.start(); assert.equal(portable.autoUpdater.autoDownload, false);
 });
@@ -65,6 +67,8 @@ test('release links and errors are sanitized', async () => {
   assert.equal(updater.state.status, 'error'); assert.equal(updater.state.message, 'HttpError: 404');
   autoUpdater.fail = new Error('net::ERR_INTERNET_DISCONNECTED'); await updater.check();
   assert.equal(updater.state.status, 'error'); assert.equal(updater.state.message, 'net::ERR_INTERNET_DISCONNECTED');
+  autoUpdater.emit('error', new Error("ENOENT: no such file, open '/Users/someone/Library/Caches/journal-desktop-updater/x.zip'"));
+  assert.equal(updater.state.message, "ENOENT: no such file, open '…'", 'No local paths');
 });
 
 test('one check at a time, and a downloaded update is kept', async () => {
@@ -80,6 +84,15 @@ test('installs only a downloaded update, and only when asked', () => {
   assert.throws(() => updater.install(), /No downloaded update/); assert.equal(autoUpdater.installs.length, 0);
   autoUpdater.emit('update-downloaded', { version: '0.2.0-alpha.3' }); updater.install();
   assert.deepEqual(autoUpdater.installs, [[false, true]], 'Installer as usual, then relaunch');
+});
+
+test('install progress is shared with the window and cleared by a failure', () => {
+  const errors = []; const { autoUpdater, sent, updater } = make({ onError: error => errors.push(error.message) }); updater.start();
+  autoUpdater.emit('update-downloaded', { version: '0.2.0-alpha.3' });
+  updater.setInstalling(true); assert.equal(sent.at(-1).state.installing, true);
+  updater.setInstalling(false); assert.equal(updater.state.installing, false);
+  updater.setInstalling(true); autoUpdater.emit('error', new Error('Squirrel: code signature did not pass validation'));
+  assert.equal(updater.state.installing, false); assert.equal(updater.state.status, 'error'); assert.deepEqual(errors, ['Squirrel: code signature did not pass validation']);
 });
 
 test('automatic checks: shortly after launch, then periodically, and can be switched off', () => {

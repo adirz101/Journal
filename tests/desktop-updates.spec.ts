@@ -20,7 +20,7 @@ test('update notices: progress, restart only for a downloaded update, settings i
     await page.getByRole('button', { name: 'Done' }).click();
 
     const emit = (state: object) => app.evaluate(({ BrowserWindow }, update) => {
-      BrowserWindow.getAllWindows()[0].webContents.send('journal:event', { type: 'update', state: { mode: 'auto', current: '0.2.0-alpha.2', message: null, automatic: true, ...update } });
+      BrowserWindow.getAllWindows()[0].webContents.send('journal:event', { type: 'update', state: { mode: 'auto', current: '0.2.0-alpha.2', message: null, automatic: true, installing: false, ...update } });
     }, state);
     await emit({ status: 'downloading', version: '0.2.0-alpha.3', percent: 37 });
     await expect(page.locator('.update-notice')).toHaveText('Downloading Journal 0.2.0-alpha.3… 37%');
@@ -35,6 +35,11 @@ test('update notices: progress, restart only for a downloaded update, settings i
 
     await emit({ status: 'available', mode: 'notify', version: '0.2.0-alpha.3', percent: null });
     await expect(page.getByRole('button', { name: 'Download' })).toBeVisible();
+    // A failure after the user chose to install is shown; background check failures are not.
+    await emit({ status: 'error', version: null, percent: null, message: 'offline' });
+    await expect(page.locator('.update-notice')).toHaveText('The update could not be installed: offline');
+    await page.reload(); await expect(page.getByText('Runtime connected')).toBeVisible();
+    await emit({ status: 'ready', version: '0.2.0-alpha.3', percent: 100 }); await expect(page.getByRole('button', { name: 'Restart to update' })).toBeVisible();
     await emit({ status: 'error', version: null, percent: null, message: 'offline' });
     await expect(page.locator('.update-notice')).toHaveCount(0);
   } finally { await app.close(); rmSync(root, { recursive: true, force: true }); }

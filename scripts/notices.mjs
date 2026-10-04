@@ -13,7 +13,8 @@ const lock = JSON.parse(readFileSync('package-lock.json', 'utf8')).packages;
 const roots = new Set([...Object.keys(manifest.dependencies ?? {}), ...(manifest.journal?.rendererBundle ?? [])]);
 const resolve = (from, name) => { for (let dir = from; ; dir = dir.slice(0, Math.max(0, dir.lastIndexOf('/node_modules/')))) { const path = `${dir ? `${dir}/` : ''}node_modules/${name}`; if (lock[path]) return path; if (!dir) return null; } };
 const packages = new Map(); // directory -> [name, version]
-const visit = path => { if (packages.has(path)) return; const info = lock[path]; packages.set(path, [path.slice(path.lastIndexOf('node_modules/') + 'node_modules/'.length), info.version]);
+const visit = path => { const info = lock[path]; if (packages.has(path) || !info.version) return; // (links have no version)
+  packages.set(path, [path.slice(path.lastIndexOf('node_modules/') + 'node_modules/'.length), info.version]);
   for (const name of Object.keys({ ...info.dependencies, ...info.optionalDependencies })) { const dep = resolve(path, name); if (dep) visit(dep); } };
 for (const name of roots) { const path = resolve('', name); if (!path) throw new Error(`${name} is listed as shipped but is not installed`); visit(path); }
 packages.set('node_modules/electron', ['electron', JSON.parse(readFileSync('node_modules/electron/package.json', 'utf8')).version]);

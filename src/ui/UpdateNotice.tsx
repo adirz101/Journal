@@ -18,18 +18,20 @@ export function useUpdateState() {
 // progress, an update ready to install, or a version to download by hand (the
 // portable build). Journal never restarts on its own.
 export function UpdateNotice({ state, onError }: { state: UpdateState | null; onError: (error: unknown) => void }) {
-  const [installing, setInstalling] = useState(false);
+  // Pending covers the session question; the main process reports the shutdown itself.
+  const [pending, setPending] = useState(false); const [attempted, setAttempted] = useState(false);
   if (!state) return null;
+  const installing = pending || state.installing;
   const install = async () => {
-    setInstalling(true);
-    try { const result = await api<{ installing: boolean }>('installUpdate'); if (!result.installing) setInstalling(false); }
-    catch (error) { setInstalling(false); onError(error); }
+    setPending(true); setAttempted(true);
+    try { await api('installUpdate'); } catch (error) { onError(error); } finally { setPending(false); }
   };
   if (state.status === 'downloading') return <div className="update-notice" role="status"><p>Downloading Journal {state.version}… {state.percent ?? 0}%</p></div>;
   if (state.status === 'ready') return <div className="update-notice" role="status"><p>Journal {state.version} is ready.</p>
     <button className="primary" disabled={installing} onClick={() => void install()}>{installing ? 'Restarting…' : 'Restart to update'}</button></div>;
   if (state.status === 'available') return <div className="update-notice" role="status"><p>Journal {state.version} is available.</p>
     <button onClick={() => void api('openUpdateRelease').catch(onError)}>Download</button></div>;
+  if (state.status === 'error' && attempted) return <div className="update-notice" role="alert"><p>The update could not be installed: {state.message ?? 'unknown error'}</p></div>;
   return null;
 }
 
