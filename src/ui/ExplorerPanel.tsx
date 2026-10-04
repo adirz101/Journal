@@ -312,7 +312,7 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
     </ul>
 
     : <div className="file-tree" ref={scroller} onScroll={event => setTop(event.currentTarget.scrollTop)}>
-      {tree.isSearchOpen() && <input {...tree.getSearchInputElementProps()} className="tree-search" aria-label="Find in loaded files" placeholder="Find in open folders" />}
+      {tree.isSearchOpen() && <input {...tree.getSearchInputElementProps()} className="tree-search" onKeyDown={event => { if (event.key === 'Escape') event.preventDefault(); /* the tree closes its search; the overlay stays */ }} aria-label="Find in loaded files" placeholder="Find in open folders" />}
       <div {...tree.getContainerProps('Files')} className="tree-rows" style={{ height: rows.length * ROW }}>
         {rows.slice(first, last).map(item => {
           const data = item.getItemData(); const meta = item.getItemMeta(); const state = stateOf(data); const dot = folderKind(data);

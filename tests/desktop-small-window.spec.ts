@@ -152,3 +152,37 @@ test('900×640: at least 10 terminal rows; the sidebar overlay toggles with its 
     await expect(page.locator('.sidebar-overlay')).toHaveCount(0);
   } finally { await closeApp(app); f.cleanup(); }
 });
+
+test('1280×800: Esc closes the file preview first, then the overlay; the docked sidebar keeps its own Esc', async () => {
+  const f = setup('small-esc-layers'); const { app, page } = await open(f.env, f.project, 1280, 800);
+  try {
+    await start(page, 'ESC_LAYERS');
+    const overlay = page.locator('.inspector-overlay'); const rail = page.locator('.inspector-rail');
+    await expect(rail.getByRole('button', { name: 'Show inspector', exact: true })).toBeVisible();
+    await rail.getByRole('button', { name: /^Files/ }).click();
+    await expect(overlay).toBeVisible();
+    // While the overlay is open, the rail's toggle names what it does.
+    await expect(rail.getByRole('button', { name: 'Hide inspector', exact: true })).toBeVisible();
+    await overlay.getByRole('treeitem', { name: /^README\.md/ }).click();
+    await expect(overlay.getByRole('region', { name: 'Preview of README.md' })).toBeVisible();
+    await overlay.getByRole('button', { name: 'Back to files' }).focus();
+    await page.keyboard.press('Escape');
+    await expect(overlay.getByRole('region', { name: 'Preview of README.md' })).toHaveCount(0);
+    await expect(overlay).toBeVisible();
+    await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('.inspector-overlay'))).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(overlay).toHaveCount(0);
+    await expect(rail.getByRole('button', { name: 'Show inspector', exact: true })).toBeVisible();
+    // Medium mode docks the sidebar: Esc there neither closes the overlay nor moves focus.
+    await rail.getByRole('button', { name: /^Memory/ }).click();
+    await expect(overlay).toBeVisible();
+    const row = page.locator('.sidebar').getByRole('button', { name: /: ESC_LAYERS\./ });
+    await row.focus();
+    await page.keyboard.press('Escape');
+    await expect(overlay).toBeVisible();
+    await expect(row).toBeFocused();
+    // Choosing a session in the sidebar closes the overlay.
+    await row.click();
+    await expect(overlay).toHaveCount(0);
+  } finally { await closeApp(app); f.cleanup(); }
+});

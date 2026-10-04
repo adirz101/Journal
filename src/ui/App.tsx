@@ -372,7 +372,7 @@ export default function App() {
     sidebar={(pane, overlay) => <Sidebar pane={pane} inOverlay={overlay} projects={projects} project={state?.project ?? null} sessions={ordered} proposals={proposals} selectedId={selectedId} connected={connected}
       runtimeState={runtime.state === 'connected' || runtime.state === 'disconnected' ? runtime.state : 'connecting'} now={now} canCompose={!!state}
       shortcuts={bootstrap?.shortcuts} appearance={appearance} update={state && session ? null : update}
-      onSelect={next => { if (overlay) layout.closeOverlays(false); void selectSession(next); }} onSessionMenu={(next, position) => void sessionMenu(next, position)} onNew={() => { if (overlay) layout.closeOverlays(false); newSession(); }}
+      onSelect={next => { if (overlay || layout.inspector === 'overlay') layout.closeOverlays(false); void selectSession(next); }} onSessionMenu={(next, position) => void sessionMenu(next, position)} onNew={() => { if (overlay || layout.inspector === 'overlay') layout.closeOverlays(false); newSession(); }}
       onSwitchProject={position => void switcherMenu(position).catch(failed)} onProjectMenu={position => void projectMenu(position).catch(failed)}
       onOpenMemory={() => { setPanel('memory'); layout.showInspector(); }} onOpenSettings={() => setSettingsOpen(true)} onError={failed}
       onExpand={layout.toggleSidebar} onShowRecent={() => { layout.openSidebar(); requestAnimationFrame(() => document.getElementById('sidebar-recent')?.scrollIntoView({ block: 'start' })); }} />}>

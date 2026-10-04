@@ -78,13 +78,18 @@ export function ResizableWorkspace({ layout, wide = false, sidebar, inspector, c
   const overlay = layout.sidebar === 'overlay' ? 'sidebar' : inspectorState === 'overlay' ? 'inspector' : null;
   const style = { '--sidebar-width': `${project}px`, '--knowledge-width': `${knowledge}px`, '--workspace-min-width': `${workspaceMin}px`,
     gridTemplateColumns: `${project}px minmax(${Math.min(workspaceMin, 300)}px, 1fr)${knowledge ? ` ${knowledge}px` : ''}` } as CSSProperties;
-  // Keyboard: Esc from inside an overlay or a rail closes it and returns focus.
-  const escape = (event: KeyboardEvent<HTMLElement>) => { if (event.key === 'Escape' && overlay) { event.preventDefault(); layout.closeOverlays(true); } };
+  // Keyboard: Esc from inside an overlay or its own rail closes it and returns focus.
+  // An Esc an inner element already handled (a file preview, a search) stays there,
+  // and Esc in a docked pane (the sidebar beside an inspector overlay) is that pane's own.
+  const escape = (from: 'sidebar' | 'inspector' | 'overlay') => (event: KeyboardEvent<HTMLElement>) => {
+    if (event.defaultPrevented || event.key !== 'Escape' || !overlay || (from !== 'overlay' && from !== overlay)) return;
+    event.preventDefault(); layout.closeOverlays(true);
+  };
   return <div ref={shell} className={`app-shell mode-${layout.mode}`} style={style}>
-    <div className="shell-pane" data-shell-pane="sidebar" onKeyDown={escape}>{sidebar(sidebarFull ? 'full' : 'rail', false)}</div>
+    <div className="shell-pane" data-shell-pane="sidebar" onKeyDown={escape('sidebar')}>{sidebar(sidebarFull ? 'full' : 'rail', false)}</div>
     {children}
-    {inspector && inspectorState !== 'none' && <div className="shell-pane" data-shell-pane="inspector" onKeyDown={escape}>{inspector(inspectorFull ? 'full' : 'rail', false)}</div>}
-    {overlay && <Overlay key={overlay} side={overlay} layout={layout} width={overlay === 'sidebar' ? overlayWidth.project(requested.project) : overlayWidth.knowledge(requested.knowledge, wide)} onKeyDown={escape}>
+    {inspector && inspectorState !== 'none' && <div className="shell-pane" data-shell-pane="inspector" onKeyDown={escape('inspector')}>{inspector(inspectorFull ? 'full' : 'rail', false)}</div>}
+    {overlay && <Overlay key={overlay} side={overlay} layout={layout} width={overlay === 'sidebar' ? overlayWidth.project(requested.project) : overlayWidth.knowledge(requested.knowledge, wide)} onKeyDown={escape('overlay')}>
       {overlay === 'sidebar' ? sidebar('full', true) : inspector!('full', true)}</Overlay>}
     {sidebarFull && <ResizeHandle side="project" value={widths.project} max={max.project} onChange={change} onCommit={persist} />}
     {inspectorFull && !wide && <ResizeHandle side="knowledge" value={widths.knowledge} max={max.knowledge} onChange={change} onCommit={persist} />}

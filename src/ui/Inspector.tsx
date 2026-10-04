@@ -25,11 +25,13 @@ export function Inspector({ pane, tab, onTab, badges, shortcuts, overlayOpen = f
       const base = id === 'files' && badges.files ? `${shell.tabFiles}, ${badges.files} changed` : id === 'memory' && badges.memory ? `${shell.tabMemory}, ${badges.memory} suggestion${badges.memory === 1 ? '' : 's'}` : TABS.find(t => t.id === id)!.label;
       return keys(id) ? `${base} (${keys(id)!.label})` : base;
     };
+    // While the overlay is open, the same button closes it.
+    const toggleName = overlayOpen ? shell.hideInspector : shell.showInspector;
     return <aside className="knowledge-panel inspector-rail" id="knowledge-sidebar" aria-label={shell.inspector}>
       {TABS.map(({ id }) => <button key={id} className="rail-tile" aria-label={railName(id)} title={railName(id)} aria-keyshortcuts={keys(id)?.aria} aria-pressed={overlayOpen ? tab === id : undefined} onClick={() => { onTab(id); onShow?.(id); }}>
         <Icon d={ICONS[id]} />{badge(id) > 0 && <span className="badge count-badge" aria-hidden="true">{badge(id)}</span>}</button>)}
       <span className="rail-spacer" />
-      <button className="rail-tile" aria-label={shell.showInspector} title={toggleKeys ? `${shell.showInspector} (${toggleKeys.label})` : shell.showInspector} aria-keyshortcuts={toggleKeys?.aria} onClick={() => onShow?.()} disabled={!onShow}><Icon d={ICONS.show} /></button>
+      <button className="rail-tile" aria-label={toggleName} title={toggleKeys ? `${toggleName} (${toggleKeys.label})` : toggleName} aria-keyshortcuts={toggleKeys?.aria} onClick={() => onShow?.()} disabled={!onShow}><Icon d={ICONS.show} /></button>
     </aside>;
   }
   const move = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
