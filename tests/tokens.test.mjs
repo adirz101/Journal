@@ -67,7 +67,17 @@ for (const [name, t] of Object.entries(themes)) {
 test('the terminal font stack is the --font-mono token', async () => {
   const { MONO_FONT } = await import('../src/ui/theme.ts');
   const tokens = readFileSync(new URL('../src/ui/tokens.css', import.meta.url), 'utf8');
-  const stack = tokens.match(/--font-mono:([^;]+);/)[1];
+  const found = [...tokens.matchAll(/--font-mono:([^;]+);/g)];
+  assert.equal(found.length, 1, '--font-mono is defined exactly once (a per-theme override would be ignored here)');
+  const stack = found[0][1];
   assert.equal(MONO_FONT.replace(/\s*,\s*/g, ','), stack.replace(/\s*,\s*/g, ','));
   assert.match(stack, /^"JetBrains Mono",/);
+});
+
+test('fonts: italic faces are bundled and ligatures are off for the terminal and the editor', () => {
+  const fonts = readFileSync(new URL('../src/ui/fonts.css', import.meta.url), 'utf8');
+  for (const subset of ['latin', 'latin-ext']) assert.ok(fonts.includes(`jetbrains-mono-${subset}-400-italic.woff2`), `${subset} italic`);
+  assert.match(fonts, /font-style:italic/);
+  const styles = readFileSync(new URL('../src/ui/styles.css', import.meta.url), 'utf8');
+  assert.match(styles, /\.xterm,\.cm-scroller\{font-variant-ligatures:none\}/);
 });
