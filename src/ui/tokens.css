@@ -6,7 +6,8 @@
    (tests/tokens.test.mjs). Exempt from that rule: --code-selection, --code-match
    and --code-match-current are highlight backgrounds; code text and every syntax
    color stay at least 3:1 on them. State surfaces have their own minimums: --hover
-   1.1:1 against --raised, --side and --panel; --sel-hover 1.05:1 against --sel.
+   1.1:1 against --raised, --side and --panel; --sel-hover 1.05:1 against --sel;
+   --accsoft-hover 1.1:1 against --accsoft on those surfaces, with --tx on it at 4.5:1.
    --line-field, the border of inputs, text areas and selects, is at least 3:1 on every
    surface they sit on (WCAG 1.4.11); --line2 is only for dividers and panel borders.
    Translucent tints and lines are their base color with alpha.
@@ -16,7 +17,7 @@
   --bg:#0F1115;--side:#13161B;--panel:#13161B;--raised:#1A1E25;--field:#0C0E12;--hover:#242A33;--sel:#1C2A40;--sel-hover:#1F2F47;--term:#0B0D10;
   --line:#242931;--line2:#30363F;--line-field:#616A78;--accline:rgba(106,165,255,.35);
   --tx:#E8EAEE;--tx2:#B3BAC6;--tx3:#8E97A6;
-  --acc:#6AA5FF;--accbtn:#2D6BE6;--accbtn-hover:#2560D6;--accsoft:rgba(106,165,255,.13);--on-acc:#FFFFFF;
+  --acc:#6AA5FF;--accbtn:#2D6BE6;--accbtn-hover:#2560D6;--accsoft:rgba(106,165,255,.13);--accsoft-hover:rgba(106,165,255,.22);--on-acc:#FFFFFF;
   --amb:#F2B957;--ambsoft:rgba(242,185,87,.12);--ambline:rgba(242,185,87,.35);
   --grn:#6CCB8D;--grnsoft:rgba(108,203,141,.12);
   --red:#F48B78;--redsoft:rgba(244,139,120,.12);--redline:rgba(244,139,120,.35);
@@ -37,7 +38,7 @@
   --bg:#FFFFFF;--side:#F5F6F8;--panel:#F8F9FA;--raised:#FFFFFF;--field:#FFFFFF;--hover:#E8EBEF;--sel:#E2EBFC;--sel-hover:#DAE5FB;--term:#FAFAFB;
   --line:#E3E6EB;--line2:#CDD3DB;--line-field:#838C9B;--accline:#BDD0F4;
   --tx:#14171C;--tx2:#454D5A;--tx3:#5E6776;
-  --acc:#195BCF;--accbtn:#195BCF;--accbtn-hover:#1652BE;--accsoft:rgba(25,91,207,.08);
+  --acc:#195BCF;--accbtn:#195BCF;--accbtn-hover:#1652BE;--accsoft:rgba(25,91,207,.08);--accsoft-hover:rgba(25,91,207,.16);
   --amb:#8A5300;--ambsoft:#FFF5E0;--ambline:#F0D49A;
   --grn:#17713A;--grnsoft:#E5F4EA;
   --red:#AE321E;--redsoft:#FCEBE7;--redline:#F0C3BA;

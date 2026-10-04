@@ -70,6 +70,14 @@ for (const [name, t] of Object.entries(themes)) {
       const ratio = contrast(solid(text), solid('sel-hover'));
       if (ratio < 4.5) low.push(`${text} on sel-hover: ${ratio.toFixed(2)}`);
     }
+    // The approve button: an accent tint that hovers to a stronger accent tint on the card and panels.
+    for (const surface of ['raised', 'side', 'panel']) {
+      const base = solid(surface); const hovered = mix(t['accsoft-hover'], base);
+      const ratio = contrast(hovered, mix(t.accsoft, base));
+      if (ratio < 1.1) low.push(`accsoft-hover against accsoft over ${surface}: ${ratio.toFixed(2)}`);
+      const text = contrast(solid('tx'), hovered);
+      if (text < 4.5) low.push(`tx on accsoft-hover over ${surface}: ${text.toFixed(2)}`);
+    }
     const button = contrast(solid('on-acc'), solid('accbtn-hover'));
     if (button < 4.5) low.push(`on-acc on accbtn-hover: ${button.toFixed(2)}`);
     const press = contrast(solid('accbtn'), solid('accbtn-hover'));
@@ -102,7 +110,7 @@ for (const [name, t] of Object.entries(themes)) {
   });
 
   test(`${name} theme: a translucent tint or line is its base color with alpha`, () => {
-    const bases = { accsoft: 'acc', accline: 'acc', ambsoft: 'amb', ambline: 'amb', grnsoft: 'grn', redsoft: 'red', redline: 'red', 'claude-soft': 'claude' };
+    const bases = { accsoft: 'acc', 'accsoft-hover': 'acc', accline: 'acc', ambsoft: 'amb', ambline: 'amb', grnsoft: 'grn', redsoft: 'red', redline: 'red', 'claude-soft': 'claude' };
     for (const [tint, base] of Object.entries(bases)) {
       assert.ok(t[tint], `--${tint} is defined`);
       const [r, g, b, a] = rgba(t[tint]);

@@ -61,6 +61,8 @@ test('states: primary hover keeps its text readable, selection survives hover an
   const selectedHover = RULES.filter(rule => declares(rule, 'background', 'var(--sel-hover)')).flatMap(rule => rule.selectors);
   for (const selector of ['.project-link.selected:not(:disabled):hover', '.session-select.selected:not(:disabled):hover', '.explorer-tools button[aria-pressed=true]:not(:disabled):hover', '.segmented button[aria-pressed=true]:not(:disabled):hover'])
     assert.ok(selectedHover.includes(selector), `${selector} uses --sel-hover`);
+  // The generic button hover (0,2,1) would replace the approve button's accent tint with grey.
+  assert.ok(rulesFor('.memory-actions .approve:not(:disabled):hover').some(rule => declares(rule, 'background', 'var(--accsoft-hover)') && rule.at.some(at => /hover:hover/.test(at) && /pointer:fine/.test(at))), 'approve keeps an accent hover');
   for (const selector of ['.project-link.selected', '.session-select.selected']) assert.ok(rulesFor(selector).some(rule => declares(rule, 'box-shadow', 'inset 2px 0 0 var(--acc)')), selector);
 });
 
