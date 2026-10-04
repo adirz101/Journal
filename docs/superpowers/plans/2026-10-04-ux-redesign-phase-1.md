@@ -845,6 +845,8 @@ git commit -m "Light theme comes from tokens; styles define no colors of their o
 **Files:**
 - Modify: `src/ui/styles.css`, `tests/styles.test.mjs`, `tests/desktop-layout.spec.ts:20`, `tests/desktop.spec.ts:78-86`
 
+> **Review note (from the 1.1a quality review):** `--line2` is only about 1.4 to 1.6:1 against the surfaces. That is fine for decorative dividers, but WCAG 1.4.11 asks for 3:1 on the boundary of an interactive control (inputs, text fields, outlined buttons). While doing the focus and control rules here, evaluate which `border-color:var(--line2)` rules belong to controls, and give those a stronger border (a new token such as `--control-line`, tested at 3:1 like the text tokens) or an alternative cue.
+
 - [ ] **Step 1: Write the failing tests.** Replace `tests/styles.test.mjs` with the full version (two more tests: the type floor and hover gating):
 
 ~~~~js
