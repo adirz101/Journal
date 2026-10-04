@@ -236,16 +236,43 @@ test('previewSelection never runs Git or reads evidence', t => {
 test('previewSelection selects what prepareContext selects when every source is current', t => {
   const f = selectionFixture(t);
   writeFileSync(join(f.repo, 'src/payments/webhook.mjs'), 'export const verify = true;\n');
+  // An additional folder, a worktree, and an area note that shares no word
+  // with the task or the referenced path: only the referenced area selects it.
+  const docs = join(f.root, 'handbook'); mkdirSync(docs); writeFileSync(join(docs, 'guide.md'), 'Guide\n');
+  const [folder] = f.store.addProjectRoot(f.project.id, docs).roots;
+  const ws = f.store.createWorkspace(f.project.id, { branch: 'feature/p4', base: 'main' }, join(f.root, 'worktrees'));
+  const quiet = f.store.proposeMemory(f.project.id, { statement: 'Quokkas nap under marmalade lanterns.', category: 'decision', scope: 'checkout', area: 'src/storage', source: { kind: 'user', note: 'Fixture quiet' } });
+  f.store.setMemoryStatus(quiet.id, 'active');
   const leftOut = [...f.labels].find(([, label]) => label === 'retry-file')[0];
-  for (const disabled of [[], [leftOut]]) {
-    const full = f.store.prepareContext(f.project.id, f.task, { references: f.references, disabled, persist: false });
-    const preview = f.store.previewSelection(f.project.id, f.task, { branch: 'main', references: f.references, disabled });
-    const shape = result => ({ items: result.items.map(item => [item.id, item.selection.reason, item.selection.terms]), excluded: result.excluded.map(item => [item.id, item.reason]), warnings: result.warnings });
-    assert.deepEqual(shape(preview), shape(full));
-    assert.equal(preview.kind, 'selection'); assert.equal(preview.checked, false); assert.equal(preview.branch, 'main'); assert.equal(preview.query, f.task);
+  const shape = result => ({ items: result.items.map(item => [item.id, item.selection.reason, item.selection.terms]), excluded: result.excluded.map(item => [item.id, item.reason]), warnings: result.warnings });
+  const sessions = [
+    { workspaceId: null, branch: 'main', references: f.references, disabled: [[], [leftOut]] },
+    // A reference to the primary checkout from an additional-folder session is primary: its area applies.
+    { workspaceId: `root:${folder.id}`, branch: 'main', references: [{ rootKey: 'checkout', path: 'src/storage' }, { rootKey: `root:${folder.id}`, path: 'guide.md' }], disabled: [[]], quiet: true },
+    { workspaceId: ws.id, branch: 'feature/p4', references: [{ rootKey: ws.id, path: 'src/storage' }], disabled: [[]], quiet: true },
+  ];
+  for (const session of sessions) for (const disabled of session.disabled) {
+    const { workspaceId, branch, references } = session;
+    const full = f.store.prepareContext(f.project.id, f.task, { workspaceId, references, disabled, persist: false });
+    const preview = f.store.previewSelection(f.project.id, f.task, { workspaceId, branch, references, disabled });
+    assert.deepEqual(shape(preview), shape(full), `session ${workspaceId}`);
+    if (session.quiet) assert.ok(preview.items.some(item => item.id === quiet.id), `the referenced area selects the quiet note in ${workspaceId}`);
+    assert.equal(preview.kind, 'selection'); assert.equal(preview.checked, false); assert.equal(preview.branch, branch); assert.equal(preview.query, f.task);
     assert.deepEqual(preview.terms, full.terms);
     assert.equal(preview.bytes, Buffer.byteLength(full.packet.slice(0, full.packet.indexOf('\nReferenced by the user'))), 'packet bytes before references');
   }
+  // A primary path from another copy, and unknown roots, are refused with prepareContext's messages.
+  const message = action => { try { action(); } catch (error) { return error.message; } return null; };
+  const refused = [
+    [ws.id, [{ rootKey: 'checkout', path: 'src/storage' }]], [null, [{ rootKey: ws.id, path: 'src/storage' }]],
+    [null, [{ rootKey: 'root:missing', path: 'guide.md' }]], [null, [{ rootKey: randomUUID(), path: 'src' }]],
+  ];
+  for (const [workspaceId, references] of refused) {
+    const expected = message(() => f.store.prepareContext(f.project.id, f.task, { workspaceId, references, persist: false }));
+    assert.ok(expected, `prepareContext refuses ${JSON.stringify(references)} from ${workspaceId}`);
+    assert.equal(message(() => f.store.previewSelection(f.project.id, f.task, { workspaceId, branch: 'main', references })), expected);
+  }
+  assert.match(message(() => f.store.previewSelection(f.project.id, f.task, { workspaceId: ws.id, references: [{ rootKey: 'checkout', path: 'src' }] })), /^src is in repo \(checkout\), but this session runs in repo \(worktree feature\/p4\)\. Reference it from the session's own copy\.$/);
 });
 
 test('wrong-branch and removed-folder notes are excluded from the stored records alone', t => {

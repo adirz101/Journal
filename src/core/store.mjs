@@ -558,12 +558,16 @@ export class JournalStore {
     const project = this.storedView(projectId, workspaceId, branch === null ? null : text(branch, 'branch', 255));
     // Reference paths only: resolving a reference hashes its file.
     if (!Array.isArray(references) || references.length > MAX_REFERENCES) throw new Error(`Reference up to ${MAX_REFERENCES} files or folders per task`);
-    const sessionKey = workspaceId ?? 'checkout';
+    // resolveReferences' rules from stored records: a reference is primary unless
+    // its root is an additional folder, and a primary path must come from the
+    // session's own copy when the session itself runs in a primary copy.
+    const sessionRoot = references.length ? this.storedRoot(projectId, project, workspaceId ?? 'checkout') : null;
     const paths = references.map(input => {
       if (!input || typeof input !== 'object') throw new Error('Invalid reference');
       if (input.projectId !== undefined && input.projectId !== projectId) throw new Error(`${input.path} was chosen in another project; add it again from this project`);
-      const rootKey = text(input.rootKey, 'reference root', 100);
-      return { path: treePath(input.path), primary: rootKey === sessionKey && !rootKey.startsWith('root:') };
+      const root = this.storedRoot(projectId, project, text(input.rootKey, 'reference root', 100));
+      if (root.family === 'primary' && sessionRoot.family === 'primary' && root.key !== sessionRoot.key) throw new Error(`${input.path} is in ${root.label}, but this session runs in ${sessionRoot.label}. Reference it from the session's own copy.`);
+      return { path: treePath(input.path), primary: root.family === 'primary' };
     });
     const areaQuery = [query, ...paths.map(ref => ref.path)].join(' ');
     const terms = queryTerms(areaQuery);
@@ -590,6 +594,19 @@ export class JournalStore {
     if (workspace.projectId !== projectId) throw new Error('Workspace belongs to another project');
     if (workspace.state !== 'ready') throw new Error(`Workspace ${workspace.branch ?? basename(workspace.path)} is ${workspace.state}`);
     return { ...project, root: workspace.path, head: workspace.head ?? project.head, workspaceId };
+  }
+  // fileRoot() from stored records only: the same keys, families, labels and
+  // messages, without Git or checking that the folder still exists on disk.
+  storedRoot(projectId, project, key) {
+    if (key === 'checkout') return { key, family: 'primary', label: `${project.name} (checkout)` };
+    if (typeof key === 'string' && key.startsWith('root:')) {
+      if (!(project.roots ?? []).some(entry => `root:${entry.id}` === key)) throw new Error('That folder is no longer part of this project');
+      return { key, family: 'folder' };
+    }
+    const workspace = this.getWorkspace(text(key, 'root', 100));
+    if (workspace.projectId !== projectId) throw new Error('Workspace belongs to another project');
+    if (workspace.state !== 'ready') throw new Error('This worktree is not available');
+    return { key, family: 'primary', label: `${project.name} (worktree ${workspace.branch ?? basename(workspace.path)})` };
   }
   // validation() from stored records only: evidence is not read, so a note is
   // 'unchecked' rather than 'current'.
