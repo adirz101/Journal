@@ -29,8 +29,8 @@ const declares = (rule, property, value) => rule.body.split(';').some(declaratio
 
 test('colors come from tokens: no hex, rgb() or hsl() literal outside tokens.css', () => {
   // xterm takes literal colors; tokens.test.mjs checks that the ones mirroring tokens match them.
-  const allowed = { 'theme.ts': new Set(['#0B0D10', '#E8EAEE', '#6AA5FF', '#21466A', '#30363F', '#8E97A6', '#2A2F37', '#F49A88', '#7DD39A', '#F2C46B', '#7FB2FF', '#BBA9FF', '#7FD8B8', '#B3BAC6', '#7C8594', '#ECEEF2',
-    '#FAFAFB', '#14171C', '#195BCF', '#C8DCFA', '#CDD3DB', '#5E6776', '#AE321E', '#17713A', '#8A5300', '#1A5FD8', '#5B40C9', '#0F6B52', '#454D5A', '#6B7380']) };
+  const allowed = { 'theme.ts': new Set(['#0B0D10', '#E8EAEE', '#6AA5FF', '#21466A', '#3A414B', '#8E97A6', '#2A2F37', '#F49A88', '#7DD39A', '#F2C46B', '#7FB2FF', '#BBA9FF', '#7FD8B8', '#B3BAC6', '#7C8594', '#ECEEF2',
+    '#FAFAFB', '#14171C', '#195BCF', '#C8DCFA', '#B4BBC6', '#5E6776', '#AE321E', '#17713A', '#8A5300', '#1A5FD8', '#5B40C9', '#0F6B52', '#454D5A', '#6B7380']) };
   const files = readdirSync(UI, { recursive: true }).map(String).filter(name => /\.(css|[cm]?[jt]sx?)$/.test(name) && name !== 'tokens.css');
   assert.ok(files.includes('styles.css') && files.includes('App.tsx'), 'the scan sees the renderer sources');
   const found = [];
@@ -123,6 +123,12 @@ test('motion and hover: no transition on everything, hover only for fine pointer
     depth++;
   }
   assert.deepEqual(hovers, []);
+});
+
+test('scrollbar thumbs use their token and darken on hover and while dragged', () => {
+  assert.ok(rulesFor('::-webkit-scrollbar-thumb').some(rule => declares(rule, 'background', 'var(--scroll-thumb)')));
+  const used = RULES.filter(rule => declares(rule, 'background', 'var(--tx3)')).flatMap(rule => rule.selectors);
+  for (const selector of ['::-webkit-scrollbar-thumb:hover', '::-webkit-scrollbar-thumb:active']) assert.ok(used.includes(selector), selector);
 });
 
 test('inputs, text areas and selects use the stronger field border (WCAG 1.4.11)', () => {

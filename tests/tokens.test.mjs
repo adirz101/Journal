@@ -109,6 +109,17 @@ for (const [name, t] of Object.entries(themes)) {
     assert.deepEqual(low, []);
   });
 
+  // Scrollbar thumbs: subtle but findable at rest (1.6:1 on every surface a scroll area has),
+  // and clearly stronger when hovered or dragged (--tx3, 2.5:1 against the resting thumb).
+  test(`${name} theme: the scrollbar thumb is findable at rest and darker when used`, () => {
+    assert.match(t['scroll-thumb'] ?? '', /^#[0-9a-f]{6}$/i, '--scroll-thumb must be an opaque #RRGGBB');
+    const solid = token => mix(t[token], rgba(t.bg).slice(0, 3));
+    const low = SURFACES.filter(surface => !['hover', 'sel'].includes(surface)).map(surface => [surface, contrast(solid('scroll-thumb'), solid(surface))]).filter(([, ratio]) => ratio < 1.6).map(([surface, ratio]) => `scroll-thumb on ${surface}: ${ratio.toFixed(2)}`);
+    const used = contrast(solid('tx3'), solid('scroll-thumb'));
+    if (used < 2.5) low.push(`tx3 against scroll-thumb: ${used.toFixed(2)}`);
+    assert.deepEqual(low, []);
+  });
+
   test(`${name} theme: a translucent tint or line is its base color with alpha`, () => {
     const bases = { accsoft: 'acc', 'accsoft-hover': 'acc', accline: 'acc', ambsoft: 'amb', ambline: 'amb', grnsoft: 'grn', redsoft: 'red', redline: 'red', 'claude-soft': 'claude' };
     for (const [tint, base] of Object.entries(bases)) {
@@ -121,7 +132,7 @@ for (const [name, t] of Object.entries(themes)) {
   test(`${name} theme: the terminal uses the same colors as the tokens`, () => {
     const terminal = terminalThemes[name];
     const mirrored = [['background', 'term'], ['foreground', 'tx'], ['cursor', 'acc'], ['cursorAccent', 'term'], ['selectionBackground', 'code-selection'],
-      ['scrollbarSliderBackground', 'line2'], ['scrollbarSliderHoverBackground', 'tx3'], ['scrollbarSliderActiveBackground', 'tx3']];
+      ['scrollbarSliderBackground', 'scroll-thumb'], ['scrollbarSliderHoverBackground', 'tx3'], ['scrollbarSliderActiveBackground', 'tx3']];
     if (name === 'light') mirrored.push(['selectionForeground', 'tx']);
     for (const [key, token] of mirrored) assert.equal(terminal[key]?.toUpperCase(), t[token].toUpperCase(), `${key} = --${token}`);
   });
