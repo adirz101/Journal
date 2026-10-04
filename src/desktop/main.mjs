@@ -72,7 +72,7 @@ function launchRuntime() {
 }
 
 function createWindow() {
-  window = new BrowserWindow({ title: 'Journal', icon: displayIcon, width: 1440, height: 920, minWidth: 900, minHeight: 640, backgroundColor: '#101216',
+  window = new BrowserWindow({ title: 'Journal', icon: displayIcon, width: 1440, height: 920, minWidth: 900, minHeight: 640, backgroundColor: '#0F1115',
     show: !headless,
     // Hidden test windows keep their size on small CI screens (macOS clamps to the display otherwise).
     enableLargerThanScreen: headless,

@@ -66,7 +66,7 @@ process.stdin.on('data',data=>{
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     await expect.poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe('light');
     await expect(page.locator('.brand-icon')).toHaveAttribute('src', /\/journal-mark-(?!white-)[^.]+\.png$/);
-    await expect(page.locator('.xterm-scrollable-element')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    await expect(page.locator('.xterm-scrollable-element')).toHaveCSS('background-color', 'rgb(250, 250, 251)');
     await page.getByRole('separator', { name: 'Resize project sidebar', exact: true }).press('ArrowRight');
     await page.getByRole('separator', { name: 'Resize knowledge sidebar', exact: true }).press('ArrowLeft');
     expect(await terminalElement!.evaluate(element => element.isConnected)).toBe(true);

@@ -7,16 +7,19 @@ export function storedAppearance(): Appearance {
   catch { return 'dark'; }
 }
 
+// xterm cannot read CSS variables: these repeat src/ui/tokens.css (--term, --tx,
+// --acc, --line2, --tx3); tests/tokens.test.mjs keeps the two in step.
 export const terminalThemes: Record<Appearance, ITheme> = {
   dark: {
-    background: '#101216', foreground: '#d5d9e0', cursor: '#3b82f6', selectionBackground: '#17325b',
-    black: '#23272f', red: '#e59a93', green: '#a9c293', yellow: '#d9c18c', blue: '#8faac8', magenta: '#b6a0c5', cyan: '#92bfbd', white: '#d5d9e0',
+    background: '#0B0D10', foreground: '#E8EAEE', cursor: '#6AA5FF', cursorAccent: '#0B0D10', selectionBackground: '#264F78',
+    scrollbarSliderBackground: '#30363F', scrollbarSliderHoverBackground: '#8E97A6', scrollbarSliderActiveBackground: '#8E97A6',
+    black: '#2A2F37', red: '#F49A88', green: '#7DD39A', yellow: '#F2C46B', blue: '#7FB2FF', magenta: '#BBA9FF', cyan: '#7FD8B8', white: '#B3BAC6',
+    brightBlack: '#7C8594', brightRed: '#F49A88', brightGreen: '#7DD39A', brightYellow: '#F2C46B', brightBlue: '#7FB2FF', brightMagenta: '#BBA9FF', brightCyan: '#7FD8B8', brightWhite: '#ECEEF2',
   },
   light: {
-    background: '#ffffff', foreground: '#253044', cursor: '#2563eb', cursorAccent: '#ffffff',
-    selectionBackground: '#dbeafe', selectionForeground: '#172554',
-    black: '#253044', red: '#b42332', green: '#227044', yellow: '#8a5a0c', blue: '#1d4ed8', magenta: '#7e3fab', cyan: '#087078', white: '#526174',
-    brightBlack: '#637188', brightRed: '#b42332', brightGreen: '#227044', brightYellow: '#8a5a0c',
-    brightBlue: '#2563eb', brightMagenta: '#7e3fab', brightCyan: '#087078', brightWhite: '#253044',
+    background: '#FAFAFB', foreground: '#14171C', cursor: '#1A5FD8', cursorAccent: '#FAFAFB', selectionBackground: '#C8DCFA', selectionForeground: '#14171C',
+    scrollbarSliderBackground: '#CDD3DB', scrollbarSliderHoverBackground: '#5E6776', scrollbarSliderActiveBackground: '#5E6776',
+    black: '#14171C', red: '#AE321E', green: '#17713A', yellow: '#8A5300', blue: '#1A5FD8', magenta: '#5B40C9', cyan: '#0F6B52', white: '#454D5A',
+    brightBlack: '#6B7380', brightRed: '#AE321E', brightGreen: '#17713A', brightYellow: '#8A5300', brightBlue: '#1A5FD8', brightMagenta: '#5B40C9', brightCyan: '#0F6B52', brightWhite: '#14171C',
   },
 };

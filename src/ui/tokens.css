@@ -1,0 +1,41 @@
+/* Journal design tokens (design board B8). Every color the UI uses is defined
+   here, for both themes; styles.css refers to them by name. Dark is the
+   default; the light theme is selected by data-theme="light" on <html>.
+   Contrast: every text token is at least 4.5:1 on every surface token in both
+   themes (tests/tokens.test.mjs). Amber means "needs you" and nothing else. */
+:root{
+  color-scheme:dark;
+  --bg:#0F1115;--side:#13161B;--panel:#13161B;--raised:#1A1E25;--field:#0C0E12;--hover:#1D2229;--sel:#1C2A40;--term:#0B0D10;
+  --line:#242931;--line2:#30363F;
+  --tx:#E8EAEE;--tx2:#B3BAC6;--tx3:#8E97A6;
+  --acc:#6AA5FF;--accbtn:#2D6BE6;--accsoft:rgba(106,165,255,.13);--on-acc:#FFFFFF;
+  --amb:#F2B957;--ambsoft:rgba(242,185,87,.12);--ambline:rgba(242,185,87,.35);
+  --grn:#6CCB8D;--grnsoft:rgba(108,203,141,.12);
+  --red:#F48B78;--redsoft:rgba(244,139,120,.12);--redline:rgba(244,139,120,.35);
+  --scrim:rgba(9,12,17,.73);
+  --claude:#D97757;--claude-soft:rgba(217,119,87,.16);
+  /* Code preview, syntax and Git status colors (unchanged from the previous palette). */
+  --code-selection:#264F78;--code-match:#5C4D1A;--code-match-current:#7A6420;
+  --syn-keyword:#FF7B72;--syn-string:#A5D6FF;--syn-comment:#8B949E;--syn-number:#79C0FF;--syn-type:#FFA657;--syn-property:#D2A8FF;--syn-inserted:#7EE787;--syn-deleted:#FFA198;--syn-invalid:#F85149;
+  --git-modified:#E2C08D;--git-added:#81B88B;--git-deleted:#EC7F74;--git-renamed:#79B8FF;--git-conflict:#F2777A;--git-submodule:#8DB9E2;--git-ignored:#6B7380;--sensitive:#A59A7C;
+  /* Type: system UI; JetBrains Mono (bundled, see fonts.css) for code, paths, IDs and the terminal. */
+  --font-ui:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono","SF Mono",ui-monospace,"Cascadia Mono",Menlo,Consolas,monospace;
+  /* Type scale, ratio about 1.2. Nothing renders below 11 px. */
+  --text-caption:11px;--text-meta:12px;--text-body:13px;--text-title:16px;--text-screen:22px;
+}
+:root[data-theme=light]{
+  color-scheme:light;
+  --bg:#FFFFFF;--side:#F5F6F8;--panel:#F8F9FA;--raised:#FFFFFF;--field:#FFFFFF;--hover:#ECEEF1;--sel:#E2EBFC;--term:#FAFAFB;
+  --line:#E3E6EB;--line2:#CDD3DB;
+  --tx:#14171C;--tx2:#454D5A;--tx3:#5E6776;
+  --acc:#1A5FD8;--accbtn:#1A5FD8;--accsoft:rgba(26,95,216,.08);
+  --amb:#8A5300;--ambsoft:#FFF5E0;--ambline:#F0D49A;
+  --grn:#17713A;--grnsoft:#E5F4EA;
+  --red:#AE321E;--redsoft:#FCEBE7;--redline:#F0C3BA;
+  --scrim:rgba(23,36,59,.33);
+  --claude:#C8603F;--claude-soft:#FBEEE8;
+  --code-selection:#C8DCFA;--code-match:#FBE7A6;--code-match-current:#F5CF5B;
+  --syn-keyword:#CF222E;--syn-string:#0A3069;--syn-comment:#6E7781;--syn-number:#0550AE;--syn-type:#953800;--syn-property:#8250DF;--syn-inserted:#116329;--syn-deleted:#82071E;--syn-invalid:#82071E;
+  --git-modified:#8A5A00;--git-added:#2B7A36;--git-deleted:#B42318;--git-renamed:#1A5FB4;--git-conflict:#B00020;--git-submodule:#3D6A99;--git-ignored:#98A2B3;--sensitive:#7C6A3A;
+}
