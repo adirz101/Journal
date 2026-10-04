@@ -327,6 +327,8 @@ export class TerminalManager extends EventEmitter {
         }
         break;
       case 'PostToolUse': case 'PostToolUseFailure': {
+        // The tool ran, so any permission prompt for it was answered, even if no further PreToolUse arrives.
+        if (session.status === 'waiting') this.observe(id, event.nativeId, 'running', 'working');
         if (event.tool === 'Bash' && entry.commands.delete(event.toolUseId)) {
           // Exit 0 only when Claude reported completion of a foreground command.
           const status = event.interrupted ? 'interrupted' : event.background ? 'unknown' : event.event === 'PostToolUse' ? 'succeeded' : Number.isInteger(event.exit) ? 'failed' : 'unknown';

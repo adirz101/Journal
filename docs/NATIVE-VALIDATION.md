@@ -72,3 +72,7 @@ Two parser regressions failed before the fix and passed afterward. A runtime reg
 A fresh read-only reviewer found no actionable issues in the source, regressions and evidence claims, and independently passed all 24 agent/runtime tests. The reviewer did not observe the native trials or rerun desktop acceptance. Parent verification passed all 40 core tests, typecheck, production build and the local Electron/native-PTY fixture scenario. The production build retains its existing roughly 545 KiB chunk warning.
 
 Final required local checks are reported in [implementation status](IMPLEMENTATION-STATUS.md). Outstanding native coverage: Codex interactive approval under an approval-capable profile, interruption of an already running tool and child cleanup, Windows, and broader combinations of inherited plugins/settings. No installer, signing, public release or full-roadmap implementation is established by this trial.
+
+## To verify
+
+After approving a Bash permission in authenticated Claude Code, Journal shows Working, not Needs approval, while the command runs.

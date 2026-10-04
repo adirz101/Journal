@@ -203,3 +203,14 @@ test('output keeps ANSI sequences, CRLF and multi-byte text intact across chunk 
   assert.ok(buffer.since(0).chunks.every(c => Buffer.byteLength(c.data) <= 8192));
   assert.ok(!joined.includes('\ufffd'));
 });
+
+test('an approved tool ends the waiting state when it completes', async t => {
+  const f = runtime(t);
+  const { session } = await f.manager.start({ projectId: f.project.id, provider: 'claude', task: 'x' });
+  f.manager.ingest(session.id, { event: 'PermissionRequest', nativeId: session.nativeId, tool: 'Bash' });
+  assert.equal(f.store.getSession(session.id).status, 'waiting');
+  f.manager.ingest(session.id, { event: 'PostToolUse', nativeId: session.nativeId, tool: 'Bash', toolUseId: 'approved-1' });
+  const after = f.store.getSession(session.id);
+  assert.equal(after.status, 'running');
+  assert.equal(after.activity, 'working');
+});
