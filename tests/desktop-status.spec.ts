@@ -35,6 +35,7 @@ test('a Git-drafted branch update is saved only after review and approved before
     });
     const receiptsBefore = await receiptCount();
     await page.getByRole('button', { name: 'Preview context' }).click();
+    await expect(page.getByText('Preview only.')).toBeVisible(); // Rendered, so the request has finished.
     await expect(page.getByTestId('context-packet')).not.toContainText('REFUND_MODEL_DONE');
     expect(await receiptCount()).toBe(receiptsBefore);
 
