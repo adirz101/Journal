@@ -157,11 +157,29 @@ test('a repo overview goes stale once no branch, remote or tag contains its comm
 test('a tree too large for one Git listing falls back to top-level structure without counts', () => {
   const run = (root, args) => {
     if (args.includes('-r')) throw new Error('stdout maxBuffer length exceeded');
-    return '040000 tree 1111111111111111111111111111111111111111\tsrc\n100644 blob 2222222222222222222222222222222222222222\tpackage.json';
+    return '040000 tree 1111111111111111111111111111111111111111\tsrc\x00100644 blob 2222222222222222222222222222222222222222\tpackage.json\0';
   };
   const result = structure('/unused', 'HEAD', run);
   assert.equal(result.counted, false);
   assert.deepEqual([...result.dirs], [['src', null]]);
   assert.deepEqual(result.files, ['package.json']);
   assert.equal(describeStructure(result), 'src; key files: package.json');
+});
+
+test('the top-level fallback lists dot-directories after ordinary ones', () => {
+  const run = (root, args) => {
+    if (args.includes('-r')) throw new Error('stdout maxBuffer length exceeded');
+    return '040000 tree 1111111111111111111111111111111111111111\t.github\x00040000 tree 1111111111111111111111111111111111111111\tsrc';
+  };
+  assert.equal(describeStructure(structure('/unused', 'HEAD', run)), 'src, .github');
+});
+
+test('structure is null when neither Git listing can be read', () => {
+  assert.equal(structure('/unused', 'HEAD', () => { throw new Error('fail'); }), null);
+});
+
+test('non-ASCII directory names are listed unquoted', t => {
+  const f = fixture(t);
+  f.commit('\u05de\u05e1\u05de\u05db\u05d9\u05dd/a.md', 'x\n', 'Add Hebrew folder');
+  assert.match(describeStructure(structure(f.repo, 'HEAD')), /\u05de\u05e1\u05de\u05db\u05d9\u05dd \(1\)/);
 });
