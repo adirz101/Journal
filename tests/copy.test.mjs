@@ -6,15 +6,27 @@ import { copy, excludedReason, selectionReason, warningText } from '../src/ui/co
 
 // Plain-language vocabulary (design board B8). The technical term may stay in a
 // tooltip (the title attribute of an element) but not in visible text or names.
-const OLD_TERMS = /\b(?:claims?|knowledge|receipts?|stale|approve[ds]?|proposals?|research|resume[ds]?)\b/i;
+const OLD_TERMS = /\b(?:claims?|knowledge|receipts?|stale|approve[ds]?|proposals?|research|resume[ds]?|overviews?|branch updates?|orientation|briefs?|inbox|withdraw(?:n|s)?|packets?|constraints?)\b/i;
 // Element attributes that are code, or a tooltip where the precise term is allowed.
 const ELEMENT_CODE = new Set(['className', 'key', 'role', 'id', 'htmlFor', 'type', 'title', 'value', 'name', 'dir', 'src', 'data-testid', 'aria-controls', 'aria-labelledby', 'aria-haspopup', 'aria-orientation']);
 // Component props that are code (other props, such as a dialog's title or note, are visible).
 const COMPONENT_CODE = new Set(['key', 'side', 'provider', 'kind', 'id', 'className']);
 // Calls whose string arguments are code: IPC actions, state values, storage keys, DOM queries.
+// Object literals passed to these calls are not scanned at all (IPC payloads are code).
 const CODE_CALLS = /^(?:api|setPanel|useState|useRef|getItem|setItem|addEventListener|removeEventListener|querySelector|includes|startsWith|has|get|set|CustomEvent|read)$/;
-// Internal identifiers that look like old terms: [file, text, why].
-const ALLOWED = [['ResizableWorkspace.tsx', 'knowledge', 'side id, stored in journal-panel-widths']];
+// Code values that look like old terms: [file, text, why]. Each must still be present.
+const ALLOWED = [
+  ['KnowledgeForm.tsx', 'brief', 'category code (stored data)'], ['KnowledgeForm.tsx', 'constraint', 'category code (stored data)'],
+  ['KnowledgePanel.tsx', 'brief', 'category code passed to the note form'],
+];
+// Visible strings kept until a later phase of the UX redesign replaces them: [file, text, phase].
+// Each must still be present, so an entry is removed when its phase lands.
+const DEFERRED = [
+  ['KnowledgePanel.tsx', 'Propose branch update', 'Phase 7'], ['KnowledgePanel.tsx', 'Propose overview', 'Phase 7'],
+  ['App.tsx', 'Preview context ↗', 'Phase 4'], ['App.tsx', 'Initial task', 'Phase 4'],
+  ['KnowledgeForm.tsx', 'Save for review', 'Phase 6'], ['App.tsx', 'Native session ID', 'Phase 6'],
+];
+const exempt = (file, text) => [...ALLOWED, ...DEFERRED].some(([f, t]) => f === file && t === text);
 
 // Every string a user can see or hear: JSX text and string or template literals,
 // except code positions (types, imports, comparisons, object keys, code attributes and calls).
@@ -46,8 +58,11 @@ function visibleStrings(file, code = readFileSync(new URL(`../src/ui/${file}`, i
 
 test('components use the plain vocabulary in visible text', () => {
   const files = readdirSync(new URL('../src/ui/', import.meta.url)).filter(name => name.endsWith('.tsx'));
-  const old = files.flatMap(file => visibleStrings(file)).filter(([, text, file]) => OLD_TERMS.test(text) && !ALLOWED.some(([f, t]) => f === file && t === text));
+  const strings = files.flatMap(file => visibleStrings(file));
+  const old = strings.filter(([, text, file]) => OLD_TERMS.test(text) && !exempt(file, text));
   assert.deepEqual(old.map(([at, text]) => `${at}: ${text}`), []);
+  const missing = [...ALLOWED, ...DEFERRED].filter(([f, t]) => !strings.some(([, text, file]) => file === f && text === t));
+  assert.deepEqual(missing, [], 'remove allow-list entries whose string is gone');
 });
 
 test('the scanner reads case bodies and skips only the case label', () => {
