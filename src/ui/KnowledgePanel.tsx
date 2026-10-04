@@ -1,63 +1,79 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type Memory, type MemoryPage, type Project, type Proposal, type Session, type StatusDraft } from './types';
 import { category, copy, tip } from './copy';
 import { NoteCard } from './NoteCard';
 import { CATEGORY_ORDER, chipLabel } from './noteCardModel';
-import { useNoteTrust } from './useNoteTrust';
+import { useNoteTrust, useOpenable } from './useNoteTrust';
 import { useMemoryChecks } from './useMemoryChecks';
 
 const PAGE = 50; const MAX_IDS = 200;
 
-// The Memory tab's filters live for this app run (not stored), so switching tabs
-// keeps them; another project starts from the defaults (Phase 5, B4).
-type Filters = { filter: string; search: string; category: string; attention: 'check' | 'other' | null };
-const DEFAULTS: Filters = { filter: 'all', search: '', category: 'all', attention: null };
-let kept: { projectId: string; filters: Filters } | null = null;
+// The Memory tab's filters live for this app run (not stored). App keeps them, so
+// switching tabs keeps them, and resets them when the project changes, so another
+// project, and a return to this one, starts from the defaults (Phase 5, B4).
+export type MemoryFilters = { filter: string; search: string; category: string; attention: 'check' | 'other' | null };
+export const MEMORY_FILTER_DEFAULTS: MemoryFilters = { filter: 'all', search: '', category: 'all', attention: null };
+type Filters = MemoryFilters; const DEFAULTS = MEMORY_FILTER_DEFAULTS;
+// The last announced Check needed count per project, for this app run: a remounted
+// panel (a tab switch) does not announce the same count again.
+const announcedCounts = new Map<string, number>();
 
-export function KnowledgePanel({ project, version, trustVersion, busy, proposals: shared, sessions = [], onOpenSession, onEdit, onPropose, onChanged, onError }: {
+export function KnowledgePanel({ project, version, trustVersion, busy, proposals: shared, sessions = [], filters: heldFilters, onFilters, onOpenSession, onEdit, onPropose, onChanged, onError }: {
   // proposals: App's window-wide fetch (useProposals); when set, the panel does not fetch its own.
   // trustVersion: bumps with version and when a session starts running (a new delivery).
   // sessions: the loaded sessions; an origin links to its session only when App can select it.
+  // filters, onFilters: App holds the filters (null: the defaults); without onFilters the panel keeps its own.
   project: Project; version: number; trustVersion?: number; busy: boolean; proposals?: Proposal[]; sessions?: Session[]; onOpenSession?: (sessionId: string) => void;
+  filters?: MemoryFilters | null; onFilters?: (filters: MemoryFilters) => void;
   onEdit: (form: { memory?: Memory; supersedes?: Memory; initialCategory?: string; draft?: StatusDraft }) => void;
   onPropose: (scope: 'checkout' | 'branch') => void; onChanged: () => void; onError: (error: unknown) => void;
 }) {
-  const [filters, setFilters] = useState<Filters>(() => kept?.projectId === project.id ? kept.filters : DEFAULTS);
+  const [ownFilters, setOwnFilters] = useState<{ projectId: string; filters: Filters }>({ projectId: project.id, filters: DEFAULTS });
   const [filtersFor, setFiltersFor] = useState(project.id);
-  if (filtersFor !== project.id) { setFiltersFor(project.id); setFilters(kept?.projectId === project.id ? kept.filters : DEFAULTS); }
-  useEffect(() => { kept = { projectId: project.id, filters }; }, [project.id, filters]);
+  if (filtersFor !== project.id) { setFiltersFor(project.id); setOwnFilters({ projectId: project.id, filters: DEFAULTS }); }
+  const filters = onFilters ? heldFilters ?? DEFAULTS : ownFilters.projectId === project.id ? ownFilters.filters : DEFAULTS;
+  const change = (next: Partial<Filters>) => onFilters ? onFilters({ ...filters, ...next }) : setOwnFilters({ projectId: project.id, filters: { ...filters, ...next } });
   const { filter, search, category: chosen, attention } = filters;
-  const change = (next: Partial<Filters>) => setFilters(current => ({ ...current, ...next }));
   const [expanded, setExpanded] = useState<string | null>(null);
   const [page, setPage] = useState<MemoryPage | null>(null); const [items, setItems] = useState<Memory[]>([]); const [own, setOwn] = useState<Proposal[]>([]);
   const proposals = shared ?? own; const fetchOwn = !shared;
   // Check needed: the project-wide total of current notes whose file changed (decision 5).
   const checks = useMemoryChecks(project.id, items, true, version);
-  const staleIds = useMemo(() => [...checks.stale].slice(0, MAX_IDS), [checks.stale]);
-  const checkKey = attention === 'check' ? staleIds.join(',') : '';
+  // The Check needed list follows finished scans only, so it does not reload per chunk or per page.
+  const [doneKey, setDoneKey] = useState<{ projectId: string; key: string }>({ projectId: project.id, key: '' });
+  useEffect(() => { if (checks.done) setDoneKey({ projectId: project.id, key: [...checks.stale].slice(0, MAX_IDS).join(',') }); }, [checks.done, checks.stale, project.id]);
+  const checkKey = attention === 'check' && doneKey.projectId === project.id ? doneKey.key : '';
   // Loads overlap (approvals, search, project switches). A response renders
   // only if it was requested after the one on screen, so an older response
   // can never replace newer data, and a newer one is never held back.
   // A "Show more" page is appended only to the list it was requested against.
   const issued = useRef(0); const applied = useRef(0); const resets = useRef(0); const [paging, setPaging] = useState(false);
+  const pageRef = useRef<MemoryPage | null>(null); pageRef.current = page;
   const load = useCallback(async (offset = 0) => {
     const ticket = ++issued.current; const reset = offset === 0 ? ++resets.current : resets.current;
     const ids = attention === 'check' ? (checkKey ? checkKey.split(',') : []) : null;
     // Nothing needs a check: an empty list, without a request (a page needs at least one ID).
-    const next = ids && !ids.length ? { items: [], total: 0, offset: 0, limit: PAGE, counts: page?.counts ?? {}, categoryCounts: Object.fromEntries(CATEGORY_ORDER.map(code => [code, 0])), otherBranch: page?.otherBranch ?? 0 }
+    const shown = pageRef.current;
+    const next = ids && !ids.length ? { items: [], total: 0, offset: 0, limit: PAGE, counts: shown?.counts ?? {}, categoryCounts: Object.fromEntries(CATEGORY_ORDER.map(code => [code, 0])), otherBranch: shown?.otherBranch ?? 0 }
       : await api<MemoryPage>('memoryPage', { projectId: project.id, offset, limit: PAGE, filter, search, category: chosen, otherBranch: attention === 'other', ...(ids ? { ids } : {}) });
     if (ticket <= applied.current || (offset && reset !== resets.current)) return;
     applied.current = ticket;
     setPage(next); setItems(current => offset ? [...current, ...next.items] : next.items);
-  }, [project.id, filter, search, chosen, attention, checkKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [project.id, filter, search, chosen, attention, checkKey]);
   useEffect(() => { const timer = setTimeout(() => void load(0).catch(onError), search ? 150 : 0); return () => clearTimeout(timer); }, [load, version, search, onError]);
   useEffect(() => { if (!fetchOwn) return; let current = true; void api<Proposal[]>('proposals', { projectId: project.id }).then(next => { if (current) setOwn(next); }).catch(onError); return () => { current = false; }; }, [project.id, version, onError, fetchOwn]);
   const trust = useNoteTrust(project.id, items.map(item => item.id), trustVersion ?? version);
-  const openable = useMemo(() => new Set(sessions.map(session => session.id)), [sessions]);
-  // The final count is announced once per change, never per chunk.
-  const [announced, setAnnounced] = useState(''); const lastCount = useRef<number | null>(null);
+  const openable = useOpenable(sessions);
+  // The final count is announced once per change and project, never per chunk or remount.
   // A first result of zero is not announced: opening the tab with nothing to check stays quiet.
-  useEffect(() => { if (!checks.done) return; const n = checks.stale.size; if (lastCount.current !== n) { if (lastCount.current !== null || n > 0) setAnnounced(copy.trust.needCheck(n)); lastCount.current = n; } }, [checks.done, checks.stale]);
+  const [announced, setAnnounced] = useState('');
+  useEffect(() => {
+    if (!checks.done) return;
+    const n = checks.stale.size; const before = announcedCounts.get(project.id);
+    if (before === n) return;
+    if (before !== undefined || n > 0) setAnnounced(copy.trust.needCheck(n));
+    announcedCounts.set(project.id, n);
+  }, [checks.done, checks.stale, project.id]);
   // While an action and its reload are in flight, every action button is
   // disabled: the list on screen may be stale, and a second click on it
   // would act on an outdated item.
@@ -76,9 +92,10 @@ export function KnowledgePanel({ project, version, trustVersion, busy, proposals
     } catch (error) { onError(error); } finally { setPending(false); }
   };
   const counts = page?.counts ?? {}; const byCategory = page?.categoryCounts ?? {};
-  const checkCount = checks.stale.size; const scanning = !checks.done;
-  const rootName = (memory: Memory) => memory.source.rootId ? `${project.roots?.find(root => root.id === memory.source.rootId)?.name ?? '(removed folder)'}/` : '';
-  const empty = attention === 'check' ? copy.trust.noneNeedCheck : attention === 'other' ? copy.trust.noneOtherBranch : search ? 'No matching notes' : filter === 'review' ? 'Nothing waiting for review' : 'Keep the useful parts.';
+  // "…" only before the first result; a rescan keeps the last count (and its amber).
+  const checkCount = checks.stale.size; const firstScan = !checks.settled;
+  const rootName = (memory: Memory) => { const name = memory.source.rootId ? project.roots?.find(root => root.id === memory.source.rootId)?.name : undefined; return name ? `${name}/` : ''; };
+  const empty = attention === 'check' ? checks.done ? copy.trust.noneNeedCheck : copy.trust.checkingNotes : attention === 'other' ? copy.trust.noneOtherBranch : search ? 'No matching notes' : filter === 'review' ? 'Nothing waiting for review' : 'Keep the useful parts.';
   return <div className="panel-content"><div className="section-heading"><div><h2>{copy.memory}</h2></div></div><p className="muted panel-intro">{copy.aboutProject} and {copy.branchStands} reach every session. Relevant decisions, rules and lessons are added for the task.</p>
     <div className="brief-actions"><button onClick={() => onEdit({ initialCategory: 'brief' })}>{copy.addSummary}</button><button disabled={busy || !project.branch} onClick={() => onPropose('branch')}>Propose branch update</button><button disabled={busy} onClick={() => onPropose('checkout')}>Propose overview</button></div>
     {proposals.length > 0 && <section className="proposal-inbox" aria-label={copy.suggestions}><span className="eyebrow">{copy.suggestions} · {proposals.length}</span>
@@ -91,7 +108,7 @@ export function KnowledgePanel({ project, version, trustVersion, busy, proposals
       <button key={code} aria-pressed={code === chosen} onClick={() => change({ category: code })}>{chipLabel(code)} <span>{byCategory[code] ?? 0}</span></button>)}</div>
     <div className="filter-tabs"><button aria-pressed={filter === 'all'} onClick={() => change({ filter: 'all' })}>Current</button><button aria-pressed={filter === 'review'} onClick={() => change({ filter: 'review' })}>{copy.needsReview} <span>{counts.candidate ?? 0}</span></button><button aria-pressed={filter === 'active'} onClick={() => change({ filter: 'active' })}>{copy.remembered}</button><button aria-pressed={filter === 'history'} onClick={() => change({ filter: 'history' })}>History</button>
       <span className="filter-gap" aria-hidden="true" />
-      <button className={`attention-toggle${checkCount > 0 && !scanning ? ' amber' : ''}`} aria-pressed={attention === 'check'} aria-busy={scanning || undefined} onClick={() => change({ attention: attention === 'check' ? null : 'check' })}>{copy.checkNeeded} <span>{scanning ? copy.trust.checking : checkCount}</span></button>
+      <button className={`attention-toggle${checkCount > 0 && !firstScan ? ' amber' : ''}`} aria-pressed={attention === 'check'} aria-busy={firstScan || undefined} onClick={() => change({ attention: attention === 'check' ? null : 'check' })}>{copy.checkNeeded} <span>{firstScan ? copy.trust.checking : checkCount}</span></button>
       <button className="attention-toggle" aria-pressed={attention === 'other'} onClick={() => change({ attention: attention === 'other' ? null : 'other' })}>{copy.trust.otherBranches} <span>{page?.otherBranch ?? 0}</span></button></div>
     <p className="visually-hidden" aria-live="polite">{announced}</p>
     {checks.done && checks.total !== null && checks.checked < checks.total && <p className="hint">{copy.trust.checked(checks.checked, checks.total)}</p>}

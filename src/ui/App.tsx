@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { TerminalPane } from './TerminalPane';
 import { KnowledgeForm } from './KnowledgeForm';
-import { KnowledgePanel } from './KnowledgePanel';
+import { KnowledgePanel, type MemoryFilters } from './KnowledgePanel';
 import { ResizableWorkspace } from './ResizableWorkspace';
 import { useShellLayout } from './useShellLayout';
 import { useProposals } from './useProposals';
@@ -54,8 +54,15 @@ export default function App() {
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState<{ memory?: Memory; supersedes?: Memory; initialCategory?: string; draft?: StatusDraft } | null>(null);
   const [knowledgeVersion, setKnowledgeVersion] = useState(0);
   // Phase 5: note trust lines refetch on note changes and when a session starts running (a new delivery).
+  // statuses: each live session's last status, pruned when sessions disappear.
   const [runVersion, setRunVersion] = useState(0); const statuses = useRef(new Map<string, string>());
   const trustVersion = knowledgeVersion + runVersion;
+  useEffect(() => { for (const id of [...statuses.current.keys()]) if (!sessions[id]) statuses.current.delete(id); }, [sessions]);
+  // The Memory tab's filters: kept across tab switches, reset when the project changes
+  // (a return to an earlier project starts from the defaults too).
+  const [memoryFilters, setMemoryFilters] = useState<MemoryFilters | null>(null);
+  const filtersProject = state?.project.id ?? null; const [filtersFor, setFiltersFor] = useState<string | null>(filtersProject);
+  if (filtersFor !== filtersProject) { setFiltersFor(filtersProject); setMemoryFilters(null); }
   const [runtime, setRuntime] = useState<{ state: string; warning?: string | null }>({ state: 'connecting' });
   const [liveEvents, setLiveEvents] = useState<TimelineEvent[]>([]);
   // File and command-end events per session, counted as they arrive: liveEvents is capped, so its length stops changing.
@@ -177,7 +184,8 @@ export default function App() {
       if (event.type !== 'status') return;
       // Main strips user-owned fields (names, pins, archive, removal) from runtime sessions.
       const before = statuses.current.get(event.session.id); statuses.current.set(event.session.id, event.session.status);
-      if (event.session.status === 'running' && before !== 'running') setRunVersion(v => v + 1);
+      // A launch's first transition to running is a new delivery; waiting → running (an approval) is not.
+      if (event.session.status === 'running' && before !== 'running' && before !== 'waiting') setRunVersion(v => v + 1);
       merge([event.session]);
     });
   }, [refresh, reloadSessions, merge, noteActivity, failed]);
@@ -393,7 +401,7 @@ export default function App() {
           setReferences(current => current.some(r => r.rootKey === described.rootKey && r.path === described.path && r.startLine === described.startLine && r.endLine === described.endLine) ? current : [...current, described].slice(-20));
         }}
         onSaveEvidence={source => setEvidenceSource({ kind: 'file', path: source.path, startLine: source.startLine, endLine: source.endLine, ...(source.rootKey.startsWith('root:') ? { rootId: source.rootKey.slice(5) } : {}) })} />} />}
-      {panel === 'memory' && <MemoryTab><KnowledgePanel project={state.project} version={knowledgeVersion} trustVersion={trustVersion} sessions={ordered} onOpenSession={openSession} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} /></MemoryTab>}
+      {panel === 'memory' && <MemoryTab><KnowledgePanel project={state.project} version={knowledgeVersion} trustVersion={trustVersion} sessions={ordered} filters={memoryFilters} onFilters={setMemoryFilters} onOpenSession={openSession} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} /></MemoryTab>}
   </Inspector>;
   // === End region B: inspector ===
   // === Region C: the ResizableWorkspace wrapper (layout modes) ===

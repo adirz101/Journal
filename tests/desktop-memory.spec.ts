@@ -2,7 +2,7 @@ import { test, expect, _electron as electron, type Page } from '@playwright/test
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { ensureWide, inspectorTab, newSession, sessionStatus } from './support/ui';
+import { ensureWide, inspectorTab, newSession, openAnotherProject, sessionStatus, switchProject } from './support/ui';
 
 // Phase 5 (memory trust): note cards show where a note came from, whether its file
 // still matches and how many conversations it was sent to; the Memory tab filters by
@@ -50,6 +50,17 @@ const chips = (page: Page) => page.getByRole('group', { name: 'Category' });
 const chip = (page: Page, label: string) => chips(page).getByRole('button', { name: new RegExp(`^${label} \\d+$`) });
 const toggle = (page: Page, label: string) => page.getByRole('button', { name: new RegExp(`^${label} `) });
 const today = () => new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date());
+// A focus within 5 s of the last finished scan is ignored (a focus storm): keep focusing until the count follows.
+const focusUntil = (page: Page, label: string, text: string) => expect(async () => {
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(toggle(page, label)).toHaveText(text, { timeout: 1000 });
+}).toPass({ timeout: 20_000 });
+// Samples the Check needed toggle for `ms`, so a count that only flickers is caught.
+const sampleCount = (page: Page, ms: number) => page.evaluate(async span => {
+  const seen = new Set<string>(); const end = performance.now() + span;
+  while (performance.now() < end) { const node = [...document.querySelectorAll('.attention-toggle')].find(element => element.textContent?.startsWith('Check needed')); if (node) seen.add(node.textContent ?? ''); await new Promise(resolve => setTimeout(resolve, 20)); }
+  return [...seen];
+}, ms);
 const color = (page: Page, name: string) => page.evaluate(token => { const probe = document.createElement('span'); probe.style.color = `var(${token})`; document.body.append(probe); const value = getComputedStyle(probe).color; probe.remove(); return value; }, name);
 
 test('category chips count and filter; Check needed finds a changed file; keyboard reaches every control', async () => {
@@ -86,8 +97,7 @@ test('category chips count and filter; Check needed finds a changed file; keyboa
     await expect(toggle(page, 'Check needed')).toHaveText('Check needed 0');
     // The file changes outside Journal; focusing the window checks again.
     writeFileSync(resolve(project, 'tests.md'), 'Integration tests start Podman containers.\nClean them up after each run.\n');
-    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await expect(toggle(page, 'Check needed')).toHaveText('Check needed 1');
+    await focusUntil(page, 'Check needed', 'Check needed 1');
     await expect(page.locator('[aria-live="polite"]').filter({ hasText: /need a check|needs a check/ })).toHaveText('1 note needs a check');
     const amber = fileCard.locator('.note-evidence');
     await expect(amber).toHaveText('Check needed · file changed');
@@ -181,9 +191,16 @@ test('a session note says where it came from and how many conversations it was s
     await expect(rule).toContainText("You remembered this today, from the session 'Integration tests always need Docker running' (Claude Code) ›");
     await expect(rule).toContainText('Not sent yet');
     await remember(page, 'Docker cleanup steps are in tests.md', 'lesson', [1, 2]);
-    // The origin link opens its session.
+    // The origin link opens its session, from the keyboard: Tab reaches it with a focus ring, and Enter opens it.
     await newSession(page);
-    await rule.getByRole('button', { name: /^You remembered this today, from the session/ }).click();
+    const link = rule.getByRole('button', { name: /^You remembered this today, from the session/ });
+    await page.getByLabel('Search project memory').focus();
+    await expect(async () => {
+      await page.keyboard.press('Tab');
+      expect(await link.evaluate(element => element === document.activeElement)).toBe(true);
+    }).toPass({ timeout: 20_000, intervals: [0] });
+    expect(await link.evaluate(element => element.matches(':focus-visible') && getComputedStyle(element).outlineStyle !== 'none')).toBe(true);
+    await page.keyboard.press('Enter');
     await expect(page.locator('.session-header')).toContainText('Integration tests always need Docker running');
     // A second session gets both notes: each was sent to one conversation (the first launched before the rule existed).
     await newSession(page); await page.getByLabel('Initial task').fill('Fix the docker integration tests');
@@ -201,5 +218,91 @@ test('a session note says where it came from and how many conversations it was s
     await expect(page.locator('.receipt-items .note-card.receipt').filter({ hasText: 'Integration tests always need Docker running' })).toContainText('You remembered this today, from the session');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(sessionStatus(page)).toContainText('Stopped');
+  } finally { await close(); }
+});
+
+test('Check needed: scans never overlap across remounts; counts follow the project and current notes; filters reset per project', async () => {
+  test.setTimeout(180_000);
+  test.skip(process.platform === 'win32', 'POSIX provider fixture; native Windows is verified separately');
+  const { app, page, root, project, close } = await launch('checks a');
+  try {
+    await inspectorTab(page, 'Memory');
+    await remember(page, 'Docker containers need cleanup after integration runs', 'lesson', [1, 2]);
+    await remember(page, 'The first line names the container tool', 'lesson', [1, 1]);
+    // Forget the second note: it moves to History and is no longer counted.
+    await app.evaluate(({ dialog }) => { (dialog as any).showMessageBox = async () => ({ response: 0 }); });
+    await cardFor(page, 'The first line names').getByRole('button', { name: 'Forget…', exact: true }).click();
+    await expect(cardFor(page, 'The first line names')).toHaveCount(0);
+    writeFileSync(resolve(project, 'tests.md'), 'Integration tests start Podman containers.\nClean them up after each run.\n');
+    await focusUntil(page, 'Check needed', 'Check needed 1');
+
+    // Spy on memoryChecks in main: count calls and the most in flight at once, each slowed to 250 ms.
+    await app.evaluate(() => {
+      const spy = { calls: 0, inFlight: 0, max: 0 }; (globalThis as any).__checksSpy = spy;
+      (globalThis as any).__journalRequestHook = async (action: string, run: () => Promise<unknown>) => {
+        if (action !== 'memoryChecks') return run();
+        spy.calls++; spy.inFlight++; spy.max = Math.max(spy.max, spy.inFlight);
+        try { await new Promise(resolve => setTimeout(resolve, 250)); return await run(); } finally { spy.inFlight--; }
+      };
+    });
+    const spy = () => app.evaluate(() => ({ ...(globalThis as any).__checksSpy }) as { calls: number; inFlight: number; max: number });
+
+    // History lists the forgotten note (its file changed too); the count stays at the current notes.
+    await page.getByRole('button', { name: 'History', exact: true }).click();
+    await expect(cardFor(page, 'The first line names')).toBeVisible();
+    await expect(cardFor(page, 'The first line names').locator('.note-evidence')).toHaveText('Check needed · file changed');
+    await inspectorTab(page, 'Session'); await inspectorTab(page, 'Memory');
+    expect(await sampleCount(page, 1500)).toEqual(['Check needed 1']);
+    // The filters were kept across the tab switch.
+    await expect(page.getByRole('button', { name: 'History', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(async () => (await spy()).inFlight).toBe(0);
+
+    // Many notes: a full scan takes 3 chunks. Switching tabs quickly never runs two scans at once,
+    // and a scan cancelled by an unmount stops after its chunk.
+    await page.evaluate(async () => {
+      const journal = (window as any).journal; const projectId = (await journal.request('projects'))[0].id;
+      for (let index = 0; index < 110; index++) {
+        const memory = await journal.request('proposeMemory', { projectId, input: { statement: `Fixture convention number ${index}`, category: 'convention', scope: 'checkout', area: '', source: { kind: 'user', note: 'Fixture' } } });
+        await journal.request('setMemoryStatus', { id: memory.id, status: 'active' });
+      }
+    });
+    await inspectorTab(page, 'Session');
+    await expect.poll(async () => (await spy()).inFlight, { timeout: 20_000 }).toBe(0);
+    await page.waitForTimeout(500);
+    const before = (await spy()).calls;
+    for (let round = 0; round < 5; round++) { await inspectorTab(page, 'Memory'); await inspectorTab(page, 'Session'); }
+    await inspectorTab(page, 'Memory');
+    await expect(toggle(page, 'Check needed')).toHaveText('Check needed 1');
+    await expect.poll(async () => (await spy()).inFlight, { timeout: 20_000 }).toBe(0);
+    await page.waitForTimeout(600);
+    const after = await spy();
+    expect(after.max).toBe(1);
+    // Six mounts: at most one chunk for each cancelled scan, plus the last full scan (3 chunks).
+    expect(after.calls - before).toBeGreaterThanOrEqual(3);
+    expect(after.calls - before).toBeLessThanOrEqual(5 + 3);
+    await app.evaluate(() => { delete (globalThis as any).__journalRequestHook; });
+
+    // Filters: Check needed on in project A.
+    await page.getByRole('button', { name: 'Current', exact: true }).click();
+    await toggle(page, 'Check needed').click();
+    await expect(toggle(page, 'Check needed')).toHaveAttribute('aria-pressed', 'true');
+    // Project B has no notes: its count never takes A's page, and its filters start from the defaults.
+    const other = resolve(root, 'checks b'); mkdirSync(other);
+    execFileSync('git', ['-C', other, 'init', '-b', 'main'], { stdio: 'pipe' });
+    execFileSync('git', ['-C', other, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--allow-empty', '-m', 'fixture'], { stdio: 'pipe' });
+    await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, other);
+    await openAnotherProject(app, page);
+    await expect(page.locator('.project-switcher .project-name')).toHaveText(/^checks b/);
+    await expect(toggle(page, 'Check needed')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByRole('button', { name: 'Current', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(toggle(page, 'Check needed')).toHaveText('Check needed 0');
+    expect(await sampleCount(page, 800)).toEqual(['Check needed 0']);
+    // Back to A with the Memory tab closed during the switch: A's filters do not come back.
+    await inspectorTab(page, 'Session');
+    await switchProject(app, page, 'checks a');
+    await inspectorTab(page, 'Memory');
+    await expect(toggle(page, 'Check needed')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByRole('button', { name: 'Current', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(toggle(page, 'Check needed')).toHaveText('Check needed 1');
   } finally { await close(); }
 });

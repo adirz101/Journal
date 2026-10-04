@@ -33,3 +33,10 @@ export function useNoteTrust(projectId: string | null, ids: string[], version: n
   }, [projectId, key, wanted]);
   return cache.projectId === projectId ? cache.trust : EMPTY;
 }
+
+// The loaded session IDs as a Set (origin links open only these). Its identity changes
+// only when the IDs change, not on every session event.
+export function useOpenable(sessions: readonly { id: string }[]): Set<string> {
+  const key = sessions.map(session => session.id).join('\n');
+  return useMemo(() => new Set(key ? key.split('\n') : []), [key]);
+}
