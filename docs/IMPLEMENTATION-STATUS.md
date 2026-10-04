@@ -83,14 +83,27 @@ Native checks still open (fixtures only so far; see [NATIVE-VALIDATION](NATIVE-V
 
 Known follow-up (Phase 6): branch notes for a worktree's branch cannot yet be approved from the main checkout.
 
+## UX redesign - Phase 1 (foundation)
+
+Plan: [docs/superpowers/plans/2026-10-04-ux-redesign-phase-1.md](superpowers/plans/2026-10-04-ux-redesign-phase-1.md).
+
+- Design tokens for both themes in `src/ui/tokens.css`; `styles.css` uses tokens only and the light theme comes from them. Every text color is at least 4.5:1 on every surface (tested), and the terminal takes its colors from the same values.
+- JetBrains Mono (OFL-1.1, from `@fontsource/jetbrains-mono`, Latin and Latin Extended, 400/500/600 including italics) is bundled for code, paths, IDs and the terminal. Font subset decision: box-drawing, block and Braille glyphs are not in those subsets and fall back to the system monospace font (risk R1); the full font is reconsidered after real sessions.
+- Nothing renders below 11 px; one 2 px focus ring on `:focus-visible`; themed scrollbars; one input border token.
+- Plain vocabulary (`src/ui/copy.ts`): Project memory, notes, Remember, Archive, Forget..., Continue, Stop, Read-only, Separate copy (worktree), What was sent. Core reasons and warnings are mapped in the renderer; receipt and packet text is unchanged. Technical terms stay in tooltips.
+- Provider marks (Simple Icons, CC0) next to provider names, with attribution in the third-party notices. Open item D9a: the OpenAI mark (used for Codex) comes from Simple Icons 15.22.0 because later releases removed it; check the OpenAI brand page and the source before a release.
+- App shortcuts are routed in the main process and work while the terminal has focus (BUG-7), and the router steps aside while a dialog is open (the renderer reports dialog state). Menu and button labels, tooltips and `aria-keyshortcuts` show the same keys. macOS: Cmd+N, Cmd+O, Cmd+1-4, Shift+Cmd+K, Cmd+E, Cmd+I, Option+Cmd+1-3. Windows and Linux: Ctrl+Shift+N, Ctrl+O (outside the terminal), Alt+1-4, Ctrl+Shift+K, Ctrl+Shift+E, Ctrl+Shift+B, Alt+Shift+1-3. Every other key goes to the terminal. Slot shortcuts are ignored while a switch is in progress.
+
+Still open: the Windows items in [WINDOWS](WINDOWS.md) (shortcut pass, Alt menu-bar focus, ConPTY keys) need a real Windows machine; the Linux Ctrl+O desktop check runs for the first time in CI; the box-drawing check against real Claude Code and Codex sessions has not been done (fixtures only); the terminal shows three rows at 900x640 with widened sidebars until Phase 3 moves the composer.
+
 ## Observed validation (local macOS)
 
 | Check | Result |
 | --- | --- |
-| `npm test` | 223 passed |
+| `npm test` | 282 passed |
 | `npm run check`, `npm run build` | Passed (the existing ~545 KiB chunk warning remains) |
-| `npm run test:desktop` | 17 passed (headless): real Electron, runtime and node-pty with fixture CLIs, covering four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches, project management, right-click menus, the file explorer and the Cursor provider (install, sign-in, launch, resume) |
-| `npm run dist:dir` | Unsigned app builds; packaged runtime starts; notices bundled |
+| `npm run test:desktop` | 17 passed, 1 skipped (headless): real Electron, runtime and node-pty with fixture CLIs, covering four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches, project management, right-click menus, the file explorer, keyboard shortcuts while the terminal has focus and the Cursor provider (install, sign-in, launch, resume) |
+| `npm run dist:dir` | Unsigned app builds (needs Xcode 26 selected, see [RELEASING](RELEASING.md)); package audit passes with the bundled JetBrains Mono font files; packaged smoke test passes |
 | GitHub Actions | Active since 4 October 2026 (the `workflow` scope was granted): fixture CI on macOS, Linux and experimental Windows; results per GitHub Actions |
 
 Earlier authenticated evidence ([native validation](NATIVE-VALIDATION.md), [lifecycle follow-up](LIFECYCLE-AND-MEMORY-VALIDATION.md)) predates the runtime split; authenticated providers have not been rerun under the runtime or in worktrees. The [usefulness trial](USEFULNESS-TRIAL.md) round 1 was inconclusive (MODIFY).

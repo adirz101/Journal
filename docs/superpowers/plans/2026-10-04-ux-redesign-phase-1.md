@@ -1942,7 +1942,7 @@ git commit -m "Add the app shortcut table and matcher for macOS, Windows and Lin
 
 > **Decision for this task:** while a dialog is open, commands are swallowed by the main-process `preventDefault` because the main process does not know about dialogs. Either accept and document that, or have the renderer report dialog state so the router lets keys through. The router must send a command only when `shouldDispatch(input)` is true (held keys are claimed but not repeated).
 >
-> **Chosen (implementation):** the renderer reports dialog state. every `<dialog>` component opens through `src/ui/useModalDialog.ts`, which counts open dialogs and sends `setModalOpen({ open })` (a validated action on the preload allow-list) when the first opens and the last closes (a unit scan enforces the hook); while it is open, the router claims no key, so shortcut keys behave natively inside the dialog. A reload resets the flag. The renderer still ignores a command that arrives while a `dialog[open]` exists (a key pressed before main heard about the dialog).
+> **Chosen (implementation):** the renderer reports dialog state. Every `<dialog>` component opens through `src/ui/useModalDialog.ts`, which counts open dialogs and sends `setModalOpen({ open })` (a validated action on the preload allow-list) when the first opens and the last closes (a unit scan enforces the hook); while it is open, the router claims no key, so shortcut keys behave natively inside the dialog. A reload resets the flag. The renderer still ignores a command that arrives while a `dialog[open]` exists (a key pressed before main heard about the dialog).
 
 **Files:**
 - Create: `tests/support/keys.ts`
@@ -2287,7 +2287,7 @@ the right panel is collapsible to a rail (⌘I / Ctrl+Shift+B); ⌥⌘2 / Alt+Sh
 
 - [ ] **Step 4: Run the checks.**
 Run: all four checks.
-Expected: 246 unit tests pass; 17 desktop scenarios pass, including slot 4 selecting `TASK_0` while the terminal has focus, Ctrl+C still reaching the CLI (`INTERRUPTED`), and ⌘I / ⌥⌘2 (Ctrl+Shift+B / Alt+Shift+2) in the explorer scenario.
+Expected: 282 unit tests pass (the count after review follow-ups); 17 desktop scenarios pass, including slot 4 selecting `TASK_0` while the terminal has focus, Ctrl+C still reaching the CLI (`INTERRUPTED`), and ⌘I / ⌥⌘2 (Ctrl+Shift+B / Alt+Shift+2) in the explorer scenario.
 
 - [ ] **Step 5: Try it by hand (macOS).** `npm run dev`, open a project, start two fixture or real sessions, click into a terminal and press ⌘1, ⌘2, ⌘E, ⌘I, ⌥⌘2, ⇧⌘K (the dialog opens; ⌘1 inside the dialog does nothing). In the terminal, Ctrl+C, Ctrl+R and Ctrl+O still reach the CLI. Windows and Linux are covered by CI and the table test; a manual Windows pass belongs to Phase 9.
 
@@ -2308,7 +2308,7 @@ git commit -m "Route app shortcuts in the main process so they work in the termi
 npm test && npm run check && npm run build && npm run test:desktop
 ```
 
-Expected: 246 unit tests pass; `check` and `build` pass (the existing ~545 KiB chunk warning remains); 17 desktop scenarios pass. Check the exit status.
+Expected: 282 unit tests pass; `check` and `build` pass (the existing ~545 KiB chunk warning remains); 17 desktop scenarios pass (1 skipped). Check the exit status.
 
 - [ ] **Step 2: Package audit with the fonts (macOS).**
 
@@ -2316,7 +2316,7 @@ Expected: 246 unit tests pass; `check` and `build` pass (the existing ~545 KiB c
 npm run dist:dir && node scripts/package-audit.mjs release/mac-arm64/Journal.app && npm run smoke:packaged
 ```
 
-Expected: `Package audit passed: …`, with six `dist/assets/jetbrains-mono-*.woff2` entries on the allow-list; the packaged smoke passes.
+Expected: `Package audit passed: …`, with ten `dist/assets/jetbrains-mono-*.woff2` entries on the allow-list; the packaged smoke passes.
 
 - [ ] **Step 3: Visual pass.** Open `.cache/screenshots/` (dark and light) and a real session: compare the palette, the 11 px floor, the focus ring (Tab through the sidebar) and the marks with boards B4 and B8. Check one Claude Code and one Codex session for box-drawing alignment (risk R1). Apply `emil-design-eng`'s review table to the diff: no `transition: all`, hover gated, nothing animated on keyboard actions.
 
@@ -2337,7 +2337,7 @@ Plan: [docs/superpowers/plans/2026-10-04-ux-redesign-phase-1.md](superpowers/pla
 Still open: a manual Windows pass of the shortcuts (Phase 9); the terminal shows three rows at 900×640 with widened sidebars until Phase 3 moves the composer.
 ```
 
-In the "Observed validation (local macOS)" table, change `npm test` to `246 passed` and add "keyboard shortcuts while the terminal has focus" to the desktop coverage list.
+In the "Observed validation (local macOS)" table, change `npm test` to `282 passed` and add "keyboard shortcuts while the terminal has focus" to the desktop coverage list.
 
 - [ ] **Step 5: Commit.**
 
@@ -2359,6 +2359,7 @@ git commit -m "Record Phase 1 of the UX redesign" -m "Co-Authored-By: Claude Opu
 | 1.3 | 237 | 0 | 17 | 0 | pass |
 | 1.4a | 246 | 0 | 17 | 0 | pass |
 | 1.4b | 246 | 0 | 17 | 0 | pass |
+| 1.5 (final, with review follow-ups) | 282 | 0 | 17 (1 skipped) | 0 | pass |
 
 Measured on macOS (Apple Silicon), Node 25.6, Electron 44.5.1, headless, from `2a69b4c` with the font package installed from the npm registry tarball. Linux and Windows run in CI after each push.
 
