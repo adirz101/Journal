@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { inspectProject } from './project.mjs';
+import { git, inspectProject } from './project.mjs';
 import { captureEvidence, validateEvidence } from './evidence.mjs';
 import { choice, relativePath, refuseCredentials, text } from './validation.mjs';
 import { branchDraft, commitsSince, overviewDraft, PLACEHOLDER } from './status.mjs';
@@ -195,12 +195,22 @@ export class JournalStore {
     });
     return { removed: id, deletedData: true };
   }
-  proposeMemory(projectId, input) {
+  // `bound.branch` is internal (never reachable from the renderer): it binds branch-scoped knowledge to the
+  // branch a suggestion came from instead of the checked-out one. Briefs always follow the checkout.
+  proposeMemory(projectId, input, { branch: boundBranch = null } = {}) {
     const project = this.project(projectId);
     const statement = text(input.statement, 'statement'); refuseCredentials(statement);
     const category = choice(input.category, categories, 'category');
     const scope = choice(input.scope, ['checkout', 'branch'], 'scope');
-    if (scope === 'branch' && !project.branch) throw new Error('Branch scope requires a named branch');
+    const target = scope === 'branch' ? boundBranch ?? project.branch : null;
+    if (scope === 'branch' && !target) throw new Error('Branch scope requires a named branch');
+    if (scope === 'branch' && boundBranch) {
+      if (category === 'brief') throw new Error('A project brief follows the checked-out branch');
+      // Validated before it reaches Git, so the name can never be read as an option.
+      if (typeof boundBranch !== 'string' || boundBranch.startsWith('-') || boundBranch.length > 200) throw new Error('Invalid branch name');
+      try { git(project.root, ['check-ref-format', '--branch', boundBranch]); } catch { throw new Error('Invalid branch name'); }
+      try { git(project.root, ['rev-parse', '--verify', '--quiet', `refs/heads/${boundBranch}`]); } catch { throw new Error(`The branch ${boundBranch} no longer exists; this suggestion cannot be remembered`); }
+    }
     const area = relativePath(input.area ?? '', true);
     // Optional environment qualifier ("macOS only", "with Docker running").
     const environment = text(input.environment ?? '', 'environment qualifier', 200, true); if (environment) refuseCredentials(environment);
@@ -220,7 +230,7 @@ export class JournalStore {
     }
     const id = previous?.id ?? randomUUID();
     const revision = (previous?.revision ?? 0) + 1;
-    const branch = scope === 'branch' ? project.branch : null;
+    const branch = target;
     // Flag, never block: the reviewer decides whether two claims really conflict.
     const conflicts = this.db.prepare(`SELECT r.body FROM memories m JOIN revisions r ON r.id=m.current_revision
       WHERE m.project_id=? AND m.status='active' AND m.id<>? LIMIT 500`).all(projectId, id).map(parse)
@@ -608,11 +618,9 @@ export class JournalStore {
     const proposal = this.getProposal(id);
     if (proposal.state !== 'open') throw new Error('This proposal was already handled');
     if (proposal.kind === 'branch-status') throw new Error('Use Propose branch update for status proposals');
-    if (proposal.scope === 'branch' && proposal.branch && proposal.branch !== this.project(proposal.projectId).branch) {
-      throw new Error(`Switch to ${proposal.branch} to remember this branch suggestion`);
-    }
     if (proposal.evidence?.sessionId) this.getSession(proposal.evidence.sessionId);
-    const memory = this.proposeMemory(proposal.projectId, { statement: proposal.statement, category: proposal.category, scope: proposal.scope, area: '', source: proposal.source });
+    const memory = this.proposeMemory(proposal.projectId, { statement: proposal.statement, category: proposal.category, scope: proposal.scope, area: '', source: proposal.source },
+      proposal.scope === 'branch' && proposal.branch ? { branch: proposal.branch } : undefined);
     this.db.prepare('UPDATE proposals SET body=? WHERE id=?').run(JSON.stringify({ ...proposal, state: 'accepted', memoryId: memory.id, handledAt: now() }), id);
     this.audit('proposal-accepted', { id, memoryId: memory.id, kind: proposal.kind });
     return memory;

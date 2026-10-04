@@ -102,13 +102,37 @@ test('purging detaches open test-command suggestions from the session and its ev
   assert.equal(f.store.acceptProposal(open.id).status, 'candidate');
 });
 
-test('a branch suggestion cannot be remembered while another branch is checked out', t => {
-  const f = fixture(t);
+test('a branch suggestion is remembered on the branch it came from, not the checked-out one', t => {
+  const f = fixture(t); f.git('branch', 'feature/flags');
   const s = f.session('Rule: Feature flags on this branch default to off.', { survivors: [] });
   const [created] = f.store.generateProposals(s.id);
   f.store.db.prepare(`UPDATE proposals SET body=json_set(body,'$.scope','branch','$.branch','feature/flags') WHERE id=?`).run(created.id);
-  assert.throws(() => f.store.acceptProposal(created.id), /Switch to feature\/flags/);
+  const memory = f.store.acceptProposal(created.id);
+  assert.equal(memory.scope, 'branch'); assert.equal(memory.branch, 'feature/flags');
+  assert.equal(f.store.getProposal(created.id).state, 'accepted');
+  assert.throws(() => f.store.setMemoryStatus(memory.id, 'active'), /branch changed/, 'It is approved on its own branch');
+  f.git('checkout', '-q', 'feature/flags'); f.store.setMemoryStatus(memory.id, 'active');
+  assert.equal(f.store.prepareContext(f.project.id, 'Feature flags default').items.length, 1);
+  f.git('checkout', '-q', 'main');
+  assert.equal(f.store.prepareContext(f.project.id, 'Feature flags default').items.length, 0, 'main does not receive another branch\'s memory');
+});
+
+test('a branch suggestion whose branch was deleted stays open and is not remembered', t => {
+  const f = fixture(t);
+  const s = f.session('Rule: Feature flags on this branch default to off.', { survivors: [] });
+  const [created] = f.store.generateProposals(s.id);
+  f.store.db.prepare(`UPDATE proposals SET body=json_set(body,'$.scope','branch','$.branch','feature/gone') WHERE id=?`).run(created.id);
+  assert.throws(() => f.store.acceptProposal(created.id), /The branch feature\/gone no longer exists/);
   assert.equal(f.store.getProposal(created.id).state, 'open', 'Nothing changed');
+});
+
+test('an explicit bound branch is validated: option-like names, unknown branches and briefs are refused', t => {
+  const f = fixture(t);
+  const input = { statement: 'Feature flags default to off', category: 'constraint', scope: 'branch', area: '', source: { kind: 'user', note: 'fixture' } };
+  assert.throws(() => f.store.proposeMemory(f.project.id, input, { branch: '--upload-pack=x' }), /Invalid branch name/);
+  assert.throws(() => f.store.proposeMemory(f.project.id, input, { branch: 'nope' }), /no longer exists/);
+  f.git('branch', 'feature/x');
+  assert.throws(() => f.store.proposeMemory(f.project.id, { ...input, category: 'brief' }, { branch: 'feature/x' }), /brief/i);
 });
 
 test('a branch suggestion made on the checked-out branch is remembered on that branch', t => {
