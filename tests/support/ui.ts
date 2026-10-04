@@ -76,9 +76,9 @@ export const slotsUsed = (page: Page, n: number): Locator => page.locator('.slot
 
 // Shows the New session view before a start (no-op if it is already shown).
 export async function newSession(page: Page) {
-  if (await page.getByLabel('Initial task').count()) return;
+  if (await taskBox(page).count()) return;
   await page.locator('.sidebar .new-session').click();
-  await expect(page.getByLabel('Initial task')).toBeVisible();
+  await expect(taskBox(page)).toBeVisible();
 }
 
 // The selected session's state line (provider, workspace, mode, start time and state).
@@ -131,4 +131,50 @@ export async function skipFirstRun(page: Page) {
   if (!await skip.count()) return;
   await skip.click();
   await expect(page.locator('.get-to-know')).toHaveCount(0);
+}
+
+// ----- Phase 4: the composer -----
+
+const PROVIDER_LABELS = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' } as const;
+const MODE_LABELS = { build: 'Build', plan: 'Plan', 'read-only': 'Read-only' } as const;
+type Provider = keyof typeof PROVIDER_LABELS; type Mode = keyof typeof MODE_LABELS;
+
+// The New session view's task box.
+export const taskBox = (page: Page): Locator => page.getByLabel('Task', { exact: true });
+
+// The single Start button ("Start Claude Code", "Start Codex", "Start Cursor").
+export const startButton = (page: Page): Locator => page.getByRole('form', { name: 'Start a session' }).getByRole('button', { name: /^Start / });
+
+// Chooses an agent card in the composer.
+export async function chooseAgent(page: Page, provider: Provider) {
+  const card = page.getByRole('radiogroup', { name: 'Agent' }).getByRole('radio', { name: PROVIDER_LABELS[provider], exact: true });
+  await card.click();
+  await expect(card).toHaveAttribute('aria-checked', 'true');
+}
+
+// Chooses Build, Plan or Read-only. An unsupported mode cannot be chosen (the click does nothing).
+export async function chooseMode(page: Page, mode: Mode) {
+  const radio = page.getByRole('radiogroup', { name: 'Mode' }).getByRole('radio', { name: MODE_LABELS[mode], exact: true });
+  await radio.click();
+  await expect(radio).toHaveAttribute('aria-checked', 'true');
+}
+
+// Starts a session: shows New session if needed, picks the agent card and the
+// mode, types the task (when given) and clicks Start.
+export async function startSession(page: Page, provider: Provider, { task, mode }: { task?: string; mode?: Mode } = {}) {
+  await newSession(page);
+  await chooseAgent(page, provider);
+  if (mode) await chooseMode(page, mode);
+  if (task !== undefined) await taskBox(page).fill(task);
+  await expect(startButton(page)).toHaveText(new RegExp(`^Start ${PROVIDER_LABELS[provider]}`));
+  await startButton(page).click();
+}
+
+// The live preview beside the composer.
+export const contextPreview = (page: Page): Locator => page.getByRole('complementary', { name: 'Context preview' });
+
+// Shows the checked packet for the task in the inspector's Session tab (replaces "Preview context").
+export async function inspectContext(page: Page) {
+  await expect(contextPreview(page).getByText('Sources checked', { exact: true })).toBeVisible({ timeout: 10_000 });
+  await contextPreview(page).getByRole('button', { name: 'Inspect all', exact: true }).click();
 }

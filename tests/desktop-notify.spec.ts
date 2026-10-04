@@ -2,7 +2,7 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { manageProject, newSession, openSettings } from './support/ui';
+import { manageProject, newSession, openSettings, startSession } from './support/ui';
 
 // Approval notifications and the badge, end to end: real Electron, runtime and
 // node-pty, a fixture Claude CLI, and Journal's real observer hook. Electron's
@@ -82,8 +82,7 @@ const notifications = (app: ElectronApplication) => app.evaluate(() => (globalTh
 const badges = (app: ElectronApplication) => app.evaluate(() => (globalThis as any).__badges as number[]);
 
 async function startClaude(page: Page, task: string) {
-  await newSession(page); await page.getByLabel('Initial task').fill(task);
-  await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+  await startSession(page, 'claude', { task: task });
   await expect(page.locator('.terminal-surface')).toContainText(`TASK ${task}`);
   const live = await page.evaluate(async () => (await (window as any).journal.request('sessions')).live);
   // Exactly one live session carries this task as its title.

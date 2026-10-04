@@ -2,7 +2,7 @@ import { test, expect, _electron as electron, type Page } from '@playwright/test
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { ensureWide, inspectorTab, newSession, openAnotherProject, sessionStatus, switchProject } from './support/ui';
+import { ensureWide, inspectorTab, newSession, openAnotherProject, sessionStatus, startSession, switchProject } from './support/ui';
 
 // Phase 5 (memory trust): note cards show where a note came from, whether its file
 // still matches and how many conversations it was sent to; the Memory tab filters by
@@ -176,8 +176,7 @@ test('a session note says where it came from and how many conversations it was s
   const { page, close } = await launch('memory origins');
   try {
     // A rule stated in a task becomes a suggestion when its session ends.
-    await newSession(page); await page.getByLabel('Initial task').fill('rule: Integration tests always need Docker running');
-    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await startSession(page, 'claude', { task: 'rule: Integration tests always need Docker running' });
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(sessionStatus(page)).toContainText('Stopped');
@@ -203,8 +202,7 @@ test('a session note says where it came from and how many conversations it was s
     await page.keyboard.press('Enter');
     await expect(page.locator('.session-header')).toContainText('Integration tests always need Docker running');
     // A second session gets both notes: each was sent to one conversation (the first launched before the rule existed).
-    await newSession(page); await page.getByLabel('Initial task').fill('Fix the docker integration tests');
-    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await startSession(page, 'claude', { task: 'Fix the docker integration tests' });
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY');
     await inspectorTab(page, 'Memory');
     await expect(rule).toContainText('Sent to 1 session');

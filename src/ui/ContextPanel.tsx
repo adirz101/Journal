@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ProviderMark } from './ProviderMark';
 import { api, PROVIDER_NAMES, type Bootstrap, type FileReference, type Project, type Receipt, type Session, type TimelineEvent } from './types';
-import { copy, count, deliveryState, excludedReason, shell, warningText } from './copy';
+import { composer, copy, count, deliveryState, excludedReason, shell, warningText } from './copy';
 import { NoteCard } from './NoteCard';
 import { receiptVariant } from './noteCardModel';
 import { useNoteTrust, useOpenable } from './useNoteTrust';
@@ -64,7 +64,7 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, e
   const agent = session ? bootstrap?.agents.find(a => a.provider === session.provider) : null;
   const act = async (action: () => Promise<unknown>) => { try { await action(); onChanged(); } catch (error) { onError(error); } };
   return <div className="panel-content context-content"><div className="section-heading"><div><span className="eyebrow">What the agent receives</span><h2 ref={heading} tabIndex={-1}>{title}</h2>{own && receipt?.state === 'submitted' && <small className="muted">{shell.atLaunch(relativeTime(receipt.createdAt, now))}</small>}</div></div>
-    {!receipt ? <div className="knowledge-empty"><h3>Inspect before you start.</h3><p>Enter an initial task and preview its context.</p></div> : <>
+    {!receipt ? <div className="knowledge-empty"><p>{composer.inspectEmpty}</p></div> : <>
       <div className="receipt-meta"><span>{count(receipt.items.length, 'note')}</span><span>{new TextEncoder().encode(receipt.packet).length} bytes · ≈{receipt.estimatedTokens} tokens</span><span className="receipt-state">{deliveryState(receipt.state)}</span></div>
       <dl className="receipt-facts"><dt>Task</dt><dd>{receipt.query || <em>none (only what {copy.everySession.toLowerCase()})</em>}</dd>
         <dt>Checkout</dt><dd>⑂ {(receipt as any).checkout?.branch ?? 'detached'} @ {String((receipt as any).checkout?.head ?? '').slice(0, 7) || 'unborn'}{receipt.workspaceId ? ' · worktree' : ''}</dd>
@@ -78,7 +78,7 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, e
           {open === item.id && <div className="evidence-details"><pre dir="auto">{item.source.excerpt ?? item.source.note ?? `${item.source.base ?? ''} → ${item.source.head ?? ''}`}</pre></div>}</>;
         const sessionId = trust[item.id]?.origin?.session?.id;
         // A delivered snapshot never changes; a preview's notes are checked again at the start.
-        return <li key={item.id}>{project ? <NoteCard note={item} project={project} variant={receiptVariant(receipt.state)} receiptState={receipt.state} trust={trust[item.id]} onOpenSession={sessionId && openable.has(sessionId) ? onOpenSession : undefined} actions={actions}>{details}</NoteCard>
+        return <li key={item.id}>{project ? <NoteCard note={item} project={project} variant={receiptVariant(receipt.state)} receiptState={receipt.state} trust={trust[item.id]} matched={item.selection?.terms} onOpenSession={sessionId && openable.has(sessionId) ? onOpenSession : undefined} actions={actions}>{details}</NoteCard>
           : <><p dir="auto">{item.statement}</p>{details}<div className="memory-actions">{actions}</div></>}</li>;
       })}</ol>
       {receipt.references?.length ? <References title={`Referenced for this task · ${receipt.references.length}`} projectId={(receipt as any).projectId} workspaceId={receipt.workspaceId ?? null} references={receipt.references} /> : null}

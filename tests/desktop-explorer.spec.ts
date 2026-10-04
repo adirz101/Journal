@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, symlinkSync, 
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
-import { filesView, inspectorTab, inspectorToggle, newSession, openAnotherProject, projectContextMenu, sessionStatus, switchProject } from './support/ui';
+import { filesView, inspectContext, inspectorTab, inspectorToggle, newSession, openAnotherProject, projectContextMenu, sessionStatus, startSession, switchProject } from './support/ui';
 
 // Real Electron, runtime and node-pty with fixture CLIs. Native menus are
 // driven through the headless menu hook (see desktop-context-menus.spec.ts).
@@ -127,13 +127,12 @@ test('the explorer browses, decorates, previews and references files without edi
     await expect.poll(() => app.evaluate(() => (globalThis as any).__revealed)).toBe(resolve(f.project, 'src', 'a.ts'));
 
     // Next-task references reach the receipt and the launch, as paths and hashes only.
-    await page.getByRole('button', { name: 'Preview context ↗' }).click();
+    await inspectContext(page);
     await page.getByRole('button', { name: /Show exact/ }).click();
     await expect(page.getByTestId('context-packet').first()).toContainText('Referenced by the user');
     await expect(page.getByTestId('context-packet').first()).toContainText('src/a.ts lines 2-3');
     await expect(page.getByTestId('context-packet').first()).not.toContainText('export const');
-    await newSession(page); await page.getByLabel('Initial task').fill('Check the constants');
-    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await startSession(page, 'claude', { task: 'Check the constants' });
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY');
     expect(f.launches()[0].argv.at(-1)).toContain('src/a.ts lines 2-3');
     await expect(page.getByRole('list', { name: 'Files referenced for the next task' })).toHaveCount(0);
@@ -171,7 +170,7 @@ test('the explorer browses, decorates, previews and references files without edi
     await expect(page.getByRole('list', { name: 'Files referenced for the next task' })).toContainText('README.md');
     await row(page, /^README\.md/).click(); await expect(page.locator('.preview-path')).toHaveText('README.md');
     await choose(f.other); await openAnotherProject(app, page);
-    await expect(page.getByLabel('Initial task')).toBeVisible();
+    await expect(page.getByLabel('Task', { exact: true })).toBeVisible();
     await expect(page.locator('.file-preview')).toHaveCount(0);
     await expect(page.getByRole('list', { name: 'Files referenced for the next task' })).toHaveCount(0);
     await expect(row(page, /^OTHER_SECRET_FILE\.md/)).toBeVisible();

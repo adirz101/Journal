@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
-import { inspectorTab, skipFirstRun } from './support/ui';
+import { contextPreview, inspectorTab, newSession, skipFirstRun, startSession, taskBox } from './support/ui';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -181,12 +181,27 @@ test('welcome lists agents and opens a project', async () => {
     const open = page.getByRole('button', { name: 'Open a project…', exact: true });
     expect(await open.getAttribute('aria-keyshortcuts')).toBe(process.platform === 'darwin' ? 'Meta+O' : 'Control+O');
     await openDialogReturns(app, f.project); await open.click();
-    await expect(page.getByLabel('Initial task')).toBeVisible();
+    await expect(taskBox(page)).toBeVisible();
     await expect(page.locator('.project-switcher .project-name')).toHaveText('project');
     // Sparse first-session states (board 3).
     await expect(page.locator('.sidebar')).toContainText('No sessions yet.');
     await expect(page.locator('.sidebar')).toContainText('Your first session will appear here.');
-    await expect(page.locator('.terminal-empty')).toContainText(`Start an agent with ${process.platform === 'darwin' ? '⌘N' : 'Ctrl+N'}.`);
+    const empty = page.locator('.terminal-empty');
+    await expect(empty).toContainText(`Start an agent with ${process.platform === 'darwin' ? '⌘N' : 'Ctrl+N'}.`);
+    await expect(empty.locator('img')).toHaveAttribute('alt', '');
+    // No remembered task notes yet: the Relevant box explains itself beside the mascot (board 3).
+    const relevantEmpty = contextPreview(page).locator('.preview-empty');
+    await expect(relevantEmpty).toContainText('Nothing here yet. After this session, I’ll suggest rules');
+    await expect(relevantEmpty.locator('img')).toHaveAttribute('alt', '');
+    // The composer's cards say what the Welcome rows said.
+    await expect(page.getByRole('radio', { name: 'Claude Code', exact: true })).toContainText('Installed · 1.0.0');
+    await expect(page.getByRole('radio', { name: 'Cursor', exact: true })).toContainText('Not installed');
+    // The empty terminal is for the project's first session only.
+    await startSession(page, 'claude', { task: 'FIRST_SESSION' });
+    await expect(page.locator('.terminal-surface')).toBeVisible();
+    await newSession(page);
+    await expect(taskBox(page)).toBeVisible();
+    await expect(empty).toHaveCount(0);
   } finally { await app.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -241,11 +256,16 @@ test('a fresh repo shows Getting to know your project; Remember both remembers t
     await expect(page.getByRole('button', { name: /^Remember both/ })).toBeEnabled();
     await page.keyboard.press(`${mod}+Enter`);
     // Back to New session, with the first-note moment once.
-    await expect(page.getByLabel('Initial task')).toBeVisible();
+    await expect(taskBox(page)).toBeVisible();
     await expect(knowTitle(page)).toHaveCount(0);
     const moment = page.locator('.first-note');
     await expect(moment).toHaveText(/First note remembered\. Every new session in Journal will know it\./);
     await expect(moment).toHaveAttribute('role', 'status');
+    // The composer's "Every session knows" lists both notes as just remembered (board 3).
+    const always = contextPreview(page).getByRole('region', { name: 'Every session knows' });
+    await expect(always.getByRole('listitem')).toHaveCount(2);
+    await expect(always.locator('.just-remembered')).toHaveCount(2);
+    await expect(always).toContainText('About this project'); await expect(always).toContainText('Where this branch stands');
     expect(await moment.evaluate(el => getComputedStyle(el).animationName)).toBe('first-note-in');
     expect(await page.evaluate(() => document.activeElement?.closest('.first-note'))).toBeNull();
     // Both notes are remembered (active), exactly as the cards showed them.
@@ -282,7 +302,7 @@ test('skip shows nothing again for that project', async () => {
     await page.getByRole('button', { name: 'Open a project…', exact: true }).click();
     await expect(knowTitle(page)).toBeVisible();
     await skipFirstRun(page);
-    await expect(page.getByLabel('Initial task')).toBeVisible();
+    await expect(taskBox(page)).toBeVisible();
     await skipFirstRun(page); // a no-op once the screen is gone
     expect(audits(f, ['orientation-skipped', 'memory-active']).map(([action]) => action)).toEqual(['orientation-skipped']);
     await app.close();
@@ -290,7 +310,7 @@ test('skip shows nothing again for that project', async () => {
     await firstRunHook(app); await openDialogReturns(app, f.project);
     const project = await request<{ id: string }>(page, 'openProjectPath', { path: f.project });
     expect(await request(page, 'firstRunDrafts', { projectId: project.id })).toBeNull();
-    await expect(page.getByLabel('Initial task')).toBeVisible();
+    await expect(taskBox(page)).toBeVisible();
     await expect(knowTitle(page)).toHaveCount(0);
   } finally { await app.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
@@ -305,7 +325,7 @@ test('a project with a summary never shows it', async () => {
     expect(note.id).toBeTruthy();
     await firstRunHook(app); await openDialogReturns(app, f.project);
     await page.getByRole('button', { name: 'Open a project…', exact: true }).click();
-    await expect(page.getByLabel('Initial task')).toBeVisible();
+    await expect(taskBox(page)).toBeVisible();
     // The renderer asked (once) and got nothing; asking again still gives nothing.
     expect(await request(page, 'firstRunDrafts', { projectId: project.id })).toBeNull();
     await expect(knowTitle(page)).toHaveCount(0);
@@ -324,7 +344,7 @@ test('a detached HEAD shows the overview card only, and Remember saves it', asyn
     await expect(page.getByRole('region', { name: 'Where this branch stands' })).toHaveCount(0);
     await expect(page.getByText('This checkout isn’t on a branch, so I drafted only “About this project”.')).toBeVisible();
     await page.locator('.know-actions').getByRole('button', { name: 'Remember', exact: true }).click();
-    await expect(page.getByLabel('Initial task')).toBeVisible();
+    await expect(taskBox(page)).toBeVisible();
     expect(audits(f, ['memory-active']).length).toBe(1);
   } finally { await app.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
@@ -378,6 +398,11 @@ process.stdin.resume();`);
     await expect(codex.getByRole('status')).toHaveText('Signed in to Codex.');
     await expect(codex.getByRole('button')).toHaveCount(0);
     expect(await codex.textContent()).not.toContain('@');
+    // The composer's Codex card agrees with the row.
+    await openDialogReturns(app, f.project); await page.getByRole('button', { name: 'Open a project…', exact: true }).click();
+    const card = page.getByRole('radio', { name: 'Codex', exact: true });
+    await expect(card).toContainText('Installed · codex-cli 0.40.0 · Signed in');
+    expect(await card.textContent()).not.toContain('@');
   } finally { await app.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 

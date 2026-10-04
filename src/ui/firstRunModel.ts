@@ -1,6 +1,6 @@
 // First run (Phase 7, boards 1-3). Pure: Welcome, the agent rows, GettingToKnow and
-// tests/first-run-model.test.mjs use it. The composer's agent cards (Phase 4) call
-// agentRow too, so the Welcome rows and the cards can't disagree.
+// tests/first-run-model.test.mjs use it. The composer's agent cards (composerModel.agentCard)
+// are built on agentRow, so the Welcome rows and the cards can't disagree.
 import { PROVIDER_NAMES, type AgentInfo, type DraftFacts, type StatusDraft } from './types';
 import { composer, firstRun, providers } from './copy';
 
@@ -33,7 +33,8 @@ export function agentRow(agent: AgentInfo | undefined, provider = agent?.provide
   const canLogin = provider === 'cursor' || agent.supports?.login === true;
   if (agent.auth === 'signed-in') return { ...base, sub: `${installed} · ${providers.signedIn}`, tone: 'ok', action: null };
   if (agent.auth === 'signed-out' || agent.state === 'login-required') return { ...base, sub: `${installed} · ${providers.signInNeeded}`, tone: 'warn', action: canLogin ? 'login' : null, hint: canLogin ? null : providers.signInElsewhere(name) };
-  return { ...base, sub: installed, tone: 'muted', action: canLogin ? 'login' : null, quietLogin: canLogin };
+  // A probe that ran but could not conclude says so (muted, never a warning); no probe claims nothing.
+  return { ...base, sub: agent.auth === 'unknown' ? `${installed} · ${composer.signInUnknown}` : installed, tone: 'muted', action: canLogin ? 'login' : null, quietLogin: canLogin };
 }
 
 // The accessible name of a row's action, unique per provider.

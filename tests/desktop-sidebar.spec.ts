@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:f
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
-import { currentProject, openAnotherProject, openSettings, projectNames, slotsUsed, switchProject } from './support/ui';
+import { currentProject, openAnotherProject, openSettings, projectNames, slotsUsed, startSession, switchProject } from './support/ui';
 
 // The Phase 3 sidebar: slots, Recent by day, suggestion counts, attention rows,
 // the project switcher and Settings. Real Electron, runtime and node-pty with fixture CLIs.
@@ -58,9 +58,8 @@ const closeApp = async (app: ElectronApplication) => {
 };
 const sessionButton = (page: Page, task: string) => page.getByRole('button', { name: new RegExp(`: ${task}\\.`) });
 async function start(page: Page, task: string, provider: 'Claude' | 'Codex' = 'Claude') {
-  if (await page.getByLabel('Initial task').count() === 0) await page.getByRole('button', { name: 'New session', exact: true }).click();
-  await page.getByLabel('Initial task').fill(task);
-  await page.getByRole('button', { name: `Start ${provider}`, exact: true }).click();
+  if (await page.getByLabel('Task', { exact: true }).count() === 0) await page.getByRole('button', { name: 'New session', exact: true }).click();
+  await startSession(page, provider === 'Claude' ? 'claude' : 'codex', { task });
   await expect(page.locator('.terminal-surface')).toContainText(`TASK ${task}`);
 }
 const mac = process.platform === 'darwin';

@@ -28,7 +28,6 @@ const ALLOWED = [
 // Visible strings kept until a later phase of the UX redesign replaces them: [file, text, phase].
 // Each must still be present, so an entry is removed when its phase lands.
 const DEFERRED = [
-  ['App.tsx', 'Preview context ↗', 'Phase 4'], ['App.tsx', 'Initial task', 'Phase 4'],
   ['KnowledgeForm.tsx', 'Save for review', 'Phase 6'], ['App.tsx', 'Native session ID', 'Phase 6'],
 ];
 const exempt = ([, text, file, position]) => ALLOWED.some(([f, t, p]) => f === file && t === text && p === position) || DEFERRED.some(([f, t]) => f === file && t === text);
@@ -104,7 +103,8 @@ test('the vocabulary itself avoids the old terms, except in tooltips', () => {
   for (const [key, value] of Object.entries(copy)) if (typeof value === 'string') assert.doesNotMatch(value, OLD_TERMS, key);
   // The composer's strings, nested help and functions called with sample arguments.
   const samples = { checkoutLine: ['Journal', 'main', 'abc1234'], start: ['Claude Code'], installed: ['2.1.0'], noPlan: ['Codex'], agentMissing: ['Codex'],
-    notesMatch: [2], notesMatching: ['retry'], leaveOutTip: [true], previewFailed: ['the task looks like a credential'] };
+    notesMatch: [2], notesMatching: ['retry'], leaveOutTip: [true], previewFailed: ['the task looks like a credential'],
+    matchesTerms: [['retries', 'payment']], notIncludedChip: [2, 'out of date'], currentCheckout: ['main'], existingWorktree: ['main'], folder: ['docs'] };
   const values = Object.entries(composer).flatMap(([key, value]) => typeof value === 'function' ? [[key, value(...(samples[key] ?? []))]]
     : typeof value === 'object' ? Object.entries(value).map(([inner, text]) => [`${key}.${inner}`, text]) : [[key, value]]);
   assert.ok(Object.entries(composer).filter(([, value]) => typeof value === 'function').every(([key]) => key in samples), 'every function has sample arguments');
@@ -334,7 +334,7 @@ test('the wrap-up vocabulary avoids the old terms', () => {
 // Every string copy.ts exports, as [key, text]: nested objects and arrays are walked, and
 // functions are called with sample arguments (a name, a count, or the facts of a draft).
 const SAMPLE_ARGS = { facts: [{ readme: 'README.md', folders: 8, commits: 93, counted: true }], emptyTerminalBody: ['⌘N'], cursorInstalled: ['2026.10.01', true],
-  commitsSince: [2, 'main'], recentCommits: [3, 'abc1234'], cantStart: ['/usr/bin/agent', 'it is a script'], leaveOutTip: [true] };
+  commitsSince: [2, 'main'], recentCommits: [3, 'abc1234'], cantStart: ['/usr/bin/agent', 'it is a script'], leaveOutTip: [true], matchesTerms: [['windows', 'menu']] };
 function copyStrings() {
   const out = [];
   const walk = (key, value) => {

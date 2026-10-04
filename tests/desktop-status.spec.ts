@@ -2,7 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { inspectorTab, switchProject } from './support/ui';
+import { inspectContext, inspectorTab, switchProject } from './support/ui';
 
 test('a Git-drafted branch update is saved only after review and approved before delivery', async () => {
   mkdirSync(resolve('.cache/tmp'), { recursive: true });
@@ -35,7 +35,7 @@ test('a Git-drafted branch update is saved only after review and approved before
       return (await (window as any).journal.request('project', { projectId: boot.projects[0].id })).receipts.length;
     });
     const receiptsBefore = await receiptCount();
-    await page.getByRole('button', { name: 'Preview context' }).click();
+    await inspectContext(page);
     await expect(page.getByText('Preview only.')).toBeVisible(); // Rendered, so the request has finished.
     await expect(page.getByTestId('context-packet')).not.toContainText('REFUND_MODEL_DONE');
     expect(await receiptCount()).toBe(receiptsBefore);
@@ -45,11 +45,11 @@ test('a Git-drafted branch update is saved only after review and approved before
     const draft = await statement.inputValue();
     await statement.fill(draft.replace(/Current work: .*/, 'Current work: REFUND_ROUTE_IN_PROGRESS').replace(/Next: .*/, 'Next: validate partial refunds'));
     await page.getByRole('button', { name: 'Save for review' }).click();
-    await page.getByRole('button', { name: 'Preview context' }).click();
+    await inspectContext(page);
     await expect(page.getByTestId('context-packet')).not.toContainText('REFUND_ROUTE_IN_PROGRESS');
     await inspectorTab(page, 'Memory');
     await page.getByRole('button', { name: 'Remember', exact: true }).click();
-    await page.getByRole('button', { name: 'Preview context' }).click();
+    await inspectContext(page);
     await expect(page.getByTestId('context-packet')).toContainText('REFUND_ROUTE_IN_PROGRESS');
     await expect(page.getByTestId('context-packet')).toContainText('Git history');
 

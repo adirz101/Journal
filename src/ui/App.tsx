@@ -11,7 +11,6 @@ import { ChangesPanel } from './ChangesPanel';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import { ContextPanel } from './ContextPanel';
 import { ExplorerPanel } from './ExplorerPanel';
-import { ProviderStatus } from './ProviderStatus';
 import { ProcessDialog } from './ProcessDialog';
 import { UpdateNotice, useUpdateState } from './UpdateNotice';
 import { SettingsDialog } from './SettingsDialog';
@@ -27,19 +26,19 @@ import { StatusBar } from './StatusBar';
 import { useSessionChanges, useSessionEvents } from './useSessionData';
 import { diffSummary } from './sessionView';
 import { showMenu } from './menu';
-import { ProviderMark } from './ProviderMark';
 import journalMarkWhite from '../../assets/branding/journal-mark-white.png';
 import journalMarkDark from '../../assets/branding/journal-mark.png';
 import { storedAppearance, type Appearance } from './theme';
-import { copy, firstRun, providers, shell, tip } from './copy';
+import { composer, copy, firstRun, providers, shell } from './copy';
 // Phase 7: first run (Welcome, Getting to know your project, the first-note moment).
 import { Welcome } from './Welcome';
 import { GettingToKnow, type DraftParts } from './GettingToKnow';
 import { FirstNoteMoment } from './FirstNoteMoment';
 import type { ProviderHandlers } from './AgentRow';
 import { claimFirstNote, settleFirstNote } from './firstNote';
+import { defaultProvider, isProvider, modeFlags } from './composerModel';
 import { keyLetter } from './keys';
-import { api, errorCode, isLive, PROVIDER_NAMES, type AgentInfo, type Bootstrap, type CommandId, type FirstRunDrafts, type ProcessKind, type FileReference, type InspectorTab, type Memory, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
+import { api, errorCode, isLive, PROVIDER_NAMES, type AgentInfo, type Bootstrap, type CommandId, type FirstRunDrafts, type ProcessKind, type FileReference, type InspectorTab, type Memory, type Mode, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
 
 const MAX_SESSIONS = 4;
 const latest = (a: string | null | undefined, b: string | null | undefined) => !a ? b : !b ? a : a > b ? a : b;
@@ -82,7 +81,15 @@ export default function App() {
   // File and command-end events per session, counted as they arrive: liveEvents is capped, so its length stops changing.
   const [fileEventCounts, setFileEventCounts] = useState<Record<string, number>>({});
   const [now, setNow] = useState(Date.now());
-  const [workspaces, setWorkspaces] = useState<WorkspaceList | null>(null); const [workspaceId, setWorkspaceId] = useState<string>(''); const [research, setResearch] = useState(false); const [plan, setPlan] = useState(false);
+  const [workspaces, setWorkspaces] = useState<WorkspaceList | null>(null); const [workspaceId, setWorkspaceId] = useState<string>('');
+  // === Phase 4: composer state ===
+  // The agent choice is remembered on this computer; the mode starts at Build and is never changed for the user.
+  const [mode, setMode] = useState<Mode>('build'); const [startError, setStartError] = useState<{ code?: string; message: string } | null>(null);
+  const rememberedAgent = useRef<string | null | undefined>(undefined);
+  if (rememberedAgent.current === undefined) rememberedAgent.current = (() => { try { const value = localStorage.getItem('journal-agent'); return isProvider(value) ? value : null; } catch { return null; } })();
+  const [provider, setProviderState] = useState<Provider>(() => defaultProvider(undefined, rememberedAgent.current ?? null));
+  const chooseProvider = (next: Provider) => { setProviderState(next); setStartError(null); rememberedAgent.current = next; try { localStorage.setItem('journal-agent', next); } catch { /* optional */ } };
+  // === End Phase 4: composer state ===
   const [processView, setProcessView] = useState<{ id: string; title: string; command?: string; provider: Provider; kind: ProcessKind } | null>(null);
   // === Phase 7: first run state ===
   // providerNotes: what the last install or sign-in changed, per provider; providerBusy: an action or check in flight.
@@ -102,8 +109,8 @@ export default function App() {
   // The Files tab's view: the user's last choice for this app run, else Changed while the session changed something.
   const [filesChoice, setFilesChoice] = useState<'changed' | 'all' | null>(null); const [packetRequest, setPacketRequest] = useState<number | null>(null);
   const [references, setReferences] = useState<FileReference[]>([]); const [evidenceSource, setEvidenceSource] = useState<{ kind: 'file'; path: string; startLine: number; endLine: number; rootId?: string } | null>(null);
-  // References belong to the project they were chosen in; switching projects drops them.
-  useEffect(() => { setReferences([]); setEvidenceSource(null); }, [state?.project.id]);
+  // References belong to the project they were chosen in; switching projects drops them (and a refused start's note).
+  useEffect(() => { setReferences([]); setEvidenceSource(null); setStartError(null); }, [state?.project.id]);
   const referenceInputs = references.map(ref => ({ projectId: ref.projectId, rootKey: ref.rootKey, path: ref.path, startLine: ref.startLine, endLine: ref.endLine }));
   const [resumeDraft, setResumeDraft] = useState<{ sessionId: string; value: string } | null>(null);
   const session = selectedId ? sessions[selectedId] ?? null : null;
@@ -175,7 +182,7 @@ export default function App() {
   useEffect(() => {
     void api<Bootstrap>('bootstrap').then(async data => {
       hasNotesAtStart.current = data.hasNotes; settleFirstNote(data.hasNotes); // Phase 7: an upgrading install never sees the first-note moment
-      setBootstrap(latestAgents.current ? { ...data, agents: latestAgents.current } : data); setProjects(data.projects); setRuntime(data.runtime); merge([...data.active, ...data.live]);
+      setBootstrap(latestAgents.current ? { ...data, agents: latestAgents.current } : data); setProjects(data.projects); if (!rememberedAgent.current) setProviderState(defaultProvider(latestAgents.current ?? data.agents, null)); setRuntime(data.runtime); merge([...data.active, ...data.live]);
       const remembered = (() => { try { return localStorage.getItem('journal-project'); } catch { return null; } })();
       const firstLive = slotOrder([...data.active, ...data.live]).find(isLive);
       const selected = data.projects.find(p => p.id === (firstLive?.projectId ?? remembered));
@@ -317,12 +324,20 @@ export default function App() {
     const submitted = resumeFrom ? '' : task; if (!resumeFrom) setTask('');
     await run(async () => {
       try {
-        const result = await api<{ session: Session; receipt: Receipt }>('start', { projectId, provider, task: submitted, resumeId: resumeFrom?.id, ...(resumeFrom ? {} : { workspaceId: workspaceId || null, research, plan: plan && !research, disabled, references: referenceInputs }) });
+        if (!resumeFrom) setStartError(null);
+        const result = await api<{ session: Session; receipt: Receipt }>('start', { projectId, provider, task: submitted, resumeId: resumeFrom?.id, ...(resumeFrom ? {} : { workspaceId: workspaceId || null, ...modeFlags(mode), disabled, references: referenceInputs }) });
         merge([result.session]); setSelectedId(result.session.id); setReceipt(result.receipt); setFirstNote(false); setDisabled([]); if (!resumeFrom) setReferences([]); setPanel('session'); await refresh(projectId);
       } catch (error) {
         if (submitted) setTask(current => current || submitted);
         // Another window or a stale count: all four slots are taken. Catch up and say so plainly.
-        if (errorCode(error) === 'SLOTS_FULL') { void reloadSessions().catch(() => {}); throw new Error(copy.slotsFull(MAX_SESSIONS)); }
+        const code = errorCode(error);
+        if (code === 'SLOTS_FULL') { void reloadSessions().catch(() => {}); if (!resumeFrom) { setStartError({ code, message: composer.slotsFull }); return; } throw new Error(copy.slotsFull(MAX_SESSIONS)); }
+        // The agent went missing since detection: say so beside Start and check that provider
+        // again now (fresh), so its card follows what is installed instead of staying Not installed.
+        if (code === 'PROVIDER_MISSING' && !resumeFrom) {
+          void checkProvider(provider).catch(failed);
+          setStartError({ code, message: error instanceof Error ? error.message : String(error) }); return;
+        }
         throw error;
       }
     });
@@ -406,8 +421,6 @@ export default function App() {
     if (!state) return;
     await run(async () => { setForm({ draft: await api<StatusDraft>('proposeStatusUpdate', { projectId: state.project.id, scope }) }); });
   }
-  const available = (provider: Provider) => bootstrap?.agents.some(a => a.provider === provider && a.available && (a.state ?? 'ready') === 'ready');
-  const cursorAgent = bootstrap?.agents.find(a => a.provider === 'cursor');
   // === Phase 7: provider actions (Welcome rows and the New session view) ===
   // The renderer names a provider; main picks the executable and argv. Install asks for confirmation in main.
   async function providerAction(provider: Provider, action: () => Promise<void>) {
@@ -415,21 +428,28 @@ export default function App() {
     setProviderNotes(notes => ({ ...notes, [provider]: '' })); setProviderBusy(current => ({ ...current, [provider]: true }));
     try { await action(); } catch (error) { failed(error); } finally { setProviderBusy(current => ({ ...current, [provider]: false })); }
   }
-  const providerHandlers: ProviderHandlers = {
-    onCheck: provider => void providerAction(provider, async () => {
-      const next = await api<AgentInfo>('providerStatus', { provider, fresh: true });
-      setBootstrap(current => current ? { ...current, agents: current.agents.map(a => a.provider === provider ? next : a) } : current);
-    }),
-    onInstall: provider => void providerAction(provider, async () => {
-      const result = await api<{ id: string; command: string } | null>('providerInstall', { provider });
-      if (result) setProcessView({ id: result.id, command: result.command, title: providers.installTitle(PROVIDER_NAMES[provider]), provider, kind: 'install' });
-    }),
-    onLogin: provider => void providerAction(provider, async () => {
-      const result = await api<{ id: string; command: string }>('providerLogin', { provider });
-      setProcessView({ id: result.id, command: result.command, title: providers.loginTitle(PROVIDER_NAMES[provider]), provider, kind: 'login' });
-    }),
-    onInstallPage: provider => void providerAction(provider, async () => { await api('openInstallPage', { provider }); }),
-  };
+  // A fresh check of one provider (Check again, and after a start refused with PROVIDER_MISSING).
+  async function checkProvider(target: Provider) {
+    const next = await api<AgentInfo>('providerStatus', { provider: target, fresh: true });
+    setBootstrap(current => current ? { ...current, agents: current.agents.map(a => a.provider === target ? next : a) } : current);
+  }
+  const providerLatest = useRef({ providerAction, checkProvider }); providerLatest.current = { providerAction, checkProvider };
+  // Stable handlers (they read the newest state through a ref), shared by Welcome and the composer's agent cards.
+  const providerHandlers: ProviderHandlers = useMemo(() => {
+    const act = (provider: Provider, action: () => Promise<void>) => void providerLatest.current.providerAction(provider, action);
+    return {
+      onCheck: provider => act(provider, () => providerLatest.current.checkProvider(provider)),
+      onInstall: provider => act(provider, async () => {
+        const result = await api<{ id: string; command: string } | null>('providerInstall', { provider });
+        if (result) setProcessView({ id: result.id, command: result.command, title: providers.installTitle(PROVIDER_NAMES[provider]), provider, kind: 'install' });
+      }),
+      onLogin: provider => act(provider, async () => {
+        const result = await api<{ id: string; command: string }>('providerLogin', { provider });
+        setProcessView({ id: result.id, command: result.command, title: providers.loginTitle(PROVIDER_NAMES[provider]), provider, kind: 'login' });
+      }),
+      onInstallPage: provider => act(provider, async () => { await api('openInstallPage', { provider }); }),
+    };
+  }, []);
   // === End Phase 7: provider actions ===
   // === Phase 7: Getting to know your project ===
   // After a project's state has rendered, ask main once for its first-run drafts (null unless it needs them).
@@ -460,6 +480,21 @@ export default function App() {
     return next.overview || next.branch ? next : null;
   });
   // === End Phase 7: Getting to know your project ===
+  // The composer's props stay the same object across renders unless their data changes, so
+  // timeline and terminal events re-render App without re-rendering the composer.
+  const composerLatest = useRef({ start, chooseProvider, provider, showInspector: layout.showInspector });
+  composerLatest.current = { start, chooseProvider, provider, showInspector: layout.showInspector };
+  const composerCallbacks = useMemo(() => ({
+    onWorkspace: (id: string) => setWorkspaceId(id), onManageWorkspaces: () => setWorkspaceDialog(true),
+    onRemoveReference: (index: number) => setReferences(current => current.filter((_, i) => i !== index)),
+    onProvider: (next: Provider) => composerLatest.current.chooseProvider(next), onMode: (next: Mode) => { setMode(next); setStartError(null); },
+    onStart: () => void composerLatest.current.start(composerLatest.current.provider),
+    onInspect: (next: Receipt) => { setReceipt(next); setPanel('session'); composerLatest.current.showInspector(); },
+    onChecked: (next: Receipt) => setReceipt(current => current?.state === 'prepared' ? next : current),
+  }), []);
+  const providerProps = useMemo(() => ({ busy: providerBusy, notes: providerNotes, ...providerHandlers }), [providerBusy, providerNotes, providerHandlers]);
+  // Board 12, placement 6: the empty terminal shows under the composer until the project's first session.
+  const firstSession = !!state && !ordered.some(s => s.projectId === state.project.id);
   const projectBranchChanged = session && state && !session.workspaceId && session.projectId === state.project.id && isLive(session) && session.branch !== undefined && session.branch !== state.project.branch;
   // One timeline fetch and one changes source per session, shared by the header, status bar and inspector.
   const { events } = useSessionEvents(session?.id ?? null, liveEvents, `${session?.status ?? ''}:${connected}`);
@@ -514,25 +549,11 @@ export default function App() {
           dragging={dragging} dropError={dropError} handlers={providerHandlers} onOpen={() => void openProject()} />
         : showFirstRun && firstRunDrafts ? <GettingToKnow key={firstRunDrafts.projectId} drafts={firstRunDrafts} branch={state.project.branch} mark={journalMark} mac={bootstrap?.platform === 'darwin'}
           onRemember={rememberFirstRun} onSkip={skipFirstRun} onEdit={(scope, statement) => { const draft = scope === 'checkout' ? firstRunDrafts.overview : firstRunDrafts.branch; if (draft) setForm({ draft: { ...draft, statement }, firstRun: scope }); }} />
-        : !session ? <NewSessionView mark={journalMark} keys={bootstrap?.shortcuts['new-session']?.label ?? null}>
-          <section className="launch-bar" aria-label="Start an agent terminal"><label htmlFor="initial-task">Initial task <span className="optional">optional · picks relevant notes</span></label><textarea ref={taskRef} id="initial-task" value={task} onChange={e => setTask(e.target.value)} maxLength={4000} rows={2} placeholder="What are you working on? Mention a module or path to include notes about it." />
-            {references.length > 0 && <ul className="reference-chips" aria-label="Files referenced for the next task">{references.map((ref, index) => <li key={`${ref.rootKey}:${ref.path}:${ref.startLine}`}>
-              <span title={`${ref.rootLabel ?? ''} · ${ref.path}${ref.contentHash ? ` · sha256 ${ref.contentHash.slice(0, 12)}` : ''}`}>{ref.kind === 'folder' ? '▸ ' : ''}{ref.display ?? ref.path}{ref.startLine ? `:${ref.startLine}${ref.endLine !== ref.startLine ? `-${ref.endLine}` : ''}` : ''}</span>
-              <button aria-label={`Remove ${ref.path} from the next task`} onClick={() => setReferences(current => current.filter((_, i) => i !== index))}>×</button></li>)}
-              <li className="muted">Paths and lines only; the agent reads the files itself.</li></ul>}
-            <div className="launch-actions"><div><button className="primary" disabled={busy || !canStart || !available('claude')} onClick={() => void start('claude')}>Start Claude</button><button disabled={busy || !canStart || !available('codex') || (plan && !research)} title={plan && !research ? 'Codex has no plan mode' : undefined} onClick={() => void start('codex')}>Start Codex</button><button disabled={busy || !canStart || !available('cursor') || ((research || plan) && !cursorAgent?.supports?.mode)} onClick={() => void start('cursor')}>Start Cursor</button>{liveCount >= MAX_SESSIONS && <span className="hint inline">{copy.slotsFull(MAX_SESSIONS)}</span>}</div><button className="text-button" disabled={busy} onClick={() => void run(async () => { setReceipt(await api<Receipt>('prepareContext', { projectId: state.project.id, task, workspaceId: workspaceId || null, disabled, references: referenceInputs })); setPanel('session'); layout.showInspector(); })}>Preview context ↗</button></div>
-            <div className="launch-options"><label className="inline-label">Workspace<select value={workspaceId} onChange={e => setWorkspaceId(e.target.value)} aria-label="Workspace">
-              <option value="">Current checkout · {state.project.branch ?? 'detached HEAD'}</option>
-              {workspaces?.workspaces.filter(w => w.state === 'ready').map(w => <option key={w.id} value={w.id!}>{w.kind === 'managed' ? copy.separateCopy : 'Existing worktree'} · {w.branch ?? 'detached'}</option>)}
-              {state.project.roots?.map(root => <option key={root.id} value={`root:${root.id}`}>Folder · {root.name}</option>)}
-            </select></label><button className="text-button" onClick={() => setWorkspaceDialog(true)}>Workspaces…</button>
-              <label className="inline-check" title={tip.readOnly}><input type="checkbox" checked={research} onChange={e => { setResearch(e.target.checked); if (e.target.checked) setPlan(false); }} /> {copy.readOnly}</label>
-              <label className="inline-check" title={tip.plan}><input type="checkbox" checked={plan} onChange={e => { setPlan(e.target.checked); if (e.target.checked) setResearch(false); }} /> {copy.plan}</label></div>
-            <p className="provider-line">{bootstrap?.agents.map(a => <span key={a.provider} title={a.available ? `${a.path ?? ''}\nResume: ${a.capabilities?.exactResume}\nObserved: status ${a.capabilities?.status.join(', ')}; commands ${a.capabilities?.commands}${a.capabilities?.modes ? `\nModes: ${a.capabilities.modes}` : ''}` : 'Not found on PATH'}><ProviderMark provider={a.provider} size={16} />{PROVIDER_NAMES[a.provider]} {a.available ? `${a.version ?? ''}${a.state === 'login-required' ? ' · login required' : ''}` : a.state === 'unsupported' ? '· unsupported version' : a.state === 'not-cursor' ? '· not the Cursor CLI' : '· not found'}</span>)}</p>
-            {/* Phase 7: install and sign-in for every provider (Phase 4's composer cards take this over). */}
-            {(['claude', 'codex', 'cursor'] as const).map(provider => <ProviderStatus key={provider} provider={provider} agent={bootstrap?.agents.find(a => a.provider === provider)} busy={!!providerBusy[provider]} note={providerNotes[provider] ?? ''} handlers={providerHandlers} />)}
-          </section>
-        </NewSessionView>
+        : !session ? <NewSessionView project={state.project} bootstrap={bootstrap} workspaces={workspaces} workspaceId={workspaceId}
+          task={task} onTask={setTask} taskRef={taskRef} references={references} disabled={disabled} onDisabled={setDisabled} provider={provider} mode={mode}
+          connected={connected} liveCount={liveCount} busy={busy} startError={startError} knowledgeVersion={knowledgeVersion}
+          {...composerCallbacks} providers={providerProps} mark={journalMark} justRemembered={justRemembered}
+          emptyTerminal={firstSession ? bootstrap?.shortcuts['new-session']?.label ?? '' : null} />
         : <section className="session-view" aria-label="Session">
           <SessionHeader session={session} state={stateFor(session, now, connected)} connected={connected} busy={busy} canStart={canStart} now={now} mac={bootstrap?.platform === 'darwin'}
             projectBranch={session.projectId === state.project.id ? state.project.branch : session.branch ?? null} agentVersion={bootstrap?.agents.find(a => a.provider === session.provider)?.version ?? null}

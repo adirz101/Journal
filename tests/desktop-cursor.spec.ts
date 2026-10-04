@@ -2,7 +2,7 @@ import { test, expect, type ElectronApplication, _electron as electron } from '@
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { filesView, inspectorTab, newSession, sessionStatus } from './support/ui';
+import { chooseAgent, filesView, inspectorTab, newSession, sessionStatus, startButton, startSession } from './support/ui';
 
 // Cursor as a third provider with fake CLIs: install (confirmed, visible,
 // failure and success), PATH not refreshed, sign-in, launch with an exact chat
@@ -54,54 +54,58 @@ console.log('Installed to ~/.local/bin/agent. Add ~/.local/bin to your PATH.');`
     await app.evaluate((_e, file) => { (globalThis as any).__journalCursorInstall = { file, args: [] }; }, installer);
     const page = await app.firstWindow();
     await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
+    // The Cursor card is honest about the missing CLI and holds its one action; the details
+    // under the cards (while Cursor is chosen) explain it and keep Check again.
+    await chooseAgent(page, 'cursor');
+    const card = page.getByRole('radio', { name: 'Cursor', exact: true });
+    await expect(card).toContainText('Not installed');
+    const install = page.getByRole('radiogroup', { name: 'Agent' }).getByRole('button', { name: 'Install… Cursor', exact: true });
     const status = page.getByRole('region', { name: 'Cursor provider status' });
-    await expect(status).toContainText('Not installed');
-    await expect(page.getByRole('button', { name: 'Start Cursor' })).toBeDisabled();
+    await expect(status).toContainText('Runs Cursor’s official installer in a visible terminal.');
+    await expect(status.getByRole('button', { name: 'Check again: Cursor' })).toBeVisible();
+    await expect(startButton(page)).toHaveText(/^Start Cursor/);
+    await expect(startButton(page)).toBeDisabled();
 
     // Cancel: nothing runs. The dialog shows the exact official command.
-    await answer(app, 1); await status.getByRole('button', { name: 'Install Cursor…' }).click();
+    await answer(app, 1); await install.click();
     const detail = await app.evaluate(() => (globalThis as any).__lastDialog.detail as string);
     expect(detail).toContain('curl https://cursor.com/install -fsS | bash'); expect(detail).toContain('will not receive or store your Cursor credentials');
     await expect(page.locator('.process-dialog')).toHaveCount(0);
 
     // A failed install is shown with its exit code and never reported as installed.
-    await answer(app, 0); await status.getByRole('button', { name: 'Install Cursor…' }).click();
+    await answer(app, 0); await install.click();
     const processDialog = page.locator('.process-dialog');
     await expect(processDialog).toContainText('Download failed');
     await expect(processDialog.getByRole('status')).toContainText('exit code 3');
     await processDialog.getByRole('button', { name: 'Done' }).click();
     await expect(status).toContainText('cannot find the agent command');
-    await expect(page.getByRole('button', { name: 'Start Cursor' })).toBeDisabled();
+    await expect(startButton(page)).toBeDisabled();
 
     // A successful install into ~/.local/bin, which is not on Journal's PATH.
     rmSync(failInstall);
-    await status.getByRole('button', { name: 'Install Cursor…' }).click();
+    await install.click();
     await expect(processDialog).toContainText('Installed to ~/.local/bin/agent');
     await expect(processDialog.getByRole('status')).toContainText('exit 0');
     await processDialog.getByRole('button', { name: 'Done' }).click();
-    await expect(status).toContainText('Sign in needed');
+    await expect(card).toContainText('Sign in needed');
     await expect(status).toContainText('not on your PATH');
 
     // Sign in through Cursor's own flow, visibly.
-    await status.getByRole('button', { name: 'Sign in to Cursor…' }).click();
+    await page.getByRole('radiogroup', { name: 'Agent' }).getByRole('button', { name: 'Sign in… Cursor', exact: true }).click();
     await expect(processDialog).toContainText('Open this URL to sign in');
     await expect(processDialog.getByRole('status')).toContainText('exit 0');
     await processDialog.getByRole('button', { name: 'Done' }).click();
-    await expect(page.getByRole('button', { name: 'Start Cursor' })).toBeEnabled();
-    await expect(status).not.toContainText('Sign in needed');
+    await expect(startButton(page)).toBeEnabled();
+    await expect(card).not.toContainText('Sign in needed');
 
     // Launch with an exact chat ID in Ask mode, beside a Claude session.
-    await page.getByLabel('Read-only', { exact: true }).check();
-    await newSession(page); await page.getByLabel('Initial task').fill('Summarise the readme');
-    await page.getByRole('button', { name: 'Start Cursor' }).click();
+    await startSession(page, 'cursor', { task: 'Summarise the readme', mode: 'read-only' });
     await expect(page.locator('.terminal-surface')).toContainText(`RAN ["--resume=${CHAT}","--mode=ask"]`);
     await expect(sessionStatus(page)).toContainText('Read-only');
     const cursorLaunch = launches().find(l => l.bin === 'agent')!;
     expect(cursorLaunch.argv.slice(-2)).toEqual(['--', 'Summarise the readme']); // no approved knowledge yet: the task alone
     expect(cursorLaunch.argv).not.toContain('--force');
-    await newSession(page); await page.getByLabel('Read-only', { exact: true }).uncheck();
-    await page.getByLabel('Initial task').fill('Claude side task');
-    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await startSession(page, 'claude', { task: 'Claude side task', mode: 'build' });
     await expect(page.getByRole('button', { name: /^Cursor: Summarise the readme/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /^Claude Code: Claude side task/ })).toBeVisible();
 

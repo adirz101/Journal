@@ -11,12 +11,13 @@ import { fillDraft } from '../src/core/status.mjs';
 async function load(t) {
   mkdirSync(resolve('.cache/tmp'), { recursive: true });
   const dir = mkdtempSync(resolve('.cache/tmp', 'first-run-model-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
-  for (const name of ['types', 'copy', 'firstRunModel', 'firstNote']) {
+  for (const name of ['types', 'copy', 'firstRunModel', 'firstNote', 'composerModel']) {
     const source = readFileSync(new URL(`../src/ui/${name}.ts`, import.meta.url), 'utf8');
     const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
-    writeFileSync(join(dir, `${name}.mjs`), outputText.replace(/from '\.\/(types|copy)'/g, "from './$1.mjs'"));
+    writeFileSync(join(dir, `${name}.mjs`), outputText.replace(/from '\.\/(types|copy|firstRunModel)'/g, "from './$1.mjs'"));
   }
-  return { ...await import(pathToFileURL(join(dir, 'firstRunModel.mjs')).href), ...await import(pathToFileURL(join(dir, 'firstNote.mjs')).href) };
+  return { ...await import(pathToFileURL(join(dir, 'firstRunModel.mjs')).href), ...await import(pathToFileURL(join(dir, 'firstNote.mjs')).href),
+    agentCard: (await import(pathToFileURL(join(dir, 'composerModel.mjs')).href)).agentCard };
 }
 
 const commands = (fields = {}) => ({ login: 'claude auth login', install: 'curl -fsSL https://claude.ai/install.sh | bash', installPage: 'https://code.claude.com/docs/en/setup', ...fields });
@@ -31,7 +32,8 @@ test('agentRow never says signed in without a probe', async t => {
   // Only a parsed probe (or Cursor's own status check) says it.
   assert.deepEqual(agentRow(agent({ auth: 'signed-in' })), { name: 'Claude Code', sub: 'Installed · 2.1.286 · Signed in', hint: null, tone: 'ok', action: null, quietLogin: false });
   // Unknown never warns: a quiet sign-in where the CLI documents one, nothing where it doesn't.
-  assert.deepEqual(agentRow(agent({ auth: 'unknown' })), { name: 'Claude Code', sub: 'Installed · 2.1.286', hint: null, tone: 'muted', action: 'login', quietLogin: true });
+  assert.deepEqual(agentRow(agent({ auth: 'unknown' })), { name: 'Claude Code', sub: 'Installed · 2.1.286 · Sign-in unknown', hint: null, tone: 'muted', action: 'login', quietLogin: true });
+  assert.deepEqual(agentRow(agent({ auth: 'unchecked' })), { name: 'Claude Code', sub: 'Installed · 2.1.286', hint: null, tone: 'muted', action: 'login', quietLogin: true });
   assert.equal(agentRow(agent({ auth: 'unknown', supports: { login: false } })).action, null);
   // Account details never reach a row: there is no field for them.
   assert.doesNotMatch(JSON.stringify(agentRow(agent({ auth: 'signed-in', email: 'a@b.c' }))), /@/);
@@ -61,6 +63,43 @@ test('agentRow offers install, install page or sign-in per state, one action at 
   assert.match(agentRow(cursor({ state: 'unlaunchable', available: false, unlaunchable: { path: 'C:\\x\\agent.cmd', reason: 'a batch file' } })).hint, /cannot start it safely: a batch file/);
   // Action names are unique per provider.
   assert.deepEqual(['install', 'login', 'install-page'].map(action => actionName(action, 'Codex')), ['Install Codex…', 'Sign in to Codex…', 'Open Codex install page']);
+});
+
+test('agentRow and agentCard agree for every provider, state and auth', async t => {
+  // The composer's cards and the Welcome rows can't disagree: same line, tone and next action.
+  const { agentRow, agentCard } = await load(t);
+  const fixtures = [undefined];
+  const supportsFor = provider => provider === 'cursor' ? [{ resume: true, createChat: true, mode: true }, { resume: true, createChat: true }, { login: true, mode: true }]
+    : [{ login: true, authStatus: true }, { login: false, authStatus: false }, undefined];
+  const commandSets = [commands(), commands({ install: null }), commands({ install: null, installPage: null }), undefined];
+  for (const provider of ['claude', 'codex', 'cursor']) {
+    for (const cmds of commandSets) {
+      fixtures.push({ provider, state: 'checking', available: false, version: null, auth: 'unchecked', commands: cmds });
+      fixtures.push({ provider, state: 'missing', available: false, version: null, commands: cmds });
+      fixtures.push({ provider, available: false, version: null, commands: cmds }); // no state: an older bootstrap
+    }
+    for (const supports of supportsFor(provider)) {
+      for (const auth of [undefined, 'unchecked', 'unknown', 'signed-in', 'signed-out']) {
+        fixtures.push(agent({ provider, auth, supports }));
+        fixtures.push(agent({ provider, auth, supports, version: null }));
+        fixtures.push(agent({ provider, auth, supports, state: 'login-required' }));
+      }
+      fixtures.push(agent({ provider, supports, state: 'unsupported' }));
+      fixtures.push(agent({ provider, supports, state: 'unsupported', available: false }));
+      fixtures.push(agent({ provider, supports, state: 'not-cursor', available: false, impostor: '/usr/bin/agent' }));
+      fixtures.push(agent({ provider, supports, state: 'unlaunchable', available: false, unlaunchable: { path: 'C:\\x\\agent.cmd', reason: 'a batch file' } }));
+    }
+  }
+  let compared = 0;
+  for (const fixture of fixtures) for (const provider of fixture ? [fixture.provider] : ['claude', 'codex', 'cursor']) {
+    const row = agentRow(fixture, provider); const card = agentCard(fixture, provider);
+    const label = JSON.stringify({ provider, state: fixture?.state, auth: fixture?.auth, supports: fixture?.supports, install: fixture?.commands?.install });
+    assert.deepEqual({ sub: card.sub, tone: card.tone, action: card.action, quiet: card.quiet }, { sub: row.sub, tone: row.tone, action: row.action, quiet: row.quietLogin }, label);
+    // Exactly one next action at most, and never "Signed in" without a parsed probe.
+    if (fixture?.auth !== 'signed-in') assert.doesNotMatch(card.sub, /Signed in/, label);
+    compared++;
+  }
+  assert.ok(compared > 150, `${compared} fixtures`);
 });
 
 const OVERVIEW = 'Purpose: A fixture project.\nStructure: src (4), tests (2); key files: README.md\nConstraints: [describe decisions the next session must preserve]';

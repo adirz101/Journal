@@ -2,7 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { newSession, switchProject } from './support/ui';
+import { newSession, startSession, switchProject } from './support/ui';
 
 // This verifies owned real processes, not assistant text or a simulated interrupt.
 test('running child cancellation, terminal stop and app exit leave no owned fixture processes', async () => {
@@ -46,8 +46,7 @@ else console.log('ECHO '+command);
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
     let page = await app.firstWindow();
     await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
-    await newSession(page); await page.getByLabel('Initial task').fill('LIFECYCLE_INITIAL_TASK');
-    await page.getByRole('button', { name: 'Start Claude' }).click();
+    await startSession(page, 'claude', { task: 'LIFECYCLE_INITIAL_TASK' });
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
     const firstArgs = launches()[0].argv; const nativeId = firstArgs[firstArgs.indexOf('--session-id') + 1];
     // The terminal accepts input once its output is replayed; wait until a typed line echoes

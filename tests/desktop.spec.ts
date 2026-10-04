@@ -2,7 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { inspectorTab, newSession, sessionActions, sessionStatus, setTheme, switchProject } from './support/ui';
+import { inspectContext, inspectorTab, newSession, sessionActions, sessionStatus, setTheme, startSession, switchProject } from './support/ui';
 
 test('reviewed file knowledge reaches a real PTY and survives renderer and app restart', async () => {
   // A long scenario: each start now begins with New session (Phase 3 split view), and hidden test windows click slowly.
@@ -47,14 +47,14 @@ process.stdin.on('data',data=>{
     await page.getByRole('button', { name: 'Save for review' }).click();
     await expect(page.getByText('Fixture tests require Docker', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Remember', exact: true }).click();
-    await newSession(page); await page.getByLabel('Initial task').fill('Review Docker tests');
-    await page.getByRole('button', { name: 'Preview context' }).click();
+    await newSession(page); await page.getByLabel('Task', { exact: true }).fill('Review Docker tests');
+    await inspectContext(page);
     await expect(page.getByTestId('context-packet')).toContainText('Fixture tests require Docker');
-    await page.getByRole('button', { name: 'Start Claude' }).click();
+    await startSession(page, 'claude');
     // The session view replaces the form; the next New session starts with an empty task.
-    await expect(page.getByLabel('Initial task')).toHaveCount(0);
+    await expect(page.getByLabel('Task', { exact: true })).toHaveCount(0);
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
-    await newSession(page); await expect(page.getByLabel('Initial task')).toHaveValue('');
+    await newSession(page); await expect(page.getByLabel('Task', { exact: true })).toHaveValue('');
     await page.getByRole('button', { name: /^Claude Code: Review Docker tests\./ }).click();
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
     // The provider mark sits next to the name; the session row's accessible name is unchanged.
@@ -129,9 +129,8 @@ process.stdin.on('data',data=>{
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(sessionStatus(page)).toContainText('Stopped');
     // Reviewed knowledge is provider-neutral; Codex needs an explicitly confirmed UUID.
-    await newSession(page); await expect(page.getByLabel('Initial task')).toHaveValue('');
-    await page.getByLabel('Initial task').fill('Docker tests');
-    await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
+    await newSession(page); await expect(page.getByLabel('Task', { exact: true })).toHaveValue('');
+    await startSession(page, 'codex', { task: 'Docker tests' });
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
     // Codex shows the OpenAI mark in its heading and in its session row, hidden from assistive technology.
     await expect(page.locator('.session-header .provider-mark.codex[aria-hidden="true"] svg')).toBeVisible();
@@ -147,8 +146,7 @@ process.stdin.on('data',data=>{
     await expect(sessionStatus(page)).toContainText('Stopped');
     // Selecting a confirmed older session must not prefill a new conversation's ID.
     await page.getByRole('button', { name: /^Codex:/ }).first().click();
-    await newSession(page); await page.getByLabel('Initial task').fill('Docker tests NEW_CODEX_SESSION_MARKER');
-    await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
+    await startSession(page, 'codex', { task: 'Docker tests NEW_CODEX_SESSION_MARKER' });
     await expect(page.locator('.terminal-surface')).toContainText('NEW_CODEX_SESSION_MARKER');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.getByLabel('Native session ID')).toHaveValue('');

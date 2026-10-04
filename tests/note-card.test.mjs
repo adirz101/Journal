@@ -99,6 +99,22 @@ test('evidenceLine: every validation, one line, a folder and the receipt suffix'
   assert.equal(evidenceLine(note({ source: { kind: 'user', note: 'because' } })), null);
 });
 
+test('evidenceLine: sources not checked yet never say the file is unchanged', async t => {
+  // The composer's typing preview reads stored records only (D3): its file notes say they are
+  // checked when you start, whatever the stored validation says.
+  const { evidenceLine } = await load(t);
+  for (const validation of ['current', 'stale', undefined]) {
+    const line = evidenceLine(note({ validation }), undefined, 'preview', undefined, true);
+    assert.deepEqual(line, { text: 'Based on tests.md:3–5 · checked when you start', tone: 'quiet', title: 'tests.md:3–5' }, String(validation));
+  }
+  assert.equal(evidenceLine(note(), 'api', 'hover', undefined, true).text, 'Based on api/tests.md:3–5 · checked when you start');
+  // A delivered snapshot keeps its own wording; notes without a file still have no line.
+  assert.equal(evidenceLine(note(), undefined, 'receipt', undefined, true).text, 'Based on tests.md:3–5 · checked when the session started');
+  assert.equal(evidenceLine(note({ source: { kind: 'user', note: 'because' } }), undefined, 'preview', undefined, true), null);
+  // Without the flag (existing callers), nothing changes.
+  assert.equal(evidenceLine(note(), undefined, 'preview').text, 'Based on tests.md:3–5 · file unchanged since you saved it');
+});
+
 test('sentLine counts conversations and never says used', async t => {
   const { sentLine } = await load(t);
   assert.equal(sentLine(undefined), null); assert.equal(sentLine(null), null);
