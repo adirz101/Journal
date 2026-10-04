@@ -47,7 +47,7 @@ async function open(env: Record<string, string>, project: string): Promise<{ app
   // The window counts as focused, so no real notification is ever posted.
   await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); (globalThis as any).__journalFocused = () => true; }, project);
   const page = await app.firstWindow();
-  await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
   return { app, page };
 }
 const closeApp = async (app: ElectronApplication) => {
@@ -116,6 +116,9 @@ test('Remember puts the note in Memory at once; Remember all remembers every sug
     await card.getByRole('button', { name: 'Remember', exact: true }).click();
     await expect(keep(page)).toContainText('Remembered. It goes to new sessions where it applies.');
     await expect(page.locator('.sidebar-footer .count-badge')).toHaveCount(0);
+    // Phase 7: the install's first remembered note, from the wrap-up, gets the first-note moment (once).
+    await expect(page.locator('.first-note')).toContainText('First note remembered.');
+    expect(await page.evaluate(() => localStorage.getItem('journal-first-note-seen'))).toBe('1');
     await inspectorTab(page, 'Memory');
     await page.locator('.filter-tabs').getByRole('button', { name: 'Remembered', exact: true }).click();
     await expect(page.locator('.memory-list .note-statement').getByText('Release tags must be signed by CI')).toBeVisible();
@@ -133,6 +136,7 @@ test('Remember puts the note in Memory at once; Remember all remembers every sug
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     await page.keyboard.press(mac ? 'Shift+Meta+Enter' : 'Control+Shift+Enter');
     await expect(keep(page).locator('.wrap-row-done.ok')).toHaveCount(2);
+    await expect(page.locator('.first-note')).toHaveCount(0); // later notes: the plain Remembered state
     const active = await request(page, 'memoryPage', { projectId: id, filter: 'active' }) as any;
     expect(active.items.map((item: any) => item.statement).sort()).toEqual(['Always run npm test before pushing', 'Never commit generated files', 'Release tags must be signed by CI']);
   } finally { await closeApp(app); f.cleanup(); }

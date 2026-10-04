@@ -588,7 +588,7 @@ export default function App() {
           {/* Show terminal hides the wrap-up without unmounting it, so a staged Still true or Dismiss keeps its Undo;
               only another session or project (the key) commits it. */}
           {endedView(session) ? <><div className="wrap-scroll" hidden={!wrapUpShown}><WrapUp key={session.id} session={session} project={state.project} workspaces={workspaces?.workspaces ?? []} receipt={sessionReceipt} events={events} agents={bootstrap?.agents ?? []}
-            appearance={appearance} mac={bootstrap?.platform === 'darwin'} busy={busy} canStart={canStart} connected={connected} justEnded={justEnded} hidden={!wrapUpShown} knowledgeVersion={knowledgeVersion}
+            appearance={appearance} mac={bootstrap?.platform === 'darwin'} busy={busy} canStart={canStart} connected={connected} justEnded={justEnded} hidden={!wrapUpShown} knowledgeVersion={knowledgeVersion} onRemembered={noteRemembered}
             onShowTerminal={() => setTerminalShown(current => ({ ...current, [session.id]: true }))} onContinue={() => void start(session.provider, session)}
             onConfirmId={nativeId => run(async () => { merge([await api<Session>('confirmNativeId', { id: session.id, nativeId })]); })} onCopyId={() => void sessionActions.copyNativeId(session)}
             onOpenDiff={() => { setFilesChoice('changed'); setPanel('files'); layout.showInspector(); }} onOpenMemory={() => { setPanel('memory'); layout.showInspector(); }}
