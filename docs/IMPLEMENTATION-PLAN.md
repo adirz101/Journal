@@ -2,7 +2,7 @@
 
 **Current testing policy:** all checks are manual and local on the user's computer. No CI, hosted runners, nightly tests or scheduled verification. This policy supersedes historical testing proposals below.
 
-Date: 1 October 2026. **Historical full-product roadmap.** The user approved a narrower terminal-only first slice and rejected all dev3 code reuse. The current [specification](TERMINAL-FIRST-SPEC.md), [plan](superpowers/plans/2026-10-01-terminal-first.md), [foundation decision](adr/002-terminal-first-foundation.md) and [verified status](IMPLEMENTATION-STATUS.md) supersede the initial stack, chat and reuse assumptions below. Later phases remain proposals.
+Date: 1 October 2026. **Historical full-product roadmap.** The user approved a narrower terminal-only first slice and rejected reusing third-party application code. The current [specification](TERMINAL-FIRST-SPEC.md), [plan](superpowers/plans/2026-10-01-terminal-first.md), [foundation decision](adr/002-terminal-first-foundation.md) and [verified status](IMPLEMENTATION-STATUS.md) supersede the initial stack, chat and reuse assumptions below. Later phases remain proposals.
 
 ## Roadmap status (2 October 2026)
 
@@ -32,14 +32,14 @@ No product scaffolding before the feasibility decision. Keep spike code throwawa
 
 ## Phase 0 — Feasibility and product proof
 
-**Reuse-first revision after the focused source audit:** read the follow-up in
-[RESEARCH.md](RESEARCH.md#follow-up-reuse-existing-agent-integrations) before
-executing these spikes. Compare extending dev3 with extracting its Apache-licensed
-agent/hook modules; use Superset as a structured-chat reference subject to ELv2.
-Do not build a fresh agent loop, OAuth flow, or terminal runtime before assessing
-that reuse. The Tauri proposal remains provisional. Agent connection spikes now
-validate the selected existing route and Journal-specific behavior; basic
-Claude/Codex integration is already demonstrated in upstream implementations.
+**Revision after the focused source audit:** read the integration routes in
+[RESEARCH.md](RESEARCH.md#how-agent-workspaces-connect-to-claude-and-codex) before
+executing these spikes. Do not build a fresh agent loop, OAuth flow, or terminal
+runtime before choosing a route. The Tauri proposal remains provisional. Agent
+connection spikes now validate the selected route and Journal-specific behavior;
+basic Claude/Codex integration through the official CLIs and protocols is already
+demonstrated by existing tools. (Superseded: the user rejected reusing third-party
+application code; see [ADR 002](adr/002-terminal-first-foundation.md).)
 
 Timebox: roughly 2–3 engineering weeks, with policy response times independent. Run in this order; Windows probe must not wait for a finished Mac UI.
 
@@ -83,7 +83,7 @@ Outputs: reproducible platform smoke scripts, actual measured memory/startup/inp
 
 Before a full shell, manually curate ~30–50 evidence-linked claims in 2–3 fixture/consented real projects. Include failures, decisions, explicit policies, stale paths, conflicting branches and malicious/noisy claims. Test ~20–30 task/review queries on frozen checkouts; keep claims/task labels separate from model-generated answers.
 
-Compare: no injected memory; small human AGENTS/CLAUDE guidance; native memory; existing workspace + Engram/claude-mem; proposed scoped/validated packets. Use the same model/task conditions where feasible and state configuration differences. Measure relevant hits, stale/wrong-scope injections, repeated failed approaches, token overhead, manual correction time and user preference. This is a directional pilot, not a statistically strong provider benchmark.
+Compare: no injected memory; small human AGENTS/CLAUDE guidance; native memory; an existing workspace plus a dedicated memory tool; proposed scoped/validated packets. Use the same model/task conditions where feasible and state configuration differences. Measure relevant hits, stale/wrong-scope injections, repeated failed approaches, token overhead, manual correction time and user preference. This is a directional pilot, not a statistically strong provider benchmark.
 
 Gate: proposed approach demonstrates a concrete benefit beyond curated docs and assembled tools, with manageable review burden. If not, ABANDON a new desktop and contribute the useful missing piece upstream. If scope/validation is useful but the shell is not, MODIFY to companion.
 

@@ -4,7 +4,7 @@
 
 **Goal:** Working terminal-only first slice with reviewed, source-backed knowledge shared between Claude and Codex.
 
-**Architecture:** Narrow desktop IPC calls a local SQLite knowledge service and owned PTY manager. Native agents keep their settings and permissions. Original Journal launchers use official CLI contracts; reuse node-pty/xterm. User explicitly rejected all dev3 code reuse.
+**Architecture:** Narrow desktop IPC calls a local SQLite knowledge service and owned PTY manager. Native agents keep their settings and permissions. Original Journal launchers use official CLI contracts; reuse node-pty/xterm. User explicitly rejected reusing third-party application code.
 
 **Tech Stack:** Electron, React, Vite, Node >=24, node:sqlite/FTS5, node-pty, xterm.js.
 
@@ -27,7 +27,7 @@ Terminal only. One active terminal at a time. Native settings/permissions/login 
 Files: `src/core/agents.mjs`, `tests/agents.test.mjs`.
 Produces `buildAgentLaunch({provider,nativeId,resume,prompt,settingsFile}) -> {executable,argv}` and exact-ID capture helpers.
 - [x] Write failing tests for fresh/resumed UUIDs, literal argv, missing-ID refusal and absence of bypass flags; run `npm test`.
-- [x] Write original launch code against official CLI contracts; add native CLI detection. Run tests. No vendor directory or dev3 code.
+- [x] Write original launch code against official CLI contracts; add native CLI detection. Run tests. No vendor directory or third-party application code.
 
 ### Task 2 — Evidence-backed SQLite knowledge
 
