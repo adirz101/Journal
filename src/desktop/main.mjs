@@ -94,7 +94,8 @@ function validSender(event) {
 // The runtime is detached from this process so an app crash or window close
 // does not end running agents. Its output goes to a bounded log, not a pipe.
 function launchRuntime() {
-  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+  // The runtime names Journal's version to agents as TERM_PROGRAM_VERSION.
+  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', JOURNAL_APP_VERSION: app.getVersion() };
   const log = openSync(join(userData, 'runtime-stderr.log'), 'a', 0o600);
   const child = spawn(process.execPath, [unpacked(resolve(here, '../runtime/runtime.mjs')), '--data', userData], { detached: true, stdio: ['ignore', 'ignore', log], env, windowsHide: true });
   // Report exit from the child handle: a killed, not yet reaped runtime still
@@ -130,6 +131,8 @@ function createWindow() {
   });
   // A reloading renderer re-attaches; until then the runtime keeps buffering.
   window.webContents.on('did-start-loading', () => { modalOpen = false; void runtime?.call('detach', {}).catch(() => {}); });
+  // A crashed or killed renderer never detaches its panes itself.
+  window.webContents.on('render-process-gone', () => { modalOpen = false; void runtime?.call('detach', {}).catch(() => {}); });
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   window.on('closed', () => { window = null; });
   // Windows and Linux flash the taskbar while something waits; looking at Journal stops it.
@@ -659,7 +662,7 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
     try { return { ok: true, value: await (hook ? hook(action, () => actions[action](input)) : actions[action](input)) }; } finally { if (ROOT_CHANGES.has(action)) { rootCache.clear(); listings.clear(); } }
   } catch (error) { return settledError(error); }
 });
-try { recovery = recoveryFrom(await runtime.connect()); runtimeState = 'connected'; await seedNotifier(); }
+try { recovery = recoveryFrom(await runtime.connect()); runtimeState = 'connected'; tellRuntimeAppearance(); await seedNotifier(); }
 catch (error) { runtimeState = 'disconnected'; console.error('Journal runtime unavailable:', error.message); void runtime.reconnect(); }
 createWindow();
 // Updates: packaged builds only. The automatic-check preference lives in the data folder.

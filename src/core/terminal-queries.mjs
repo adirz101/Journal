@@ -35,21 +35,42 @@ const CARRY_LIMIT = 512;
 // OSC 10/11/12 with one or more slots, ended by BEL or ST; DA1 (CSI c or CSI 0 c);
 // private mode set/reset (for 2031); the theme report request (CSI ? 996 n).
 const SEQUENCES = /\x1b\](1[0-2]);([^\x07\x1b]*)(\x07|\x1b\\)|\x1b\[0?c|\x1b\[\?([\d;]+)([hl])|\x1b\[\?996n/g;
-// An escape sequence cut off at the end of a chunk: OSC without its terminator or a CSI without its final byte.
-const INCOMPLETE = /\x1b(?:\](?:[^\x07\x1b]|\x1b(?!\\))*|\[[\d;?]*)?$/;
+// An escape sequence cut off at the end of a chunk: OSC without its terminator (perhaps
+// ending in the ESC of ST) or a CSI without its final byte. Any other ESC ends an OSC, as in xterm.
+const INCOMPLETE = /\x1b(?:\][^\x07\x1b]*\x1b?|\[[\d;?]*)?$/;
+
+// Variables naming the terminal Journal was started from (iTerm2, VS Code, tmux…). An agent
+// runs in Journal's terminal, so they are removed, and TERM_PROGRAM names Journal.
+const INHERITED_TERMINAL = new Set(['TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'LC_TERMINAL', 'LC_TERMINAL_VERSION', 'ITERM_SESSION_ID', 'ITERM_PROFILE',
+  'KITTY_WINDOW_ID', 'KITTY_PID', 'KITTY_LISTEN_ON', 'KITTY_PUBLIC_KEY', 'WT_SESSION', 'WT_PROFILE_ID', 'TERM_SESSION_ID', 'TERMINAL_EMULATOR', 'CURSOR_TRACE_ID',
+  'TMUX', 'TMUX_PANE', 'STY', 'XTERM_VERSION', 'VTE_VERSION', 'TILIX_ID', 'TERMINATOR_UUID', 'CONEMUANSI', 'CONEMUPID', 'CONEMUTASK', 'COLORFGBG']);
+const INHERITED_PREFIXES = ['VSCODE_', 'ALACRITTY_', 'WEZTERM_', 'GHOSTTY_', 'KONSOLE_'];
+export function agentTerminalEnv(env, { appearance = 'dark', version = null } = {}) {
+  const next = {};
+  for (const [key, value] of Object.entries(env)) {
+    const upper = key.toUpperCase();
+    if (!INHERITED_TERMINAL.has(upper) && !INHERITED_PREFIXES.some(prefix => upper.startsWith(prefix))) next[key] = value;
+  }
+  return { ...next, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'Journal', ...(version ? { TERM_PROGRAM_VERSION: String(version) } : {}),
+    COLORFGBG: COLORFGBG[appearanceOf(appearance)] };
+}
 
 export class QueryResponder {
   constructor() { this.carry = ''; this.themeReports = false; }
   // Reads a chunk of PTY output and returns the bytes to write back to the PTY ('' for none).
   feed(data, { appearance = 'dark', attached = false } = {}) {
-    const text = this.carry + data; let reply = '';
+    // Most output has no escape at all.
+    if (!this.carry && !data.includes('\x1b')) return '';
+    const text = this.carry + data; let reply = ''; let consumed = 0;
     const colors = TERMINAL_COLORS[appearanceOf(appearance)];
-    SEQUENCES.lastIndex = 0;
     for (const match of text.matchAll(SEQUENCES)) {
+      consumed = match.index + match[0].length;
       const [whole, code, slots, end, modes, set] = match;
       if (code) {
-        // OSC 10;?;? asks for 10 and 11: each slot is the next colour.
-        slots.split(';').forEach((slot, index) => {
+        // OSC 10;?;? asks for 10 and 11: each slot is the next colour. A sequence that also
+        // sets a colour is left to the window's terminal, which applies it (and answers it).
+        const parts = slots.split(';'); if (!parts.every(slot => slot === '?')) continue;
+        parts.forEach((slot, index) => {
           const ident = Number(code) + index;
           if (slot === '?' && colors[ident]) reply += `\x1b]${ident};${xtermRgb(colors[ident])}${end}`;
         });
@@ -58,8 +79,11 @@ export class QueryResponder {
       } else if (whole === '\x1b[?996n') reply += themeReport(appearance);
       else if (!attached) reply += DA1_REPLY;
     }
-    const tail = INCOMPLETE.exec(text);
-    this.carry = tail && tail[0].length <= CARRY_LIMIT ? tail[0] : '';
+    // Only an unfinished sequence after the last one handled is kept, and only the last
+    // CARRY_LIMIT characters are searched: a flood of unterminated openers stays linear.
+    const from = Math.max(consumed, text.length - CARRY_LIMIT);
+    const tail = INCOMPLETE.exec(text.slice(from));
+    this.carry = tail ? tail[0] : '';
     return reply;
   }
 }

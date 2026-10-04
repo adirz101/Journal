@@ -66,7 +66,9 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
   let manager = null;
   const observers = new Observers({ dataDir, hookScript, execPath, platform, ingest: (id, event) => manager.ingest(id, event),
     lost: id => manager.record(id, 'error', { message: 'Activity observation stopped: the hook event file reached its size limit.' }) });
-  manager = new TerminalManager({ store, spawn, runtimeId, platform, makeSettings: (session, project) => observers.settings(session, project),
+  // Set by main when it launches the runtime; otherwise this checkout's version.
+  const appVersion = process.env.JOURNAL_APP_VERSION || (() => { try { return JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version; } catch { return null; } })();
+  manager = new TerminalManager({ store, spawn, runtimeId, platform, appVersion, makeSettings: (session, project) => observers.settings(session, project),
     ...(identify ? { identify } : {}), ...(table ? { table } : {}), ...(stopGraceMs ? { stopGraceMs } : {}) });
   const recovered = await manager.recover();
   // Trace retention (timelines of long-ended sessions); knowledge is never pruned.

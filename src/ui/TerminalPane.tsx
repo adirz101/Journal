@@ -50,8 +50,9 @@ export function TerminalPane({ sessionId, live, appearance, onError, onUnavailab
     terminal.parser.registerOscHandler(8, () => true); // No automatic links to external applications.
     // Colour queries (OSC 10/11/12 with a ?) are answered by the runtime at once, shown or not
     // (src/core/terminal-queries.mjs); answering here too would type a second reply into the CLI.
-    // A runtime from an earlier build does not answer them, so xterm still does. Setting a colour is left to xterm.
-    for (const code of [10, 11, 12]) terminal.parser.registerOscHandler(code, data => runtimeColors && data.split(';').includes('?'));
+    // A runtime from an earlier build does not answer them, so xterm still does. Only a pure query is
+    // swallowed: a sequence that also sets a colour goes to xterm (which then answers its queries too).
+    for (const code of [10, 11, 12]) terminal.parser.registerOscHandler(code, data => runtimeColors && data.split(';').every(slot => slot === '?'));
     const failed = (error: unknown) => { if (!disposed) errorRef.current(String(error instanceof Error ? error.message : error)); };
     function handle(event: TerminalEvent) {
       if (disposed) return;

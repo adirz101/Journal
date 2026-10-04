@@ -8,7 +8,7 @@ import { redact, text } from './validation.mjs';
 import { generateTitle } from './sessions.mjs';
 import { referenceEvent } from './references.mjs';
 import { realPath } from './paths.mjs';
-import { APPEARANCES, COLORFGBG, QueryResponder, themeReport } from './terminal-queries.mjs';
+import { agentTerminalEnv, APPEARANCES, QueryResponder, themeReport } from './terminal-queries.mjs';
 
 export const MAX_SESSIONS = 4;
 export const IDLE_SETTLE_MS = 750;
@@ -92,13 +92,13 @@ export class OutputBuffer {
 // only entries this manager spawned (and that have not exited) accept input or
 // signals. Output stays in bounded memory; nothing raw is persisted.
 export class TerminalManager extends EventEmitter {
-  constructor({ store, spawn, makeSettings = () => null, runtimeId = randomUUID(), platform = process.platform,
+  constructor({ store, spawn, makeSettings = () => null, runtimeId = randomUUID(), platform = process.platform, appVersion = null,
     identify = processIdentity, table = processTable, verifiedSignal = signalVerified, alive = isAlive, stopGraceMs = 3000, trackMs = 5000,
     cursor = { find: () => findCursor(process.env), createChat: (path, cwd) => createChat(path, cwd, process.env) } }) {
     super(); this.cursor = cursor; this.store = store; this.spawn = spawn; this.makeSettings = makeSettings; this.runtimeId = runtimeId; this.platform = platform;
     this.identify = identify; this.table = table; this.verifiedSignal = verifiedSignal; this.alive = alive; this.stopGraceMs = stopGraceMs;
     // Journal's light or dark appearance: main sends it with each start and on every switch.
-    this.appearance = 'dark';
+    this.appearance = 'dark'; this.appVersion = appVersion;
     // Slots 1-4 are reserved synchronously at start so concurrent starts never share one.
     this.entries = new Map(); this.reservedSlots = new Set(); this.flushPending = false; this.disposed = false; this.settling = new Set();
     this.tracker = trackMs ? setInterval(() => { void this.trackDescendants().catch(() => {}); void this.recheckOrphans().catch(() => {}); }, trackMs) : null; this.tracker?.unref?.();
@@ -183,12 +183,12 @@ export class TerminalManager extends EventEmitter {
       if (this.disposed) throw fail(ERROR_CODES.SHUTTING_DOWN, 'Journal is shutting down');
       const settingsFile = provider === 'claude' ? this.makeSettings(session, project) : null;
       const launch = buildAgentLaunch({ provider, nativeId: session.nativeId, resume: !!prior, prompt, settingsFile, research, plan, executable: cursor?.path });
-      // COLORFGBG describes Journal's terminal, not the one Journal was started from: Claude Code
-      // (theme Auto) and Cursor fall back to it when the background query goes unanswered.
-      const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', COLORFGBG: COLORFGBG[this.appearance], JOURNAL_SESSION_ID: session.id };
-      delete env.ELECTRON_RUN_AS_NODE;
+      // The agent's terminal is Journal's, not the one Journal was started from: TERM_PROGRAM names
+      // Journal, and COLORFGBG (read by Claude Code in theme Auto and by Cursor) is Journal's appearance.
+      const env = { ...agentTerminalEnv(process.env, { appearance: this.appearance, version: this.appVersion }), JOURNAL_SESSION_ID: session.id };
+      delete env.ELECTRON_RUN_AS_NODE; delete env.JOURNAL_APP_VERSION;
       const proc = this.spawn(launch.executable, launch.argv, { cwd: session.cwd, env, name: 'xterm-256color', ...PTY_SIZE });
-      entry = { session, proc, buffer: new OutputBuffer(), attached: false, sent: 0, acknowledged: 0, inflight: [], tail: '', exited: false,
+      entry = { session, proc, buffer: new OutputBuffer(), attached: 0, sent: 0, acknowledged: 0, inflight: [], tail: '', exited: false,
         stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), tools: new Map(), pending: [], answered: false, lastPersist: 0,
         lastInputAt: 0, lastResizeAt: 0, lastActivityEmit: 0, activityTimer: null, size: { cols: PTY_SIZE.cols, rows: PTY_SIZE.rows }, queries: new QueryResponder() };
       this.entries.set(session.id, entry);
@@ -229,7 +229,7 @@ export class TerminalManager extends EventEmitter {
     if (!entry.sawOutput) { entry.sawOutput = true; void this.refreshIdentity(entry); }
     entry.buffer.append(data); entry.tail = (entry.tail + data).slice(-8192);
     // Colour queries are answered here at once (src/core/terminal-queries.mjs). Not typed input: lastInputAt stays.
-    const reply = entry.queries.feed(data, { appearance: this.appearance, attached: entry.attached });
+    const reply = entry.queries.feed(data, { appearance: this.appearance, attached: entry.attached > 0 });
     if (reply && !entry.exited) { try { entry.proc.write(reply); } catch { /* the PTY is closing */ } }
     const now = Date.now();
     // Echo of typed input and full-screen repaints after a resize are not agent output.
@@ -546,7 +546,8 @@ export class TerminalManager extends EventEmitter {
     const entry = this.entries.get(id);
     if (!entry) return { chunks: [], gap: true, lastSequence: 0 };
     const snapshot = entry.buffer.since(0);
-    entry.attached = true; entry.sent = snapshot.lastSequence; entry.acknowledged = snapshot.lastSequence; entry.inflight = [];
+    // A count: two panes may show one session, and closing one must not detach the other.
+    entry.attached++; entry.sent = snapshot.lastSequence; entry.acknowledged = snapshot.lastSequence; entry.inflight = [];
     // colors: this runtime answers colour queries, so the window must not answer them too.
     return { ...snapshot, colors: true };
   }
@@ -563,7 +564,8 @@ export class TerminalManager extends EventEmitter {
     return { reported };
   }
   detach(id) {
-    for (const entry of this.entries.values()) if (!id || entry.session.id === id) entry.attached = false;
+    // Without an ID (a reload, or the renderer gone) every pane is gone.
+    for (const entry of this.entries.values()) if (!id) entry.attached = 0; else if (entry.session.id === id) entry.attached = Math.max(0, entry.attached - 1);
     if (!this.disposed) this.trimExited();
   }
   acknowledge(id, sequence) {
