@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import ts from 'typescript';
-import { copy, excludedReason, selectionReason, warningText } from '../src/ui/copy.ts';
+import { copy, excludedReason, memoryState, selectionReason, tip, warningText } from '../src/ui/copy.ts';
 
 // Plain-language vocabulary (design board B8). The technical term may stay in a
 // tooltip (the title attribute of an element) but not in visible text or names.
@@ -88,6 +88,9 @@ test('core reasons and warnings are shown in the plain vocabulary; packet text i
   assert.equal(selectionReason('matched'), 'Relevant to your task');
   assert.equal(selectionReason(undefined), 'Included');
   assert.equal(copy.onlyOn('main'), 'Only on main');
+  // Forget pairs with Remember; the tooltip keeps the technical meaning.
+  assert.equal(copy.forget, 'Forget…'); assert.match(tip.forget, /^Archive: agents stop receiving it/);
+  assert.equal(memoryState({ status: 'archived', validation: 'current' }), 'Forgotten');
   assert.equal(copy.onlyOn(null), 'Only on this branch');
   assert.equal(excludedReason('stale'), 'out of date');
   assert.equal(excludedReason('left-out-for-task'), 'left out by you');

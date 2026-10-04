@@ -61,7 +61,16 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
     // Withdrawing a status update excludes it from subsequent context.
     await page.getByRole('tab', { name: /^Memory/ }).click();
     const card = page.locator('.memory-card').filter({ hasText: 'FEATURE_PROGRESS' });
-    await card.getByRole('button', { name: 'Archive', exact: true }).click();
+    // Forgetting cannot be undone, so it asks first: Cancel keeps the note, Forget archives it.
+    const answer = (response: number) => app.evaluate(({ dialog }, r) => { (dialog as any).showMessageBox = async (_w: unknown, options: any) => { (globalThis as any).__lastDialog = options; return { response: r }; }; }, response);
+    await answer(1);
+    await card.getByRole('button', { name: 'Forget…', exact: true }).click();
+    await expect.poll(() => app.evaluate(() => (globalThis as any).__lastDialog?.message)).toBe('Forget this note?');
+    expect(await app.evaluate(() => (globalThis as any).__lastDialog.detail)).toContain('FEATURE_PROGRESS');
+    await expect(card.locator('.memory-state')).toHaveText('Remembered');
+    await answer(0);
+    await card.getByRole('button', { name: 'Forget…', exact: true }).click();
+    await expect(card).toHaveCount(0);
     await page.getByRole('button', { name: 'Preview context' }).click();
     await expect(page.getByTestId('context-packet')).toContainText('REPO_PURPOSE');
     await expect(page.getByTestId('context-packet')).not.toContainText('FEATURE_PROGRESS');

@@ -210,7 +210,17 @@ const actions = {
   forgetWorkspace: ({ id }) => store.forgetWorkspace(id),
   memoryPage: ({ projectId, offset, limit, filter, search }) => store.listMemoryPage(projectId, { offset, limit, filter, search }),
   proposeMemory: ({ projectId, input }) => store.proposeMemory(projectId, input),
-  setMemoryStatus: ({ id, status }) => store.setMemoryStatus(id, status, { reason: status === 'archived' ? 'withdrawn' : null }),
+  // Forgetting (archiving) cannot be undone, so it asks first; Cancel returns null.
+  setMemoryStatus: async ({ id, status }) => {
+    if (status === 'archived') {
+      const memory = await store.getMemory(id);
+      const statement = memory.statement.length > 160 ? `${memory.statement.slice(0, 159)}…` : memory.statement;
+      const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Forget', 'Cancel'], defaultId: 1, cancelId: 1, message: 'Forget this note?',
+        detail: `“${statement}”\n\nAgents stop receiving it from the next session. It stays in History and cannot be remembered again as it is; to use it again, revise it there and review it.` });
+      if (response !== 0) return null;
+    }
+    return store.setMemoryStatus(id, status, { reason: status === 'archived' ? 'withdrawn' : null });
+  },
   proposeStatusUpdate: ({ projectId, scope }) => store.proposeStatusUpdate(projectId, scope),
   memoryHistory: ({ id }) => store.memoryHistory(id),
   prepareContext: ({ projectId, task, workspaceId, disabled, references }) => store.prepareContext(projectId, task, { workspaceId: workspaceId ?? null, disabled: disabled ?? [], references: references ?? [], persist: false }),
