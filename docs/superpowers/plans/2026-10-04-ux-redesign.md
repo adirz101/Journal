@@ -985,7 +985,7 @@ Each task lists **files**, **what to build** (signatures and behaviour), **tests
 - [ ] **Docs:**
   - Update `README.md` (screens and shortcuts).
   - Update `docs/IMPLEMENTATION-STATUS.md`.
-  - Apply the approved spec amendments (D1–D4) to `docs/TERMINAL-FIRST-SPEC.md` and `docs/PROJECT-ORIENTATION.md`.
+  - Apply the remaining approved spec amendments (D1, and D2 if approved; D3 and D4 were applied in Phase 4) to `docs/TERMINAL-FIRST-SPEC.md` and `docs/PROJECT-ORIENTATION.md`.
   - Update `docs/PROVIDERS.md` (auth status, pending command).
   - Add a product screenshot where the README has a TODO.
 - [ ] **Usability round 2** with the built app: the same script as board B15, plus terminal feel and real approvals. Compare with the mockup round.
