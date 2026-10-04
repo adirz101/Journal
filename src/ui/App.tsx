@@ -194,9 +194,10 @@ export default function App() {
     else if (id === 'tab-files') { setCollapsed(false); setPanel('files'); setExplorerFocus(n => n + 1); }
     else if (id === 'tab-memory') { setCollapsed(false); setPanel('memory'); }
   };
-  // A notification click (main sends focus-session) selects its session like a click, busy or not.
+  // A notification click (main sends focus-session) selects its session like a click, busy or not,
+  // except while a dialog is open: like commands, it must not switch the session behind it.
   const focusSession = useRef<(id: string) => void>(() => {});
-  focusSession.current = id => { const target = sessions[id]; if (target) void selectSession(target); };
+  focusSession.current = id => { if (document.querySelector('dialog[open]')) return; const target = sessions[id]; if (target) void selectSession(target); };
   useEffect(() => window.journal?.onEvent(event => {
     if (event.type === 'command') command.current(event.id);
     else if (event.type === 'focus-session') focusSession.current(event.sessionId);

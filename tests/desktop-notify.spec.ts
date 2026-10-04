@@ -85,7 +85,10 @@ async function startClaude(page: Page, task: string) {
   await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
   await expect(page.locator('.terminal-surface')).toContainText(`TASK ${task}`);
   const live = await page.evaluate(async () => (await (window as any).journal.request('sessions')).live);
-  return live.find((session: any) => session.task === task || session.title === task || JSON.stringify(session).includes(task));
+  // Exactly one live session carries this task as its title.
+  const matches = live.filter((session: any) => session.title === task);
+  expect(matches).toHaveLength(1);
+  return matches[0];
 }
 
 // Plays one Claude hook event through Journal's own hook script and settings file.
@@ -178,11 +181,7 @@ test('clicking the notification sends focus-session for its session', async () =
   } finally { await closeApp(app); f.cleanup(); }
 });
 
-// The renderer half (Group B) selects the session on focus-session. Until that
-// handler is merged this test is skipped; it enables itself afterwards.
-const rendererHandlesFocus = readFileSync(resolve('src/ui/App.tsx'), 'utf8').includes('focus-session');
-test('clicking the notification selects its session in the renderer', async () => {
-  test.skip(!rendererHandlesFocus, 'Needs the renderer focus-session handler (Phase 2 Group B)');
+test('clicking the notification selects its session in the renderer, but not while a dialog is open', async () => {
   const f = setup('notify-select'); const { app, page } = await open(f.env, f.project);
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
@@ -192,6 +191,15 @@ test('clicking the notification selects its session in the renderer', async () =
     hook(f.root, f.project, first, 'PreToolUse', bash('s1'));
     hook(f.root, f.project, first, 'PermissionRequest', bash('s1'));
     await expect.poll(async () => (await notifications(app)).length).toBe(1);
+    // An open dialog owns the window: the click must not switch the session behind it.
+    await page.getByRole('button', { name: /^Manage / }).click();
+    await expect(page.locator('dialog[open]')).toHaveCount(1);
+    await app.evaluate(() => (globalThis as any).__notifications[0].handlers.click());
+    await expect.poll(() => app.evaluate(() => (globalThis as any).__focusEvents.length)).toBe(1);
+    await page.waitForTimeout(300);
+    await expect(sessionButton(page, 'SELECT_B')).toHaveAttribute('aria-current', 'true');
+    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(page.locator('dialog[open]')).toHaveCount(0);
     await app.evaluate(() => (globalThis as any).__notifications[0].handlers.click());
     await expect(sessionButton(page, 'SELECT_A')).toHaveAttribute('aria-current', 'true');
   } finally { await closeApp(app); f.cleanup(); }
