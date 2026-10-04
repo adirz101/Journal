@@ -22,6 +22,7 @@ Before advertising Windows support:
 1. Install, build and run on Windows 11 with the npm-installed and native-installer versions of both CLIs.
 2. Run the desktop scenarios with Windows fixture CLIs (`.cmd` and `.exe`).
 3. Manually check ConPTY input (IME, Ctrl+C, resize), runtime survival after closing the app window, runtime crash recovery, and named-pipe access by another local user (it must be refused).
+4. Verify that Claude permission answer keys (digit, Enter, Esc, Ctrl+C) reach Journal's `write()` as plain characters on Windows ConPTY, not win32-input-mode sequences, since detecting an answered prompt depends on it.
 
 ## Windows on CI (4 October 2026)
 The unit tests run on hosted `windows-latest` runners and are required. Their first run found 37 failures, now fixed:
