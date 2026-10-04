@@ -51,6 +51,57 @@ for (const [name, t] of Object.entries(themes)) {
     assert.deepEqual(low, []);
   });
 
+  // State surfaces are not text, so WCAG sets no ratio for them. These minimums keep a state
+  // visible against what it replaces: hover against the surfaces controls sit on (1.1:1), and the
+  // hovered selection against the selection (1.05:1; text on it must stay at 4.5:1, which leaves
+  // no more room, and the accent bar on selected rows carries the selection by itself).
+  test(`${name} theme: hover, selection and primary-button states are distinguishable and keep text readable`, () => {
+    const solid = token => mix(t[token], rgba(t.bg).slice(0, 3));
+    for (const token of ['hover', 'sel-hover', 'accbtn-hover']) assert.match(t[token] ?? '', /^#[0-9a-f]{6}$/i, `--${token} must be an opaque #RRGGBB`);
+    const low = [];
+    for (const surface of ['raised', 'side', 'panel']) {
+      const ratio = contrast(solid('hover'), solid(surface));
+      if (ratio < 1.1) low.push(`hover against ${surface}: ${ratio.toFixed(2)}`);
+    }
+    const selection = contrast(solid('sel-hover'), solid('sel'));
+    if (selection < 1.05) low.push(`sel-hover against sel: ${selection.toFixed(2)}`);
+    // Text that sits on selected rows and pressed toggles.
+    for (const text of ['tx', 'tx2', 'tx3', 'acc', 'amb', 'grn', 'red']) {
+      const ratio = contrast(solid(text), solid('sel-hover'));
+      if (ratio < 4.5) low.push(`${text} on sel-hover: ${ratio.toFixed(2)}`);
+    }
+    const button = contrast(solid('on-acc'), solid('accbtn-hover'));
+    if (button < 4.5) low.push(`on-acc on accbtn-hover: ${button.toFixed(2)}`);
+    const press = contrast(solid('accbtn'), solid('accbtn-hover'));
+    if (press < 1.1) low.push(`accbtn-hover against accbtn: ${press.toFixed(2)}`);
+    assert.deepEqual(low, []);
+  });
+
+  // Highlights in the file preview are exempt from 4.5:1 (see tokens.css): code text and every
+  // syntax color stay at 3:1 on them, and matches stay apart from each other and the editor.
+  test(`${name} theme: code text stays at 3:1 on selection and search highlights`, () => {
+    const solid = token => mix(t[token], rgba(t.bg).slice(0, 3));
+    const low = [];
+    for (const surface of ['code-selection', 'code-match', 'code-match-current']) for (const text of ['tx', ...SYNTAX]) {
+      const ratio = contrast(solid(text), solid(surface));
+      if (ratio < 3) low.push(`${text} on ${surface}: ${ratio.toFixed(2)}`);
+    }
+    for (const [a, b] of [['code-match-current', 'code-match'], ['code-match', 'field']]) {
+      const ratio = contrast(solid(a), solid(b));
+      if (ratio < 1.2) low.push(`${a} against ${b}: ${ratio.toFixed(2)}`);
+    }
+    assert.deepEqual(low, []);
+  });
+
+  test(`${name} theme: a translucent tint or line is its base color with alpha`, () => {
+    const bases = { accsoft: 'acc', accline: 'acc', ambsoft: 'amb', ambline: 'amb', grnsoft: 'grn', redsoft: 'red', redline: 'red', 'claude-soft': 'claude' };
+    for (const [tint, base] of Object.entries(bases)) {
+      assert.ok(t[tint], `--${tint} is defined`);
+      const [r, g, b, a] = rgba(t[tint]);
+      if (a < 1) assert.deepEqual([r, g, b], rgba(t[base]).slice(0, 3), `--${tint} uses the RGB of --${base}`);
+    }
+  });
+
   test(`${name} theme: the terminal uses the same colors as the tokens`, () => {
     const terminal = terminalThemes[name];
     const mirrored = [['background', 'term'], ['foreground', 'tx'], ['cursor', 'acc'], ['cursorAccent', 'term'], ['selectionBackground', 'code-selection'],

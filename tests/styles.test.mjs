@@ -25,3 +25,20 @@ test('the light theme comes from tokens; the few light-only rules change no colo
   const light = [...styles.matchAll(/([^{}]*data-theme=light[^{}]*)\{([^{}]*)\}/g)].map(([, selector, body]) => `${selector.trim()}{${body}}`);
   assert.deepEqual(light, [':root[data-theme=light] .welcome-wordmark{filter:none}', ':root[data-theme=light] .update-notice.compact{background:transparent}']);
 });
+
+test('states: primary hover keeps its text readable, selection survives hover and has a non-color cue', () => {
+  const rule = selector => { const at = styles.indexOf(`${selector}{`); assert.ok(at >= 0, selector); return styles.slice(at + selector.length + 1, styles.indexOf('}', at)); };
+  // A brightness filter dropped white text below 4.5:1 and gave the button its own compositing layer.
+  assert.doesNotMatch(styles, /filter:brightness\(1/);
+  assert.match(rule('button.primary:not(:disabled):hover'), /background:var\(--accbtn-hover\)/);
+  const selectedHover = '.project-link.selected:not(:disabled):hover,.session-select.selected:not(:disabled):hover,.explorer-tools button[aria-pressed=true]:not(:disabled):hover,.segmented button[aria-pressed=true]:not(:disabled):hover';
+  assert.match(rule(selectedHover), /background:var\(--sel-hover\)/);
+  for (const selector of ['.project-link.selected', '.session-select.selected']) assert.match(rule(selector), /box-shadow:inset 2px 0 0 var\(--acc\)/, selector);
+});
+
+test('accent containers keep an accent border', () => {
+  for (const selector of ['.memory-actions .approve', '.branch-badge', '.local-tag', '.receipt-meta>span', '.draft-basis', '.explorer-note', '.update-notice', '.reference-chips li', '.proposal-inbox']) {
+    const at = styles.indexOf(`${selector}{`); assert.ok(at >= 0, selector);
+    assert.match(styles.slice(at, styles.indexOf('}', at)), /border(?:-color)?:[^;}]*var\(--accline\)/, selector);
+  }
+});

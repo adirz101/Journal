@@ -14,7 +14,7 @@ export const MONO_FONT = '"JetBrains Mono", "SF Mono", ui-monospace, "Cascadia M
 // --acc, --line2, --tx3); tests/tokens.test.mjs keeps the two in step.
 export const terminalThemes: Record<Appearance, ITheme> = {
   dark: {
-    background: '#0B0D10', foreground: '#E8EAEE', cursor: '#6AA5FF', cursorAccent: '#0B0D10', selectionBackground: '#264F78',
+    background: '#0B0D10', foreground: '#E8EAEE', cursor: '#6AA5FF', cursorAccent: '#0B0D10', selectionBackground: '#21466A',
     scrollbarSliderBackground: '#30363F', scrollbarSliderHoverBackground: '#8E97A6', scrollbarSliderActiveBackground: '#8E97A6',
     black: '#2A2F37', red: '#F49A88', green: '#7DD39A', yellow: '#F2C46B', blue: '#7FB2FF', magenta: '#BBA9FF', cyan: '#7FD8B8', white: '#B3BAC6',
     brightBlack: '#7C8594', brightRed: '#F49A88', brightGreen: '#7DD39A', brightYellow: '#F2C46B', brightBlue: '#7FB2FF', brightMagenta: '#BBA9FF', brightCyan: '#7FD8B8', brightWhite: '#ECEEF2',
