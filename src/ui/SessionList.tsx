@@ -55,7 +55,7 @@ export function SessionList({ sessions, projects, selectedId, currentProjectId, 
     </button>;
   };
   return <>
-    <div className="nav-caption sessions-caption">SESSIONS <span>{visible.filter(s => isLive(s)).length}/4 active</span><button className="new-session" onClick={onNew} disabled={!canStart} title="New session">＋ New</button></div>
+    <div className="nav-caption sessions-caption">SESSIONS<span>{visible.filter(s => isLive(s)).length}/4 active</span><button className="new-session" onClick={onNew} disabled={!canStart} aria-label="New session" title="New session">New</button></div>
     <nav aria-label="Sessions" className="session-nav">
       {active.length > 0 && <div className="session-group" role="group" aria-label="Active sessions">{active.map(row)}</div>}
       {recent.length > 0 && <><div className="session-group-label">RECENT</div><div className="session-group" role="group" aria-label="Recent sessions">{recent.map(row)}</div></>}

@@ -30,6 +30,8 @@ test('both sidebars resize by pointer and keyboard, persist, and leave room for 
       return Math.min(count.left - label.right, button.left - count.right, box.right - button.right) >= 0 && count.left - label.right >= 6;
     });
     expect(await captionGaps()).toBe(true);
+    // At the default sidebar width the count fits whole; it only truncates in narrower sidebars.
+    expect(await page.locator('.sessions-caption>span').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
     // Focus rings stay inside every clipping ancestor (scroll containers clip a ring drawn outside the control).
     const ringClear = (locator: ReturnType<typeof page.locator>) => locator.evaluate(element => {
       (element as HTMLElement).focus({ focusVisible: true } as FocusOptions);
