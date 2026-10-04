@@ -81,3 +81,4 @@ Final required local checks are reported in [implementation status](IMPLEMENTATI
 - Whether subagent hooks share the parent `session_id`. If they do, a sibling tool must not hide an open approval.
 - Claude permission prompts are answered with a digit, Enter or Esc, which Journal uses to know the prompt was answered.
 - Whether Claude can show a second permission prompt (for example from a parallel subagent) before the first is answered.
+- Whether denying a Claude permission with Esc or Ctrl+C fires any hook (PostToolUseFailure or Stop).

@@ -374,3 +374,25 @@ test('exit releases the tracked tools, commands and prompts', async t => {
   assert.equal(entry.tools.size, 0); assert.equal(entry.commands.size, 0);
   assert.deepEqual(entry.pending, []); assert.equal(entry.answered, false);
 });
+
+test("Journal's Interrupt counts as answering the prompt, like a typed Ctrl+C", async t => {
+  const { send, state, f, session } = await hooked(t);
+  send('PermissionRequest', { tool: 'Bash' });
+  send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
+  assert.equal(state(), 'waiting/permission');
+  f.manager.interrupt(session.id);
+  send('PreToolUse', { tool: 'Grep', toolUseId: 'g2' });
+  assert.equal(state(), 'running/working');
+});
+
+test('an answer is consumed by the prompt its tool resolved', async t => {
+  const { send, state, write } = await hooked(t);
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'a1', command: 'a' });
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'b' });
+  send('PermissionRequest', { tool: 'Bash', toolUseId: 'a1' });
+  send('PermissionRequest', { tool: 'Bash', toolUseId: 'b1' });
+  write('1');
+  send('PostToolUse', { tool: 'Bash', toolUseId: 'a1' });
+  send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
+  assert.equal(state(), 'waiting/permission');
+});

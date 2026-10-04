@@ -236,7 +236,8 @@ export class TerminalManager extends EventEmitter {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 2 || cols > 500 || rows > 300) throw new Error('Invalid terminal size');
     const entry = this.owned(id); entry.proc.resize(cols, rows); entry.session.terminal = { cols, rows };
   }
-  interrupt(id) { this.owned(id).proc.write('\x03'); this.record(id, 'interrupt', {}); }
+  // Goes through write() so Ctrl+C counts as answering an open permission prompt.
+  interrupt(id) { this.write(id, '\x03'); this.record(id, 'interrupt', {}); }
   // Graceful first: SIGTERM to the PTY's process group (or ConPTY close on
   // Windows), then a forced kill only if it is still running after the grace
   // period. Signals stop once the exit callback fires, so a reused PID is
