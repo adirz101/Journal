@@ -21,7 +21,7 @@ export function checkOutcome(state) {
   switch (state.status) {
     case 'off': return { kind: 'info', message: 'Updates are available in installed builds only.', detail: `This is a development build of Journal ${state.current}.` };
     case 'none': return { kind: 'info', message: 'Journal is up to date.', detail: `Version ${state.current} is the newest version available.` };
-    case 'downloading': return { kind: 'info', message: `${next} is available.`, detail: 'It is downloading in the background. When it is ready, choose Restart to update in the sidebar.' };
+    case 'downloading': return { kind: 'info', message: `${next} is available.`, detail: 'It is downloading in the background. When it is ready, choose Restart to update at the bottom right of the window.' };
     case 'ready': return { kind: 'ready', message: `${next} is ready to install.`, detail: 'Restart Journal now to finish updating?' };
     case 'available': return { kind: 'available', message: `${next} is available.`, detail: 'This portable build cannot update itself. Download the new version from the release page.' };
     case 'error': return { kind: 'error', message: 'Could not check for updates.', detail: state.message ?? 'Unknown error' };

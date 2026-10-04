@@ -52,5 +52,15 @@ test('update notices: progress, restart only for a downloaded update, settings i
     await emit({ status: 'ready', version: '0.2.0-alpha.3', percent: 100 }); await expect(page.getByRole('button', { name: 'Restart to update' })).toBeVisible();
     await emit({ status: 'error', version: null, percent: null, message: 'offline' });
     await expect(page.locator('.update-notice')).toHaveCount(0);
+
+    // With a project open, the notice moves to the right of the terminal's bottom bar.
+    const project = resolve(root, 'project'); mkdirSync(project);
+    await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
+    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await emit({ status: 'ready', version: '0.2.0-alpha.4', percent: 100 });
+    await expect(page.locator('.terminal-footer .update-notice')).toContainText('Journal 0.2.0-alpha.4 is ready.');
+    await expect(page.locator('.sidebar-footer .update-notice')).toHaveCount(0);
+    await expect(page.locator('.terminal-footer').getByRole('button', { name: 'Restart to update' })).toBeVisible();
+    if (process.env.JOURNAL_SCREENSHOT) { await page.screenshot({ path: process.env.JOURNAL_SCREENSHOT }); await page.locator('.terminal-footer').screenshot({ path: process.env.JOURNAL_SCREENSHOT.replace('.png', '-bar.png') }); }
   } finally { await app.close(); rmSync(root, { recursive: true, force: true }); }
 });
