@@ -20,7 +20,7 @@ function storedWidths(): Widths {
 export const SIDEBAR_RAIL = 56, INSPECTOR_RAIL = 44;
 // Accessible names; the side ids are also the keys of the stored widths.
 const names: Record<Side, string> = { project: 'project sidebar', knowledge: 'side panel' };
-const overlayWidth = { project: (stored: number | null) => clamp(stored ?? 218, 220, 300), knowledge: (stored: number | null, wide: boolean) => wide ? Math.min(720, Math.round(window.innerWidth * 0.5)) : clamp(stored ?? 350, 320, 420) };
+const overlayWidth = { project: (stored: number | null) => clamp(stored ?? 264, 220, 300), knowledge: (stored: number | null, wide: boolean) => wide ? Math.min(720, Math.round(window.innerWidth * 0.5)) : clamp(stored ?? 384, 320, 420) };
 
 // The shell grid: sidebar | main | inspector. Each side pane renders in full
 // (resizable, wide windows), as a rail, or as a rail plus an overlay. An
@@ -47,7 +47,8 @@ export function ResizableWorkspace({ layout, wide = false, sidebar, inspector, c
   const sidebarFull = layout.sidebar === 'full'; const inspectorState = inspector ? layout.inspector : 'none';
   const inspectorFull = inspectorState === 'full'; const inspectorRail = inspectorState === 'rail' || inspectorState === 'overlay';
   const compact = containerWidth <= 1150;
-  const defaults = { project: compact ? 176 : 218, knowledge: compact ? 304 : 350 };
+  // Boards B4 and B10: 264 px sidebar and 384 px inspector when wide, a 248 px sidebar in a medium window.
+  const defaults = { project: compact ? 176 : containerWidth >= 1440 ? 264 : 248, knowledge: compact ? 304 : 384 };
   const workspaceMin = compact ? 340 : 390;
   let project = sidebarFull ? requested.project ?? defaults.project : SIDEBAR_RAIL;
   let knowledge = inspectorFull ? requested.knowledge ?? defaults.knowledge : inspectorRail ? INSPECTOR_RAIL : 0;

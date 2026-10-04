@@ -21,8 +21,11 @@ const pointAt = (element: HTMLElement): Point => { const rect = element.getBound
 const withKeys = (label: string, keys?: { label: string }) => keys ? `${label} (${keys.label})` : label;
 
 // Rail icons: inline, decorative (every rail button has its own accessible name).
-const Icon = ({ d }: { d: string }) => <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d={d} /></svg>;
-const ICONS = { plus: 'M12 5v14M5 12h14', recent: 'M12 7v5l3 2M21 12a9 9 0 1 1-9-9 9 9 0 0 1 9 9Z', memory: 'M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3ZM5 17a3 3 0 0 1 3-3h11', expand: 'm9 6 6 6-6 6' };
+const Icon = ({ d, size = 18 }: { d: string; size?: number }) => <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d={d} /></svg>;
+const ICONS = { plus: 'M12 5v14M5 12h14', recent: 'M12 7v5l3 2M21 12a9 9 0 1 1-9-9 9 9 0 0 1 9 9Z', memory: 'M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3ZM5 17a3 3 0 0 1 3-3h11', expand: 'm9 6 6 6-6 6', updown: 'm8 9 4-4 4 4M8 15l4 4 4-4',
+  settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z' };
+// The last two folders of a path, so the project's own folder stays readable in a narrow sidebar (the full path is the tooltip).
+const shortPath = (path: string) => { const parts = path.split(/[\\/]/).filter(Boolean); return parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : path; };
 
 // inOverlay: the full sidebar shown over a narrow window (the rail keeps the ID).
 // canCompose: a project is open, so the New session view can be shown (even with
@@ -96,8 +99,8 @@ export function Sidebar({ pane, inOverlay = false, projects, project, sessions, 
       onClick={event => switchProject(event.currentTarget)} onContextMenu={event => { if (!project) return; event.preventDefault(); onProjectMenu(menuPosition(event)); }}>
       <img className="brand-icon" src={mark} alt="" width={32} height={32} />
       <span className="project-switcher-text"><span className="project-name">{project?.name ?? shell.noProject}</span>
-        {project && <span className="project-sub"><span className="project-path">{project.root}</span><span className="branch-badge">⑂ {project.branch ?? 'detached HEAD'}</span></span>}</span>
-      <span className="switcher-chevron" aria-hidden="true">▾</span>
+        {project && <span className="project-sub"><span className="project-path">{shortPath(project.root)}</span><span className="branch-badge">⑂ {project.branch ?? 'detached HEAD'}</span></span>}</span>
+      <span className="switcher-chevron" aria-hidden="true"><Icon d={ICONS.updown} size={16} /></span>
     </button>
     <button className="new-session" onClick={onNew} disabled={!canCompose} aria-keyshortcuts={shortcuts?.['new-session']?.aria} title={withKeys(shell.newSession, shortcuts?.['new-session'])}>
       <span aria-hidden="true">＋</span> {shell.newSession}{shortcuts?.['new-session'] && <kbd aria-hidden="true">{shortcuts['new-session'].label}</kbd>}</button>
@@ -112,8 +115,8 @@ export function Sidebar({ pane, inOverlay = false, projects, project, sessions, 
     </nav>
     <div className="sidebar-footer">
       <UpdateNotice state={update} onError={onError} />
-      {project && <button className="footer-button" onClick={onOpenMemory} aria-label={memoryName}><span>{copy.memory}</span>{proposals.length > 0 && <span className="badge count-badge" aria-hidden="true">{proposals.length}</span>}</button>}
-      <button className="footer-button" onClick={onOpenSettings} aria-keyshortcuts={shortcuts?.settings?.aria} title={withKeys(shell.settings, shortcuts?.settings)}><span>{shell.settings}</span></button>
+      {project && <button className="footer-button" onClick={onOpenMemory} aria-label={memoryName}><Icon d={ICONS.memory} size={16} /><span>{copy.memory}</span>{proposals.length > 0 && <span className="badge count-badge" aria-hidden="true">{proposals.length}</span>}</button>}
+      <button className="footer-button" onClick={onOpenSettings} aria-keyshortcuts={shortcuts?.settings?.aria} title={withKeys(shell.settings, shortcuts?.settings)}><Icon d={ICONS.settings} size={16} /><span>{shell.settings}</span></button>
       <p className="runtime-line"><span className={`status-dot ${connected ? 'running' : 'waiting'}`} aria-hidden="true" />{connected ? shell.runtimeConnected : runtimeState === 'connecting' ? shell.runtimeStarting : shell.runtimeDisconnected}</p>
     </div>
   </aside>;
