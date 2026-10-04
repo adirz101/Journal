@@ -12,7 +12,7 @@ import { ProcessRunner } from './processes.mjs';
 import { homedir } from 'node:os';
 import { choice, relativePath, text } from '../core/validation.mjs';
 import { SESSION_USER_FIELDS, survivorScanPending } from '../core/sessions.mjs';
-import { headDiff, listDirectory, locate, previewFile, treePath } from '../core/files.mjs';
+import { headDiff, listDirectory, listFiles, locate, previewFile, searchFiles, treePath } from '../core/files.mjs';
 import { gitStatus } from '../core/git-status.mjs';
 import { formatReference, referenceEvent } from '../core/references.mjs';
 import { isSensitivePath } from '../core/evidence.mjs';
@@ -56,7 +56,8 @@ let preferences = readPreferences(preferencesFile);
 if (!app.requestSingleInstanceLock()) app.quit();
 // modalOpen: the renderer reports whether a modal dialog is open (setModalOpen).
 // recovery: sessions the runtime recovered from a crashed predecessor (its hello), until the renderer acknowledges them.
-let recovery = null;
+let recovery = null; const acknowledgedRecovery = new Set();
+const recoveryFrom = hello => hello?.recovery && !acknowledgedRecovery.has(hello.recovery.at) ? hello.recovery : null;
 let window; let modalOpen = false; let store; let runtime; let updater; let updatePolicy = null; let closing = false; let closed = false; let runtimeState = 'connecting'; let runtimeWarning = null;
 const devUrl = process.env.JOURNAL_DEV_URL;
 // Automated tests run without visible windows or a Dock icon.
@@ -159,7 +160,8 @@ runtime.on('event', event => {
 });
 // Explorer: one watched root, the status call per root shared while it runs,
 // and an external editor found on PATH (or named by JOURNAL_EDITOR).
-const watcher = new RootWatcher(change => send({ type: 'files', ...change }));
+// A change in the watched root also drops its open-file listing, so a new file can be found at once.
+const watcher = new RootWatcher(change => { listings.delete(change.key); send({ type: 'files', ...change }); });
 const statusCalls = new Map();
 // Resolved roots are cached briefly so browsing does not run Git in the store
 // worker for every request; any workspace or folder change clears the cache.
@@ -168,6 +170,23 @@ const fileRoot = async (projectId, rootKey) => {
   const key = `${text(projectId, 'project ID', 100)}\u0000${text(rootKey, 'root', 100)}`; const cached = rootCache.get(key);
   if (cached && Date.now() - cached.at < 5000) return cached.root;
   const root = await store.fileRoot(projectId, rootKey); rootCache.set(key, { root, at: Date.now() }); return root;
+};
+// Open-file (Phase 8): git ls-files listings per root, kept 30 s after they finish, at most
+// four roots (the oldest is dropped). One listing runs per root at a time; a failed one is
+// not kept. Workspace and folder changes drop them all, like the root cache.
+const listings = new Map();
+const LISTING_MS = 30_000; const MAX_LISTINGS = 4;
+const fileListing = async (projectId, rootKey) => {
+  const root = await fileRoot(projectId, rootKey); const key = `${projectId}\u0000${rootKey}`;
+  const cached = listings.get(key);
+  if (cached && (!cached.done || Date.now() - cached.at < LISTING_MS)) return cached.listing;
+  const entry = { at: Date.now(), done: false, listing: null };
+  const drop = () => { if (listings.get(key) === entry) listings.delete(key); };
+  entry.listing = listFiles(root).then(result => { entry.done = true; entry.at = Date.now(); if (!result.available && result.reason === 'failed') drop(); return result; },
+    () => { drop(); return { available: false, reason: 'failed' }; });
+  listings.delete(key); listings.set(key, entry);
+  while (listings.size > MAX_LISTINGS) listings.delete(listings.keys().next().value);
+  return entry.listing;
 };
 const ROOT_CHANGES = new Set(['addProjectFolder', 'removeProjectFolder', 'removeProject', 'openProject', 'openProjectPath', 'createWorkspace', 'importWorkspace', 'removeWorkspace', 'forgetWorkspace']);
 const EDITORS = { code: line => file => ['--goto', `${file}:${line}`], cursor: line => file => ['--goto', `${file}:${line}`], zed: line => file => [`${file}:${line}`], subl: line => file => [`${file}:${line}`] };
@@ -182,7 +201,7 @@ const findEditor = () => {
 runtime.on('warning', message => { runtimeWarning = message; send({ type: 'runtime', state: runtimeState, warning: message }); });
 runtime.on('disconnected', () => { runtimeState = 'disconnected'; send({ type: 'runtime', state: 'disconnected' }); });
 runtime.on('failed', message => { runtimeWarning = message; send({ type: 'runtime', state: 'disconnected', warning: message }); });
-runtime.on('reconnected', hello => { runtimeState = 'connected'; recovery = hello?.recovery ?? null; send({ type: 'runtime', state: 'connected', recovered: true, recovery }); void seedNotifier(); });
+runtime.on('reconnected', hello => { runtimeState = 'connected'; recovery = recoveryFrom(hello); send({ type: 'runtime', state: 'connected', recovered: true, recovery }); void seedNotifier(); });
 // Phase 7: every provider starts as "checking"; detection, help reads and sign-in
 // probes start at once when main loads (refreshProviders below), before the window
 // exists, and run asynchronously beside it, one check in flight per provider. Only signed in / signed out / unknown is kept.
@@ -248,10 +267,24 @@ const actions = {
     const active = await store.activeSessions(); const hasNotes = await store.hasActiveNotes();
     return { projects, agents, platform: process.platform, shortcuts: shortcutKeys(process.platform), runtime: runtimeInfo, live, active, hasNotes, recovery };
   },
-  // Phase 8 seams (A0 stubs; Group A replaces them).
-  searchFiles: async ({ projectId, rootKey, query }) => { await fileRoot(projectId, rootKey); text(query, 'query', 200, true); return { available: true, hits: [], total: 0, truncated: false }; },
-  acknowledgeRecovery: ({ at }) => { if (recovery?.at === text(at, 'recovery time', 40)) recovery = null; return null; },
-  reconnectRuntime: () => { void runtime.reconnect(); return null; },
+  // Phase 8: open-file. The root comes from Journal's records (fileRoot), never a renderer path;
+  // the listing is ranked here and never reads a file. An empty query only warms the listing.
+  searchFiles: ({ projectId, rootKey, query, limit }) => {
+    const value = text(query, 'query', 200, true);
+    if (limit !== undefined && (typeof limit !== 'number' || !Number.isFinite(limit))) throw new Error('Invalid limit');
+    return searchFiles(null, value, { limit: Math.min(100, Math.max(1, Math.trunc(limit ?? 50))), list: () => fileListing(projectId, rootKey) });
+  },
+  // Phase 8: the recovery panel's Done. Main forgets its copy (and remembers the acknowledgement,
+  // so a reconnect to the same runtime does not bring it back); the runtime clears it for later
+  // apps. A runtime from before Phase 8 rejects the method: main's copy is cleared all the same.
+  acknowledgeRecovery: async ({ at }) => {
+    const value = text(at, 'recovery time', 40);
+    acknowledgedRecovery.add(value); if (recovery?.at === value) recovery = null;
+    if (!runtime.socket) return { cleared: false };
+    try { return await runtime.call('acknowledgeRecovery', { at: value }); } catch { return { cleared: false }; }
+  },
+  // Phase 8: Reconnect now. retrying is false when there is nothing to retry (already connected).
+  reconnectRuntime: () => ({ retrying: runtime.retryNow() }),
   openProject: async () => {
     const result = await dialog.showOpenDialog(window, { title: 'Open a Git project', properties: ['openDirectory'] });
     return result.canceled ? null : store.openProject(result.filePaths[0]);
@@ -595,13 +628,13 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
   try {
     if (!validSender(event)) throw new Error('Untrusted desktop caller');
     if (!Object.hasOwn(actions, action) || !input || typeof input !== 'object' || Array.isArray(input) || JSON.stringify(input).length > 100000) throw new Error('Invalid desktop request');
-    if (ROOT_CHANGES.has(action)) rootCache.clear();
+    if (ROOT_CHANGES.has(action)) { rootCache.clear(); listings.clear(); }
     // Headless test runs may wrap a request (globalThis.__journalRequestHook(action, run)) to count or delay it.
     const hook = headless && typeof globalThis.__journalRequestHook === 'function' ? globalThis.__journalRequestHook : null;
-    try { return { ok: true, value: await (hook ? hook(action, () => actions[action](input)) : actions[action](input)) }; } finally { if (ROOT_CHANGES.has(action)) rootCache.clear(); }
+    try { return { ok: true, value: await (hook ? hook(action, () => actions[action](input)) : actions[action](input)) }; } finally { if (ROOT_CHANGES.has(action)) { rootCache.clear(); listings.clear(); } }
   } catch (error) { return settledError(error); }
 });
-try { recovery = (await runtime.connect())?.recovery ?? null; runtimeState = 'connected'; await seedNotifier(); }
+try { recovery = recoveryFrom(await runtime.connect()); runtimeState = 'connected'; await seedNotifier(); }
 catch (error) { runtimeState = 'disconnected'; console.error('Journal runtime unavailable:', error.message); void runtime.reconnect(); }
 createWindow();
 // Updates: packaged builds only. The automatic-check preference lives in the data folder.
@@ -623,7 +656,8 @@ async function checkForUpdatesFromMenu() {
   if (outcome.kind === 'available') actions.openUpdateRelease();
 }
 Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate({ platform: process.platform, name: app.name, packaged: app.isPackaged, devTools: process.env.JOURNAL_DEVTOOLS === '1',
-  checkForUpdates: () => void checkForUpdatesFromMenu().catch(() => {}), openUrl: url => void shell.openExternal(url), openSettings: () => send({ type: 'command', id: 'settings' }) })));
+  checkForUpdates: () => void checkForUpdatesFromMenu().catch(() => {}), openUrl: url => void shell.openExternal(url), openSettings: () => send({ type: 'command', id: 'settings' }),
+  command: id => send({ type: 'command', id }) })));
 // Release smoke checks of builds that cannot be driven by automation (the
 // Windows portable EXE relaunches itself): report basic health, then quit.
 // Packaged builds only; contains no project or user content.
