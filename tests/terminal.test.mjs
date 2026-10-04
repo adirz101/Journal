@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { JournalStore } from '../src/core/store.mjs';
@@ -625,4 +625,80 @@ test('exit clears the pending heartbeat', async t => {
   assert.equal(f.manager.entry(f.session.id).activityTimer, null);
   t.mock.timers.tick(10_000);
   assert.equal(f.events.length, 1);
+});
+
+// Phase 2: what an open Claude permission prompt asks, redacted and bounded.
+const pendingOf = h => { const { pending } = h.f.store.getSession(h.session.id); return pending && { tool: pending.tool, command: pending.command, path: pending.path, ...('inferred' in pending ? { inferred: pending.inferred } : {}) }; };
+
+test('a PermissionRequest with a command sets a redacted pending snapshot', async t => {
+  const h = await hooked(t); const statuses = []; h.f.manager.on('event', e => { if (e.type === 'status') statuses.push(e.session); });
+  assert.equal(h.session.pending, null);
+  h.send('PermissionRequest', { tool: 'Bash', toolUseId: 'b1', command: 'TOKEN=abc123456 npm publish' });
+  assert.deepEqual(pendingOf(h), { tool: 'Bash', command: 'TOKEN=[redacted] npm publish', path: null });
+  assert.ok(!Number.isNaN(Date.parse(h.f.store.getSession(h.session.id).pending.at)));
+  assert.equal(statuses.length, 1, 'One status event carries both the state and the detail');
+  assert.equal(statuses[0].status, 'waiting'); assert.equal(statuses[0].pending.command, 'TOKEN=[redacted] npm publish');
+  h.send('PostToolUse', { tool: 'Bash', toolUseId: 'b1' });
+  assert.equal(h.f.store.getSession(h.session.id).pending, null);
+  assert.equal(statuses.at(-1).pending, null);
+});
+
+test('pending is inferred from the in-flight tool when the request has no command', async t => {
+  const h = await hooked(t);
+  h.send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'npm test' });
+  h.send('PermissionRequest', { tool: 'Bash', command: '' });
+  assert.deepEqual(pendingOf(h), { tool: 'Bash', command: 'npm test', path: null, inferred: true });
+});
+
+test('pending path is workspace-relative and null outside it', async t => {
+  const h = await hooked(t);
+  h.send('PermissionRequest', { tool: 'Write', toolUseId: 'w1', filePath: join(h.session.cwd, 'src', 'a.mjs') });
+  assert.deepEqual(pendingOf(h), { tool: 'Write', command: null, path: 'src/a.mjs' });
+  h.send('Stop');
+  h.send('PermissionRequest', { tool: 'Write', toolUseId: 'w2', filePath: resolve(h.session.cwd, '..', 'elsewhere.txt') });
+  assert.deepEqual(pendingOf(h), { tool: 'Write', command: null, path: null });
+  h.send('Stop');
+  h.send('PermissionRequest', { tool: 'Write', toolUseId: 'w3', filePath: '' });
+  assert.deepEqual(pendingOf(h), { tool: 'Write', command: null, path: null });
+});
+
+test('pending clears on settlement, Stop, UserPromptSubmit, an answer key, SessionStart and exit', async t => {
+  const cases = {
+    'tool completion': h => h.send('PostToolUse', { tool: 'Bash', toolUseId: 'b1' }),
+    'Stop': h => h.send('Stop'),
+    'UserPromptSubmit': h => h.send('UserPromptSubmit'),
+    'SessionStart': h => h.send('SessionStart'),
+    'answer key': h => h.write('1'),
+    'Esc': h => h.write('\x1b'),
+    'exit': h => h.f.callbacks.exit({ exitCode: 0 }),
+  };
+  for (const [name, settle] of Object.entries(cases)) {
+    const h = await hooked(t);
+    h.send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'rm -rf build' });
+    h.send('PermissionRequest', { tool: 'Bash', toolUseId: 'b1', command: 'rm -rf build' });
+    assert.equal(pendingOf(h).command, 'rm -rf build', name);
+    settle(h);
+    assert.equal(h.f.store.getSession(h.session.id).pending, null, name);
+    assert.equal(h.f.manager.entry(h.session.id).session.pending, null, name);
+  }
+});
+
+test('with two open prompts pending shows the oldest, then the next', async t => {
+  const h = await hooked(t);
+  h.send('PermissionRequest', { tool: 'Bash', command: 'first' });
+  h.send('PermissionRequest', { tool: 'Edit', filePath: join(h.session.cwd, 'b.txt') });
+  assert.equal(pendingOf(h).command, 'first');
+  h.write('1'); h.send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
+  assert.deepEqual(pendingOf(h), { tool: 'Edit', command: null, path: 'b.txt' }, 'PreToolUse settlement moves to the next prompt');
+  assert.equal(h.state(), 'waiting/permission');
+  h.write('1');
+  assert.equal(pendingOf(h), null);
+});
+
+test('the permission timeline event carries tool, command, path and toolUseId', async t => {
+  const h = await hooked(t);
+  h.send('PermissionRequest', { tool: 'Bash', toolUseId: 'b9', command: 'API_KEY=abcd1234 rm x' });
+  h.send('PermissionRequest', { tool: 'Write', toolUseId: 'w9', filePath: join(h.session.cwd, 'c.txt') });
+  const bodies = h.f.store.listEvents(h.session.id).filter(e => e.kind === 'permission').map(e => e.body);
+  assert.deepEqual(bodies, [{ tool: 'Bash', command: 'API_KEY=[redacted] rm x', path: null, toolUseId: 'b9' }, { tool: 'Write', command: null, path: 'c.txt', toolUseId: 'w9' }]);
 });

@@ -206,6 +206,12 @@ test('Claude hook observations become redacted commands, exit codes and file eve
   assert.equal(events.find(e => e.kind === 'file').body.path, 'src/a.mjs');
   assert.equal(f.store.getSession(session.id).activity, 'permission');
   assert.ok(!events.some(e => e.kind === 'turn-end'), 'Forged observations are ignored');
+  // A new turn clears the open Write prompt; the next one shows its redacted command.
+  line({ event: 'UserPromptSubmit' });
+  line({ event: 'PermissionRequest', tool: 'Bash', toolUseId: 't9', command: 'API_KEY=abcd1234 rm x' });
+  await until(() => f.store.getSession(session.id).pending?.tool === 'Bash');
+  assert.equal(f.store.getSession(session.id).pending.command, 'API_KEY=[redacted] rm x');
+  assert.ok(!JSON.stringify(f.store.getSession(session.id)).includes('abcd1234'));
 });
 
 test('archiving a live session hides it but keeps it running; releasing still needs a stop', async t => {

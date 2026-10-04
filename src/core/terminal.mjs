@@ -141,7 +141,7 @@ export class TerminalManager extends EventEmitter {
       status: 'starting', receiptId: receipt.id, resumedFrom: prior?.id ?? null, createdAt: now, lastActivityAt: now,
       // An additional-folder session runs in that folder with its own Git identity (if any).
       branch: project.cwd ? project.cwdBranch ?? null : project.branch, head: project.cwd ? project.cwdHead ?? null : project.head, cwd, workspaceId, research, plan, baseline, runtimeId: this.runtimeId, activity: null,
-      slot, nativeIdSource, identityMismatch: false, lastOutputAt: null };
+      slot, nativeIdSource, identityMismatch: false, lastOutputAt: null, pending: null };
     let prompt = task;
     if (receipt.packet || (prior && (oldReceipt?.hadKnowledge || oldReceipt?.items.length))) {
       const withdrawn = oldReceipt?.items.filter(item => !receipt.items.some(current => current.revisionId === item.revisionId)) ?? [];
@@ -236,7 +236,7 @@ export class TerminalManager extends EventEmitter {
   }
   exited(entry, exitCode, signal) {
     if (this.disposed || entry.exited) return;
-    entry.exited = true; entry.tools.clear(); entry.commands.clear(); entry.pending = []; entry.answered = false; clearTimeout(entry.forceTimer); clearTimeout(entry.activityTimer); entry.activityTimer = null; for (const resolve of entry.waiters.splice(0)) resolve();
+    entry.exited = true; entry.tools.clear(); entry.commands.clear(); entry.pending = []; entry.answered = false; this.syncPending(entry); clearTimeout(entry.forceTimer); clearTimeout(entry.activityTimer); entry.activityTimer = null; for (const resolve of entry.waiters.splice(0)) resolve();
     const { session } = entry;
     session.status = entry.stopping ? 'stopped' : 'exited'; session.exitCode = exitCode; session.signal = signal ?? null;
     session.endedAt = new Date().toISOString(); session.activity = null; session.slot = null;
@@ -266,7 +266,7 @@ export class TerminalManager extends EventEmitter {
     if (entry.pending.length && !data.startsWith('\x1b[200~') && (data.includes('\r') || data === '\x1b' || data === '\x03' || /^[1-9]$/.test(data))) entry.answered = true;
     entry.proc.write(data); entry.lastInputAt = Date.now();
     if (entry.answered && entry.pending.length === 1 && entry.session.status === 'waiting') {
-      entry.pending = []; entry.answered = false; this.observe(id, entry.session.nativeId, 'running', 'working');
+      entry.pending = []; entry.answered = false; this.syncPending(entry); this.observe(id, entry.session.nativeId, 'running', 'working');
     }
   }
   // Types a file reference into the agent's input without submitting it, only
@@ -372,13 +372,27 @@ export class TerminalManager extends EventEmitter {
   // subagent event alone must not hide a prompt. `known` is undefined for a tool that is starting.
   settlePermissions(id, nativeId, toolUseId, known) {
     const entry = this.entries.get(id); if (!entry) return;
+    const before = entry.pending[0];
     if (known !== undefined) {
       const open = entry.pending.filter(p => !this.permissionResolvedBy(entry, p, toolUseId, known));
       // The answer belonged to the prompt this tool resolved.
       if (open.length < entry.pending.length) { entry.pending = open; entry.answered = false; }
     }
     if (entry.answered && entry.pending.length) { entry.pending.shift(); entry.answered = false; }
+    this.syncPending(entry);
     if (entry.session.status === 'waiting' && !entry.pending.length) this.observe(id, nativeId, 'running', 'working');
+    // Still waiting, now on the next prompt: report its detail.
+    else if (entry.session.status === 'waiting' && entry.pending[0] !== before) this.emitStatus(entry.session);
+  }
+  // The banner shows the oldest open prompt, the one the next answer settles.
+  syncPending(entry) { entry.session.pending = entry.pending[0]?.detail ?? null; }
+  // Workspace-relative, '/'-separated and bounded; null outside the workspace.
+  relativePath(session, file) {
+    if (typeof file !== 'string' || !file) return null;
+    // Compare canonical paths (for example /var vs /private/var on macOS).
+    const path = relative(session.cwd, canonical(isAbsolute(file) ? file : join(session.cwd, file)));
+    if (!path || path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path)) return null;
+    return path.split(sep).join('/').slice(0, 300);
   }
   // A tool finished (already removed from entry.tools): was it the one that asked?
   permissionResolvedBy(entry, pending, toolUseId, known) {
@@ -394,18 +408,26 @@ export class TerminalManager extends EventEmitter {
     const { session } = entry;
     session.lastActivityAt = new Date().toISOString();
     switch (event.event) {
-      case 'SessionStart': entry.pending = []; entry.answered = false; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'idle'); break;
-      case 'UserPromptSubmit': entry.pending = []; entry.answered = false; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'working'); this.record(id, 'prompt', {}); break;
+      case 'SessionStart': entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry); this.observe(id, event.nativeId, 'running', 'idle'); break;
+      case 'UserPromptSubmit': entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry); this.observe(id, event.nativeId, 'running', 'working'); this.record(id, 'prompt', {}); break;
       case 'PermissionRequest': {
         // The request may not carry a tool id: match it to the in-flight tool that asked, if exactly one fits.
         const candidates = [...entry.tools].filter(([, tool]) => !tool.asked && tool.tool === event.tool
           && (!event.command || tool.command === event.command) && (!event.filePath || tool.filePath === event.filePath));
         const toolUseId = event.toolUseId ?? (candidates.length === 1 ? candidates[0][0] : null);
         if (toolUseId && entry.tools.has(toolUseId)) entry.tools.get(toolUseId).asked = true;
-        entry.pending.push({ toolUseId, tool: event.tool ?? null }); if (entry.pending.length > 100) entry.pending.shift(); entry.answered = false;
-        this.observe(id, event.nativeId, 'waiting', 'permission'); this.record(id, 'permission', { tool: event.tool ?? null }); break;
+        // What the prompt asks: from the request, else from the in-flight tool that asked ('' counts as missing).
+        const matched = toolUseId ? entry.tools.get(toolUseId) : null;
+        const rawCommand = event.command || matched?.command || null;
+        const rawPath = event.filePath || matched?.filePath || null;
+        const detail = { tool: event.tool ?? null, command: rawCommand ? redact(rawCommand, 300) : null, path: rawPath ? this.relativePath(session, rawPath) : null,
+          at: new Date().toISOString(), ...(!event.command && !event.filePath && matched ? { inferred: true } : {}) };
+        entry.pending.push({ toolUseId, tool: event.tool ?? null, detail }); if (entry.pending.length > 100) entry.pending.shift(); entry.answered = false;
+        this.syncPending(entry);
+        this.observe(id, event.nativeId, 'waiting', 'permission');
+        this.record(id, 'permission', { tool: detail.tool, command: detail.command, path: detail.path, toolUseId }); break;
       }
-      case 'Stop': entry.pending = []; entry.answered = false; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'idle'); this.record(id, 'turn-end', {}); break;
+      case 'Stop': entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry); this.observe(id, event.nativeId, 'running', 'idle'); this.record(id, 'turn-end', {}); break;
       case 'PreToolUse':
         if (event.toolUseId && entry.tools.size < 500) entry.tools.set(event.toolUseId, { tool: event.tool, command: event.command ?? null, filePath: event.filePath ?? null });
         this.settlePermissions(id, event.nativeId, event.toolUseId);
@@ -427,11 +449,8 @@ export class TerminalManager extends EventEmitter {
           const status = event.interrupted ? 'interrupted' : event.background ? 'unknown' : event.event === 'PostToolUse' ? 'succeeded' : Number.isInteger(event.exit) ? 'failed' : 'unknown';
           this.record(id, 'command-end', { toolUseId: event.toolUseId, status, exitCode: status === 'succeeded' ? 0 : Number.isInteger(event.exit) ? event.exit : null, durationMs: Number.isFinite(event.durationMs) ? event.durationMs : null });
         } else if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(event.tool) && event.filePath && event.event === 'PostToolUse') {
-          let absolute = isAbsolute(event.filePath) ? event.filePath : join(session.cwd, event.filePath);
-          // Compare canonical paths (for example /var vs /private/var on macOS).
-          absolute = canonical(absolute);
-          const path = relative(session.cwd, absolute);
-          if (path && !path.startsWith(`..${sep}`) && path !== '..') this.record(id, 'file', { path: path.split(sep).join('/').slice(0, 300), tool: event.tool });
+          const path = this.relativePath(session, event.filePath);
+          if (path) this.record(id, 'file', { path, tool: event.tool });
         }
         break;
       }
