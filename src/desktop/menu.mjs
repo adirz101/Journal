@@ -1,21 +1,28 @@
 // The application menu: Electron's default menus (standard roles) plus
-// "Check for Updates…", in the app menu on macOS and in Help elsewhere.
+// "Check for Updates…", in the app menu on macOS and in Help elsewhere, and the
+// two notification preferences (app menu on macOS, Window elsewhere) until the
+// Settings dialog takes them over.
 export const PROJECT_URL = 'https://github.com/adirz101/Journal';
 
-export function menuTemplate({ platform, name, checkForUpdates, openUrl, packaged = false, devTools = false }) {
+export function menuTemplate({ platform, name, checkForUpdates, openUrl, packaged = false, devTools = false, preferences = null, setPreference = () => {} }) {
   // Released builds: zoom and full screen only. Reload would drop the renderer mid-session; DevTools is a developer affordance, not a security boundary (set JOURNAL_DEVTOOLS=1 for support).
   const view = packaged
     ? { label: 'View', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }, ...(devTools ? [{ type: 'separator' }, { role: 'toggleDevTools' }] : [])] }
     : { role: 'viewMenu' };
   const check = { id: 'check-for-updates', label: 'Check for Updates…', click: () => checkForUpdates() };
+  // Each click names the value it sets, so the result never depends on Electron toggling the item first.
+  const notify = preferences ? [{ type: 'separator' },
+    { id: 'notify-approval', type: 'checkbox', label: 'Notify When Claude Needs Approval', checked: preferences.notifications, click: () => setPreference('notifications', !preferences.notifications) },
+    { id: 'notify-command', type: 'checkbox', label: 'Show Commands in Notifications', checked: preferences.notificationCommand, enabled: preferences.notifications, click: () => setPreference('notificationCommand', !preferences.notificationCommand) }] : [];
   const help = { role: 'help', submenu: [{ label: 'Journal on GitHub', click: () => openUrl(PROJECT_URL) }, { label: 'Releases', click: () => openUrl(`${PROJECT_URL}/releases`) }] };
   if (platform === 'darwin') {
     return [
-      { label: name, submenu: [{ role: 'about' }, check, { type: 'separator' }, { role: 'services' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+      { label: name, submenu: [{ role: 'about' }, check, ...notify, { type: 'separator' }, { role: 'services' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
       { role: 'fileMenu' }, { role: 'editMenu' }, view, { role: 'windowMenu' }, help,
     ];
   }
-  return [{ role: 'fileMenu' }, { role: 'editMenu' }, view, { role: 'windowMenu' }, { ...help, submenu: [check, { type: 'separator' }, ...help.submenu] }];
+  const windowMenu = notify.length ? { role: 'windowMenu', submenu: [{ role: 'minimize' }, { role: 'zoom' }, { role: 'close' }, ...notify] } : { role: 'windowMenu' };
+  return [{ role: 'fileMenu' }, { role: 'editMenu' }, view, windowMenu, { ...help, submenu: [check, { type: 'separator' }, ...help.submenu] }];
 }
 
 // What to tell the user after a check they started from the menu. The sidebar

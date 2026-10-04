@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 import { auditEntries, checkTag, checksumLines, configArtifacts, expectedArtifacts, LEAKS, loadConfig, productionPackages, readVersion, tagFor, UPDATE_FILES } from '../scripts/release-lib.mjs';
 import { dataDirectory, guiPathEntries, unpackedPath, withGuiPath } from '../src/desktop/environment.mjs';
 import { removeLater } from './support/cleanup.mjs';
+import { APP_USER_MODEL_ID } from '../src/desktop/notify.mjs';
 
 const require = createRequire(import.meta.url);
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
@@ -26,6 +27,8 @@ test('one version source: tag, package.json and artifact names agree', () => {
 test('packaging config: stable ID, platforms, per-user installer, data kept, update feed', () => {
   const config = withEnv({ CSC_LINK: undefined, APPLE_API_KEY: undefined }, () => loadConfig());
   assert.equal(config.appId, 'io.github.adirz101.journal'); assert.equal(config.productName, 'Journal');
+  // Windows attributes toasts to the AppUserModelId main.mjs sets; it must be the packaged appId.
+  assert.equal(APP_USER_MODEL_ID, config.appId);
   // The update feed: electron-updater reads it from app-update.yml. Builds never upload; the release workflow does.
   assert.deepEqual(config.publish, [{ provider: 'github', owner: 'adirz101', repo: 'Journal' }]); assert.equal(config.detectUpdateChannel, false);
   assert.deepEqual(UPDATE_FILES, { mac: ['latest-mac.yml'], win: ['latest.yml'] });
