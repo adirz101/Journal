@@ -4,7 +4,7 @@ contextBridge.exposeInMainWorld('journal', {
   request: async (action, input = {}) => {
     if (!allowed.has(action)) throw new Error('Unknown desktop action');
     const result = await ipcRenderer.invoke('journal:request', action, input);
-    if (!result.ok) throw new Error(result.error);
+    if (!result.ok) throw Object.assign(new Error(result.error), result.code ? { code: result.code } : {});
     return result.value;
   },
   onEvent: callback => {

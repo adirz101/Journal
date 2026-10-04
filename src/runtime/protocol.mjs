@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 // Windows named pipe. Both sides prove knowledge of the random token in
 // runtime.json (mode 0600) with HMAC challenges; the token itself is never
 // sent, so a process squatting on the socket path learns nothing.
-export const PROTOCOL = 3; // 3: start accepts workspaceId, research and disabled
+export const PROTOCOL = 4; // 4: session slot, pending, activity events and error codes
 export const nonce = () => randomBytes(24).toString('hex');
 export const proof = (token, role, a, b) => createHmac('sha256', token).update(`${role}:${a}:${b}`).digest('hex');
 export function proofMatches(expected, actual) {

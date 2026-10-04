@@ -475,7 +475,7 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
     if (!Object.hasOwn(actions, action) || !input || typeof input !== 'object' || Array.isArray(input) || JSON.stringify(input).length > 100000) throw new Error('Invalid desktop request');
     if (ROOT_CHANGES.has(action)) rootCache.clear();
     try { return { ok: true, value: await actions[action](input) }; } finally { if (ROOT_CHANGES.has(action)) rootCache.clear(); }
-  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Operation failed' }; }
+  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Operation failed', ...(error?.code ? { code: error.code } : {}) }; }
 });
 try { await runtime.connect(); runtimeState = 'connected'; }
 catch (error) { runtimeState = 'disconnected'; console.error('Journal runtime unavailable:', error.message); void runtime.reconnect(); }

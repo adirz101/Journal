@@ -435,3 +435,90 @@ test('an answer is consumed by the prompt its tool resolved', async t => {
   send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
   assert.equal(state(), 'waiting/permission');
 });
+
+// Phase 2: stable slots and error codes.
+// Each start gets its own fake PTY so tests can end one session at a time.
+function multi(t) {
+  const f = runtime(t); const procs = [];
+  f.manager.spawn = () => {
+    const proc = { callbacks: {}, onData(fn) { this.callbacks.data = fn; }, onExit(fn) { this.callbacks.exit = fn; }, write() {}, resize() {}, kill() {} };
+    procs.push(proc); return proc;
+  };
+  const start = (provider = 'claude', extra = {}) => f.manager.start({ projectId: f.project.id, provider, task: 'x', ...extra }).then(r => r.session);
+  return { ...f, procs, start };
+}
+
+test('slots: lowest free slot, kept across stops of others', async t => {
+  const f = multi(t);
+  const a = await f.start(); const b = await f.start(); const c = await f.start();
+  assert.deepEqual([a.slot, b.slot, c.slot], [1, 2, 3]);
+  f.procs[1].callbacks.exit({ exitCode: 0 });
+  assert.equal(f.manager.entry(b.id).session.slot, null);
+  assert.equal(f.store.getSession(b.id).slot, null);
+  const d = await f.start();
+  assert.equal(d.slot, 2);
+  assert.equal(f.manager.entry(a.id).session.slot, 1);
+  assert.deepEqual(f.manager.list().filter(s => s.slot).map(s => s.slot).sort(), [1, 2, 3]);
+});
+
+test('concurrent starts never share a slot; a fifth is refused with SLOTS_FULL', async t => {
+  const f = multi(t);
+  const sessions = await Promise.all([1, 2, 3, 4].map(() => f.start()));
+  assert.deepEqual(sessions.map(s => s.slot).sort(), [1, 2, 3, 4]);
+  await assert.rejects(f.start(), error => error.code === 'SLOTS_FULL' && /up to 4 sessions/.test(error.message));
+});
+
+test('a failed launch frees its reserved slot', async t => {
+  const f = multi(t); const spawn = f.manager.spawn;
+  f.manager.spawn = () => { throw new Error('fixture launch failure'); };
+  await assert.rejects(f.start(), error => error.code === 'START_FAILED' && /Could not start/.test(error.message));
+  const failed = f.store.listSessions(f.project.id)[0];
+  assert.equal(failed.status, 'failed'); assert.equal(failed.slot, null);
+  f.manager.spawn = spawn;
+  assert.equal((await f.start()).slot, 1);
+});
+
+test('a missing executable gives PROVIDER_MISSING', async t => {
+  const f = multi(t);
+  f.manager.spawn = () => { throw Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' }); };
+  await assert.rejects(f.start(), error => error.code === 'PROVIDER_MISSING' && /Could not start/.test(error.message));
+});
+
+test('recovered sessions have no slot', async t => {
+  const f = multi(t);
+  const now = new Date().toISOString();
+  f.store.saveSession({ id: 'foreign', projectId: f.project.id, provider: 'claude', nativeId: null, title: 'old', status: 'running', slot: 2, runtimeId: 'another-runtime', createdAt: now, lastActivityAt: now,
+    pending: { tool: 'Bash', command: 'ls', path: null, at: now } });
+  const [recovered] = await f.manager.recover();
+  assert.equal(recovered.slot, null); assert.equal(recovered.pending, null);
+  assert.equal(f.store.getSession('foreign').slot, null);
+  assert.equal(f.store.getSession('foreign').pending, null);
+});
+
+test('error codes: SLOTS_FULL, ID_UNCONFIRMED, CONVERSATION_OPEN, NOT_LIVE and SHUTTING_DOWN', async t => {
+  const { ERROR_CODES } = await import('../src/core/terminal.mjs');
+  assert.deepEqual(Object.keys(ERROR_CODES), ['SLOTS_FULL', 'SHUTTING_DOWN', 'PROVIDER_MISSING', 'PROVIDER_UNSUPPORTED', 'ID_UNCONFIRMED', 'CONVERSATION_OPEN', 'ORPHAN_RUNNING', 'START_FAILED', 'NOT_LIVE']);
+  assert.ok(Object.isFrozen(ERROR_CODES));
+  const f = multi(t);
+  const codex = await f.start('codex');
+  f.procs[0].callbacks.exit({ exitCode: 0 });
+  await assert.rejects(f.start('codex', { resumeId: codex.id }), error => error.code === 'ID_UNCONFIRMED' && /Confirm the conversation ID/.test(error.message));
+  assert.throws(() => f.manager.write(codex.id, 'x'), error => error.code === 'NOT_LIVE' && /not active or owned/.test(error.message));
+  const claude = await f.start();
+  f.procs[1].callbacks.exit({ exitCode: 0 });
+  const resumed = await f.start('claude', { resumeId: claude.id });
+  await assert.rejects(f.start('claude', { resumeId: claude.id }), error => error.code === 'CONVERSATION_OPEN');
+  assert.equal(resumed.slot, 1);
+  for (let i = 0; i < 3; i++) await f.start();
+  await assert.rejects(f.start(), error => error.code === 'SLOTS_FULL');
+  await f.manager.dispose({ stopSessions: false });
+  await assert.rejects(f.start(), error => error.code === 'SHUTTING_DOWN');
+});
+
+test('cursor errors carry PROVIDER_MISSING and PROVIDER_UNSUPPORTED', async t => {
+  const f = multi(t);
+  f.manager.cursor = { find: async () => null, createChat: async () => null };
+  await assert.rejects(f.start('cursor'), error => error.code === 'PROVIDER_MISSING' && /Cursor CLI is not installed/.test(error.message));
+  f.manager.cursor = { find: async () => ({ path: '/bin/agent', cursor: true, supports: { resume: false, createChat: true } }), createChat: async () => null };
+  await assert.rejects(f.start('cursor'), error => error.code === 'PROVIDER_UNSUPPORTED');
+});

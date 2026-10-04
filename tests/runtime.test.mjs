@@ -59,7 +59,7 @@ test('the runtime refuses clients that cannot prove the token, and never receive
   const exchange = messages => new Promise(resolvePromise => {
     const socket = net.connect(runtime.path); socket.setEncoding('utf8'); let text = '';
     socket.on('data', d => { text += d; if (text.includes('\n') && messages.length) socket.write(frame(messages.shift())); }); socket.on('close', () => resolvePromise(text));
-    socket.on('connect', () => socket.write(frame({ id: 1, method: 'hello', params: { protocol: 3, nonce: 'n'.repeat(48) } })));
+    socket.on('connect', () => socket.write(frame({ id: 1, method: 'hello', params: { protocol: 4, nonce: 'n'.repeat(48) } })));
     setTimeout(() => socket.destroy(), 500);
   });
   const reply = await exchange([{ id: 2, method: 'auth', params: { proof: 'f'.repeat(64) } }]);
@@ -83,7 +83,7 @@ test('a client refuses a server that cannot prove the token', async t => {
   const seen = [];
   const impostor = net.createServer(socket => { socket.setEncoding('utf8'); socket.on('data', d => { seen.push(d); socket.write(frame({ id: 0, value: { challenge: 'c'.repeat(48), proof: '0'.repeat(64) } })); }); });
   await new Promise(r => impostor.listen(impostorPath, r)); t.after(() => impostor.close());
-  writeFileSync(join(f.dataDir, 'runtime.json'), JSON.stringify({ socket: impostorPath, token: 'secret-token-value', protocol: 3 }));
+  writeFileSync(join(f.dataDir, 'runtime.json'), JSON.stringify({ socket: impostorPath, token: 'secret-token-value', protocol: 4 }));
   const c = new RuntimeClient({ dataDir: f.dataDir, launch: () => null, connectTimeoutMs: 600 }); t.after(() => c.close());
   await assert.rejects(c.connect(), /Could not start/);
   assert.ok(seen.length && seen.every(text => !text.includes('secret-token-value') && !/"auth"/.test(text)));
@@ -100,6 +100,7 @@ test('four concurrent sessions keep input and output separate; a fifth is refuse
   const sessions = [];
   for (let i = 0; i < 4; i++) sessions.push((await c.call('start', { projectId: f.project.id, provider: i % 2 ? 'codex' : 'claude', task: `Task ${i}` })).session);
   await assert.rejects(c.call('start', { projectId: f.project.id, provider: 'claude', task: 'fifth' }), /up to 4 sessions/);
+  assert.deepEqual(sessions.map(s => s.slot), [1, 2, 3, 4]);
   assert.equal(new Set(sessions.map(s => s.id)).size, 4);
   await c.call('write', { id: sessions[1].id, data: 'only-b' });
   assert.deepEqual(fake.procs.map(p => p.inputs), [[], ['only-b'], [], []]);
@@ -377,4 +378,18 @@ test('the runtime lock records a real identity and recognizes a live owner', { s
   let identity; await until(async () => (identity = await processIdentity(child.pid)));
   writeFileSync(join(f.dataDir, 'runtime.lock'), JSON.stringify({ pid: child.pid, identity }));
   await assert.rejects(acquireLock(f.dataDir, join(f.dataDir, 'none.sock')), /already running/);
+});
+
+test('the SLOTS_FULL code reaches the client with the unchanged message; hello reports protocol 4', async t => {
+  const f = fixture(t); await f.boot(); const c = client(f, t);
+  const hello = await c.connect();
+  assert.equal(hello.protocol, 4);
+  for (let i = 0; i < 4; i++) await c.call('start', { projectId: f.project.id, provider: 'claude', task: `Task ${i}` });
+  const error = await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'fifth' }).catch(e => e);
+  assert.equal(error.code, 'SLOTS_FULL');
+  assert.equal(error.message, 'Journal runs up to 4 sessions at once. Stop one before starting another.');
+  const plain = await c.call('nope').catch(e => e);
+  assert.equal(plain.message, 'Unknown runtime operation'); assert.equal(plain.code, undefined);
+  const listed = await c.call('list');
+  assert.deepEqual(listed.map(s => s.slot).sort(), [1, 2, 3, 4]);
 });
