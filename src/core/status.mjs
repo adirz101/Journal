@@ -115,19 +115,30 @@ export function branchDraft(project, previous) {
   };
 }
 
-function structure(root, ref) {
-  const paths = quiet(() => git(root, ['ls-tree', '-r', '--name-only', ref]).split('\n').filter(Boolean), null);
-  if (!paths) return null;
-  const dirs = new Map(); const files = [];
-  for (const path of paths) {
-    const [first, ...rest] = path.split('/');
-    if (rest.length) dirs.set(first, (dirs.get(first) ?? 0) + 1); else files.push(first);
+export function structure(root, ref, run = git) {
+  const paths = quiet(() => run(root, ['ls-tree', '-r', '--name-only', ref]).split('\n').filter(Boolean), null);
+  if (paths) {
+    const dirs = new Map(); const files = [];
+    for (const path of paths) {
+      const [first, ...rest] = path.split('/');
+      if (rest.length) dirs.set(first, (dirs.get(first) ?? 0) + 1); else files.push(first);
+    }
+    return { dirs, files, counted: true };
   }
-  return { dirs, files };
+  // Very large trees overflow the bounded Git output: list the top level only, without counts.
+  const top = quiet(() => run(root, ['ls-tree', ref]).split('\n').filter(Boolean), null);
+  if (!top) return null;
+  const dirs = new Map(); const files = [];
+  for (const line of top) {
+    const [meta, name] = line.split('\t');
+    if (meta.split(' ')[1] === 'tree') dirs.set(name, null); else files.push(name);
+  }
+  return { dirs, files, counted: false };
 }
 
-function describeStructure({ dirs, files }) {
-  const listed = [...dirs].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 10).map(([dir, count]) => `${dir} (${count})`);
+export function describeStructure({ dirs, files }) {
+  const listed = [...dirs].sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0) || a[0].localeCompare(b[0])).slice(0, 10)
+    .map(([dir, count]) => count === null ? dir : `${dir} (${count})`);
   const top = files.filter(name => MANIFESTS.test(name)).slice(0, 5);
   return `${listed.join(', ') || 'no directories'}${top.length ? `; key files: ${top.join(', ')}` : ''}`;
 }
@@ -144,6 +155,7 @@ export function overviewDraft(project, previous) {
   const { root } = project; const notes = [];
   if (!project.head) throw new Error('A repo overview requires at least one commit');
   const now = structure(root, 'HEAD');
+  if (!now) throw new Error('Journal could not read this repository’s file list; try again or write the overview by hand');
   const recorded = previous?.source?.kind === 'git' ? previous.source.head : previous?.source?.commit;
   const base = recorded && isCommit(root, recorded) && isAncestor(root, recorded) ? recorded : null;
   const structureChanges = [];

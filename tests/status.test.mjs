@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { JournalStore } from '../src/core/store.mjs';
 import { removeLater } from './support/cleanup.mjs';
+import { structure, describeStructure } from '../src/core/status.mjs';
 
 function fixture(t) {
   const root = mkdtempSync(resolve(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'journal-status-'));
@@ -151,4 +152,16 @@ test('a repo overview goes stale once no branch, remote or tag contains its comm
   assert.equal(f.store.listMemories(f.project.id)[0].validation, 'current');
   f.git('reset', '--hard', 'HEAD~1');
   assert.equal(f.store.listMemories(f.project.id)[0].validation, 'stale', 'Only the reflog still holds the commit');
+});
+
+test('a tree too large for one Git listing falls back to top-level structure without counts', () => {
+  const run = (root, args) => {
+    if (args.includes('-r')) throw new Error('stdout maxBuffer length exceeded');
+    return '040000 tree 1111111111111111111111111111111111111111\tsrc\n100644 blob 2222222222222222222222222222222222222222\tpackage.json';
+  };
+  const result = structure('/unused', 'HEAD', run);
+  assert.equal(result.counted, false);
+  assert.deepEqual([...result.dirs], [['src', null]]);
+  assert.deepEqual(result.files, ['package.json']);
+  assert.equal(describeStructure(result), 'src; key files: package.json');
 });
