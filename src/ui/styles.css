@@ -159,3 +159,8 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 
 
 /* === Phase 3 C: layout, rails and overlay === */
+/* The grid columns come from ResizableWorkspace; pane wrappers take no box of their own. */
+.shell-pane{display:contents}.sidebar-rail{padding-left:7px;padding-right:7px}.inspector-rail .rail-tile{width:36px;height:36px}
+/* Overlays sit above the main column, out of flow, so the terminal never refits (boards B10, B11). */
+.shell-overlay{position:absolute;top:0;bottom:0;z-index:20;display:flex;flex-direction:column;border:1px solid var(--line2);max-width:calc(100% - 100px)}.shell-overlay>aside{flex:1;min-height:0;border:0}
+.inspector-overlay{right:44px;background:var(--panel);box-shadow:-16px 0 40px var(--shadow-overlay)}.sidebar-overlay{left:56px;background:var(--side);box-shadow:16px 0 40px var(--shadow-overlay)}

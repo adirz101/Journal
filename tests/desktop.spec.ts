@@ -5,6 +5,8 @@ import { execFileSync } from 'node:child_process';
 import { inspectorTab, newSession, sessionActions, sessionStatus, setTheme, switchProject } from './support/ui';
 
 test('reviewed file knowledge reaches a real PTY and survives renderer and app restart', async () => {
+  // A long scenario: each start now begins with New session (Phase 3 split view), and hidden test windows click slowly.
+  test.setTimeout(120_000);
   test.skip(process.platform === 'win32', 'Windows native desktop smoke requires a separate real-machine fixture');
   const base = resolve('.cache/tmp'); mkdirSync(base, { recursive: true });
   const root = mkdtempSync(resolve(base, 'desktop-')); const project = resolve(root, 'fixture project'); const bin = resolve(root, 'bin');
@@ -49,11 +51,12 @@ process.stdin.on('data',data=>{
     await page.getByRole('button', { name: 'Preview context' }).click();
     await expect(page.getByTestId('context-packet')).toContainText('Fixture tests require Docker');
     await page.getByRole('button', { name: 'Start Claude' }).click();
-    await expect(page.getByLabel('Initial task')).toHaveValue('');
+    // The session view replaces the form; the next New session starts with an empty task.
+    await expect(page.getByLabel('Initial task')).toHaveCount(0);
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
     // The provider mark sits next to the name; the session row's accessible name is unchanged.
-    await expect(page.locator('.terminal-heading .provider-mark.claude svg')).toBeVisible();
+    await expect(page.locator('.session-header .provider-mark.claude svg')).toBeVisible();
     await expect(page.getByRole('button', { name: /^Claude Code: Review Docker tests\./ })).toBeVisible();
     // Each session row carries its own aria-hidden mark.
     await expect(page.getByRole('button', { name: /^Claude Code: Review Docker tests\./ }).locator('.provider-mark.claude[aria-hidden="true"] svg')).toBeVisible();
@@ -88,9 +91,8 @@ process.stdin.on('data',data=>{
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(900, 640));
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-    // A small viewport with widened sidebars shows only the last few rows (three at
-    // the 11 px type floor). Verify retained history by scrolling through it, a page
-    // at a time, rather than requiring earlier output to remain on screen.
+    // A small viewport shows only part of the history. Verify retained history by
+    // scrolling through it, a page at a time, rather than requiring earlier output to remain on screen.
     const surface = page.locator('.terminal-surface'); const rows = page.locator('.xterm-rows');
     const scrollTo = async (key: string, text: string) => {
       for (let i = 0; i < 60; i++) {
@@ -103,9 +105,8 @@ process.stdin.on('data',data=>{
       await expect(surface).toContainText(text);
     };
     await expect(surface).toContainText('ECHO after-theme');
-    // Floor, not target: 900x640 shows 3 rows today. It must not shrink further; the composer
-    // redesign (plan Task 3.4) has to bring this back to at least 10.
-    await expect.poll(() => rows.locator(':scope > div').count()).toBeGreaterThanOrEqual(3);
+    // Floor: at 900x640 the session view (no launch form above the terminal) and the narrow rails keep at least 10 rows.
+    await expect.poll(() => rows.locator(':scope > div').count()).toBeGreaterThanOrEqual(10);
     await scrollTo('Shift+PageUp', 'PTY_READY true');
     await scrollTo('Shift+PageDown', 'ECHO hello-terminal');
     await scrollTo('Shift+PageDown', 'ECHO after-theme');
@@ -130,7 +131,7 @@ process.stdin.on('data',data=>{
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
     // Codex shows the OpenAI mark in its heading and in its session row, hidden from assistive technology.
-    await expect(page.locator('.terminal-heading .provider-mark.codex[aria-hidden="true"] svg')).toBeVisible();
+    await expect(page.locator('.session-header .provider-mark.codex[aria-hidden="true"] svg')).toBeVisible();
     await expect(page.getByRole('button', { name: /^Codex:/ }).first().locator('.provider-mark.codex[aria-hidden="true"] svg')).toBeVisible();
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.getByLabel('Native session ID')).toBeVisible();

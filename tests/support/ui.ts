@@ -90,6 +90,8 @@ export const sessionActions = (page: Page): Locator => page.locator('.session-ac
 // Selects an inspector tab and returns it.
 export async function inspectorTab(page: Page, name: 'Session' | 'Files' | 'Memory'): Promise<Locator> {
   const tab = page.getByRole('tab', { name: startsWith(name) });
+  // A medium or narrow window folds the inspector into a rail: its button opens the overlay on that tab.
+  if (!await tab.count()) await page.locator('.inspector-rail').getByRole('button', { name: startsWith(name) }).click();
   await tab.click();
   return tab;
 }
@@ -108,7 +110,10 @@ export const statusBar = (page: Page): Locator => page.locator('.status-bar');
 
 // The button that hides or shows the inspector.
 export const inspectorToggle = (page: Page, action: 'hide' | 'show'): Locator =>
-  page.getByRole('button', { name: action === 'hide' ? 'Hide side panel' : 'Show side panel', exact: true });
+  page.getByRole('button', { name: action === 'hide' ? 'Hide inspector' : 'Show inspector', exact: true });
 
-// Makes the window wide enough for the docked inspector and both separators. Today every size docks them.
-export async function ensureWide(_app: ElectronApplication) {}
+// Makes the window wide enough for the docked inspector and both separators (1440 px of content or more).
+export async function ensureWide(app: ElectronApplication, page?: Page) {
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1600, 900));
+  if (page) await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeGreaterThanOrEqual(1440);
+}

@@ -95,12 +95,12 @@ console.log('Installed to ~/.local/bin/agent. Add ~/.local/bin to your PATH.');`
     await newSession(page); await page.getByLabel('Initial task').fill('Summarise the readme');
     await page.getByRole('button', { name: 'Start Cursor' }).click();
     await expect(page.locator('.terminal-surface')).toContainText(`RAN ["--resume=${CHAT}","--mode=ask"]`);
-    await expect(sessionStatus(page)).toContainText('read-only');
+    await expect(sessionStatus(page)).toContainText('Read-only');
     const cursorLaunch = launches().find(l => l.bin === 'agent')!;
     expect(cursorLaunch.argv.slice(-2)).toEqual(['--', 'Summarise the readme']); // no approved knowledge yet: the task alone
     expect(cursorLaunch.argv).not.toContain('--force');
-    await page.getByLabel('Read-only', { exact: true }).uncheck();
-    await newSession(page); await page.getByLabel('Initial task').fill('Claude side task');
+    await newSession(page); await page.getByLabel('Read-only', { exact: true }).uncheck();
+    await page.getByLabel('Initial task').fill('Claude side task');
     await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
     await expect(page.getByRole('button', { name: /^Cursor: Summarise the readme/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /^Claude Code: Claude side task/ })).toBeVisible();

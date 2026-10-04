@@ -19,16 +19,15 @@ const describe = (session: Session, state: SessionState, attention: boolean) =>
 const slotKeys = (session: Session, shortcuts: Keys) => isLive(session) && session.slot ? shortcuts?.[`slot-${session.slot}` as CommandId] : undefined;
 const pointAt = (element: HTMLElement): Point => { const rect = element.getBoundingClientRect(); return { x: rect.left, y: rect.bottom }; };
 const withKeys = (label: string, keys?: { label: string }) => keys ? `${label} (${keys.label})` : label;
-// Commands that arrive with later groups (toggle-sidebar) are looked up by name.
-const keysFor = (shortcuts: Keys, id: string) => (shortcuts as Partial<Record<string, { label: string; aria: string }>> | undefined)?.[id];
 
 // Rail icons: inline, decorative (every rail button has its own accessible name).
 const Icon = ({ d }: { d: string }) => <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d={d} /></svg>;
 const ICONS = { plus: 'M12 5v14M5 12h14', recent: 'M12 7v5l3 2M21 12a9 9 0 1 1-9-9 9 9 0 0 1 9 9Z', memory: 'M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3ZM5 17a3 3 0 0 1 3-3h11', expand: 'm9 6 6 6-6 6' };
 
-export function Sidebar({ pane, projects, project, sessions, proposals, selectedId, connected, runtimeState, now, canStart, shortcuts, appearance, update,
+// inOverlay: the full sidebar shown over a narrow window (the rail keeps the ID).
+export function Sidebar({ pane, inOverlay = false, projects, project, sessions, proposals, selectedId, connected, runtimeState, now, canStart, shortcuts, appearance, update,
   onSelect, onSessionMenu, onNew, onSwitchProject, onProjectMenu, onOpenMemory, onOpenSettings, onExpand, onShowRecent, onError }: {
-  pane: Pane; projects: Project[]; project: Project | null; sessions: Session[]; proposals: Proposal[];
+  pane: Pane; inOverlay?: boolean; projects: Project[]; project: Project | null; sessions: Session[]; proposals: Proposal[];
   selectedId: string | null; connected: boolean; runtimeState: 'connected' | 'connecting' | 'disconnected'; now: number; canStart: boolean;
   shortcuts: Keys; appearance: Appearance; update: UpdateState | null;
   onSelect(session: Session): void; onSessionMenu(session: Session, at?: Point): void; onNew(): void;
@@ -85,11 +84,11 @@ export function Sidebar({ pane, projects, project, sessions, proposals, selected
       <button className="rail-tile" aria-label={shell.recentSessions} title={shell.recentSessions} onClick={onShowRecent} disabled={!onShowRecent}><Icon d={ICONS.recent} /></button>
       <span className="rail-spacer" />
       {project && <button className="rail-tile" aria-label={memoryName} title={memoryName} onClick={onOpenMemory}><Icon d={ICONS.memory} />{proposals.length > 0 && <span className="badge count-badge" aria-hidden="true">{proposals.length}</span>}</button>}
-      <button className="rail-tile" aria-label={shell.expandSidebar} title={withKeys(shell.expandSidebar, keysFor(shortcuts, 'toggle-sidebar'))} aria-keyshortcuts={keysFor(shortcuts, 'toggle-sidebar')?.aria} onClick={onExpand} disabled={!onExpand}><Icon d={ICONS.expand} /></button>
+      <button className="rail-tile" aria-label={shell.expandSidebar} title={withKeys(shell.expandSidebar, shortcuts?.['toggle-sidebar'])} aria-keyshortcuts={shortcuts?.['toggle-sidebar']?.aria} onClick={onExpand} disabled={!onExpand}><Icon d={ICONS.expand} /></button>
     </aside>;
   }
 
-  return <aside className="sidebar" id="project-sidebar" aria-label="Sidebar">
+  return <aside className="sidebar" id={inOverlay ? undefined : 'project-sidebar'} aria-label="Sidebar">
     <button className="project-switcher" aria-label={switcherName} aria-haspopup={hasMenu} title={project?.root}
       onClick={event => switchProject(event.currentTarget)} onContextMenu={event => { if (!project) return; event.preventDefault(); onProjectMenu(menuPosition(event)); }}>
       <img className="brand-icon" src={mark} alt="" width={32} height={32} />

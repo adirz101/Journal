@@ -32,8 +32,10 @@ export function SettingsDialog({ appearance, onAppearance, update, project, onCl
         {(['dark', 'light'] as const).map(value => <label key={value} className="inline-check"><input type="radio" name="appearance" checked={appearance === value} onChange={() => onAppearance(value)} /> {value === 'dark' ? shell.dark : shell.light}</label>)}
       </div></section>
     <section className="settings-section" aria-labelledby="settings-notifications"><h3 id="settings-notifications">{shell.notifications}</h3>
-      <label className="inline-check"><input type="checkbox" disabled={!preferences} checked={!!preferences?.notifications} onChange={e => prefer('notifications', e.target.checked)} /> {shell.notifyApproval}</label>
-      <label className="inline-check"><input type="checkbox" disabled={!preferences?.notifications} checked={!!preferences?.notificationCommand} onChange={e => prefer('notificationCommand', e.target.checked)} aria-describedby="settings-command-hint" /> {shell.notifyCommand}</label>
+      {/* Shown once the stored values are known, never as a guessed state. */}
+      {preferences ? <><label className="inline-check"><input type="checkbox" checked={preferences.notifications} onChange={e => prefer('notifications', e.target.checked)} /> {shell.notifyApproval}</label>
+        <label className="inline-check"><input type="checkbox" disabled={!preferences.notifications} checked={preferences.notificationCommand} onChange={e => prefer('notificationCommand', e.target.checked)} aria-describedby="settings-command-hint" /> {shell.notifyCommand}</label></>
+        : <p className="muted">Loading…</p>}
       <p className="muted small-print" id="settings-command-hint">{shell.notifyCommandHint}</p></section>
     {/* Its own section, headed Updates. */}
     <UpdateSettings state={update} />

@@ -134,6 +134,7 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     expect(f.launches()).toHaveLength(4);
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(sessionStatus(page)).toContainText('Stopped');
+    await newSession(page);
     await expect(page.getByRole('button', { name: 'Start Claude', exact: true })).toBeEnabled();
   } finally { await closeApp(app); f.cleanup(); }
 });
@@ -288,7 +289,8 @@ test('a managed worktree is created from the dialog, hosts a research session an
     await expect(page.locator('.terminal-surface')).toContainText('TASK WORKTREE_TASK');
     await expect(page.locator('.terminal-surface')).toContainText('ARGS ["--sandbox","read-only"]');
     await expect(page.locator('.terminal-surface')).toContainText(/CWD .*worktrees/);
-    await expect(sessionStatus(page)).toContainText('worktree · read-only');
+    await expect(sessionStatus(page)).toContainText('Separate copy (worktree) · ⑂ journal/isolated');
+    await expect(sessionStatus(page)).toContainText('Read-only');
     await page.getByRole('button', { name: 'Workspaces…' }).click();
     await page.getByRole('button', { name: 'Remove worktree' }).click();
     await expect(page.getByText(/still running in it/)).toBeVisible();
@@ -309,10 +311,10 @@ test('a branch switched outside Journal is picked up and live sessions say where
     await newSession(page); await page.getByLabel('Initial task').fill('SWITCH_TASK');
     await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('TASK SWITCH_TASK');
-    await expect(page.getByLabel('Workspace')).toContainText('Current checkout · main');
+    await expect(page.locator('.project-switcher .branch-badge')).toContainText('main');
     execFileSync('git', ['-C', f.project, 'switch', '-q', '-c', 'feat/elsewhere']);
-    await expect(page.getByLabel('Workspace')).toContainText('Current checkout · feat/elsewhere', { timeout: 8000 });
-    await expect(page.locator('.branch-badge')).toContainText('feat/elsewhere');
+    // The switcher's sub-line follows the checkout.
+    await expect(page.locator('.project-switcher .branch-badge')).toContainText('feat/elsewhere', { timeout: 8000 });
     await expect(sessionStatus(page)).toContainText('started on ⑂ main');
     await expect(page.getByText(/The checkout is now on feat\/elsewhere; this session started on main/)).toBeVisible();
   } finally { await closeApp(app); f.cleanup(); }

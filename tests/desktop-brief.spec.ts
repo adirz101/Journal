@@ -5,6 +5,8 @@ import { execFileSync } from 'node:child_process';
 import { inspectorTab, newSession, switchProject } from './support/ui';
 
 test('empty-task launches carry an approved repo overview and current branch update to either provider', async () => {
+  // A long scenario: each start now begins with New session (Phase 3 split view), and hidden test windows click slowly.
+  test.setTimeout(120_000);
   test.skip(process.platform === 'win32', 'POSIX provider fixture; native Windows is verified separately');
   mkdirSync(resolve('.cache/tmp'), { recursive: true });
   const root = mkdtempSync(resolve('.cache/tmp', 'brief-')); const project = resolve(root, 'orientation project'); const bin = resolve(root, 'bin');
@@ -48,6 +50,7 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
     await expect(page.getByTestId('context-packet')).toContainText('Project brief');
     await expect(page.getByTestId('context-packet')).toContainText('Branch update');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await newSession(page);
     await expect(page.getByRole('button', { name: 'Start Codex', exact: true })).toBeEnabled();
     git('switch', '-c', 'feature');
     await switchProject(app, page, 'orientation project');
@@ -58,6 +61,7 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
     await expect(page.locator('.terminal-surface')).toContainText('FEATURE_PROGRESS');
     await expect(page.locator('.terminal-surface')).not.toContainText('MAIN_PROGRESS');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await newSession(page);
     await expect(page.getByRole('button', { name: 'Start Claude', exact: true })).toBeEnabled();
     // Withdrawing a status update excludes it from subsequent context.
     await inspectorTab(page, 'Memory');
@@ -83,6 +87,7 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
     await expect(page.locator('.terminal-surface')).not.toContainText('REPO_PURPOSE');
     await expect(page.getByText(/left out by you/)).toBeAttached();
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await newSession(page);
     await page.getByRole('button', { name: 'Preview context' }).click();
     await expect(page.getByTestId('context-packet')).toContainText('REPO_PURPOSE');
     // Suggestions are fetched once for the window (App) and reach the Memory tab:

@@ -453,7 +453,9 @@ const actions = {
     // A runtime from another build may not understand newer launch options;
     // never let it silently run in the wrong workspace or mode.
     if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.plan || input.provider === 'cursor' || input.disabled?.length || input.references?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, read-only or plan mode, Cursor, leave-out or file references.');
-    return runtime.call('start', input);
+    // The CLI version comes from main's own provider detection, never from the renderer.
+    const { cliVersion: _ignored, ...request } = input;
+    return runtime.call('start', { ...request, cliVersion: agents.find(agent => agent.provider === input.provider)?.version ?? null });
   },
   // ----- Cursor CLI: install and sign in run visibly, only after the user asks. -----
   providerStatus: ({ provider, fresh }) => { if (provider !== 'cursor') throw new Error('Only Cursor needs a status check'); return refreshCursor({ fresh: fresh === true }); },

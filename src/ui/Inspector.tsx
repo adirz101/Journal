@@ -11,9 +11,10 @@ const ICONS: Record<InspectorTab | 'show', string> = {
 // The right-hand inspector (boards B4, B6): Session, Files and Memory tabs, or
 // a 44 px rail of tab buttons. Tabs follow the WAI-ARIA pattern: arrows move
 // between them (roving tabIndex), Home and End jump to the ends.
-export function Inspector({ pane, tab, onTab, badges, shortcuts, overlay = false, onHide, onShow, children }: {
+// overlayOpen: the overlay shows a tab (the rail marks it pressed). inOverlay: this full pane is that overlay (the rail keeps the ID).
+export function Inspector({ pane, tab, onTab, badges, shortcuts, overlayOpen = false, inOverlay = false, onHide, onShow, children }: {
   pane: Pane; tab: InspectorTab; onTab(tab: InspectorTab): void; badges: { files: number; memory: number };
-  shortcuts: Bootstrap['shortcuts'] | undefined; overlay?: boolean; onHide?(): void; onShow?(tab?: InspectorTab): void; children?: ReactNode;
+  shortcuts: Bootstrap['shortcuts'] | undefined; overlayOpen?: boolean; inOverlay?: boolean; onHide?(): void; onShow?(tab?: InspectorTab): void; children?: ReactNode;
 }) {
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const keys = (id: InspectorTab) => shortcuts?.[`tab-${id}`];
@@ -25,7 +26,7 @@ export function Inspector({ pane, tab, onTab, badges, shortcuts, overlay = false
       return keys(id) ? `${base} (${keys(id)!.label})` : base;
     };
     return <aside className="knowledge-panel inspector-rail" id="knowledge-sidebar" aria-label={shell.inspector}>
-      {TABS.map(({ id }) => <button key={id} className="rail-tile" aria-label={railName(id)} title={railName(id)} aria-keyshortcuts={keys(id)?.aria} aria-pressed={overlay ? tab === id : undefined} onClick={() => { onTab(id); onShow?.(id); }}>
+      {TABS.map(({ id }) => <button key={id} className="rail-tile" aria-label={railName(id)} title={railName(id)} aria-keyshortcuts={keys(id)?.aria} aria-pressed={overlayOpen ? tab === id : undefined} onClick={() => { onTab(id); onShow?.(id); }}>
         <Icon d={ICONS[id]} />{badge(id) > 0 && <span className="badge count-badge" aria-hidden="true">{badge(id)}</span>}</button>)}
       <span className="rail-spacer" />
       <button className="rail-tile" aria-label={shell.showInspector} title={toggleKeys ? `${shell.showInspector} (${toggleKeys.label})` : shell.showInspector} aria-keyshortcuts={toggleKeys?.aria} onClick={() => onShow?.()} disabled={!onShow}><Icon d={ICONS.show} /></button>
@@ -37,7 +38,7 @@ export function Inspector({ pane, tab, onTab, badges, shortcuts, overlay = false
     if (next < 0) return;
     event.preventDefault(); onTab(TABS[next].id); tabs.current[next]?.focus();
   };
-  return <aside className="knowledge-panel" id="knowledge-sidebar" aria-label={shell.inspector}>
+  return <aside className="knowledge-panel" id={inOverlay ? undefined : 'knowledge-sidebar'} aria-label={shell.inspector}>
     <div className="panel-tabs" role="tablist" aria-label={shell.inspector}>
       {TABS.map(({ id, label }, index) => <button key={id} ref={node => { tabs.current[index] = node; }} role="tab" id={`inspector-tab-${id}`} aria-selected={tab === id} aria-controls="inspector-panel" tabIndex={tab === id ? 0 : -1}
         aria-keyshortcuts={keys(id)?.aria} title={keys(id) ? `${label} (${keys(id)!.label})` : label} onClick={() => onTab(id)} onKeyDown={event => move(event, index)}>

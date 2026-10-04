@@ -3,6 +3,7 @@ import { TerminalPane } from './TerminalPane';
 import { KnowledgeForm } from './KnowledgeForm';
 import { KnowledgePanel } from './KnowledgePanel';
 import { ResizableWorkspace } from './ResizableWorkspace';
+import { useShellLayout } from './useShellLayout';
 import { useProposals } from './useProposals';
 import { Sidebar } from './Sidebar';
 import { nextNeedsYou, resumable, slotOrder, slotTarget, stateFor } from './sessionState';
@@ -37,7 +38,6 @@ import { api, errorCode, isLive, PROVIDER_NAMES, type Bootstrap, type CommandId,
 
 const MAX_SESSIONS = 4;
 const latest = (a: string | null | undefined, b: string | null | undefined) => !a ? b : !b ? a : a > b ? a : b;
-const storedCollapsed = () => { try { return localStorage.getItem('journal-panel-collapsed') === '1'; } catch { return false; } };
 
 export default function App() {
   const [appearance, setAppearance] = useState<Appearance>(storedAppearance);
@@ -62,11 +62,10 @@ export default function App() {
   const [renameTarget, setRenameTarget] = useState<{ kind: 'project'; project: Project } | { kind: 'session'; session: Session } | null>(null);
   // Right panel: collapsible, wider while previewing a file; references chosen for the next task.
   const update = useUpdateState();
-  const [collapsed, setCollapsed] = useState(storedCollapsed); const [previewing, setPreviewing] = useState(false); const [explorerFocus, setExplorerFocus] = useState(0);
+  const [previewing, setPreviewing] = useState(false); const [explorerFocus, setExplorerFocus] = useState(0);
   // The Files tab's view: the user's last choice for this app run, else Changed while the session changed something.
   const [filesChoice, setFilesChoice] = useState<'changed' | 'all' | null>(null); const [packetSignal, setPacketSignal] = useState(0);
   const [references, setReferences] = useState<FileReference[]>([]); const [evidenceSource, setEvidenceSource] = useState<{ kind: 'file'; path: string; startLine: number; endLine: number; rootId?: string } | null>(null);
-  useEffect(() => { try { localStorage.setItem('journal-panel-collapsed', collapsed ? '1' : '0'); } catch { /* optional */ } }, [collapsed]);
   // References belong to the project they were chosen in; switching projects drops them.
   useEffect(() => { setReferences([]); setEvidenceSource(null); }, [state?.project.id]);
   const referenceInputs = references.map(ref => ({ projectId: ref.projectId, rootKey: ref.rootKey, path: ref.path, startLine: ref.startLine, endLine: ref.endLine }));
@@ -80,6 +79,8 @@ export default function App() {
   const userChose = useRef(false);
   projectRef.current = state?.project ?? null;
   const connected = runtime.state === 'connected';
+  // Wide, medium or narrow window: which side panes dock, fold to rails or open as overlays.
+  const layout = useShellLayout(!!state);
   const failed = useCallback((error: unknown) => setError(error instanceof Error ? error.message : String(error)), []);
   // Open suggestions, fetched once for the window: the `proposals` event and memory changes bump knowledgeVersion.
   const proposals = useProposals(state?.project.id ?? null, knowledgeVersion, failed);
@@ -199,13 +200,14 @@ export default function App() {
     if (id === 'new-session') { if (state && canStart) newSession(); return; }
     if (id === 'open-project') { if (!busy) void openProject(); return; }
     if (id === 'settings') { setSettingsOpen(true); return; }
+    if (id === 'toggle-sidebar') { layout.toggleSidebar(); return; }
     if (!projectRef.current) return;
     if (id === 'add-note') setForm({});
-    else if (id === 'toggle-inspector') setCollapsed(value => !value);
+    else if (id === 'toggle-inspector') layout.toggleInspector();
     else if (id === 'focus-terminal') { if (session) window.dispatchEvent(new CustomEvent('journal:focus-terminal', { detail: session.id })); }
-    else if (id === 'tab-session') { setCollapsed(false); setPanel('session'); }
-    else if (id === 'tab-files') { setCollapsed(false); setPanel('files'); setExplorerFocus(n => n + 1); }
-    else if (id === 'tab-memory') { setCollapsed(false); setPanel('memory'); }
+    else if (id === 'tab-session') { setPanel('session'); layout.showInspector(); }
+    else if (id === 'tab-files') { setPanel('files'); layout.showInspector(); setExplorerFocus(n => n + 1); }
+    else if (id === 'tab-memory') { setPanel('memory'); layout.showInspector(); }
   };
   // === End region: command handler ===
   // A notification click (main sends focus-session) selects its session like a click, busy or not.
@@ -340,17 +342,36 @@ export default function App() {
   const filesView = filesChoice ?? (changed ? 'changed' : 'all');
   // A preview or an older record never feeds the status bar.
   const sessionReceipt = session && receipt?.id === session.receiptId ? receipt : null;
-  const showSent = () => { setPanel('session'); setCollapsed(false); setPacketSignal(n => n + 1); };
+  const showSent = () => { setPanel('session'); layout.showInspector(); setPacketSignal(n => n + 1); };
+  // === Region B: inspector ===
+  const inspector = (pane: 'full' | 'rail', overlay: boolean) => state && <Inspector pane={pane} inOverlay={overlay} overlayOpen={layout.inspector === 'overlay'} tab={panel} onTab={tab => { setPanel(tab); if (tab === 'files') setExplorerFocus(n => n + 1); }} badges={{ files: changed, memory: proposals.length }} shortcuts={bootstrap?.shortcuts}
+      
+    onHide={overlay ? () => layout.closeOverlays(true) : layout.mode === 'wide' ? layout.toggleInspector : undefined} onShow={tab => tab ? layout.showInspector() : layout.toggleInspector()}>
+      {panel === 'session' && <SessionTab session={session} events={events} now={now} onShowSent={showSent} context={<ContextPanel receipt={receipt} session={session} bootstrap={bootstrap} history={state.receipts} disabled={disabled} events={events} now={now} packetSignal={packetSignal}
+        onToggle={id => { const next = disabled.includes(id) ? disabled.filter(x => x !== id) : [...disabled, id]; setDisabled(next); if (receipt?.state === 'prepared') void api<Receipt>('prepareContext', { projectId: state.project.id, task: receipt.query, workspaceId: workspaceId || null, disabled: next, references: referenceInputs }).then(setReceipt).catch(failed); }}
+        onSelectReceipt={setReceipt} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />} />}
+      {panel === 'files' && <FilesTab hasSession={!!session} view={filesView} onView={setFilesChoice} changed={changed}
+        changes={session && <ChangesPanel session={session} changes={sessionChanges.changes} loading={sessionChanges.loading} error={sessionChanges.error} refresh={sessionChanges.refresh} />}
+        files={<ExplorerPanel key={state.project.id} project={state.project} session={session} rootsVersion={workspaces?.workspaces.map(w => `${w.id}:${w.state}`).join(',') ?? ''} revealLabel={`Reveal in ${revealLabel}`} focusSignal={explorerFocus} onPreviewing={setPreviewing} onError={failed}
+        onAddReference={async ref => {
+          const projectId = state.project.id;
+          const described = await api<FileReference>('describeReference', { projectId, workspaceId: workspaceId || null, rootKey: ref.rootKey, path: ref.path, startLine: ref.startLine, endLine: ref.endLine });
+          if (projectRef.current?.id !== projectId) return; // switched projects meanwhile
+          setReferences(current => current.some(r => r.rootKey === described.rootKey && r.path === described.path && r.startLine === described.startLine && r.endLine === described.endLine) ? current : [...current, described].slice(-20));
+        }}
+        onSaveEvidence={source => setEvidenceSource({ kind: 'file', path: source.path, startLine: source.startLine, endLine: source.endLine, ...(source.rootKey.startsWith('root:') ? { rootId: source.rootKey.slice(5) } : {}) })} />} />}
+      {panel === 'memory' && <MemoryTab><KnowledgePanel project={state.project} version={knowledgeVersion} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} /></MemoryTab>}
+  </Inspector>;
+  // === End region B: inspector ===
   // === Region C: the ResizableWorkspace wrapper (layout modes) ===
-  return <ResizableWorkspace hasKnowledge={!!state} collapsed={collapsed} wide={previewing && panel === 'files'}>
-    {/* === Region A: sidebar === */}
-    <Sidebar pane="full" projects={projects} project={state?.project ?? null} sessions={ordered} proposals={proposals} selectedId={selectedId} connected={connected}
+  return <ResizableWorkspace layout={layout} wide={previewing && panel === 'files'} inspector={state ? inspector : null}
+    sidebar={(pane, overlay) => <Sidebar pane={pane} inOverlay={overlay} projects={projects} project={state?.project ?? null} sessions={ordered} proposals={proposals} selectedId={selectedId} connected={connected}
       runtimeState={runtime.state === 'connected' || runtime.state === 'disconnected' ? runtime.state : 'connecting'} now={now} canStart={!!state && canStart}
       shortcuts={bootstrap?.shortcuts} appearance={appearance} update={update}
-      onSelect={next => void selectSession(next)} onSessionMenu={(next, position) => void sessionMenu(next, position)} onNew={newSession}
+      onSelect={next => { if (overlay) layout.closeOverlays(false); void selectSession(next); }} onSessionMenu={(next, position) => void sessionMenu(next, position)} onNew={() => { if (overlay) layout.closeOverlays(false); newSession(); }}
       onSwitchProject={position => void switcherMenu(position).catch(failed)} onProjectMenu={position => void projectMenu(position).catch(failed)}
-      onOpenMemory={() => { setPanel('memory'); setCollapsed(false); }} onOpenSettings={() => setSettingsOpen(true)} onError={failed} />
-    {/* === End region A: sidebar === */}
+      onOpenMemory={() => { setPanel('memory'); layout.showInspector(); }} onOpenSettings={() => setSettingsOpen(true)} onError={failed}
+      onExpand={layout.toggleSidebar} onShowRecent={() => { layout.openSidebar(); requestAnimationFrame(() => document.getElementById('sidebar-recent')?.scrollIntoView({ block: 'start' })); }} />}>
 
     {/* === Region B: main column (session view) === */}
     <main className="workspace">
@@ -364,7 +385,7 @@ export default function App() {
               <span title={`${ref.rootLabel ?? ''} · ${ref.path}${ref.contentHash ? ` · sha256 ${ref.contentHash.slice(0, 12)}` : ''}`}>{ref.kind === 'folder' ? '▸ ' : ''}{ref.display ?? ref.path}{ref.startLine ? `:${ref.startLine}${ref.endLine !== ref.startLine ? `-${ref.endLine}` : ''}` : ''}</span>
               <button aria-label={`Remove ${ref.path} from the next task`} onClick={() => setReferences(current => current.filter((_, i) => i !== index))}>×</button></li>)}
               <li className="muted">Paths and lines only; the agent reads the files itself.</li></ul>}
-            <div className="launch-actions"><div><button className="primary" disabled={busy || !canStart || !available('claude')} onClick={() => void start('claude')}>Start Claude</button><button disabled={busy || !canStart || !available('codex') || (plan && !research)} title={plan && !research ? 'Codex has no plan mode' : undefined} onClick={() => void start('codex')}>Start Codex</button><button disabled={busy || !canStart || !available('cursor') || ((research || plan) && !cursorAgent?.supports?.mode)} onClick={() => void start('cursor')}>Start Cursor</button>{liveCount >= MAX_SESSIONS && <span className="hint inline">{copy.slotsFull(MAX_SESSIONS)}</span>}</div><button className="text-button" disabled={busy} onClick={() => void run(async () => { setReceipt(await api<Receipt>('prepareContext', { projectId: state.project.id, task, workspaceId: workspaceId || null, disabled, references: referenceInputs })); setCollapsed(false); setPanel('session'); })}>Preview context ↗</button></div>
+            <div className="launch-actions"><div><button className="primary" disabled={busy || !canStart || !available('claude')} onClick={() => void start('claude')}>Start Claude</button><button disabled={busy || !canStart || !available('codex') || (plan && !research)} title={plan && !research ? 'Codex has no plan mode' : undefined} onClick={() => void start('codex')}>Start Codex</button><button disabled={busy || !canStart || !available('cursor') || ((research || plan) && !cursorAgent?.supports?.mode)} onClick={() => void start('cursor')}>Start Cursor</button>{liveCount >= MAX_SESSIONS && <span className="hint inline">{copy.slotsFull(MAX_SESSIONS)}</span>}</div><button className="text-button" disabled={busy} onClick={() => void run(async () => { setReceipt(await api<Receipt>('prepareContext', { projectId: state.project.id, task, workspaceId: workspaceId || null, disabled, references: referenceInputs })); setPanel('session'); layout.showInspector(); })}>Preview context ↗</button></div>
             <div className="launch-options"><label className="inline-label">Workspace<select value={workspaceId} onChange={e => setWorkspaceId(e.target.value)} aria-label="Workspace">
               <option value="">Current checkout · {state.project.branch ?? 'detached HEAD'}</option>
               {workspaces?.workspaces.filter(w => w.state === 'ready').map(w => <option key={w.id} value={w.id!}>{w.kind === 'managed' ? copy.separateCopy : 'Existing worktree'} · {w.branch ?? 'detached'}</option>)}
@@ -395,25 +416,6 @@ export default function App() {
     </main>
     {/* === End region B: main column === */}
 
-    {/* === Region B: inspector === */}
-    {state && <Inspector pane={collapsed ? 'rail' : 'full'} tab={panel} onTab={tab => { setPanel(tab); if (tab === 'files') setExplorerFocus(n => n + 1); }} badges={{ files: changed, memory: proposals.length }} shortcuts={bootstrap?.shortcuts}
-      onHide={() => setCollapsed(true)} onShow={() => setCollapsed(false)}>
-      {panel === 'session' && <SessionTab session={session} events={events} now={now} onShowSent={showSent} context={<ContextPanel receipt={receipt} session={session} bootstrap={bootstrap} history={state.receipts} disabled={disabled} events={events} now={now} packetSignal={packetSignal}
-        onToggle={id => { const next = disabled.includes(id) ? disabled.filter(x => x !== id) : [...disabled, id]; setDisabled(next); if (receipt?.state === 'prepared') void api<Receipt>('prepareContext', { projectId: state.project.id, task: receipt.query, workspaceId: workspaceId || null, disabled: next, references: referenceInputs }).then(setReceipt).catch(failed); }}
-        onSelectReceipt={setReceipt} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />} />}
-      {panel === 'files' && <FilesTab hasSession={!!session} view={filesView} onView={setFilesChoice} changed={changed}
-        changes={session && <ChangesPanel session={session} changes={sessionChanges.changes} loading={sessionChanges.loading} error={sessionChanges.error} refresh={sessionChanges.refresh} />}
-        files={<ExplorerPanel key={state.project.id} project={state.project} session={session} rootsVersion={workspaces?.workspaces.map(w => `${w.id}:${w.state}`).join(',') ?? ''} revealLabel={`Reveal in ${revealLabel}`} focusSignal={explorerFocus} onPreviewing={setPreviewing} onError={failed}
-        onAddReference={async ref => {
-          const projectId = state.project.id;
-          const described = await api<FileReference>('describeReference', { projectId, workspaceId: workspaceId || null, rootKey: ref.rootKey, path: ref.path, startLine: ref.startLine, endLine: ref.endLine });
-          if (projectRef.current?.id !== projectId) return; // switched projects meanwhile
-          setReferences(current => current.some(r => r.rootKey === described.rootKey && r.path === described.path && r.startLine === described.startLine && r.endLine === described.endLine) ? current : [...current, described].slice(-20));
-        }}
-        onSaveEvidence={source => setEvidenceSource({ kind: 'file', path: source.path, startLine: source.startLine, endLine: source.endLine, ...(source.rootKey.startsWith('root:') ? { rootId: source.rootKey.slice(5) } : {}) })} />} />}
-      {panel === 'memory' && <MemoryTab><KnowledgePanel project={state.project} version={knowledgeVersion} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} /></MemoryTab>}
-    </Inspector>}
-    {/* === End region B: inspector === */}
     {manageId && <ManageProjectDialog projectId={manageId} onClose={() => setManageId(null)} onChanged={() => { void reloadProjects().catch(failed); if (state?.project.id === manageId) void refresh().catch(failed); }}
       onRemoved={() => { const removed = manageId; setManageId(null); removedProject(removed); }} />}
     {renameTarget?.kind === 'project' && <RenameDialog title={`Rename ${renameTarget.project.name}`} label="Display name" value={renameTarget.project.displayName} fallback={renameTarget.project.folderName ?? renameTarget.project.name}
