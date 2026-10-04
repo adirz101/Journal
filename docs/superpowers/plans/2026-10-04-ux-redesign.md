@@ -843,7 +843,7 @@ Each task lists **files**, **what to build** (signatures and behaviour), **tests
   - `rememberProposals` accepts ≤5 IDs.
   - Per ID: accept, then approve. Audit `memory-active` with `{via}`.
   - All-or-nothing; branch mismatch refused (task 0.6).
-- **Worktree branches (found in Phase 0, task 0.6):** a suggestion from a worktree session is now bound to its own branch. Approval (`setMemoryStatus`) still validates against the primary checkout, so it refuses such notes as "branch changed". Validate and approve in the view of a workspace that is on that branch (`this.view(projectId, workspaceId)` for a workspace whose branch matches), and add a test.
+- **Worktree branches (found in Phase 0, task 0.6):** a suggestion from a worktree session is now bound to its own branch. Approval (`setMemoryStatus`) still validates against the primary checkout, so it refuses such notes as "branch changed". Validate and approve in the view of a workspace that is on that branch (`this.view(projectId, workspaceId)` for a workspace whose branch matches), and add a test. In the Memory tab, hide Revise and Approve on notes for another branch (`memory.scope === 'branch' && memory.branch !== project.branch`); the backend already refuses with a message naming the branch.
 - **Tests:** a batch of 3 gives 3 active notes and 3 audits; one bad ID rolls back all; a duplicate fingerprint from a resumed session is reported as "already suggested".
 
 **Task 6.3: Out-of-date catch (F18)**
