@@ -654,6 +654,10 @@ Each task lists **files**, **what to build** (signatures and behaviour), **tests
   - **Any provider:** `exited 0` → "Exited 0"; `exited N` → "Exited N" (error tone); `stopped`, `interrupted` and `orphaned` as on board B8; disconnected → "Disconnected · state unknown".
   - `needsYou(session)` is true only for Claude `waiting`, `failed`, `orphaned`, or survivors present.
 - **Tests:** a table test over every status, activity and provider combination.
+- **Carried over from the Phase 0 review:**
+  - Answering the only open prompt with Esc or Ctrl+C currently shows Working, but Claude is probably idle after a denial. Once native checking confirms this, show "Your turn" (running/idle) for those two keys.
+  - With two open prompts answered before any tool event, the second answer is lost (`answered` is a boolean). Consider a count if native checking shows Claude can stack prompts.
+  - Add an expression index on sessions `$.receiptId` if `listReceipts`' preview filter becomes slow.
 - **Acceptance:** board B8's state table.
 
 **Task 2.3: Pending command for the attention banner (F6)**
