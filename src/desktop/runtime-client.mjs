@@ -10,11 +10,15 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // The desktop app's connection to the runtime. It starts the runtime when none
 // is listening, reconnects after the runtime restarts, and reports a build
 // mismatch instead of silently mixing versions.
+// delay: the timer between reconnect attempts (tests inject one); retryNow() wakes it.
 export class RuntimeClient extends EventEmitter {
-  constructor({ dataDir, launch, connectTimeoutMs = 15000 }) {
-    super(); this.dataDir = dataDir; this.launch = launch; this.connectTimeoutMs = connectTimeoutMs;
+  constructor({ dataDir, launch, connectTimeoutMs = 15000, delay = wait }) {
+    super(); this.dataDir = dataDir; this.launch = launch; this.connectTimeoutMs = connectTimeoutMs; this.delay = delay;
     this.socket = null; this.pending = new Map(); this.sequence = 0; this.closing = false; this.info = null; this.connecting = null;
     this.launched = null; this.launches = 0;
+    // reconnecting: the one reconnect loop's promise; wake: ends its current pause; retry: a user retry
+    // asks the connect() in progress to try launching again.
+    this.reconnecting = null; this.wake = null; this.retry = false;
   }
   readInfo() { try { return JSON.parse(readFileSync(join(this.dataDir, 'runtime.json'), 'utf8')); } catch { return null; } }
   async attempt() {
@@ -72,7 +76,7 @@ export class RuntimeClient extends EventEmitter {
           }
           this.launches = 0; this.adopt(connection); return connection.hello;
         }
-        if (!launched) launched = this.maybeLaunch() || true;
+        if (!launched || this.retry) { this.retry = false; launched = this.maybeLaunch() || true; }
         await wait(150);
       }
       throw new Error('Could not start the Journal runtime');
@@ -90,12 +94,39 @@ export class RuntimeClient extends EventEmitter {
       if (!this.closing) { this.emit('disconnected'); void this.reconnect(); }
     });
   }
-  async reconnect() {
-    for (let attempt = 0; !this.closing && !this.socket; attempt++) {
-      try { const hello = await this.connect(); this.mismatch = false; this.emit('reconnected', hello); return; }
-      // Another version's runtime will not change by retrying quickly.
-      catch (error) { await wait(error.mismatch ? 30000 : Math.min(5000, 500 * (attempt + 1))); }
-    }
+  // One loop at a time, so 'reconnected' is emitted once per reconnection. A
+  // connection made meanwhile by call() also ends the loop with 'reconnected'.
+  reconnect() {
+    if (this.reconnecting) return this.reconnecting;
+    this.reconnecting = (async () => {
+      for (let attempt = 0; !this.closing; attempt++) {
+        if (this.socket) { this.mismatch = false; this.emit('reconnected', this.info); return; }
+        try { await this.connect(); continue; }
+        // Another version's runtime will not change by retrying quickly.
+        catch (error) { await this.pause(error.mismatch ? 30000 : Math.min(5000, 500 * (attempt + 1))); }
+      }
+    })().finally(() => { this.reconnecting = null; });
+    return this.reconnecting;
+  }
+  // A wait between attempts that retryNow() (or close()) can end early.
+  pause(ms) {
+    if (this.closing) return Promise.resolve();
+    return new Promise(resolve => {
+      const done = () => { if (this.wake === done) this.wake = null; resolve(); };
+      this.wake = done; Promise.resolve(this.delay(ms)).then(done, done);
+    });
+  }
+  // Reconnect now (the disconnected banner): try at once instead of after the
+  // current pause. It also resets the launch counter, so a retry may start the
+  // runtime again after the three-launch 'failed' stop, and clears the mismatch
+  // flag, so a remaining protocol mismatch is reported again. False when there
+  // is nothing to retry (connected, or closing).
+  retryNow() {
+    if (this.socket || this.closing) return false;
+    this.launches = 0; this.mismatch = false; this.retry = !!this.connecting;
+    this.wake?.();
+    void this.reconnect();
+    return true;
   }
   receive(message) {
     if (message.event) { this.emit('event', message.event); return; }
@@ -116,7 +147,7 @@ export class RuntimeClient extends EventEmitter {
   }
   async close({ shutdown = false, stopSessions = true } = {}) {
     // Mark closing first so the runtime's own disconnect is not treated as a crash.
-    this.closing = true;
+    this.closing = true; this.wake?.();
     if (shutdown && this.socket) { try { await this.call('shutdown', { stopSessions }); } catch { /* runtime already gone */ } }
     this.socket?.end(); this.socket = null;
   }

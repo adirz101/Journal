@@ -421,3 +421,54 @@ test('the proposals event says when generating suggestions failed', async t => {
   await until(() => events.length === 1, 5000);
   assert.deepEqual(events[0], { type: 'proposals', projectId: f.project.id, sessionId: session.id, count: 0, failed: true });
 });
+
+// Phase 8: recovery in the hello.
+test('the hello reports sessions recovered from a crashed runtime', async t => {
+  const f = fixture(t);
+  // A live session of a runtime that is gone (no process): recovery marks it interrupted.
+  f.store.saveSession({ id: 'crashed', projectId: f.project.id, provider: 'claude', nativeId: '44444444-4444-4444-8444-444444444444', nativeIdConfirmed: true, status: 'running', receiptId: 'r', runtimeId: 'gone', title: 'x', createdAt: new Date().toISOString() });
+  const { runtime } = await f.boot(); const c = client(f, t);
+  const hello = await c.connect();
+  assert.equal(hello.protocol, 4, 'an optional field: no protocol change');
+  assert.equal(hello.recovery.runtimeId, runtime.runtimeId); assert.ok(!Number.isNaN(Date.parse(hello.recovery.at)));
+  assert.deepEqual(hello.recovery.sessions, [{ id: 'crashed', status: 'interrupted', identityVerified: null }]);
+  assert.equal(c.info.recovery.sessions[0].status, 'interrupted');
+  assert.equal(f.store.getSession('crashed').status, 'interrupted');
+});
+
+test('acknowledging recovery clears it for the next client, and a stale at is ignored', async t => {
+  const f = fixture(t);
+  f.store.saveSession({ id: 'crashed', projectId: f.project.id, provider: 'codex', status: 'running', receiptId: 'r', runtimeId: 'gone', title: 'x', createdAt: new Date().toISOString() });
+  await f.boot();
+  const first = client(f, t); const { recovery } = await first.connect();
+  assert.equal(recovery.sessions.length, 1);
+  assert.deepEqual(await first.call('acknowledgeRecovery', { at: '2000-01-01T00:00:00.000Z' }), { cleared: false });
+  assert.deepEqual(await first.call('acknowledgeRecovery', {}), { cleared: false });
+  // A later client (a restarted app) still sees it.
+  await first.close(); const second = client(f, t);
+  assert.deepEqual((await second.connect()).recovery, recovery);
+  assert.deepEqual(await second.call('acknowledgeRecovery', { at: recovery.at }), { cleared: true });
+  await second.close(); const third = client(f, t);
+  assert.equal((await third.connect()).recovery, null);
+  assert.deepEqual(await third.call('acknowledgeRecovery', { at: recovery.at }), { cleared: false });
+});
+
+test('a clean start has no recovery', async t => {
+  const f = fixture(t); await f.boot(); const c = client(f, t);
+  assert.equal((await c.connect()).recovery, null);
+});
+
+test('after a runtime crash, the next hello carries the interrupted session until acknowledged', async t => {
+  const f = fixture(t); const first = await f.boot(); const c = client(f, t); await c.connect();
+  const { session } = await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'Do not resend me' });
+  // Simulated crash, as in the crash test above: no shutdown bookkeeping.
+  c.close(); first.runtime.manager.disposed = true; await Promise.race([new Promise(resolve => first.runtime.server.close(resolve)), wait(2000)]); await wait(50);
+  const second = await f.boot(); const next = client(f, t);
+  const hello = await next.connect();
+  assert.equal(hello.runtimeId, second.runtime.runtimeId);
+  assert.deepEqual(hello.recovery.sessions, [{ id: session.id, status: 'interrupted', identityVerified: null }]);
+  assert.equal(second.fake.procs.length, 0, 'nothing was started or resent');
+  await next.call('acknowledgeRecovery', { at: hello.recovery.at });
+  await next.close(); const later = client(f, t);
+  assert.equal((await later.connect()).recovery, null);
+});
