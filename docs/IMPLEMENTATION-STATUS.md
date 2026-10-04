@@ -91,7 +91,7 @@ Known follow-up (Phase 6): branch notes for a worktree's branch cannot yet be ap
 | `npm run check`, `npm run build` | Passed (the existing ~545 KiB chunk warning remains) |
 | `npm run test:desktop` | 17 passed (headless): real Electron, runtime and node-pty with fixture CLIs, covering four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches, project management, right-click menus, the file explorer and the Cursor provider (install, sign-in, launch, resume) |
 | `npm run dist:dir` | Unsigned app builds; packaged runtime starts; notices bundled |
-| GitHub Actions | BLOCKED (workflow scope) |
+| GitHub Actions | Active since 4 October 2026 (the `workflow` scope was granted): fixture CI on macOS, Linux and experimental Windows; results per GitHub Actions |
 
 Earlier authenticated evidence ([native validation](NATIVE-VALIDATION.md), [lifecycle follow-up](LIFECYCLE-AND-MEMORY-VALIDATION.md)) predates the runtime split; authenticated providers have not been rerun under the runtime or in worktrees. The [usefulness trial](USEFULNESS-TRIAL.md) round 1 was inconclusive (MODIFY).
 
