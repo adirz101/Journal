@@ -635,7 +635,7 @@ export class JournalStore {
   acceptProposal(id) {
     const proposal = this.getProposal(id);
     if (proposal.state !== 'open') throw new Error('This suggestion was already handled');
-    if (proposal.kind === 'branch-status') throw new Error('Use Propose branch update for status proposals');
+    if (proposal.kind === 'branch-status') throw new Error('This suggestion updates “Where this branch stands”. Use its own update button instead of Add for review.');
     if (proposal.scope === 'branch' && !proposal.branch) throw new Error('This suggestion was made without a branch checked out, so Journal cannot tell which branch it belongs to. Dismiss it to clear it from your suggestions.');
     if (proposal.evidence?.sessionId) this.getSession(proposal.evidence.sessionId);
     const memory = this.proposeMemory(proposal.projectId, { statement: proposal.statement, category: proposal.category, scope: proposal.scope, area: '', source: proposal.source },

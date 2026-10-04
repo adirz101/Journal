@@ -216,7 +216,6 @@ const INTERNAL_ERRORS = [
   ['core/store.mjs', 'Unknown receipt', 'the renderer asks only for receipt IDs core listed'],
   ['core/store.mjs', 'Receipt delivery is already recorded', 'runtime invariant: delivery is recorded once by the runtime'],
   ['core/store.mjs', 'Unknown proposal', 'the renderer acts only on suggestion IDs core listed'],
-  ['core/store.mjs', 'Use Propose branch update for status proposals', 'the app shows Propose branch update, not Add for review, for these suggestions'],
 ];
 function errorStrings(dir) {
   return readdirSync(new URL(`../src/${dir}/`, import.meta.url)).filter(name => name.endsWith('.mjs')).flatMap(file => {

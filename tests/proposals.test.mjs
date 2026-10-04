@@ -51,7 +51,7 @@ test('a session that moved the branch suggests a status review; proposals refere
   const f = fixture(t); const s = f.session('', { head: f.store.project(f.project.id).head });
   writeFileSync(join(f.repo, 'b.txt'), 'b\n'); f.git('add', '.'); f.git('-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qm', 'work');
   const status = f.store.generateProposals(s.id).filter(p => p.kind === 'branch-status');
-  assert.equal(status.length, 1); assert.throws(() => f.store.acceptProposal(status[0].id), /Propose branch update/);
+  assert.equal(status.length, 1); assert.throws(() => f.store.acceptProposal(status[0].id), /Where this branch stands/);
   assert.equal(f.store.listProposals(f.project.id).length, 1);
   f.store.db.prepare(`UPDATE proposals SET body=json_set(body, '$.kind', 'rule', '$.evidence.sessionId', 'invented') WHERE id=?`).run(status[0].id);
   assert.throws(() => f.store.acceptProposal(status[0].id), /Unknown session/);
