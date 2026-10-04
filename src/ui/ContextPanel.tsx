@@ -53,7 +53,7 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, l
         {session && <><dt>Route</dt><dd><ProviderMark provider={session.provider} size={16} /> {PROVIDER_NAMES[session.provider]} {agent?.version ?? ''} · initial CLI prompt{session.plan ? ' · plan mode' : ''}{session.research ? ' · read-only mode' : ''}</dd>
           <dt>Not observable</dt><dd>{session.provider === 'claude' ? 'Whether the model read or used each note; tool output; hidden reasoning.' : 'Whether the model read or used each note; commands and test results; tool output; hidden reasoning.'}</dd></>}</dl>
       <ol className="receipt-items">{receipt.items.map(item => <li key={item.id}>
-        <div className="memory-meta"><span>{category(item.category, item.scope)}{item.pinned ? ' · pinned' : ''}</span><span>{selectionReason(item.selection?.reason)} · {item.selection?.bytes ?? 0} B</span></div>
+        <div className="memory-meta"><span>{category(item.category, item.scope)}{item.pinned ? ' · pinned' : ''}</span><span>{selectionReason(item.selection?.reason, item.area)} · {item.selection?.bytes ?? 0} B</span></div>
         <p dir="auto">{item.statement}</p>
         <small className="memory-scope">{item.scope === 'branch' ? `⑂ ${copy.onlyOn(item.branch)}` : copy.allBranches}{item.area ? ` · ${item.area}` : ''}{item.environment ? ` · applies when: ${item.environment}` : ''} · r{item.revision}</small>
         <button className="source-button" aria-expanded={open === item.id} onClick={() => setOpen(open === item.id ? null : item.id)}>{item.source.kind === 'file' ? `↗ ${item.source.path}:${item.source.startLine}` : item.source.kind === 'git' ? '↗ Git history' : '↗ Your statement'}<span>{open === item.id ? '−' : '+'}</span></button>

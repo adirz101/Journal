@@ -79,7 +79,11 @@ test('core reasons and warnings are shown in the plain vocabulary; packet text i
   assert.equal(selectionReason('branch update'), 'Where this branch stands');
   assert.equal(selectionReason('pinned'), 'Pinned');
   assert.equal(selectionReason('referenced area src/core'), 'In src/core, which you referenced');
-  assert.equal(selectionReason('matched docker, tests in src'), 'Matches docker, tests · in src');
+  assert.equal(selectionReason('matched docker, tests in src', 'src'), 'Matches docker, tests · in src');
+  assert.equal(selectionReason('matched sign in, tests in src/sign in', 'src/sign in'), 'Matches sign in, tests · in src/sign in');
+  assert.equal(selectionReason('matched sign in, tests'), 'Matches sign in, tests');
+  assert.equal(selectionReason('matched sign in flow in src', 'src'), 'Matches sign in flow · in src');
+  assert.equal(selectionReason('matched task terms in src', 'src'), 'Relevant to your task · in src');
   assert.equal(selectionReason('matched task terms'), 'Relevant to your task');
   assert.equal(selectionReason('matched'), 'Relevant to your task');
   assert.equal(selectionReason(undefined), 'Included');
@@ -94,4 +98,54 @@ test('core reasons and warnings are shown in the plain vocabulary; packet text i
     'The current branch update is 3 commits behind HEAD. Propose a status update to review recent progress.', 'Only four current project brief entries fit the orientation limit. Consolidate superseded briefs.',
     'A project brief was excluded by the context budget. Shorten or consolidate the reviewed summaries.', 'No current approved project brief is included. Add a checkout-scoped brief to orient every session.'])
     assert.doesNotMatch(warningText(text), OLD_TERMS, text);
+});
+
+// Every string core produces for the renderer to map, read from core's source,
+// so a new or reworded core string cannot silently bypass the mapping.
+// A template's substitutions are sampled: literals in conditionals and
+// fallbacks, and '1' for any other value.
+function samples(node, inTemplate = false) {
+  if (ts.isParenthesizedExpression(node)) return samples(node.expression, inTemplate);
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return [node.text];
+  if (ts.isConditionalExpression(node)) return [...samples(node.whenTrue, inTemplate), ...samples(node.whenFalse, inTemplate)];
+  if (ts.isBinaryExpression(node) && /^(?:\?\?|\|\|)$/.test(node.operatorToken.getText())) return [...samples(node.left, inTemplate), ...samples(node.right, inTemplate)];
+  if (ts.isTemplateExpression(node)) {
+    let out = [node.head.text];
+    for (const span of node.templateSpans) { const values = samples(span.expression, true); out = out.flatMap(prefix => values.map(value => prefix + value + span.literal.text)); }
+    return out;
+  }
+  return inTemplate ? ['1'] : [];
+}
+function coreStrings(file) {
+  const source = ts.createSourceFile(file, readFileSync(new URL(`../src/core/${file}`, import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const found = { warnings: [], excluded: [], selection: [], validation: [] };
+  const reasonOf = object => object.properties.find(p => ts.isPropertyAssignment(p) && p.name.getText() === 'reason')?.initializer;
+  const visit = node => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'push' && node.arguments[0]) {
+      const target = node.expression.expression.getText(); const arg = node.arguments[0];
+      if (target === 'warnings') found.warnings.push(...samples(arg));
+      if (target === 'excluded' && ts.isObjectLiteralExpression(arg)) { const reason = reasonOf(arg); if (reason && ts.isIdentifier(reason)) found.excluded.push(`<${reason.text}>`); else if (reason) found.excluded.push(...samples(reason)); }
+      if (target === 'matches' && ts.isObjectLiteralExpression(arg) && reasonOf(arg)) found.selection.push(...samples(reasonOf(arg)));
+    }
+    if (ts.isPropertyAssignment(node) && node.name.getText() === 'selection' && ts.isObjectLiteralExpression(node.initializer) && reasonOf(node.initializer)) found.selection.push(...samples(reasonOf(node.initializer)));
+    if (ts.isMethodDeclaration(node) && node.name.getText() === 'validation') {
+      const returns = n => { if (ts.isReturnStatement(n) && n.expression) found.validation.push(...samples(n.expression)); ts.forEachChild(n, returns); };
+      returns(node.body);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
+test('every warning and reason core can produce has a plain-language mapping', () => {
+  const core = coreStrings('store.mjs');
+  assert.ok(core.warnings.length >= 7 && core.selection.length >= 4 && core.validation.includes('stale'), 'the parse found core strings');
+  for (const warning of core.warnings) assert.notEqual(warningText(warning), warning, `unmapped warning: ${warning}`);
+  for (const warning of core.warnings) assert.doesNotMatch(warningText(warning), OLD_TERMS, warning);
+  // A code taken from validation() is every non-current validation result.
+  const codes = core.excluded.flatMap(code => code === '<validation>' ? core.validation.filter(v => v !== 'current') : [code]);
+  assert.ok(codes.length >= 9 && !codes.some(code => code.startsWith('<')), `excluded codes: ${codes}`);
+  for (const code of codes) assert.notEqual(excludedReason(code), code, `unmapped excluded code: ${code}`);
+  for (const reason of core.selection) assert.notEqual(selectionReason(reason, '1'), reason, `unmapped selection reason: ${reason}`);
 });

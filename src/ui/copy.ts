@@ -45,17 +45,19 @@ export function deliveryState(state: string | undefined) {
   return ({ prepared: 'preview', submitted: 'sent', failed: 'not sent', uncertain: 'delivery uncertain' } as Record<string, string>)[state ?? 'prepared'] ?? String(state);
 }
 
-// Why core selected a note (selection.reason), in plain words.
-export function selectionReason(reason: string | undefined) {
+// Why core selected a note (selection.reason), in plain words. A match reads
+// "matched <terms>[ in <area>]"; the note's own area marks the suffix, so a
+// term or area containing " in " is never split in the wrong place.
+export function selectionReason(reason: string | undefined, area?: string | null) {
   if (!reason || reason === 'selected') return 'Included';
   if (reason === 'repo overview') return copy.aboutProject;
   if (reason === 'branch update') return copy.branchStands;
   if (reason === 'pinned') return 'Pinned';
-  const area = /^referenced area (.+)$/.exec(reason);
-  if (area) return `In ${area[1]}, which you referenced`;
-  const matched = /^matched(?: (.+?))?(?: in (\S.*))?$/.exec(reason);
-  if (matched) return `${!matched[1] || matched[1] === 'task terms' ? copy.relevant : `Matches ${matched[1]}`}${matched[2] ? ` · in ${matched[2]}` : ''}`;
-  return reason;
+  if (reason.startsWith('referenced area ')) return `In ${reason.slice('referenced area '.length)}, which you referenced`;
+  if (reason !== 'matched' && !reason.startsWith('matched ')) return reason;
+  let terms = reason.slice('matched'.length).trim(); let where = '';
+  if (area && terms.endsWith(` in ${area}`)) { where = area; terms = terms.slice(0, -` in ${area}`.length); }
+  return `${!terms || terms === 'task terms' ? copy.relevant : `Matches ${terms}`}${where ? ` · in ${where}` : ''}`;
 }
 
 // Why core left a note out (excluded[].reason codes).
