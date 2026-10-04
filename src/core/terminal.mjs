@@ -263,10 +263,16 @@ export class TerminalManager extends EventEmitter {
     const entry = this.owned(id);
     // Claude's prompt answer keys: a digit selects, Enter confirms, Esc or Ctrl+C dismisses (deny with feedback ends with Enter).
     // Pasted text never counts. The only open prompt settles at once; with several, the next tool event settles one.
-    if (entry.pending.length && !data.startsWith('\x1b[200~') && (data.includes('\r') || data === '\x1b' || data === '\x03' || /^[1-9]$/.test(data))) entry.answered = true;
+    const dismiss = data === '\x1b' || data === '\x03';
+    if (entry.pending.length && !data.startsWith('\x1b[200~') && (data.includes('\r') || dismiss || /^[1-9]$/.test(data))) entry.answered = true;
     entry.proc.write(data); entry.lastInputAt = Date.now();
-    if (entry.answered && entry.pending.length === 1 && entry.session.status === 'waiting') {
-      entry.pending = []; entry.answered = false; this.syncPending(entry); this.observe(id, entry.session.nativeId, 'running', 'working');
+    const { session } = entry;
+    if (entry.answered && entry.pending.length === 1 && session.status === 'waiting') {
+      // Esc or Ctrl+C rejects the tool and interrupts the turn, which no hook reports: Claude is back at its input box.
+      entry.pending = []; entry.answered = false; this.syncPending(entry); this.observe(id, session.nativeId, 'running', dismiss ? 'idle' : 'working');
+    } else if (dismiss && !entry.pending.length && session.provider === 'claude' && session.status === 'running' && session.activity === 'working') {
+      // "esc to interrupt": Stop does not fire on a user interrupt. A later tool event corrects this if the turn went on.
+      this.observe(id, session.nativeId, 'running', 'idle');
     }
   }
   // Types a file reference into the agent's input without submitting it, only
@@ -394,6 +400,11 @@ export class TerminalManager extends EventEmitter {
     if (!path || path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path)) return null;
     return path.split(sep).join('/').slice(0, 300);
   }
+  // After Esc or Ctrl+C set Your turn, a tool that starts or completes shows the turn went on.
+  // Not after Stop: it clears entry.tools, so only tools of the current turn count.
+  restoreWorking(id, entry, nativeId) {
+    if (entry.session.status === 'running' && entry.session.activity === 'idle') this.observe(id, nativeId, 'running', 'working');
+  }
   // A tool finished (already removed from entry.tools): was it the one that asked?
   permissionResolvedBy(entry, pending, toolUseId, known) {
     if (pending.toolUseId && known) return pending.toolUseId === toolUseId;
@@ -431,6 +442,7 @@ export class TerminalManager extends EventEmitter {
       case 'PreToolUse':
         if (event.toolUseId && entry.tools.size < 500) entry.tools.set(event.toolUseId, { tool: event.tool, command: event.command ?? null, filePath: event.filePath ?? null });
         this.settlePermissions(id, event.nativeId, event.toolUseId);
+        this.restoreWorking(id, entry, event.nativeId);
         if (event.tool === 'Bash' && event.toolUseId && entry.commands.size < 500) {
           const command = redact(event.command ?? '', 300);
           entry.commands.set(event.toolUseId, true);
@@ -442,8 +454,10 @@ export class TerminalManager extends EventEmitter {
         break;
       case 'PostToolUse': case 'PostToolUseFailure': {
         // The tool ran, so any permission prompt for it was answered, even if no further PreToolUse arrives.
-        const known = entry.tools.delete(event.toolUseId);
+        const tool = entry.tools.get(event.toolUseId); const known = entry.tools.delete(event.toolUseId);
         this.settlePermissions(id, event.nativeId, event.toolUseId, known);
+        // A rejected (asked) or interrupted tool failing is the end of the turn, not new work.
+        if (known && !(event.event === 'PostToolUseFailure' && (event.interrupted || tool.asked))) this.restoreWorking(id, entry, event.nativeId);
         if (event.tool === 'Bash' && entry.commands.delete(event.toolUseId)) {
           // Exit 0 only when Claude reported completion of a foreground command.
           const status = event.interrupted ? 'interrupted' : event.background ? 'unknown' : event.event === 'PostToolUse' ? 'succeeded' : Number.isInteger(event.exit) ? 'failed' : 'unknown';

@@ -328,8 +328,9 @@ test('a lone Esc answers (denies) a prompt; a new request resets an unsettled an
   write('\x1b'); send('PreToolUse', { tool: 'Grep', toolUseId: 'g2' });
   write('\x1b'); send('PreToolUse', { tool: 'Grep', toolUseId: 'g3' });
   assert.equal(state(), 'waiting/permission');
+  // Esc at the last prompt ends Claude's turn: back at its input box.
   write('\x1b');
-  assert.equal(state(), 'running/working');
+  assert.equal(state(), 'running/idle');
 });
 
 test('an auto-approved sibling failing does not hide an open approval', async t => {
@@ -369,13 +370,13 @@ test('two open prompts need two answers; one answer settles one prompt', async t
 });
 
 test('which input counts as answering the prompt', async t => {
-  for (const [data, answers] of [['\r\n', true], ['\x1bb', false], ['\x1b[200~ok\r\x1b[201~', false], ['\x03', true]]) {
+  for (const [data, after] of [['\r\n', 'running/working'], ['\x1bb', 'waiting/permission'], ['\x1b[200~ok\r\x1b[201~', 'waiting/permission'], ['\x03', 'running/idle']]) {
     const { send, state, write } = await hooked(t);
     send('PermissionRequest', { tool: 'Bash' });
     write(data);
-    assert.equal(state(), answers ? 'running/working' : 'waiting/permission', JSON.stringify(data));
+    assert.equal(state(), after, JSON.stringify(data));
     send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
-    assert.equal(state(), answers ? 'running/working' : 'waiting/permission', JSON.stringify(data));
+    assert.equal(state(), after === 'waiting/permission' ? after : 'running/working', JSON.stringify(data));
   }
 });
 
@@ -395,13 +396,13 @@ test("Journal's Interrupt counts as answering the prompt, like a typed Ctrl+C", 
   send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
   assert.equal(state(), 'waiting/permission');
   f.manager.interrupt(session.id);
-  assert.equal(state(), 'running/working');
+  assert.equal(state(), 'running/idle', 'Ctrl+C at the only prompt returns Claude to its input box');
   send('PreToolUse', { tool: 'Grep', toolUseId: 'g2' });
-  assert.equal(state(), 'running/working');
+  assert.equal(state(), 'running/working', 'A following tool event restores Working');
 });
 
 test('answering the only open prompt shows Working at once, before any tool event', async t => {
-  for (const keys of [['1'], ['3', 'use rg instead\r'], ['\r'], ['\x1b'], ['\x03']]) {
+  for (const keys of [['1'], ['3', 'use rg instead\r'], ['\r']]) {
     const { send, state, write, f, session } = await hooked(t);
     send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'sleep 600' });
     send('PermissionRequest', { tool: 'Bash' });
@@ -409,6 +410,21 @@ test('answering the only open prompt shows Working at once, before any tool even
     assert.equal(state(), 'running/working', JSON.stringify(keys));
     const entry = f.manager.entries.get(session.id);
     assert.deepEqual(entry.pending, []); assert.equal(entry.answered, false);
+  }
+});
+
+test('Esc or Ctrl+C at the only open prompt shows Your turn at once', async t => {
+  for (const keys of [['\x1b'], ['\x03']]) {
+    const { send, state, write, f, session } = await hooked(t);
+    send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'sleep 600' });
+    send('PermissionRequest', { tool: 'Bash' });
+    for (const key of keys) write(key);
+    assert.equal(state(), 'running/idle', JSON.stringify(keys));
+    const entry = f.manager.entries.get(session.id);
+    assert.deepEqual(entry.pending, []); assert.equal(entry.answered, false);
+    // The rejected tool reports its failure; that is not new work.
+    send('PostToolUseFailure', { tool: 'Bash', toolUseId: 'b1' });
+    assert.equal(state(), 'running/idle', JSON.stringify(keys));
   }
 });
 
@@ -701,4 +717,38 @@ test('the permission timeline event carries tool, command, path and toolUseId', 
   h.send('PermissionRequest', { tool: 'Write', toolUseId: 'w9', filePath: join(h.session.cwd, 'c.txt') });
   const bodies = h.f.store.listEvents(h.session.id).filter(e => e.kind === 'permission').map(e => e.body);
   assert.deepEqual(bodies, [{ tool: 'Bash', command: 'API_KEY=[redacted] rm x', path: null, toolUseId: 'b9' }, { tool: 'Write', command: null, path: 'c.txt', toolUseId: 'w9' }]);
+});
+
+test('Esc or Ctrl+C while working shows Your turn; a later tool event restores Working', async t => {
+  for (const key of ['\x1b', '\x03']) {
+    const { send, state, write } = await hooked(t);
+    send('UserPromptSubmit');
+    send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'sleep 600' });
+    assert.equal(state(), 'running/working');
+    write(key);
+    assert.equal(state(), 'running/idle', JSON.stringify(key));
+    // The interrupted command reports its end; that is not new work.
+    send('PostToolUseFailure', { tool: 'Bash', toolUseId: 'b1', interrupted: true });
+    assert.equal(state(), 'running/idle', JSON.stringify(key));
+    // If the key did not end the turn (it closed a menu), the next tool event says so.
+    send('PreToolUse', { tool: 'Read', toolUseId: 'r1' });
+    assert.equal(state(), 'running/working', JSON.stringify(key));
+    write(key); assert.equal(state(), 'running/idle');
+    send('PostToolUse', { tool: 'Read', toolUseId: 'r1' });
+    assert.equal(state(), 'running/working', 'A completed tool also restores Working');
+  }
+});
+
+test('arrow keys and Alt+letter while working do not change state', async t => {
+  const { send, state, write } = await hooked(t);
+  send('UserPromptSubmit');
+  for (const key of ['\x1b[A', '\x1bb', 'abc', '\x1b\x1b']) { write(key); assert.equal(state(), 'running/working', JSON.stringify(key)); }
+});
+
+test('Esc while idle or for Codex changes nothing', async t => {
+  const { send, state, write } = await hooked(t);
+  send('Stop'); write('\x1b'); assert.equal(state(), 'running/idle');
+  const f = multi(t); const codex = await f.start('codex');
+  f.manager.write(codex.id, '\x03');
+  assert.equal(f.store.getSession(codex.id).status, 'running'); assert.equal(f.store.getSession(codex.id).activity, null);
 });
