@@ -90,12 +90,38 @@ test('matched words are underlined and the hover card leaves a note out', async 
     await page.mouse.move(box.x + 2, box.y + box.height / 2); await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     const card = page.getByRole('dialog', { name: 'Notes matching “worktree”' });
     await expect(card).toContainText(NOTE);
-    await card.getByRole('button', { name: 'Leave out for this task' }).click();
+    // NoteCard's Leave out (Phase 5): its name is "Leave out"; the inspector's preview keeps "Leave out for this task".
+    await card.getByRole('button', { name: 'Leave out', exact: true }).click();
     await expect(relevant(page)).not.toContainText(NOTE);
     await expect(contextPreview(page)).toContainText('1 left out by you');
     await contextPreview(page).getByRole('button', { name: 'Restore', exact: true }).click();
     await expect(relevant(page)).toContainText(NOTE);
     await expect(contextPreview(page)).not.toContainText('left out by you');
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('underlines stay aligned through wrapping, scrolling and right-to-left text', async () => {
+  const f = setup(); const { app, page } = await open(f);
+  try {
+    await remember(page, [{ statement: NOTE }]);
+    // Twelve wrapped lines: past eight rows the box scrolls, and the mirror scrolls with it.
+    const long = Array.from({ length: 12 }, (_, i) => `line ${i} keeps going long enough to wrap inside the task box`).join('\n') + '\nworktree removal';
+    await taskBox(page).fill(long);
+    await expect(page.locator('.task-mirror mark', { hasText: /^worktree$/ })).toHaveCount(1);
+    const metrics = () => page.evaluate(() => {
+      const area = document.querySelector<HTMLTextAreaElement>('#task')!; const mirror = document.querySelector<HTMLElement>('.task-mirror')!;
+      return { width: [area.clientWidth, mirror.clientWidth], height: [area.scrollHeight, mirror.scrollHeight], top: [area.scrollTop, mirror.scrollTop], scrolls: area.scrollHeight > area.clientHeight };
+    });
+    await page.evaluate(() => { const area = document.querySelector<HTMLTextAreaElement>('#task')!; area.scrollTop = area.scrollHeight; area.dispatchEvent(new Event('scroll')); });
+    await expect.poll(async () => { const m = await metrics(); return m.top[0] > 0 && m.top[0] === m.top[1]; }).toBe(true);
+    const m = await metrics();
+    expect(m.scrolls).toBe(true); expect(m.width[0]).toBe(m.width[1]); expect(m.height[0]).toBe(m.height[1]);
+    // The underline sits inside the visible box after scrolling.
+    const box = (await taskBox(page).boundingBox())!; const mark = (await page.locator('.task-mirror mark', { hasText: /^worktree$/ }).boundingBox())!;
+    expect(mark.y).toBeGreaterThanOrEqual(box.y); expect(mark.y + mark.height).toBeLessThanOrEqual(box.y + box.height);
+    // Right-to-left text: the mirror takes the same direction as the textarea.
+    await taskBox(page).fill('\u05e9\u05dc\u05d5\u05dd worktree');
+    await expect.poll(() => page.evaluate(() => [getComputedStyle(document.querySelector('#task')!).direction, getComputedStyle(document.querySelector('.task-mirror')!).direction])).toEqual(['rtl', 'rtl']);
   } finally { await closeApp(app); f.cleanup(); }
 });
 
@@ -218,7 +244,7 @@ test('Inspect all shows the checked packet in the Session tab', async () => {
     await expect(page.getByRole('tab', { name: /^Session/ })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByTestId('context-packet')).toContainText(id);
     // A leave-out in the composer reaches the inspector's preview too: one state.
-    await relevant(page).getByRole('button', { name: 'Leave out for this task' }).click();
+    await relevant(page).getByRole('button', { name: 'Leave out', exact: true }).click();
     await expect(page.getByTestId('context-packet')).not.toContainText(id);
     await inspectorTab(page, 'Session');
   } finally { await closeApp(app); f.cleanup(); }

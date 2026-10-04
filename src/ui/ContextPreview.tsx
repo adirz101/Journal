@@ -1,19 +1,22 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { category, composer, copy, excludedReason } from './copy';
+import { composer, copy, excludedReason } from './copy';
+import { NoteCard } from './NoteCard';
+import { evidenceLine } from './noteCardModel';
 import { BYTE_LIMIT, meterText, NOTE_LIMIT, type PreviewItem, type PreviewView } from './composerModel';
 import type { Project } from './types';
 
-// One note in the preview or the hover card. Phase 5's NoteCard replaces the body.
-export function PreviewNote({ item, project: _project, variant, checked, onLeaveOut }: { item: PreviewItem; project: Project; variant: 'hover' | 'preview'; checked: boolean; onLeaveOut?(): void }) {
+// One note in the preview or the hover card: Phase 5's NoteCard with the task
+// words FTS matched. Until the sources are checked, a file note says where it is
+// based and that it is checked when you start, never that the file is unchanged.
+export function PreviewNote({ item, project, variant, checked, onLeaveOut }: { item: PreviewItem; project: Project; variant: 'hover' | 'preview'; checked: boolean; onLeaveOut?(): void }) {
   const terms = item.selection?.terms ?? [];
-  return <article className={`preview-note ${variant}`} aria-label={`${category(item.category, item.scope)}: ${item.statement.slice(0, 80)}`}>
-    <div className="preview-note-meta"><span className="cat">{category(item.category, item.scope)}</span>
-      {terms.length > 0 && <span className="preview-note-terms">{composer.matches} {terms.map(term => <mark key={term}>{term}</mark>)}</span>}
-      {item.pinned && <span className="chip">{composer.pinned}</span>}
-      <span className={`chip ${checked ? 'chip-ok' : ''}`}>{checked ? composer.current : composer.checkedWhenYouStart}</span></div>
-    <p dir="auto" title={item.statement}>{item.statement}</p>
-    {onLeaveOut && <button type="button" className="link leave-out" aria-label={copy.leaveOut} onClick={onLeaveOut}>{composer.leaveOutShort} <kbd aria-hidden="true">⌫</kbd></button>}
-  </article>;
+  const rootName = item.source.rootId ? project.roots?.find(root => root.id === item.source.rootId)?.name : undefined;
+  const evidence = checked ? null : evidenceLine({ ...item, validation: 'current' }, rootName);
+  // NoteCard reads evidence from file sources only; an unchecked note's line is written here instead.
+  const note: PreviewItem = checked ? { ...item, validation: 'current' } : evidence ? { ...item, source: { kind: 'user', note: item.source.note } } : item;
+  return <NoteCard note={note} project={project} variant={variant} matched={terms} onLeaveOut={onLeaveOut}>
+    {evidence && <div className="note-line note-evidence" title={evidence.title}>{copy.trust.basedOn(evidence.title)} · {composer.checkedWhenYouStart.toLowerCase()}</div>}
+  </NoteCard>;
 }
 
 // A list with one tab stop: arrows move between notes, Backspace or Delete

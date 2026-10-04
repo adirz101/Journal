@@ -61,9 +61,13 @@ export const TaskField = forwardRef<HTMLTextAreaElement, {
     rects.current = null;
   }, []);
   useLayoutEffect(fit, [value, fit]);
+  // Refit when the field's width changes (window resize, a pane docking or folding) and once fonts load.
   useEffect(() => {
     let live = true; void document.fonts?.ready.then(() => { if (live) fit(); });
-    window.addEventListener('resize', fit); return () => { live = false; window.removeEventListener('resize', fit); };
+    const field = textarea.current?.parentElement; let width = field?.clientWidth ?? 0;
+    const observer = typeof ResizeObserver === 'function' && field ? new ResizeObserver(() => { if (field.clientWidth !== width) { width = field.clientWidth; fit(); } }) : null;
+    if (field) observer?.observe(field);
+    return () => { live = false; observer?.disconnect(); };
   }, [fit]);
 
   // Hover card timing: 300 ms warm-up, instant switches once open, 150 ms grace to reach the card.

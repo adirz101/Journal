@@ -190,7 +190,10 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .composer-field{display:flex;flex-direction:column;gap:8px;min-width:0}
 .field-label{display:flex;align-items:baseline;gap:6px;font-size:var(--text-body);font-weight:600;color:var(--tx)}.field-label label{font-size:inherit;font-weight:inherit}#task-hint{font-weight:400;font-size:var(--text-meta);color:var(--tx3)}
 .field-help{font-size:var(--text-meta);line-height:1.5;color:var(--tx3)}
+@container workspace (max-width:1000px){.new-session-inner{grid-template-columns:minmax(0,1fr) 320px;column-gap:24px;padding:28px 24px 32px}}
 @container workspace (max-width:759px){.new-session-inner{grid-template-columns:minmax(0,1fr);padding:24px 20px 32px}.context-preview{grid-column:1;grid-row:auto}}
+.composer-form{container-type:inline-size;container-name:composer-form}
+@container composer-form (max-width:479px){.agent-cards .agent-option{grid-template-columns:minmax(0,1fr);row-gap:4px;padding:10px}.agent-cards .agent-option .provider-mark{grid-row:auto;margin-bottom:2px}}
 /* Task box (board B13): the textarea sits over an aria-hidden mirror. .task-input is the alignment
    contract: both get exactly the same box and text metrics, never copied by script. */
 .task-box{position:relative}.task-field{position:relative}
@@ -205,7 +208,7 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .task-card{position:absolute;z-index:30;width:min(340px,100%);max-height:320px;overflow-y:auto;padding:12px;background:var(--raised);border:1px solid var(--line2);border-radius:10px;box-shadow:0 12px 32px var(--shadow-overlay)}
 .task-card-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}.task-card-list>li+li{border-top:1px solid var(--line);padding-top:12px}
 /* Agent cards and the mode switch: radios. Selection is the accent border and aria-checked, never hover. */
-.agent-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.agent-card{position:relative;min-width:0;display:flex}
+.agent-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.agent-card{position:relative;min-width:0;display:flex}
 .agent-option{flex:1;display:grid;grid-template-columns:24px minmax(0,1fr);column-gap:10px;row-gap:2px;align-items:center;min-width:0;padding:10px 12px;border:1px solid var(--line2);border-radius:9px;background:var(--raised);color:var(--tx);cursor:pointer}
 .agent-option .provider-mark{grid-row:1/span 2}.agent-option[aria-checked=true]{border-color:var(--acc);background:var(--accsoft);box-shadow:inset 0 0 0 .5px var(--acc)}
 .agent-name{font-weight:600;font-size:var(--text-body);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.agent-sub{font-size:var(--text-meta);color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.agent-sub.tone-warn{color:var(--amb)}
@@ -223,7 +226,7 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .start-reason{font-size:var(--text-meta);color:var(--tx2)}.start-reason:empty{display:none}.native-stays{margin-top:-14px}
 /* What the agent will know: replaced in place as replies arrive; bars change width without a transition. */
 .context-preview{grid-column:2;grid-row:1/span 2;display:flex;flex-direction:column;gap:14px;min-width:0;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
-.preview-heading{display:flex;align-items:baseline;gap:8px;font-size:14px}.preview-live{margin-left:auto;font-size:var(--text-meta);font-weight:400;color:var(--tx3)}
+.preview-heading{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;font-size:14px}.preview-live{margin-left:auto;font-size:var(--text-meta);font-weight:400;color:var(--tx3);white-space:nowrap}
 .meter{display:grid;grid-template-columns:auto 1fr auto;gap:6px 10px;align-items:center;font-size:var(--text-meta);color:var(--tx3)}.meter-bar{height:6px;border-radius:3px;background:var(--hover);overflow:hidden}.meter-bar i{display:block;height:100%;background:var(--acc);border-radius:3px}.meter-value{text-align:right;font-variant-numeric:tabular-nums}
 .preview-checked{margin-top:-6px;font-size:var(--text-meta);color:var(--tx3)}.preview-checked.is-checked{color:var(--grn)}
 .preview-group h3{margin-bottom:4px;font-size:var(--text-meta);font-weight:600;color:var(--tx2)}
@@ -232,14 +235,16 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .preview-excluded{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding-top:12px;border-top:1px solid var(--line);font-size:var(--text-meta);color:var(--tx3)}.preview-inspect{margin-left:auto}
 .chip.chip-amber{border-color:var(--ambline);background:var(--ambsoft);color:var(--amb)}.chip.chip-ok{border-color:transparent;background:var(--grnsoft);color:var(--grn)}
 .preview-tip{font-size:var(--text-meta);color:var(--tx3)}.preview-error{font-size:var(--text-meta);color:var(--red)}
-/* Notes in the preview and the hover card (one line each; the full text in the title). */
-.preview-note-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--text-caption);color:var(--tx3)}.preview-note-meta .cat{font-weight:600;padding:1px 6px;border-radius:4px;background:var(--hover);color:var(--tx2)}
-.preview-note-meta mark{margin-left:3px;padding:0 2px;border-radius:3px;background:var(--accsoft);color:var(--acc)}
-.preview-note p{margin-top:5px;font-size:var(--text-body);line-height:1.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.preview-note .leave-out{margin-top:6px;font-size:var(--text-meta)}.preview-note .leave-out kbd{text-decoration:none}
+/* Preview rows and the hover card: NoteCard (Phase 5) in its one-line variants. The matched words
+   already head the meta row, so the selection reason beside them is left out here; Leave out sits
+   where it was, top right, and shows on hover or focus for fine pointers. */
+.preview-list>li,.task-card-list>li{position:relative}
+.context-preview .note-meta>span+span{display:none}
+.preview-list .note-meta,.task-card-list .note-meta{padding-right:108px}.preview-list .note-meta>span,.task-card-list .note-meta>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.preview-list .note-card>.memory-actions,.task-card-list .note-card>.memory-actions{position:absolute;top:4px;right:4px;margin:0}.task-card-list>li:first-child .note-card>.memory-actions{top:-5px}
 @media(hover:hover) and (pointer:fine){
   .agent-option:hover{border-color:var(--tx3)}.agent-option[aria-checked=true]:hover{border-color:var(--acc);background:var(--accsoft-hover)}
   .mode-switch button:not([aria-checked=true]):not([aria-disabled=true]):not(:disabled):hover{background:transparent;color:var(--tx)}
   .task-matches:not(:disabled):hover{background:var(--hover);color:var(--tx)}
-  .preview-list>li:not(:hover):not(:focus-within) .leave-out{opacity:0}
+  .preview-list>li:not(:hover):not(:focus-within) .memory-actions{opacity:0}
 }
