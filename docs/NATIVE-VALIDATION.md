@@ -90,3 +90,10 @@ Final required local checks are reported in [implementation status](IMPLEMENTATI
 - Idle Codex and Cursor sessions: check whether their idle screens repaint on their own (a clock, spinner or cursor redraw) without any input or resize. Such output counts as agent output and keeps "output just now" lit while the agent is actually idle; note which versions do it and how often.
 - The Claude attention banner shows the command or path from a real `PermissionRequest` (depends on the `tool_input` check above).
 - Windows: Ctrl+, and Ctrl+Shift+\ reach Journal's shortcut router (Ctrl+\ still reaches the CLI), the File menu's Settings… item opens Settings, and at the default window size the layout is medium (sidebar docked, inspector rail).
+- Phase 7 first run: `claude auth status --json` and `codex login status` output on current versions, signed in and signed out (which stream, which exit code), and that Journal reads them as signed in or signed out without keeping any account detail.
+- Phase 7 first run: Sign in from Journal finishes in the visible terminal for Claude Code, Codex and Cursor (including a browser hand-off), and the row updates once the terminal exits.
+- Phase 7 first run: Install runs the official command and the installed CLI is found afterwards, on macOS and on Windows (PowerShell without a profile); a failed download is shown as failed.
+- Phase 7 first run: dragging a folder in from Finder (macOS) and File Explorer (Windows) opens it as a project; a non-Git folder and a network share are refused plainly.
+- Phase 7 first run: "Getting to know your project" on a detached HEAD (only the project card) and on a large monorepo (the top-level fallback, and how long drafting takes).
+- Phase 7 first run: the first window appears before a slow CLI (for example one waiting on the network) finishes its version or help read.
+- Phase 7 first run: a probe that times out ends the whole process tree (no `claude`, `codex` or `agent` child left running), on macOS and on Windows.

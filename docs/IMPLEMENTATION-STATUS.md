@@ -130,6 +130,16 @@ Plan: [docs/superpowers/plans/2026-10-04-ux-redesign-phase-4.md](superpowers/pla
 - Receipts record the searched terms, and each selected note records the searched terms FTS matched (`selection.terms`, porter stemming, no prefixes; briefs none). Searched terms come from the task text and the referenced paths, so a term may be a path word absent from the task. Packets, `selection.reason` and older receipts are unchanged.
 - `queryTermSpans` (renderer-safe `retrieval.mjs`) gives the UTF-16 ranges of every searched term in the task text, for underlines.
 
+## UX redesign - Phase 7 Group A (first run, core)
+
+Plan: [docs/superpowers/plans/2026-10-04-ux-redesign-phase-7.md](superpowers/plans/2026-10-04-ux-redesign-phase-7.md). Core and IPC only; the Welcome and "Getting to know your project" UI (Group B) follows. All behaviour below is fixture-tested; the native checks are listed under To verify in [NATIVE-VALIDATION](NATIVE-VALIDATION.md).
+
+- Provider detection starts when the main process loads and never delays the runtime connection or the first window. Every row starts as checking; `--version`, one `--help` read and, where the help documents it, an auth status probe run asynchronously, one check per provider at a time. Bootstrap reads the rows after its last await and the renderer applies the newest providers event, so no row stays on checking. After an install or sign-in exits, main checks that provider once and tags its providers event with the process that ended.
+- Install and sign-in run constant commands from `PROVIDER_COMMANDS` in a visible terminal, only after the user asks. POSIX install pipelines run as `bash --noprofile --norc -o pipefail -c <command>`, so a failed download fails the install; the displayed command is unchanged. The install page opens the URL from the same table and reports a failure to open it; headless test runs record the URL instead.
+- The Cursor CLI runner changed when detection moved to the shared `runFile` (`src/core/process.mjs`): stdin is now ignored (it was inherited as a pipe), a timeout ends the whole process group (POSIX) or tree (Windows `taskkill /T`) rather than only the direct child, and output over the limit now ends the run and reports it as `killed` (with `execFile` it was a `maxBuffer` error). A run that was killed settles about 2.5 s later even when a grandchild that left the group still holds its output open.
+- A folder dropped on the window opens like the open dialog. Windows network paths (`\\host\share`, `//host/share`) are refused before any file system call.
+- "Getting to know your project" drafts are made once per project. They carry the HEAD and branch they were made on; remembering refuses after a new commit or a switch to another branch, and a draft Git could not produce is reported as failed with a plain message.
+
 ## Observed validation (local macOS)
 
 | Check | Result |

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { auditEntries, checkTag, checksumLines, configArtifacts, expectedArtifacts, LEAKS, loadConfig, productionPackages, readVersion, tagFor, UPDATE_FILES } from '../scripts/release-lib.mjs';
-import { dataDirectory, guiPathEntries, unpackedPath, withGuiPath } from '../src/desktop/environment.mjs';
+import { dataDirectory, guiPathEntries, isNetworkPath, unpackedPath, withGuiPath } from '../src/desktop/environment.mjs';
 import { removeLater } from './support/cleanup.mjs';
 import { APP_USER_MODEL_ID } from '../src/desktop/notify.mjs';
 
@@ -131,4 +131,12 @@ test('packaged environment: GUI PATH, data folder and unpacked paths', () => {
   assert.equal(unpackedPath('/A/Journal.app/Contents/Resources/app.asar/src/runtime/runtime.mjs', '/'), '/A/Journal.app/Contents/Resources/app.asar.unpacked/src/runtime/runtime.mjs');
   assert.equal(unpackedPath('C:\\J\\resources\\app.asar\\src\\desktop\\hook.mjs', '\\'), 'C:\\J\\resources\\app.asar.unpacked\\src\\desktop\\hook.mjs');
   assert.equal(unpackedPath('/dev/src/runtime/runtime.mjs', '/'), '/dev/src/runtime/runtime.mjs', 'Development paths are unchanged');
+});
+
+test('a dropped Windows network path (UNC) is refused before any file system call', () => {
+  for (const path of ['\\\\host\\share', '\\\\host\\share\\repo', '//host/share/repo', '\\\\?\\UNC\\host\\share', '\\/host/share']) assert.equal(isNetworkPath(path, 'win32'), true, path);
+  for (const path of ['C:\\Users\\me\\repo', 'D:/work/repo', '\\Users\\me']) assert.equal(isNetworkPath(path, 'win32'), false, path);
+  // POSIX has no UNC paths: // is the root there.
+  for (const path of ['/Users/me/repo', '//Users/me/repo']) assert.equal(isNetworkPath(path, 'darwin'), false, path);
+  assert.equal(isNetworkPath(undefined, 'win32'), false);
 });

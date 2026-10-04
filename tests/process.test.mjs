@@ -83,3 +83,66 @@ test('redaction removes credential-looking values from commands and logs', () =>
   assert.equal(redact('npm test -- --grep money'), 'npm test -- --grep money');
   assert.equal(redact('x'.repeat(5000)).length, 2000);
 });
+
+test('runFile is asynchronous, ignores stdin, keeps both streams and ends the process tree on timeout', { skip: !posix }, async t => {
+  const { runFile } = await import('../src/core/process.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'journal-runfile-')); t.after(() => removeLater(dir));
+  const cli = join(dir, 'cli');
+  writeFileSync(cli, `#!${process.execPath}
+const a=process.argv.slice(2);
+if(a[0]==='both'){console.log('out');console.error('err');process.exit(0)}
+if(a[0]==='fail'){console.log('partial');console.error('bad');process.exit(3)}
+if(a[0]==='stdin'){let got='';process.stdin.on('data',d=>got+=d);process.stdin.on('end',()=>{console.log('stdin:'+got.length);process.exit(0)});}
+if(a[0]==='env'){console.log(JSON.stringify({open:process.env.NO_OPEN_BROWSER,node:process.env.ELECTRON_RUN_AS_NODE??null}));process.exit(0)}
+if(a[0]==='hang'){const {spawn}=require('node:child_process');const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});require('node:fs').writeFileSync(${JSON.stringify(join(dir, 'child'))},String(c.pid));setInterval(()=>{},1000)}
+`);
+  chmodSync(cli, 0o755);
+  assert.equal(await runFile(cli, ['both'], process.env), 'out\n');
+  assert.deepEqual(await runFile(cli, ['both'], process.env, { output: 'both' }), { stdout: 'out\n', stderr: 'err\n' });
+  await assert.rejects(runFile(cli, ['fail'], process.env), error => error.code === 3 && error.stdout === 'partial\n' && error.stderr === 'bad\n');
+  assert.equal(await runFile(cli, ['stdin'], process.env), 'stdin:0\n', 'stdin is closed, so nothing waits on input');
+  assert.deepEqual(JSON.parse(await runFile(cli, ['env'], { ...process.env, ELECTRON_RUN_AS_NODE: '1' })), { open: '1', node: null });
+  const started = Date.now();
+  await assert.rejects(runFile(cli, ['hang'], process.env, { timeout: 500 }), error => error.timedOut === true);
+  assert.ok(Date.now() - started < 4000);
+  const { readFileSync } = await import('node:fs');
+  const child = Number(readFileSync(join(dir, 'child'), 'utf8'));
+  for (let i = 0; i < 40 && isAlive(child); i++) await wait(100);
+  assert.equal(isAlive(child), false, 'the grandchild in the group was ended too');
+});
+
+test('runFile settles by a hard deadline when an escaped grandchild holds its output open', { skip: !posix }, async t => {
+  const { runFile } = await import('../src/core/process.mjs');
+  const { readFileSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'journal-runfile-escape-')); const pidFile = join(dir, 'grandchild');
+  // The grandchild starts its own session (detached), so the group kill misses it, and it inherits stdout and stderr.
+  const cli = join(dir, 'cli');
+  writeFileSync(cli, `#!${process.execPath}
+const {spawn}=require('node:child_process');
+const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:['ignore','inherit','inherit']});c.unref();
+require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));console.log('started');setInterval(()=>{},1000);
+`);
+  chmodSync(cli, 0o755);
+  // Both escaped grandchildren are killed here, before the folder holding their PIDs is removed.
+  t.after(() => {
+    for (const file of [pidFile, join(dir, 'loud-grandchild')]) { try { const pid = Number(readFileSync(file, 'utf8')); if (pid) process.kill(pid, 'SIGKILL'); } catch { /* not started or already gone */ } }
+    removeLater(dir);
+  });
+  const started = Date.now();
+  await assert.rejects(runFile(cli, [], process.env, { timeout: 300 }), error => error.timedOut === true && error.killed === true && error.stdout === 'started\n');
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 5000, `settled after ${elapsed} ms`);
+  assert.equal(isAlive(Number(readFileSync(pidFile, 'utf8'))), true, 'the grandchild escaped the group, so only the deadline could settle the run');
+
+  // The overflow path uses the same deadline.
+  const loud = join(dir, 'loud');
+  writeFileSync(loud, `#!${process.execPath}
+const {spawn}=require('node:child_process');
+const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:['ignore','inherit','inherit']});c.unref();
+require('node:fs').writeFileSync(${JSON.stringify(join(dir, 'loud-grandchild'))},String(c.pid));process.stdout.write('x'.repeat(4096));setInterval(()=>{},1000);
+`);
+  chmodSync(loud, 0o755);
+  const loudStarted = Date.now();
+  await assert.rejects(runFile(loud, [], process.env, { timeout: 60000, maxBuffer: 1024 }), error => error.killed === true && error.timedOut === undefined);
+  assert.ok(Date.now() - loudStarted < 5000);
+});
