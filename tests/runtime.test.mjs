@@ -399,3 +399,25 @@ test('the SLOTS_FULL code reaches the client with the unchanged message; hello r
   const listed = await c.call('list');
   assert.deepEqual(listed.map(s => s.slot).sort(), [1, 2, 3, 4]);
 });
+
+test('the proposals event names the session and reports zero', async t => {
+  const f = fixture(t); const { fake } = await f.boot(); const c = client(f, t); await c.connect();
+  const events = []; c.on('event', e => { if (e.type === 'proposals') events.push(e); });
+  const plain = (await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'Nothing to keep here' })).session;
+  const ruled = (await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'Ship it.\nRule: Release tags must be signed by CI.' })).session;
+  fake.procs[0].exit({ exitCode: 0 }); fake.procs[1].exit({ exitCode: 0 });
+  await until(() => events.length === 2, 5000);
+  const by = id => events.find(e => e.sessionId === id);
+  assert.deepEqual(by(plain.id), { type: 'proposals', projectId: f.project.id, sessionId: plain.id, count: 0 });
+  assert.deepEqual(by(ruled.id), { type: 'proposals', projectId: f.project.id, sessionId: ruled.id, count: 1 });
+});
+
+test('the proposals event says when generating suggestions failed', async t => {
+  const f = fixture(t); f.store.generateProposals = () => { throw new Error('disk full'); };
+  const { fake } = await f.boot(); const c = client(f, t); await c.connect();
+  const events = []; c.on('event', e => { if (e.type === 'proposals') events.push(e); });
+  const session = (await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'Ship it.\nRule: Release tags must be signed by CI.' })).session;
+  fake.procs[0].exit({ exitCode: 0 });
+  await until(() => events.length === 1, 5000);
+  assert.deepEqual(events[0], { type: 'proposals', projectId: f.project.id, sessionId: session.id, count: 0, failed: true });
+});

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import ts from 'typescript';
-import { composer, copy, excludedReason, memoryState, selectionReason, shell, tip, warningText } from '../src/ui/copy.ts';
+import { composer, copy, excludedReason, memoryState, selectionReason, shell, tip, warningText, wrapUp } from '../src/ui/copy.ts';
 
 // Plain-language vocabulary (design board B8). The technical term may stay in a
 // tooltip (the title attribute of an element) but not in visible text or names.
@@ -316,4 +316,16 @@ test('errors from core and the desktop main process use the plain vocabulary', (
   assert.deepEqual(old.map(([file, text, line]) => `${file}:${line}: ${text}`), []);
   const missing = INTERNAL_ERRORS.filter(([f, t]) => !errors.some(([file, text]) => file === f && text === t));
   assert.deepEqual(missing, [], 'remove allow-list entries whose error is gone');
+});
+
+test('the wrap-up vocabulary avoids the old terms', () => {
+  const samples = { exited: [0, '18m'], stopped: ['11m'], endedBy: ['SIGTERM', '3m'], alreadyChanged: [2], testsHidden: ['Codex'], passed: [3], failed: [1],
+    rememberAll: [3], branchUnreachable: ['feature/x'], staleHead: ['process.mjs', 1], whatChanged: ['process.mjs:41'], renamedTo: ['b.js'], ended: [2] };
+  const values = Object.entries(wrapUp).flatMap(([key, value]) => typeof value === 'function' ? [[key, value(...(samples[key] ?? []))]]
+    : typeof value === 'object' ? Object.entries(value).map(([inner, text]) => [`${key}.${inner}`, text]) : [[key, value]]);
+  assert.ok(Object.entries(wrapUp).filter(([, value]) => typeof value === 'function').every(([key]) => key in samples), 'every function has sample arguments');
+  for (const [key, value] of values) { assert.equal(typeof value, 'string', key); assert.doesNotMatch(value, OLD_TERMS, key); assert.doesNotMatch(value, CAPS_RUN, key); }
+  assert.equal(wrapUp.exited(0, '18m'), 'Exited 0 after 18m');
+  assert.equal(wrapUp.staleHead('process.mjs', 1), 'This session changed process.mjs. 1 note is based on it.');
+  assert.equal(wrapUp.ended(1), 'Session ended. 1 suggestion.');
 });

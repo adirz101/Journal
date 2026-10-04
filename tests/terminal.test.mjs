@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -43,7 +43,7 @@ function runtime(t) {
     return { onData: f => { callbacks.data = f; }, onExit: f => { callbacks.exit = f; }, write: data => inputs.push(data), resize() {}, kill() {} };
   }});
   t.after(() => { store.close(); removeLater(root); });
-  return { store, project, manager, callbacks, inputs, launches };
+  return { root, store, project, manager, callbacks, inputs, launches };
 }
 
 test('shutdown cannot write late native callbacks into a closed database', async t => {
@@ -830,4 +830,122 @@ test('a missing or non-string CLI version becomes null, and a long one is cut to
   assert.equal((await f.manager.start({ projectId: f.project.id, provider: 'codex', task: 'a' })).session.cliVersion, null);
   assert.equal((await f.manager.start({ projectId: f.project.id, provider: 'codex', task: 'b', cliVersion: { evil: true } })).session.cliVersion, null);
   assert.equal((await f.manager.start({ projectId: f.project.id, provider: 'codex', task: 'c', cliVersion: 'x'.repeat(200) })).session.cliVersion.length, 64);
+});
+
+// ----- Phase 6: retained buffers (BUG-8), the end snapshot (D11) and BUG-9 -----
+
+test('a ninth exited session releases the oldest buffer', async t => {
+  const { RETAINED_EXITED } = await import('../src/core/terminal.mjs');
+  assert.equal(RETAINED_EXITED, 8);
+  const f = multi(t); const ids = [];
+  for (let i = 0; i < 9; i++) {
+    const session = await f.start(); ids.push(session.id);
+    f.procs[i].callbacks.data(`output ${i}\r\n`); f.procs[i].callbacks.exit({ exitCode: 0 });
+    await f.manager.entry(session.id)?.changeSnapshot;
+  }
+  assert.deepEqual(f.manager.attach(ids[0]), { chunks: [], gap: true, lastSequence: 0 });
+  assert.match(f.manager.attach(ids[1]).chunks.map(c => c.data).join(''), /output 1/);
+  assert.equal(f.manager.list().filter(s => !['starting', 'running', 'waiting', 'stopping'].includes(s.status)).length, 8);
+});
+
+test('an attached exited buffer outlives older detached ones', async t => {
+  const f = multi(t); const ids = [];
+  for (let i = 0; i < 9; i++) {
+    const session = await f.start(); ids.push(session.id);
+    f.procs[i].callbacks.data(`output ${i}\r\n`);
+    if (i === 0) f.manager.attach(session.id);
+    f.procs[i].callbacks.exit({ exitCode: 0 });
+    await f.manager.entry(session.id)?.changeSnapshot;
+  }
+  assert.match(f.manager.attach(ids[0]).chunks.map(c => c.data).join(''), /output 0/, 'the viewed buffer is kept');
+  assert.deepEqual(f.manager.attach(ids[1]), { chunks: [], gap: true, lastSequence: 0 }, 'the oldest detached one goes instead');
+  f.manager.detach(ids[0]);
+  const tenth = await f.start(); f.procs[9].callbacks.exit({ exitCode: 0 }); await f.manager.entry(tenth.id)?.changeSnapshot;
+  assert.deepEqual(f.manager.attach(ids[0]), { chunks: [], gap: true, lastSequence: 0 }, 'once detached it is trimmed on a later exit');
+});
+
+test('an entry with a pending survivor scan is not trimmed', async t => {
+  const f = multi(t); let release; const blocked = new Promise(resolve => { release = resolve; });
+  let calls = 0; f.manager.table = () => (calls++ === 0 ? blocked : null);
+  const first = await f.start(); f.manager.entry(first.id).descendants.set('1:x', { pid: 1, started: 'x', command: 'child' });
+  f.procs[0].callbacks.data('first output\r\n'); f.procs[0].callbacks.exit({ exitCode: 0 });
+  await f.manager.entry(first.id).changeSnapshot;
+  for (let i = 1; i < 10; i++) { const s = await f.start(); f.procs[i].callbacks.exit({ exitCode: 0 }); await f.manager.entry(s.id)?.changeSnapshot; }
+  assert.match(f.manager.attach(first.id).chunks.map(c => c.data).join(''), /first output/, 'still scanning: kept');
+  f.manager.detach(first.id);
+  release([]); await f.manager.entry(first.id).survivorScan;
+  const last = await f.start(); f.procs[10].callbacks.exit({ exitCode: 0 }); await f.manager.entry(last.id)?.changeSnapshot;
+  assert.deepEqual(f.manager.attach(first.id), { chunks: [], gap: true, lastSequence: 0 }, 'trimmed once the scan finished');
+});
+
+test('detaching an exited buffer trims it at once', async t => {
+  const f = multi(t); const ids = [];
+  for (let i = 0; i < 9; i++) {
+    const session = await f.start(); ids.push(session.id);
+    f.procs[i].callbacks.data(`output ${i}\r\n`); f.manager.attach(session.id);
+    f.procs[i].callbacks.exit({ exitCode: 0 }); await f.manager.entry(session.id)?.changeSnapshot;
+  }
+  assert.ok(f.manager.entry(ids[0]), 'all nine are viewed, so all are kept');
+  f.manager.detach(ids[0]);
+  assert.equal(f.manager.entry(ids[0]), null, 'trimmed on detach, not on a later exit');
+  assert.ok(f.manager.entry(ids[1]));
+});
+
+test('a finished survivor scan or snapshot trims without a later exit', async t => {
+  const f = multi(t); let release; const blocked = new Promise(resolve => { release = resolve; });
+  let calls = 0; f.manager.table = () => (calls++ === 0 ? blocked : null);
+  const first = await f.start(); f.manager.entry(first.id).descendants.set('1:x', { pid: 1, started: 'x', command: 'child' });
+  f.procs[0].callbacks.exit({ exitCode: 0 });
+  const entry = f.manager.entry(first.id); await entry.changeSnapshot;
+  // The others are on screen, so only the scanned one can go.
+  for (let i = 1; i < 9; i++) { const s = await f.start(); f.manager.attach(s.id); f.procs[i].callbacks.exit({ exitCode: 0 }); await f.manager.entry(s.id)?.changeSnapshot; }
+  assert.ok(f.manager.entry(first.id), 'still scanning: kept');
+  release([]); await entry.survivorScan;
+  assert.equal(f.manager.entry(first.id), null, 'trimmed when the scan finished');
+  // The same for an end snapshot still being counted.
+  const g = multi(t); let finish; const counting = new Promise(resolve => { finish = resolve; });
+  const original = g.store.sessionChanges.bind(g.store); let first2 = true;
+  g.store.sessionChanges = id => (first2 ? (first2 = false, counting.then(() => original(id))) : original(id));
+  const slow = await g.start(); g.procs[0].callbacks.exit({ exitCode: 0 }); const slowEntry = g.manager.entry(slow.id);
+  for (let i = 1; i < 9; i++) { const s = await g.start(); g.manager.attach(s.id); g.procs[i].callbacks.exit({ exitCode: 0 }); await g.manager.entry(s.id)?.changeSnapshot; }
+  assert.ok(g.manager.entry(slow.id), 'still counting: kept');
+  finish(); await slowEntry.changeSnapshot;
+  assert.equal(g.manager.entry(slow.id), null, 'trimmed when the snapshot finished');
+});
+
+test('the change snapshot is saved at exit and survives later saves', async t => {
+  const f = multi(t); let release; const blocked = new Promise(resolve => { release = resolve; });
+  f.manager.table = () => blocked;
+  const session = await f.start(); f.manager.entry(session.id).descendants.set('1:x', { pid: 1, started: 'x', command: 'child' });
+  writeFileSync(join(f.root, 'new.txt'), 'one\ntwo\n');
+  f.procs[0].callbacks.exit({ exitCode: 0 });
+  await f.manager.entry(session.id).changeSnapshot;
+  const stats = f.store.getSession(session.id).changeStats;
+  assert.equal(stats.available, true); assert.equal(stats.files, 1); assert.equal(stats.additions, 2);
+  assert.deepEqual(stats.paths, [{ path: 'new.txt', from: null }]); assert.equal(stats.truncated, false); assert.ok(stats.at);
+  writeFileSync(join(f.root, 'later.txt'), 'later\n');
+  release([]); await f.manager.entry(session.id).survivorScan;
+  assert.deepEqual(f.store.getSession(session.id).survivors, []);
+  assert.deepEqual(f.store.getSession(session.id).changeStats, stats, 'the survivor scan save keeps the snapshot, never recomputed');
+});
+
+test('a failed snapshot is recorded as unavailable', async t => {
+  const f = multi(t); const session = await f.start();
+  f.store.sessionChanges = () => { throw new Error('worker gone'); };
+  f.procs[0].callbacks.exit({ exitCode: 1 }); await f.manager.entry(session.id).changeSnapshot;
+  assert.deepEqual({ ...f.store.getSession(session.id).changeStats, at: null },
+    { available: false, additions: 0, deletions: 0, files: 0, preexisting: 0, paths: [], truncated: false, at: null, reason: 'worker gone' });
+});
+
+test('an identity mismatch survives a runtime restart (BUG-9)', async t => {
+  const f = runtime(t); const started = await f.manager.start({ projectId: f.project.id, provider: 'claude' });
+  f.manager.observe(started.session.id, 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', 'running');
+  // The runtime crashes with the session still live; a new runtime recovers it.
+  f.manager.disposed = true;
+  const next = new TerminalManager({ store: f.store, trackMs: 0, identify: () => null, table: () => null, alive: () => false, spawn: () => { throw new Error('no spawn expected'); } });
+  const [recovered] = await next.recover();
+  assert.equal(recovered.status, 'interrupted');
+  const stored = f.store.getSession(started.session.id);
+  assert.equal(stored.identityMismatch, true); assert.equal(stored.nativeIdConfirmed, false);
+  await assert.rejects(next.start({ projectId: f.project.id, provider: 'claude', resumeId: started.session.id }), error => error.code === 'ID_UNCONFIRMED');
 });

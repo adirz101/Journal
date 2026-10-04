@@ -15,6 +15,19 @@ export const ECHO_MS = 300;          // output this soon after input or resize i
 export const QUIET_MS = 10_000;      // output after this much quiet is a resume edge
 export const ACTIVITY_THROTTLE_MS = 5_000;
 export const LIVE_STATES = ['starting', 'running', 'waiting', 'stopping'];
+// Exited sessions whose output stays in memory for review (BUG-8): with four live
+// sessions, at most 12 × 256 KiB ≈ 3 MiB. Output is never written to disk.
+export const RETAINED_EXITED = 8;
+const MAX_SNAPSHOT_PATHS = 200;
+// The end snapshot (D11): totals and the paths this session changed, taken once.
+export function summarizeChanges(changes, at = new Date().toISOString()) {
+  const files = Array.isArray(changes?.files) ? changes.files : [];
+  const changed = files.filter(file => !file.preexisting);
+  return { available: !!changes?.available, additions: changes?.available ? changes.additions ?? 0 : 0, deletions: changes?.available ? changes.deletions ?? 0 : 0,
+    files: files.length, preexisting: files.filter(file => file.preexisting).length,
+    paths: changed.slice(0, MAX_SNAPSHOT_PATHS).map(({ path, from }) => ({ path, from: from ?? null })),
+    truncated: !!changes?.truncated || changed.length > MAX_SNAPSHOT_PATHS, at, ...(changes?.reason ? { reason: String(changes.reason).slice(0, 300) } : {}) };
+}
 const PTY_SIZE = Object.freeze({ cols: 100, rows: 30 }); // until the terminal reports its own
 const isLive = status => LIVE_STATES.includes(status);
 // Machine-readable reasons for refused or failed operations. Messages stay
@@ -84,7 +97,7 @@ export class TerminalManager extends EventEmitter {
     super(); this.cursor = cursor; this.store = store; this.spawn = spawn; this.makeSettings = makeSettings; this.runtimeId = runtimeId; this.platform = platform;
     this.identify = identify; this.table = table; this.verifiedSignal = verifiedSignal; this.alive = alive; this.stopGraceMs = stopGraceMs;
     // Slots 1-4 are reserved synchronously at start so concurrent starts never share one.
-    this.entries = new Map(); this.reservedSlots = new Set(); this.flushPending = false; this.disposed = false;
+    this.entries = new Map(); this.reservedSlots = new Set(); this.flushPending = false; this.disposed = false; this.settling = new Set();
     this.tracker = trackMs ? setInterval(() => { void this.trackDescendants().catch(() => {}); void this.recheckOrphans().catch(() => {}); }, trackMs) : null; this.tracker?.unref?.();
   }
   entry(id) { return this.entries.get(id) ?? null; }
@@ -256,15 +269,41 @@ export class TerminalManager extends EventEmitter {
     const recorded = [...entry.descendants.values()];
     session.survivors = recorded.length ? null : [];
     this.persist(session, true); this.emitStatus(session); this.scheduleFlush();
+    // The end snapshot: changes in the checkout since the start, counted once now (Git runs
+    // in the storage worker). It lives on entry.session, so every later save carries it.
+    entry.snapshotPending = true;
+    entry.changeSnapshot = (async () => {
+      const at = new Date().toISOString();
+      try { session.changeStats = summarizeChanges(await this.store.sessionChanges(session.id), at); }
+      catch (error) { session.changeStats = summarizeChanges({ available: false, reason: error?.message ?? 'Changes could not be counted' }, at); }
+      this.persist(session, true); if (!this.disposed) this.emitStatus(session);
+    })().catch(() => {}).finally(() => { entry.snapshotPending = false; this.settling.delete(entry.changeSnapshot); if (!this.disposed) this.trimExited(); });
+    this.settling.add(entry.changeSnapshot);
     const event = survivors => this.record(session.id, entry.stopping ? 'stop' : 'exit', { exitCode, signal: signal ?? null, survivors });
-    if (!recorded.length) { event(0); return; }
+    if (!recorded.length) { event(0); this.trimExited(); return; }
     // Leftover children: scanned after exit, always saved (dispose waits for it).
+    entry.scanPending = true;
     entry.survivorScan = (async () => {
       const remaining = survivors(recorded, await Promise.resolve(this.table()).catch(() => null));
       session.survivors = remaining === null ? null : remaining.map(row => ({ pid: row.pid, started: row.started, command: redact(row.command, 120) }));
       event(session.survivors?.length ?? null);
       if (this.disposed) this.persist(session, true); else this.emitStatus(session);
-    })().catch(() => {});
+    })().catch(() => {}).finally(() => { entry.scanPending = false; this.settling.delete(entry.survivorScan); if (!this.disposed) this.trimExited(); });
+    this.settling.add(entry.survivorScan);
+    this.trimExited();
+  }
+  // Keeps at most RETAINED_EXITED exited buffers, dropping the oldest first. One being
+  // viewed (attached) or still being scanned or counted is kept; it is trimmed when it is
+  // detached or its scan and count finish (or on a later exit).
+  trimExited() {
+    const exited = [...this.entries.values()].filter(entry => entry.exited)
+      .sort((a, b) => String(a.session.endedAt ?? '').localeCompare(String(b.session.endedAt ?? '')));
+    let excess = exited.length - RETAINED_EXITED;
+    for (const entry of exited) {
+      if (excess <= 0) break;
+      if (entry.attached || entry.scanPending || entry.snapshotPending) continue;
+      this.entries.delete(entry.session.id); excess--;
+    }
   }
   owned(id) {
     const entry = this.entries.get(id);
@@ -501,7 +540,10 @@ export class TerminalManager extends EventEmitter {
     entry.attached = true; entry.sent = snapshot.lastSequence; entry.acknowledged = snapshot.lastSequence; entry.inflight = [];
     return snapshot;
   }
-  detach(id) { for (const entry of this.entries.values()) if (!id || entry.session.id === id) entry.attached = false; }
+  detach(id) {
+    for (const entry of this.entries.values()) if (!id || entry.session.id === id) entry.attached = false;
+    if (!this.disposed) this.trimExited();
+  }
   acknowledge(id, sequence) {
     const entry = this.entries.get(id);
     if (!entry || !Number.isInteger(sequence) || sequence <= entry.acknowledged || sequence > entry.sent) return;
@@ -607,8 +649,10 @@ export class TerminalManager extends EventEmitter {
       }));
       for (const entry of live) { try { void this.stop(entry.session.id).catch(() => {}); } catch { /* already gone */ } }
       await Promise.all(exits);
-      await Promise.all(live.map(entry => entry.survivorScan).filter(Boolean));
     }
+    // Leftover-process scans and end snapshots still running are saved before the runtime closes.
+    // (Tracked apart from entries, so a released buffer's pending save is awaited too.)
+    await Promise.all([...this.settling]);
     this.disposed = true; this.detach();
     for (const entry of this.entries.values()) { clearTimeout(entry.activityTimer); entry.activityTimer = null; }
     for (const entry of this.liveEntries()) {
