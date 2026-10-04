@@ -330,30 +330,27 @@ test('slot shortcuts keep their session across a renderer reload and after anoth
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
     await startSession(page, 'SLOT_A', 'Claude'); await startSession(page, 'SLOT_B', 'Codex');
-    await pressKey(app, '1', [...slotKeys()]);
-    await expect(sessionButton(page, 'SLOT_A')).toHaveAttribute('aria-current', 'true');
-    await pressKey(app, '2', [...slotKeys()]);
-    await expect(sessionButton(page, 'SLOT_B')).toHaveAttribute('aria-current', 'true');
+    // Slot keys are ignored while a start or switch is still finishing; retry until it settles.
+    const select = async (key: string, task: string) => expect(async () => {
+      await pressKey(app, key, [...slotKeys()]);
+      await expect(sessionButton(page, task)).toHaveAttribute('aria-current', 'true', { timeout: 1000 });
+    }).toPass();
+    await select('1', 'SLOT_A'); await select('2', 'SLOT_B');
     await page.reload();
     await expect(page.getByText('2/4 active')).toBeVisible();
     await sessionButton(page, 'SLOT_A').click();
     await expect(page.locator('.terminal-surface')).toContainText('TASK SLOT_A');
-    await expect(async () => {
-      await pressKey(app, '2', [...slotKeys()]);
-      await expect(sessionButton(page, 'SLOT_B')).toHaveAttribute('aria-current', 'true', { timeout: 1000 });
-    }).toPass();
+    await select('2', 'SLOT_B');
     // Stopping slot 1 leaves slot 2 where it was; the next start takes the free slot 1.
     await sessionButton(page, 'SLOT_A').click();
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.locator('.terminal-label')).toContainText('Stopped');
     await expect(sessionButton(page, 'SLOT_A')).not.toHaveAttribute('aria-keyshortcuts');
-    await pressKey(app, '2', [...slotKeys()]);
-    await expect(sessionButton(page, 'SLOT_B')).toHaveAttribute('aria-current', 'true');
+    await select('2', 'SLOT_B');
     await expect(sessionButton(page, 'SLOT_B')).toHaveAttribute('aria-keyshortcuts', slotAria(2));
     await startSession(page, 'SLOT_C', 'Claude');
     await expect(sessionButton(page, 'SLOT_C')).toHaveAttribute('aria-keyshortcuts', slotAria(1));
-    await pressKey(app, '2', [...slotKeys()]);
-    await expect(sessionButton(page, 'SLOT_B')).toHaveAttribute('aria-current', 'true');
+    await select('2', 'SLOT_B'); await select('1', 'SLOT_C');
     // The Active group lists sessions in slot order.
     await expect(page.getByRole('group', { name: 'Active sessions' }).getByRole('button')).toHaveText([/SLOT_C/, /SLOT_B/]);
   } finally { await closeApp(app); f.cleanup(); }
@@ -376,8 +373,10 @@ test('next needs-you jumps to a Claude session waiting for approval and shows wh
     await expect(asking).toContainText('TOKEN=[redacted] npm publish');
     await expect(asking).not.toContainText('abc123456');
     await expect(asking).toHaveAttribute('aria-label', /Needs approval, TOKEN=\[redacted\] npm publish.*needs attention/);
-    await pressKey(app, 'J', [...next]);
-    await expect(asking).toHaveAttribute('aria-current', 'true');
+    await expect(async () => {
+      await pressKey(app, 'J', [...next]);
+      await expect(asking).toHaveAttribute('aria-current', 'true', { timeout: 1000 });
+    }).toPass();
     // The only session that needs you is already selected: nothing moves.
     await pressKey(app, 'J', [...next]);
     await page.waitForTimeout(300);
