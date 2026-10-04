@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { isLive, PROVIDER_NAMES, type Project, type Session } from './types';
 import { menuPosition } from './menu';
+import { ProviderMark } from './ProviderMark';
 
 export const sessionName = (session: Session) => session.displayName || session.title;
 // The Active group's order, shared with keyboard switching and auto-selection.
@@ -49,6 +50,7 @@ export function SessionList({ sessions, projects, selectedId, currentProjectId, 
     return <button key={session.id} className={`session-select ${session.id === selectedId ? 'selected' : ''}`} aria-current={session.id === selectedId ? 'true' : undefined} onClick={() => onSelect(session)}
       onContextMenu={event => { event.preventDefault(); onMenu(session, menuPosition(event)); }} aria-label={`${providerName(session)}: ${sessionName(session)}. ${label}${session.pinned ? ', pinned' : ''}${attention ? ', needs attention' : ''}`}>
       <span className={`status-dot ${session.status}${label === 'disconnected' ? ' disconnected' : ''}`} />
+      <ProviderMark provider={session.provider} size={16} />
       <span className="session-text"><strong>{providerName(session)}{session.pinned && <span className="pin-mark" aria-hidden="true"> ⚲</span>}{session.archived && <span className="badge archived-badge">archived</span>}{attention && <span className="attention" aria-hidden="true"> ●</span>}</strong><small>{sessionName(session)}</small>
         {(session.projectId !== currentProjectId || session.workspaceId) && <small className="session-project">{session.projectId !== currentProjectId ? projectName(session.projectId) : ''}{session.workspaceId ? `${session.projectId !== currentProjectId ? ' · ' : ''}⑂ ${session.branch ?? 'worktree'}` : ''}</small>}</span>
       <span className="session-meta"><span className={`session-status ${attention ? 'attention-text' : ''}`}>{label}</span><time dateTime={session.createdAt} title={isLive(session) ? 'Elapsed' : 'Ended'}>{time}</time></span>

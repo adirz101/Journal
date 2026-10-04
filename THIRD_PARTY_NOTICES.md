@@ -2014,3 +2014,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 IN THE SOFTWARE.
 ```
+
+## Provider marks (Simple Icons)
+
+License: CC0-1.0
+Source: https://github.com/simple-icons/simple-icons
+Used in: src/ui/ProviderMark.tsx
+
+The Claude, OpenAI and Cursor marks are SVG paths from Simple Icons, dedicated to the public domain under CC0 1.0 Universal. The marks are trademarks of Anthropic, OpenAI and Anysphere; Journal shows them only to identify the command-line agent a session runs.

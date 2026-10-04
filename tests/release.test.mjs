@@ -69,6 +69,7 @@ test('notices cover everything that ships', () => {
   assert.ok(shipped.includes('electron-updater') && shipped.includes('sax'), 'Updater dependencies, including deduplicated ones');
   for (const name of [...pkg.journal.rendererBundle, ...shipped, 'node-pty', 'electron']) assert.match(notices, new RegExp(`^## ${name.replace(/[/@.]/g, '\\$&')} `, 'm'), name);
   assert.match(notices, /^## @fontsource\/jetbrains-mono .*\n\nLicense: OFL-1\.1$/m, 'The bundled monospace font');
+  assert.match(notices, /^## Provider marks \(Simple Icons\)\n\nLicense: CC0-1\.0$/m, 'Artwork copied into the source');
 });
 
 test('the node-pty spawn-helper path fix is applied once and fails closed on change', t => {

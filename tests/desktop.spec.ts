@@ -51,6 +51,9 @@ process.stdin.on('data',data=>{
     await expect(page.getByLabel('Initial task')).toHaveValue('');
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
+    // The provider mark sits next to the name; the session row's accessible name is unchanged.
+    await expect(page.locator('.terminal-heading .provider-mark.claude svg')).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Claude Code: Review Docker tests\./ })).toBeVisible();
     // JetBrains Mono ships inside the app (CSP font-src 'self') and the terminal uses it.
     expect(await page.evaluate(() => [...document.fonts].some(face => face.family.replace(/"/g, '') === 'JetBrains Mono' && face.status === 'loaded'))).toBe(true);
     await expect(page.locator('.xterm-rows')).toHaveCSS('font-family', /^"JetBrains Mono"/);

@@ -1,4 +1,5 @@
 import type { AgentInfo } from './types';
+import { ProviderMark } from './ProviderMark';
 
 // Cursor's provider row when something needs the user: not installed, not the
 // real Cursor CLI, too old, or signed out. Installing and signing in always run
@@ -24,5 +25,5 @@ export function CursorStatus({ agent, checking, note, onInstall, onLogin, onChec
     agent.available && agent.supports && !agent.supports.mode && 'This version has no Ask or Plan mode, so Read-only and Plan are unavailable for Cursor. Update with agent update.',
   ].filter(Boolean) as string[];
   if (!body && !hints.length && !note) return null;
-  return <section className="provider-status" aria-label="Cursor provider status">{body}{hints.map(hint => <p className="hint" key={hint}>{hint}</p>)}{note && <p className="hint" role="status">{note}</p>}</section>;
+  return <section className="provider-status" aria-label="Cursor provider status"><ProviderMark provider="cursor" size={20} />{body}{hints.map(hint => <p className="hint" key={hint}>{hint}</p>)}{note && <p className="hint" role="status">{note}</p>}</section>;
 }

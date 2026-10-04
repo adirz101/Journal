@@ -101,6 +101,19 @@ for (const [name, t] of Object.entries(themes)) {
     assert.deepEqual(low, []);
   });
 
+  // WCAG 1.4.11: a provider mark is a non-text graphic next to the provider's name. The glyph (--tx, or
+  // --claude on its tint) is at least 3:1 against its tile, wherever the tile sits (including selected rows).
+  test(`${name} theme: provider marks are at least 3:1 on their tile on every surface they sit on`, () => {
+    const base = rgba(t.bg).slice(0, 3); const solid = token => mix(t[token], base);
+    const low = [];
+    for (const surface of [...SURFACES, 'sel-hover']) {
+      const tile = solid(surface);
+      const ratio = contrast(solid('tx'), mix(t.hover, tile)); if (ratio < 3) low.push(`tx on the mark tile over ${surface}: ${ratio.toFixed(2)}`);
+      const claude = contrast(solid('claude'), mix(t['claude-soft'], tile)); if (claude < 3) low.push(`claude on its tile over ${surface}: ${claude.toFixed(2)}`);
+    }
+    assert.deepEqual(low, []);
+  });
+
   // WCAG 1.4.11: the boundary of an input is at least 3:1 against what it sits on and against its fill.
   // --line2 (about 1.4 to 1.6:1) stays for decorative dividers and panel borders.
   test(`${name} theme: the input border token is at least 3:1 on every surface an input sits on`, () => {
