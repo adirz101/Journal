@@ -109,6 +109,10 @@ test('errors stay in the preview', async t => {
   scheduler.update('other project'); await tick(250); scheduler.reset();
   requests.at(-1).resolve('late'); await tick(0);
   assert.ok(!applied.some(a => a.value === 'late'));
+  // With no input (after a reset or dispose), flush() resolves to null and sends nothing.
+  const before = requests.length;
+  assert.equal(await scheduler.flush(), null);
+  assert.equal(requests.length, before);
 });
 
 test('a request that never answers times out, and previews continue', async t => {

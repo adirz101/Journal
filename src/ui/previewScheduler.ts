@@ -46,13 +46,14 @@ export class PreviewScheduler<I, S, F> {
     this.idle = this.timers.setTimeout(() => { this.idle = null; this.send('full'); }, this.options.idleMs);
   }
 
-  // The full check for the current input, now.
-  flush(): Promise<PreviewOutcome<S | F>> {
+  // The full check for the current input, now; null when there is no input (before the
+  // first update, or after a reset or dispose).
+  flush(): Promise<PreviewOutcome<S | F> | null> {
     if (this.idle !== null) { this.timers.clearTimeout(this.idle); this.idle = null; }
     const flight = this.flights.full;
     if (flight && flight.ticket === this.ticket) return flight.promise;
     if (flight) return flight.promise.then(() => this.flush());
-    return this.send('full')!;
+    return this.send('full') ?? Promise.resolve(null);
   }
 
   reset() { this.ticket++; this.input = undefined; this.clear(); this.flights = { selection: null, full: null }; this.dirty = { selection: false, full: false }; }

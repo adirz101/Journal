@@ -50,9 +50,10 @@ export function useContextPreview(input: PreviewInput | null, onChecked?: (recei
   // The inputs can change while it runs (a note just remembered): then it checks the newest ones.
   const flush = useCallback(async (): Promise<Receipt | null> => {
     for (let attempt = 0; attempt < 5; attempt++) {
-      const outcome = await scheduler.current!.flush();
-      if (outcome.error !== undefined) return null;
-      if (outcome.ticket === scheduler.current!.latest) return outcome.value as Receipt;
+      const outcome = await scheduler.current?.flush();
+      // No input (a reset or unmount meanwhile) or a failed check: nothing to inspect.
+      if (!outcome || outcome.error !== undefined) return null;
+      if (outcome.ticket === scheduler.current?.latest) return outcome.value as Receipt;
     }
     return null;
   }, []);
