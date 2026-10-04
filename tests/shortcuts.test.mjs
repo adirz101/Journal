@@ -72,6 +72,22 @@ test('punctuation is never mistaken for a letter by its physical position', () =
   assert.equal(matchShortcut({ ...key('Meta+E'), key: 'у' }, 'darwin'), 'focus-terminal');
 });
 
+test('the backslash shortcut works on ISO keyboards and Ctrl+\\ stays with the terminal', () => {
+  // UK ISO: the \\ key beside left Shift reports IntlBackslash; the key where US has \\ types #.
+  for (const platform of ['win32', 'linux']) {
+    assert.equal(matchShortcut({ ...key('Control+Shift+\\'), code: 'IntlBackslash', key: '|' }, platform), 'toggle-sidebar', platform);
+    assert.equal(matchShortcut({ ...key('Control+Shift+\\'), code: 'IntlBackslash', key: '\\' }, platform), 'toggle-sidebar', platform);
+    // Another layout that puts \\ on some other key is matched by its character.
+    assert.equal(matchShortcut({ ...key('Control+Shift+\\'), code: 'Quote', key: '|' }, platform), 'toggle-sidebar', platform);
+    // Without Shift it is SIGQUIT for the terminal, whichever key produces it.
+    assert.equal(matchShortcut({ ...key('Control+\\'), code: 'IntlBackslash' }, platform), null, platform);
+    assert.equal(matchShortcut({ ...key('Control+\\'), code: 'Quote' }, platform), null, platform);
+  }
+  assert.equal(matchShortcut({ ...key('Meta+\\'), code: 'Backquote' }, 'darwin'), 'toggle-sidebar');
+  assert.equal(matchShortcut({ ...key('Control+\\'), code: 'Backquote' }, 'darwin'), null);
+  assert.equal(matchShortcut({ ...key('Meta+\\'), code: 'IntlBackslash', key: '§' }, 'darwin'), null, 'the Mac ISO § key');
+});
+
 test('auto-repeat is still claimed but not dispatched', () => {
   const repeat = key('Meta+N', { isAutoRepeat: true });
   assert.equal(matchShortcut(repeat, 'darwin'), 'new-session');
