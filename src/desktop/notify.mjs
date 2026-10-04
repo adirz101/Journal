@@ -1,11 +1,13 @@
 // Desktop notifications and the Dock/taskbar badge. Pure: Electron's
 // Notification, focus and badge calls are injected, so tests drive it directly.
 //
-// Privacy: a notification names the session only. The pending command or path
+// Privacy: a notification names the session only, with credentials in its
+// name redacted (a title can come from the task text). The pending command or path
 // (already redacted by the runtime) is added only when the user turned on
 // "Show Commands in Notifications". Nothing here is persisted except the two
 // preferences, written by writePreferences.
 import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { redact } from '../core/validation.mjs';
 
 // Windows attributes toasts to this ID. It must equal `appId` in
 // electron-builder.config.cjs (tests/release.test.mjs keeps them equal).
@@ -62,6 +64,7 @@ export function createNotifier({ Notification, isSupported = () => true, isFocus
     let title;
     try { title = await titleFor(session); } catch { title = null; }
     if (typeof title !== 'string' || !title) title = session.title ?? 'Claude session';
+    title = redact(String(title), 200) || 'Claude session';
     // The episode may have ended (or the notifier closed) while the name was read.
     if (disposed || episodes.get(session.id) !== episode) return;
     const prefs = preferences();

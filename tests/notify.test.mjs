@@ -213,6 +213,18 @@ test('titleFor supplies the display name; rejection falls back to session.title'
   assert.equal(throwing.shown()[0].options.body, 'Fix the parser');
 });
 
+test('the session title in the body is redacted (a task can contain a credential)', async () => {
+  const named = setup({ titleFor: async () => 'Deploy with API_KEY=abcd1234efgh5678' });
+  named.notifier.update(named.session({ status: 'waiting' }));
+  await flush();
+  assert.equal(named.shown()[0].options.body, 'Deploy with API_KEY=[redacted]');
+  const fallback = setup({ titleFor: async () => null, prefs: { notificationCommand: true } });
+  fallback.notifier.update(fallback.session({ status: 'waiting', title: 'token ghp_abcdefghijklmnopqrstuvwxyz0123456789', pending: { command: 'ls' } }));
+  await flush();
+  assert.doesNotMatch(fallback.shown()[0].options.body, /ghp_abcdefghij/);
+  assert.match(fallback.shown()[0].options.body, /\nls$/);
+});
+
 test('dispose closes every open notification', async () => {
   const f = setup();
   f.notifier.update(f.session({ id: 'a', status: 'waiting' }));
