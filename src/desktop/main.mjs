@@ -158,7 +158,8 @@ const actions = {
   setAppearance: ({ appearance }) => {
     if (appearance !== 'light' && appearance !== 'dark') throw new Error('Invalid appearance');
     nativeTheme.themeSource = appearance;
-    window?.setBackgroundColor(appearance === 'light' ? '#fafbfe' : '#101216');
+    // Repeats --bg from src/ui/tokens.css (as does the window background at creation).
+    window?.setBackgroundColor(appearance === 'light' ? '#FFFFFF' : '#0F1115');
   },
   bootstrap: async () => ({ projects: await store.listProjects(), agents, platform: process.platform, runtime: { state: runtimeState, warning: runtimeWarning },
     live: runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [], active: await store.activeSessions() }),
