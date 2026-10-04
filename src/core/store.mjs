@@ -371,10 +371,11 @@ export class JournalStore {
     const id = randomUUID();
     const assembled = this.assemblePacket(selected.matches, project, { id, disabled, areaQuery, drift: memory => this.drift(project, memory, cache) });
     const { items, excluded } = assembled; const disabledSet = new Set(disabled);
+    this.matchedTerms(items, terms);
     const warnings = [...selected.warnings, ...assembled.warnings];
     // References carry paths, ranges and hashes, never contents.
     const packet = assembled.packet + referencesBlock(referenced);
-    const receipt = { id, projectId, query, packet, items, excluded, warnings, disabled: [...disabledSet], workspaceId, references: referenced, checkout: { root: project.root, branch: project.branch, head: project.head }, state: 'prepared', estimatedTokens: Math.ceil(Buffer.byteLength(packet) / 3), createdAt: now() };
+    const receipt = { id, projectId, query, packet, items, excluded, warnings, disabled: [...disabledSet], workspaceId, references: referenced, checkout: { root: project.root, branch: project.branch, head: project.head }, state: 'prepared', estimatedTokens: Math.ceil(Buffer.byteLength(packet) / 3), createdAt: now(), terms };
     // Previews show what would be sent; only a launch keeps an immutable receipt.
     if (!persist) return { ...receipt, preview: true };
     this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(id, projectId, JSON.stringify(receipt));
@@ -492,17 +493,67 @@ export class JournalStore {
     if (!items.length) packet = '';
     return { items, excluded, warnings, packet };
   }
-  // A0 stub: replaced by the SQL-only selection (Phase 4 A3). It runs Git and reads evidence.
+  // The typing preview: what prepareContext would select, from SQLite alone.
+  // It never runs Git, reads or hashes evidence, or writes. The branch is the
+  // renderer's display hint, never trusted for launch: the full preview and the
+  // launch validate again. Notes are 'unchecked' unless stored records exclude them.
   previewSelection(projectId, task, { workspaceId = null, branch = null, disabled = [], references = [] } = {}) {
-    const receipt = this.prepareContext(projectId, task, { workspaceId, disabled, references, persist: false });
-    const terms = queryTerms([receipt.query, ...(receipt.references ?? []).map(ref => ref.path)].join(' '));
-    const hint = branch ?? receipt.checkout.branch;
-    const items = receipt.items.map(item => {
-      const lower = `${item.statement} ${aliasesFor(item)}`.toLocaleLowerCase();
-      return { ...item, selection: { ...item.selection, terms: item.category === 'brief' ? [] : terms.filter(term => lower.includes(term.slice(0, Math.max(4, term.length - 2)))) } };
+    const query = text(task, 'task', 4000, true); refuseCredentials(query);
+    if (!Array.isArray(disabled) || disabled.length > 100 || disabled.some(x => typeof x !== 'string')) throw new Error('Invalid disabled claims');
+    const project = this.storedView(projectId, workspaceId, branch === null ? null : text(branch, 'branch', 255));
+    // Reference paths only: resolving a reference hashes its file.
+    if (!Array.isArray(references) || references.length > MAX_REFERENCES) throw new Error(`Reference up to ${MAX_REFERENCES} files or folders per task`);
+    const sessionKey = workspaceId ?? 'checkout';
+    const paths = references.map(input => {
+      if (!input || typeof input !== 'object') throw new Error('Invalid reference');
+      if (input.projectId !== undefined && input.projectId !== projectId) throw new Error(`${input.path} was chosen in another project; add it again from this project`);
+      const rootKey = text(input.rootKey, 'reference root', 100);
+      return { path: treePath(input.path), primary: rootKey === sessionKey && !rootKey.startsWith('root:') };
     });
-    return { kind: 'selection', checked: false, query: receipt.query, branch: hint, items, excluded: receipt.excluded, warnings: receipt.warnings,
-      bytes: Buffer.byteLength(receipt.packet), terms, taskNotes: this.taskNotes(projectId, hint) };
+    const areaQuery = [query, ...paths.map(ref => ref.path)].join(' ');
+    const terms = queryTerms(areaQuery);
+    const { matches, warnings } = this.selectCandidates(projectId, project, { areaQuery, terms, referencedPaths: paths.filter(ref => ref.primary).map(ref => ref.path), check: item => this.storedValidation(project, item) });
+    const assembled = this.assemblePacket(matches, project, { id: randomUUID(), disabled, areaQuery, drift: () => null });
+    this.matchedTerms(assembled.items, terms);
+    // Whether a brief is current is known only after validation.
+    return { kind: 'selection', checked: false, query, branch: project.branch, items: assembled.items, excluded: assembled.excluded,
+      warnings: [...warnings, ...assembled.warnings.filter(warning => warning !== NO_BRIEF_WARNING)], bytes: Buffer.byteLength(assembled.packet), terms, taskNotes: this.taskNotes(projectId, project.branch) };
+  }
+  // The project as stored, seen from a workspace, on the branch the renderer shows.
+  // The same checks and messages as view(), without Git or the file system.
+  storedView(projectId, workspaceId, branch) {
+    const stored = this.storedProject(projectId);
+    if (stored.removed) throw new Error('This project was removed from Journal; open its folder again to restore it');
+    const project = { ...this.describe(stored), branch };
+    if (!workspaceId) return project;
+    if (workspaceId.startsWith('root:')) {
+      const root = project.roots.find(entry => entry.id === workspaceId.slice(5));
+      if (!root) throw new Error('That folder is no longer part of this project');
+      return { ...project, cwd: root.path, workspaceId };
+    }
+    const workspace = this.getWorkspace(workspaceId);
+    if (workspace.projectId !== projectId) throw new Error('Workspace belongs to another project');
+    if (workspace.state !== 'ready') throw new Error(`Workspace ${workspace.branch ?? basename(workspace.path)} is ${workspace.state}`);
+    return { ...project, root: workspace.path, head: workspace.head ?? project.head, workspaceId };
+  }
+  // validation() from stored records only: evidence is not read, so a note is
+  // 'unchecked' rather than 'current'.
+  storedValidation(project, memory) {
+    if (memory.source?.rootId && !(project.roots ?? []).some(root => root.id === memory.source.rootId)) return 'folder-removed';
+    if (memory.scope === 'branch' && project.branch !== memory.branch) return 'wrong-branch';
+    return 'unchecked';
+  }
+  // selection.terms: the task terms FTS (porter stemming, no prefixes) matches
+  // in each selected note, one statement per term. Briefs never depend on task words.
+  matchedTerms(items, terms) {
+    const byRevision = new Map(items.map(item => [item.revisionId, []]));
+    const ids = JSON.stringify(items.filter(item => item.category !== 'brief').map(item => item.revisionId));
+    if (terms.length && ids !== '[]') {
+      const check = this.db.prepare('SELECT revision_id FROM memory_fts WHERE memory_fts MATCH ? AND revision_id IN (SELECT value FROM json_each(?))');
+      for (const term of terms) for (const { revision_id: revision } of check.all(`"${term.replaceAll('"', '""')}"`, ids)) byRevision.get(revision)?.push(term);
+    }
+    for (const item of items) item.selection.terms = item.category === 'brief' ? [] : byRevision.get(item.revisionId) ?? [];
+    return items;
   }
   // Remembered notes a task could match on this branch: active, not briefs, checkout-wide or on the branch.
   taskNotes(projectId, branch) {

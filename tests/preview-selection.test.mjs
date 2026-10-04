@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { JournalStore } from '../src/core/store.mjs';
+import { queryTerms } from '../src/core/retrieval.mjs';
 import { removeLater } from './support/cleanup.mjs';
 
 // Fixed identity and dates keep commits reproducible; the snapshot still masks HEAD.
@@ -172,4 +174,144 @@ test('prepareContext packets are unchanged by the selection refactor', t => {
     assert.deepEqual(normalize(f, receipt), SNAPSHOT);
     if (persist) assert.deepEqual(normalize(f, f.store.getReceipt(receipt.id)), SNAPSHOT, 'the stored receipt holds the same packet');
   }
+});
+
+// A small project: a Git checkout on main with approved notes added by remember().
+function basic(t) {
+  const root = mkdtempSync(join(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'preview-basic-'));
+  const repo = join(root, 'repo'); mkdirSync(join(repo, 'src'), { recursive: true });
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe', encoding: 'utf8', env: GIT_ENV }).trim();
+  git('init', '-q', '-b', 'main');
+  writeFileSync(join(repo, 'src/worktree.mjs'), 'export const removal = "refuse locked";\n');
+  git('add', '.'); git('commit', '-qm', 'init');
+  const store = new JournalStore(join(root, 'journal.sqlite')); const project = store.openProject(repo);
+  t.after(() => { store.close(); removeLater(root); });
+  const remember = (statement, extra = {}, options) => {
+    const memory = store.proposeMemory(project.id, { statement, category: 'constraint', scope: 'checkout', area: '', source: { kind: 'user', note: 'Fixture' }, ...extra }, options);
+    store.setMemoryStatus(memory.id, 'active'); return memory;
+  };
+  return { root, repo, git, store, project, remember };
+}
+const count = (store, table) => store.db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n;
+const changes = store => store.db.prepare('SELECT total_changes() AS n').get().n;
+
+test('taskNotes counts in-scope non-brief notes', t => {
+  const f = basic(t);
+  f.remember('Worktree removal refuses locked worktrees.');
+  f.remember('Branch names never start with a dash.', { category: 'convention' });
+  f.remember('This repository is a fixture.', { category: 'brief' });
+  f.git('checkout', '-q', '-b', 'feature/y');
+  f.remember('Feature y is half done.', { scope: 'branch' });
+  f.git('checkout', '-q', 'main');
+  assert.equal(f.store.previewSelection(f.project.id, 'anything', { branch: 'main' }).taskNotes, 2);
+  assert.equal(f.store.previewSelection(f.project.id, '', { branch: 'feature/y' }).taskNotes, 3);
+});
+
+test('previewSelection writes nothing', t => {
+  const f = selectionFixture(t);
+  f.store.prepareContext(f.project.id, f.task, { references: f.references });
+  const before = { changes: changes(f.store), receipts: count(f.store, 'receipts'), audit: count(f.store, 'audit') };
+  for (const task of [f.task, '', 'payment']) f.store.previewSelection(f.project.id, task, { branch: 'main', references: f.references, disabled: [] });
+  assert.deepEqual({ changes: changes(f.store), receipts: count(f.store, 'receipts'), audit: count(f.store, 'audit') }, before);
+});
+
+test('previewSelection never runs Git or reads evidence', t => {
+  const f = selectionFixture(t);
+  const path = process.env.PATH; const empty = mkdtempSync(join(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'no-git-'));
+  t.after(() => { process.env.PATH = path; removeLater(empty); });
+  process.env.PATH = empty;
+  const preview = f.store.previewSelection(f.project.id, f.task, { branch: 'main', references: f.references });
+  assert.ok(preview.items.length > 0);
+  assert.throws(() => f.store.prepareContext(f.project.id, f.task, { references: f.references, persist: false }), 'the guard is real: prepareContext needs Git');
+  process.env.PATH = path;
+  // A deleted evidence file: the typing preview still shows the note; the full preview leaves it out as out of date.
+  rmSync(join(f.repo, 'src/payments/retry.mjs'));
+  const retry = [...f.labels].find(([, label]) => label === 'retry-file')[0];
+  assert.ok(f.store.previewSelection(f.project.id, f.task, { branch: 'main' }).items.some(item => item.id === retry));
+  const full = f.store.prepareContext(f.project.id, f.task, { persist: false });
+  assert.ok(!full.items.some(item => item.id === retry));
+  assert.deepEqual(full.excluded.find(item => item.id === retry), { id: retry, reason: 'stale' });
+});
+
+test('previewSelection selects what prepareContext selects when every source is current', t => {
+  const f = selectionFixture(t);
+  writeFileSync(join(f.repo, 'src/payments/webhook.mjs'), 'export const verify = true;\n');
+  const leftOut = [...f.labels].find(([, label]) => label === 'retry-file')[0];
+  for (const disabled of [[], [leftOut]]) {
+    const full = f.store.prepareContext(f.project.id, f.task, { references: f.references, disabled, persist: false });
+    const preview = f.store.previewSelection(f.project.id, f.task, { branch: 'main', references: f.references, disabled });
+    const shape = result => ({ items: result.items.map(item => [item.id, item.selection.reason, item.selection.terms]), excluded: result.excluded.map(item => [item.id, item.reason]), warnings: result.warnings });
+    assert.deepEqual(shape(preview), shape(full));
+    assert.equal(preview.kind, 'selection'); assert.equal(preview.checked, false); assert.equal(preview.branch, 'main'); assert.equal(preview.query, f.task);
+    assert.deepEqual(preview.terms, full.terms);
+    assert.equal(preview.bytes, Buffer.byteLength(full.packet.slice(0, full.packet.indexOf('\nReferenced by the user'))), 'packet bytes before references');
+  }
+});
+
+test('wrong-branch and removed-folder notes are excluded from the stored records alone', t => {
+  const f = basic(t);
+  const docs = join(f.root, 'docs'); mkdirSync(docs); writeFileSync(join(docs, 'guide.md'), 'Worktree guide line\n');
+  const [docsRoot] = f.store.addProjectRoot(f.project.id, docs).roots;
+  const fromDocs = f.remember('Worktree guide explains removal.', { source: { kind: 'file', rootId: docsRoot.id, path: 'guide.md', startLine: 1, endLine: 1 } });
+  const onMain = f.remember('Worktree removal on main keeps the branch.', { scope: 'branch' });
+  f.store.removeProjectRoot(f.project.id, docsRoot.id);
+  const preview = f.store.previewSelection(f.project.id, 'worktree removal', { branch: 'feature/x' });
+  assert.deepEqual(preview.excluded.find(item => item.id === fromDocs.id), { id: fromDocs.id, reason: 'folder-removed' });
+  // Selection filters scope by branch in SQL before ranking (as prepareContext does), so a
+  // main note is never a candidate on feature/x; the stored-record check would call it wrong-branch.
+  assert.ok(!preview.items.some(item => item.id === onMain.id));
+  const view = { ...f.store.describe(f.store.storedProject(f.project.id)), branch: 'feature/x' };
+  assert.equal(f.store.storedValidation(view, f.store.getMemory(onMain.id)), 'wrong-branch');
+  assert.equal(f.store.storedValidation({ ...view, branch: 'main' }, f.store.getMemory(onMain.id)), 'unchecked');
+  assert.equal(f.store.storedValidation(view, f.store.getMemory(fromDocs.id)), 'folder-removed');
+  assert.ok(f.store.previewSelection(f.project.id, 'worktree removal', { branch: 'main' }).items.some(item => item.id === onMain.id));
+  f.git('checkout', '-q', '-b', 'feature/x');
+  const full = f.store.prepareContext(f.project.id, 'worktree removal', { persist: false });
+  assert.deepEqual(full.items.map(item => item.id), preview.items.map(item => item.id));
+  assert.deepEqual(full.excluded, preview.excluded);
+});
+
+test('previewSelection validates input like prepareContext', t => {
+  const f = basic(t);
+  const otherRepo = join(f.root, 'other'); execFileSync('git', ['init', '-q', '-b', 'main', otherRepo], { stdio: 'pipe' });
+  const other = f.store.openProject(otherRepo);
+  const foreign = f.store.saveWorkspace({ id: randomUUID(), projectId: other.id, kind: 'managed', path: join(f.root, 'other-wt'), branch: 'x', state: 'ready' });
+  const message = action => { try { action(); } catch (error) { return error.message; } return null; };
+  const cases = [['x'.repeat(4001), {}], ['use token=abcdefghijkl for this', {}], ['task', { disabled: Array.from({ length: 101 }, (_, i) => `id${i}`) }], ['task', { workspaceId: foreign.id }],
+    ['task', { disabled: 'nope' }], ['task', { workspaceId: 'root:missing' }], ['task', { references: Array.from({ length: 21 }, () => ({ rootKey: 'checkout', path: 'src' })) }]];
+  for (const [task, options] of cases) {
+    const expected = message(() => f.store.prepareContext(f.project.id, task, { ...options, persist: false }));
+    assert.ok(expected, `prepareContext refuses ${JSON.stringify(options).slice(0, 60)}`);
+    assert.equal(message(() => f.store.previewSelection(f.project.id, task, { branch: 'main', ...options })), expected);
+  }
+  assert.throws(() => f.store.previewSelection(f.project.id, 'task', { branch: 'x'.repeat(256) }), /Invalid branch/);
+  assert.throws(() => f.store.previewSelection(f.project.id, 'task', { references: [{ rootKey: 'checkout', path: '../escape' }] }), /Invalid file path/);
+  f.store.removeProject(other.id);
+  assert.equal(message(() => f.store.previewSelection(other.id, 'task')), message(() => f.store.prepareContext(other.id, 'task', { persist: false })));
+});
+
+test('selection.terms records the task words FTS matched', t => {
+  const f = basic(t);
+  const note = f.remember('Retry payment refunds with exponential backoff');
+  f.store.setPinned(note.id, true);
+  const brief = f.remember('This payments fixture handles payment retries.', { category: 'brief' });
+  for (const prepare of [(task) => f.store.prepareContext(f.project.id, task, { persist: false }), (task) => f.store.previewSelection(f.project.id, task, { branch: 'main' })]) {
+    const terms = task => Object.fromEntries(prepare(task).items.map(item => [item.id, item.selection.terms]));
+    assert.deepEqual(terms('payment retries please'), { [brief.id]: [], [note.id]: ['payment', 'retries'] });
+    assert.deepEqual(terms('retr'), { [brief.id]: [], [note.id]: [] }, 'nothing matches by prefix');
+    assert.deepEqual(terms('backoff'), { [brief.id]: [], [note.id]: ['backoff'] });
+  }
+  const receipt = f.store.prepareContext(f.project.id, 'payment retries please');
+  assert.deepEqual(receipt.terms, queryTerms('payment retries please'));
+  assert.deepEqual(f.store.getReceipt(receipt.id).items.find(item => item.id === note.id).selection, { reason: 'pinned', bytes: receipt.items[1].selection.bytes, terms: ['payment', 'retries'] });
+});
+
+test('receipts without selection.terms still load', t => {
+  const f = basic(t);
+  const note = f.remember('Worktree removal refuses locked worktrees.');
+  const body = { id: randomUUID(), projectId: f.project.id, query: 'worktree removal', packet: 'Journal project knowledge — fixture', items: [{ ...f.store.getMemory(note.id), selection: { reason: 'matched worktree, removal', bytes: 120 } }],
+    excluded: [], warnings: [], disabled: [], workspaceId: null, references: [], checkout: { root: f.repo, branch: 'main', head: null }, state: 'submitted', estimatedTokens: 12, createdAt: '2026-10-01T00:00:00.000Z' };
+  f.store.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(body.id, f.project.id, JSON.stringify(body));
+  assert.deepEqual(f.store.getReceipt(body.id), body);
+  assert.ok(f.store.listReceipts(f.project.id).some(receipt => receipt.id === body.id && receipt.terms === undefined));
 });
