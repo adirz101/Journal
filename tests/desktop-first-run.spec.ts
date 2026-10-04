@@ -107,6 +107,12 @@ process.stdin.resume();`);
     expect(asked.message).toBe('Install Codex?');
     expect(asked.detail).toContain('curl -fsSL https://chatgpt.com/codex/install.sh | sh'); expect(asked.detail).toContain('will not receive or store your Codex credentials');
     expect(f.log().some(call => call.argv.includes('echo evil'))).toBe(false);
+
+    // The install page: the official URL from main's table, recorded instead of opened in headless runs.
+    await request(page, 'openInstallPage', { provider: 'codex', url: 'https://evil.example' });
+    expect(await app.evaluate(() => (globalThis as any).__journalOpenedUrls)).toEqual([expect.stringMatching(/^https:\/\//)]);
+    expect(JSON.stringify(await app.evaluate(() => (globalThis as any).__journalOpenedUrls))).not.toContain('evil');
+    await expect(request(page, 'openInstallPage', { provider: 'bash' })).rejects.toThrow(/Invalid provider/);
   } finally { await app.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
 

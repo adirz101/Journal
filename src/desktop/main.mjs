@@ -182,8 +182,8 @@ runtime.on('disconnected', () => { runtimeState = 'disconnected'; send({ type: '
 runtime.on('failed', message => { runtimeWarning = message; send({ type: 'runtime', state: 'disconnected', warning: message }); });
 runtime.on('reconnected', () => { runtimeState = 'connected'; send({ type: 'runtime', state: 'connected', recovered: true }); void seedNotifier(); });
 // Phase 7: every provider starts as "checking"; detection, help reads and sign-in
-// probes run asynchronously after the window is created (refreshProviders below),
-// one check in flight per provider. Only signed in / signed out / unknown is kept.
+// probes start at once when main loads (refreshProviders below), before the window
+// exists, and run asynchronously beside it, one check in flight per provider. Only signed in / signed out / unknown is kept.
 let agents = initialAgents(process.platform, process.env);
 // Headless test runs: fixture CLIs treat any argument but --version as a session (and
 // log it as a launch), so help reads and probes run only when a spec asks for them.
@@ -517,7 +517,12 @@ const actions = {
     return { ...(await processes.start({ provider, kind: 'login' }, { file: target.file, args: target.args, env: runnable(process.env), cwd: homedir() })), command: commandsFor(provider).login };
   },
   // The official page from the constant table; the renderer never supplies a URL.
-  openInstallPage: ({ provider }) => { void shell.openExternal(PROVIDER_COMMANDS[choice(provider, PROVIDERS, 'provider')].installPage); },
+  // Headless test runs record the URL instead (globalThis.__journalOpenedUrls) and never open a browser.
+  openInstallPage: async ({ provider }) => {
+    const url = PROVIDER_COMMANDS[choice(provider, PROVIDERS, 'provider')].installPage;
+    if (headless) { (globalThis.__journalOpenedUrls ??= []).push(url); return; }
+    await shell.openExternal(url);
+  },
   // ----- Phase 7: first run -----
   // A folder dropped on the window (preload pathForFile): an absolute, existing directory,
   // then the store's own Git check. The same trust as the open dialog.
