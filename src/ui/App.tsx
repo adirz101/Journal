@@ -181,6 +181,9 @@ export default function App() {
   const refresh = useCallback(async (id?: string) => {
     const projectId = id ?? projectRef.current?.id; if (!projectId) return;
     const next = await api<ProjectState>('project', { projectId }); setState(next); merge(next.sessions);
+    // The shown project is remembered as soon as it renders, so a reload (⌘R in development,
+    // or the renderer coming back after a crash) reopens it even straight after opening it.
+    try { localStorage.setItem('journal-project', next.project.id); } catch { /* optional */ }
     const list = await api<WorkspaceList>('workspaces', { projectId }).catch(() => null); setWorkspaces(list);
     setWorkspaceId(current => list?.workspaces.some(w => w.id === current && w.state === 'ready') || next.project.roots?.some(root => `root:${root.id}` === current) ? current : '');
     return next;
@@ -254,12 +257,12 @@ export default function App() {
   async function chooseProject(project: Project) {
     userChose.current = true;
     if (project.id === state?.project.id) return;
-    await run(async () => { const next = await refresh(project.id); try { localStorage.setItem('journal-project', project.id); } catch { /* optional */ }
+    await run(async () => { const next = await refresh(project.id);
       const live = slotOrder(Object.values(sessions)).find(s => isLive(s) && s.status !== 'stopping' && s.projectId === project.id);
       setSelectedId(live?.id ?? null); setReceipt(next?.receipts[0] ?? null); setTask(''); });
   }
   async function opened(project: Project) {
-    setProjects(items => [project, ...items.filter(p => p.id !== project.id)]); await refresh(project.id); try { localStorage.setItem('journal-project', project.id); } catch { /* optional */ } setSelectedId(null); setReceipt(null);
+    setProjects(items => [project, ...items.filter(p => p.id !== project.id)]); await refresh(project.id); setSelectedId(null); setReceipt(null);
   }
   async function openProject() {
     userChose.current = true;
