@@ -159,6 +159,35 @@ test('Ctrl+O opens a project outside the terminal and reaches the CLI inside it'
   } finally { await closeApp(app); f.cleanup(); }
 });
 
+test('focus, new-session and panel shortcuts act on the UI while the terminal has focus', async () => {
+  const f = setup('shortcuts'); const { app, page } = await open(f.env, f.project);
+  const mac = process.platform === 'darwin';
+  const cmd = mac ? ['meta'] as const : ['control', 'shift'] as const; const tab = mac ? ['meta', 'alt'] as const : ['alt', 'shift'] as const;
+  const terminal = page.locator('.xterm-helper-textarea'); const selectedTab = page.locator('.panel-tabs [role=tab][aria-selected=true]');
+  try {
+    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByLabel('Initial task').fill('KEYS_TASK');
+    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await expect(page.locator('.terminal-surface')).toContainText('TASK KEYS_TASK');
+    // focus-terminal, from another control.
+    await page.getByRole('button', { name: 'New session' }).focus();
+    await pressKey(app, 'E', [...cmd]);
+    await expect(terminal).toBeFocused();
+    // Panel tabs: Memory, then Session (the Context panel until Phase 3); the terminal keeps focus.
+    await pressKey(app, '3', [...tab]);
+    await expect(selectedTab).toHaveText('Memory');
+    await expect(terminal).toBeFocused();
+    await pressKey(app, '1', [...tab]);
+    await expect(selectedTab).toHaveText('Context');
+    await expect(terminal).toBeFocused();
+    // new-session: no session selected and the task box has focus.
+    await pressKey(app, 'N', [...cmd]);
+    await expect(page.getByLabel('Initial task')).toBeFocused();
+    await expect(sessionButton(page, 'KEYS_TASK')).not.toHaveAttribute('aria-current', 'true');
+    expect(f.launches()).toHaveLength(1);
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
 test('an app crash leaves sessions running in the runtime; the next launch reconnects without relaunching', async () => {
   const f = setup('crash'); let { app, page } = await open(f.env, f.project);
   try {
