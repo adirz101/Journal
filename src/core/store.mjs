@@ -230,7 +230,7 @@ export class JournalStore {
     if (input.memoryId) {
       previous = this.getMemory(input.memoryId);
       if (previous.projectId !== projectId) throw new Error('Memory belongs to another project');
-      if (previous.scope === 'branch' && scope === 'branch' && !boundBranch && previous.branch !== project.branch) throw new Error(`This note belongs to branch ${previous.branch}; check out that branch to revise it`);
+      if (previous.scope === 'branch' && scope === 'branch' && !boundBranch && previous.branch !== project.branch) throw this.wrongBranch(projectId, previous.branch, 'revise');
     }
     const id = previous?.id ?? randomUUID();
     const revision = (previous?.revision ?? 0) + 1;
@@ -312,6 +312,12 @@ export class JournalStore {
     const counts = Object.fromEntries(this.db.prepare('SELECT status, count(*) AS n FROM memories WHERE project_id=? GROUP BY status').all(projectId).map(row => [row.status, row.n]));
     return { items, total, offset, limit, counts };
   }
+  // Git refuses to check out a branch that another worktree has checked out.
+  wrongBranch(projectId, branch, verb) {
+    const open = this.db.prepare(`SELECT 1 FROM workspaces WHERE project_id=? AND json_extract(body,'$.branch')=? AND json_extract(body,'$.state')='ready'`).get(projectId, branch);
+    return new Error(open ? `This note belongs to branch ${branch}, which is open in a separate copy (worktree); ${verb === 'approve' ? 'approving' : 'revising'} it from there is not available yet. You can reject it.`
+      : `This note belongs to branch ${branch}; check out that branch to ${verb} it`);
+  }
   setMemoryStatus(id, status, { reason = null } = {}) {
     choice(status, ['active', 'rejected', 'archived'], 'status');
     if (reason !== null) choice(reason, ['incorrect', 'superseded', 'withdrawn'], 'reason');
@@ -319,7 +325,7 @@ export class JournalStore {
     if (status === 'active' && memory.status !== 'candidate') throw new Error('Only a candidate can be approved');
     if (status === 'active') {
       const validation = this.validation(this.project(memory.projectId), memory);
-      if (validation === 'wrong-branch') throw new Error(`This note belongs to branch ${memory.branch}; check out that branch to approve it`);
+      if (validation === 'wrong-branch') throw this.wrongBranch(memory.projectId, memory.branch, 'approve');
       if (validation !== 'current') throw new Error('Evidence or branch changed; revise before approving');
     }
     this.transaction(() => {

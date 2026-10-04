@@ -178,6 +178,19 @@ test('a suggestion made in a worktree is remembered on the worktree branch while
   assert.equal(f.store.acceptProposal(proposal.id).branch, 'feature/flags');
 });
 
+test('a note for a branch open in a worktree explains that it cannot be revised or approved from the main checkout yet', t => {
+  const f = fixture(t);
+  const ws = f.store.createWorkspace(f.project.id, { branch: 'feature/flags', base: 'main' }, join(f.repo, '..', 'worktrees'));
+  const s = f.session('', { survivors: [], workspaceId: ws.id, branch: 'feature/flags' });
+  f.store.appendEvent(s.id, 'command-start', { toolUseId: 'a', command: 'npm test', test: true });
+  f.store.appendEvent(s.id, 'command-end', { toolUseId: 'a', status: 'succeeded', exitCode: 0 });
+  const memory = f.store.acceptProposal(f.store.generateProposals(s.id).find(p => p.kind === 'test-command').id);
+  const revise = () => f.store.proposeMemory(f.project.id, { memoryId: memory.id, statement: 'Run npm test before committing', category: memory.category, scope: 'branch', area: '', source: { kind: 'user', note: 'fixture' } });
+  assert.throws(revise, { message: 'This note belongs to branch feature/flags, which is open in a separate copy (worktree); revising it from there is not available yet. You can reject it.' });
+  assert.throws(() => f.store.setMemoryStatus(memory.id, 'active'), { message: 'This note belongs to branch feature/flags, which is open in a separate copy (worktree); approving it from there is not available yet. You can reject it.' });
+  assert.equal(f.store.setMemoryStatus(memory.id, 'rejected').status, 'rejected');
+});
+
 test('branch names are matched by exact spelling and reported when invalid', t => {
   const f = fixture(t); f.git('branch', 'feature/flags');
   const input = { statement: 'Feature flags default to off', category: 'constraint', scope: 'branch', area: '', source: { kind: 'user', note: 'fixture' } };
