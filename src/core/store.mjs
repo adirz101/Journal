@@ -909,6 +909,82 @@ export class JournalStore {
       return this.getMemory(item.id);
     }));
   }
+  // ----- Phase 7: first run. The orientation flag lives in the project body, so it survives
+  // reopening and remove-then-restore. It is set when drafts are produced (D10: once per project).
+  setOrientation(projectId, state) { const stored = this.storedProject(projectId); return this.saveProject({ ...stored, orientation: { state, at: now() } }); }
+  // A current project summary of a scope (and, for a branch, that branch), active or waiting for review.
+  currentBrief(projectId, scope, branch) {
+    return this.db.prepare(`SELECT m.id FROM memories m JOIN revisions r ON r.id=m.current_revision
+      WHERE m.project_id=? AND m.status IN ('active','candidate') AND json_extract(r.body,'$.category')='brief'
+      AND (? IS NULL OR json_extract(r.body,'$.scope')=?) AND (? IS NULL OR json_extract(r.body,'$.branch')=?) LIMIT 1`).get(projectId, scope, scope, branch, branch) ?? null;
+  }
+  // No flag and no project summary of any scope that counts (active or candidate): projects
+  // from before Phase 7 without one are offered it once; any summary means never.
+  needsOrientation(projectId) {
+    const stored = this.storedProject(projectId);
+    return !stored.orientation && !this.currentBrief(projectId, null, null);
+  }
+  // The two first-run drafts (Git only, nothing stored but the flag), or null.
+  firstRunDrafts(projectId) {
+    if (!this.needsOrientation(projectId)) return null;
+    const project = this.project(projectId);
+    // An unborn HEAD is not marked: there is nothing to draft until the first commit.
+    if (!project.head) return null;
+    // With a commit and a named branch neither draft is expected to throw, so a throw is a
+    // real failure (Git could not be read): the card is null with the neutral reason 'failed'.
+    let overview = null; let branch = null; let branchSkipped = null; let overviewSkipped = null;
+    try { overview = this.proposeStatusUpdate(projectId, 'checkout'); } catch { overviewSkipped = 'failed'; }
+    if (!project.branch) branchSkipped = 'detached';
+    else { try { branch = this.proposeStatusUpdate(projectId, 'branch'); } catch { branchSkipped = 'failed'; } }
+    if (!overview && !branch) return null;
+    this.setOrientation(projectId, 'shown');
+    // branchName: the branch the drafts were made on; rememberDraft refuses another one.
+    return { projectId, head: project.head, branchName: project.branch ?? null, overview, branch, branchSkipped, overviewSkipped };
+  }
+  // One action for both first-run cards (D1: the whole statements were on screen). Each part
+  // is null or { statement, base, head, branch } (head and branch: the drafts' head and branchName). Every check, Git query and evidence read happens in
+  // prepareMemory before one transaction writes, remembers and audits them all; any throw
+  // leaves nothing behind. `via` is set by the main process.
+  rememberDraft(projectId, { overview = null, branch = null } = {}, { via } = {}) {
+    choice(via, ['first-run'], 'remember path');
+    const parts = [['checkout', overview], ['branch', branch]].filter(([, part]) => part !== null && part !== undefined);
+    if (!parts.length) throw new Error('Choose a draft to remember');
+    for (const [, part] of parts) {
+      if (typeof part !== 'object' || Array.isArray(part) || typeof part.statement !== 'string' || typeof part.head !== 'string' || !(part.base === null || typeof part.base === 'string') || !(part.branch === null || typeof part.branch === 'string')) throw new Error('Invalid draft');
+    }
+    const project = this.project(projectId);
+    // A switch to another branch at the same commit changes what the branch card describes.
+    if (parts.some(([, part]) => part.head !== project.head || part.branch !== (project.branch ?? null))) throw new Error('The project changed since these drafts were made. Open Project memory to draft them again.');
+    const meanwhile = () => new Error('A project summary was added meanwhile; review it in Project memory');
+    const target = scope => scope === 'branch' ? project.branch : null;
+    const prepared = parts.map(([scope, part]) => {
+      if (scope === 'branch' && !project.branch) throw new Error('"Where this branch stands" needs a named branch');
+      if (this.currentBrief(projectId, scope, target(scope))) throw meanwhile();
+      return this.prepareMemory(projectId, { statement: part.statement, category: 'brief', scope, area: '', source: { kind: 'git', base: part.base } });
+    });
+    return this.transaction(() => {
+      // Re-read inside the lock: another window may have added one meanwhile.
+      for (const [scope] of parts) if (this.currentBrief(projectId, scope, target(scope))) throw meanwhile();
+      const notes = prepared.map(({ item, expected }) => {
+        this.writeMemory(item, expected);
+        this.approveMemory(this.getMemory(item.id), { via });
+        return this.getMemory(item.id);
+      });
+      this.setOrientation(projectId, 'remembered');
+      this.audit('orientation-remembered', { projectId, notes: notes.length });
+      return notes;
+    });
+  }
+  // Skip for now: only the flag; no note is touched.
+  skipOrientation(projectId) {
+    const stored = this.storedProject(projectId);
+    if (stored.orientation?.state === 'remembered') return this.describe(stored);
+    const saved = this.setOrientation(projectId, 'skipped');
+    this.audit('orientation-skipped', { projectId });
+    return saved;
+  }
+  // Any remembered note in any project (an upgrading install never sees the first-note moment).
+  hasActiveNotes() { return !!this.db.prepare(`SELECT 1 FROM memories WHERE status='active' LIMIT 1`).get(); }
   // "Still true": the user checked an out-of-date file note against the change. A new
   // revision with fresh evidence (the same statement, scope and qualifiers), remembered
   // at once with via 'reaffirm'. Earlier revisions are never edited; pinning is kept.

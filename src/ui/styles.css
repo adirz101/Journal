@@ -169,18 +169,32 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .note-card{display:flex;flex-direction:column;gap:5px;min-width:0}
 .note-card>.note-statement{font-size:var(--text-body);line-height:1.5;margin:4px 0 0;overflow-wrap:anywhere;white-space:pre-line;color:var(--tx)}
 .note-card .note-meta{align-items:center}
+.note-card .note-meta>span+span:not(.memory-state){text-transform:none;letter-spacing:0;text-align:end}
 .memory-state.other{background:var(--hover);color:var(--tx2)}
 .note-line{font-size:var(--text-caption);line-height:1.45;color:var(--tx3);overflow-wrap:anywhere;min-width:0}
 .note-line.note-evidence.amber{align-self:flex-start;max-width:100%;color:var(--amb);background:var(--ambsoft);border-radius:4px;padding:1px 6px}
-.note-origin button.link{font-size:inherit;text-align:start;overflow-wrap:anywhere;color:var(--acc)}
+.note-origin button.link{font-size:inherit;text-align:start;white-space:normal;overflow-wrap:anywhere;max-width:100%;color:var(--acc)}
 .note-card>.memory-actions{margin-top:6px}
 .note-card .memory-actions kbd{margin-left:4px;padding:0 4px}
 /* hover and preview: one line per row, the full text in the title. */
-.note-card.hover>.note-statement,.note-card.preview>.note-statement,.note-card.hover .note-line,.note-card.preview .note-line,.note-card.hover .note-scope,.note-card.preview .note-scope{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}
-.note-card.hover .note-origin button.link,.note-card.preview .note-origin button.link{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-
-
-
+.note-card.compact>.note-statement,.note-card.compact .note-line,.note-card.compact .note-scope{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}
+.note-card.compact .note-origin button.link{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Memory tab filters (F16): search and Add, category chips, then status tabs and two attention toggles. */
+.memory-search{display:flex;gap:8px;margin-top:14px}
+.memory-search .knowledge-search{flex:1}
+.memory-search button{font-size:var(--text-meta);white-space:nowrap;background:transparent}
+.category-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.category-chips button{font-size:var(--text-caption);line-height:1.5;padding:2px 8px;border:1px solid var(--line2);border-radius:4px;background:transparent;color:var(--tx2)}
+.category-chips button span{color:var(--tx3);margin-left:2px}
+.category-chips button[aria-pressed=true]{background:var(--accsoft);border-color:var(--accline);color:var(--acc)}
+.category-chips button[aria-pressed=true] span{color:inherit}
+@media(forced-colors:active){.category-chips button[aria-pressed=true]{border-color:Highlight;outline:1px solid Highlight;outline-offset:1px}.category-chips button[aria-pressed=true]:focus-visible{outline:3px solid Highlight;outline-offset:2px}}
+.filter-tabs .filter-gap{flex:1;margin:0;padding:0;background:transparent}
+.filter-tabs .attention-toggle.amber{color:var(--amb)}
+.filter-tabs .attention-toggle.amber span{background:var(--ambsoft)}
+/* Pressed toggles also carry a non-color cue: they can be amber and pressed at once. */
+.filter-tabs .attention-toggle[aria-pressed=true]{text-decoration:underline;text-underline-offset:3px}
+@media(hover:hover) and (pointer:fine){.category-chips button:not([aria-pressed=true]):not(:disabled):hover{background:var(--hover);color:var(--tx)}.category-chips button[aria-pressed=true]:not(:disabled):hover{background:var(--accsoft-hover)}.filter-tabs .attention-toggle.amber:not(:disabled):hover{color:var(--amb)}.note-origin button.link:not(:disabled):hover{color:var(--tx)}}
 
 /* === Phase 4: composer === */
 /* New session (board B5): the form beside the live preview; the main column scrolls. Below 760 px the preview stacks under the form. */

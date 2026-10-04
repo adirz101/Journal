@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { TerminalPane } from './TerminalPane';
 import { KnowledgeForm } from './KnowledgeForm';
-import { KnowledgePanel } from './KnowledgePanel';
+import { KnowledgePanel, type MemoryFilters } from './KnowledgePanel';
 import { ResizableWorkspace } from './ResizableWorkspace';
 import { useShellLayout } from './useShellLayout';
 import { useProposals } from './useProposals';
@@ -49,6 +49,16 @@ export default function App() {
   const [panel, setPanel] = useState<InspectorTab>('memory');
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState<{ memory?: Memory; supersedes?: Memory; initialCategory?: string; draft?: StatusDraft } | null>(null);
   const [knowledgeVersion, setKnowledgeVersion] = useState(0);
+  // Phase 5: note trust lines refetch on note changes and when a session starts running (a new delivery).
+  // statuses: each live session's last status, pruned when sessions disappear.
+  const [runVersion, setRunVersion] = useState(0); const statuses = useRef(new Map<string, string>());
+  const trustVersion = knowledgeVersion + runVersion;
+  useEffect(() => { for (const id of [...statuses.current.keys()]) if (!sessions[id]) statuses.current.delete(id); }, [sessions]);
+  // The Memory tab's filters: kept across tab switches, reset when the project changes
+  // (a return to an earlier project starts from the defaults too).
+  const [memoryFilters, setMemoryFilters] = useState<MemoryFilters | null>(null);
+  const filtersProject = state?.project.id ?? null; const [filtersFor, setFiltersFor] = useState<string | null>(filtersProject);
+  if (filtersFor !== filtersProject) { setFiltersFor(filtersProject); setMemoryFilters(null); }
   const [runtime, setRuntime] = useState<{ state: string; warning?: string | null }>({ state: 'connecting' });
   const [liveEvents, setLiveEvents] = useState<TimelineEvent[]>([]);
   // File and command-end events per session, counted as they arrive: liveEvents is capped, so its length stops changing.
@@ -83,6 +93,8 @@ export default function App() {
   // Set once the user picks a project or session: the startup selection, which
   // waits for project data, must not override a choice made meanwhile.
   const userChose = useRef(false);
+  // The newest providers event: one that arrives before bootstrap resolves is applied then.
+  const latestAgents = useRef<Bootstrap['agents'] | null>(null);
   projectRef.current = state?.project ?? null;
   const connected = runtime.state === 'connected';
   // Wide, medium or narrow window: which side panes dock, fold to rails or open as overlays.
@@ -140,7 +152,7 @@ export default function App() {
   }, [merge]);
   useEffect(() => {
     void api<Bootstrap>('bootstrap').then(async data => {
-      setBootstrap(data); setProjects(data.projects); if (!rememberedAgent.current) setProviderState(defaultProvider(data.agents, null)); setRuntime(data.runtime); merge([...data.active, ...data.live]);
+      setBootstrap(latestAgents.current ? { ...data, agents: latestAgents.current } : data); setProjects(data.projects); if (!rememberedAgent.current) setProviderState(defaultProvider(latestAgents.current ?? data.agents, null)); setRuntime(data.runtime); merge([...data.active, ...data.live]);
       const remembered = (() => { try { return localStorage.getItem('journal-project'); } catch { return null; } })();
       const firstLive = slotOrder([...data.active, ...data.live]).find(isLive);
       const selected = data.projects.find(p => p.id === (firstLive?.projectId ?? remembered));
@@ -165,10 +177,19 @@ export default function App() {
         return;
       }
       if (event.type === 'proposals') { setKnowledgeVersion(v => v + 1); return; }
-      if (event.type === 'providers') { setBootstrap(current => current ? { ...current, agents: event.agents } : current); return; }
+      if (event.type === 'providers') {
+        latestAgents.current = event.agents; setBootstrap(current => current ? { ...current, agents: event.agents } : current);
+        // After an install or sign-in exits, main checks that provider again and tags the result.
+        const cursor = event.agents.find(a => a.provider === 'cursor');
+        if (event.after?.provider === 'cursor' && cursor) setProviderNote(cursorNote(event.after.kind, cursor));
+        return;
+      }
       if (event.type === 'activity') { noteActivity(event.sessionId, event.lastOutputAt); return; }
       if (event.type !== 'status') return;
       // Main strips user-owned fields (names, pins, archive, removal) from runtime sessions.
+      const before = statuses.current.get(event.session.id); statuses.current.set(event.session.id, event.session.status);
+      // A launch's first transition to running is a new delivery; waiting → running (an approval) is not.
+      if (event.session.status === 'running' && before !== 'running' && before !== 'waiting') setRunVersion(v => v + 1);
       merge([event.session]);
     });
   }, [refresh, reloadSessions, merge, noteActivity, failed]);
@@ -349,17 +370,19 @@ export default function App() {
     await run(async () => { setForm({ draft: await api<StatusDraft>('proposeStatusUpdate', { projectId: state.project.id, scope }) }); });
   }
   const cursorAgent = bootstrap?.agents.find(a => a.provider === 'cursor');
-  async function checkCursor(after?: string) {
+  function cursorNote(after: string, next: NonNullable<typeof cursorAgent>) {
+    if (after === 'install') return next.available ? `Cursor CLI ${next.version} is installed${next.state === 'login-required' ? '. Sign in to continue.' : '.'}` : next.state === 'not-cursor' ? 'The installer finished, but the agent command Journal finds is not the Cursor CLI.' : 'The installer finished, but Journal cannot find the agent command yet. Check the installer output; if it asks you to update PATH, do so and restart Journal.';
+    return next.auth === 'signed-in' ? 'Signed in to Cursor.' : next.auth === 'signed-out' ? 'Cursor still reports that you are not signed in.' : 'Journal could not confirm the sign-in. Try starting a Cursor session.';
+  }
+  async function checkCursor() {
     setCheckingProvider(true);
     try {
-      const next = await api<NonNullable<typeof cursorAgent>>('providerStatus', { provider: 'cursor', fresh: !!after });
+      const next = await api<NonNullable<typeof cursorAgent>>('providerStatus', { provider: 'cursor' });
       setBootstrap(current => current ? { ...current, agents: current.agents.map(a => a.provider === 'cursor' ? next : a) } : current);
-      if (after === 'install') setProviderNote(next.available ? `Cursor CLI ${next.version} is installed${next.state === 'login-required' ? '. Sign in to continue.' : '.'}` : next.state === 'not-cursor' ? 'The installer finished, but the agent command Journal finds is not the Cursor CLI.' : 'The installer finished, but Journal cannot find the agent command yet. Check the installer output; if it asks you to update PATH, do so and restart Journal.');
-      if (after === 'login') setProviderNote(next.auth === 'signed-in' ? 'Signed in to Cursor.' : next.auth === 'signed-out' ? 'Cursor still reports that you are not signed in.' : 'Journal could not confirm the sign-in. Try starting a Cursor session.');
     } catch (error) { failed(error); } finally { setCheckingProvider(false); }
   }
-  async function installCursor() { if (checkingProvider) return; setProviderNote(''); setCheckingProvider(true); try { const result = await api<{ id: string; command: string } | null>('installCursor'); if (result) setProcessView({ id: result.id, command: result.command, title: 'Install Cursor CLI', kind: 'install' }); } catch (error) { failed(error); } finally { setCheckingProvider(false); } }
-  async function loginCursor() { if (checkingProvider) return; setProviderNote(''); setCheckingProvider(true); try { const result = await api<{ id: string }>('cursorLogin'); setProcessView({ id: result.id, command: 'agent login', title: 'Sign in to Cursor', kind: 'login' }); } catch (error) { failed(error); } finally { setCheckingProvider(false); } }
+  async function installCursor() { if (checkingProvider) return; setProviderNote(''); setCheckingProvider(true); try { const result = await api<{ id: string; command: string } | null>('providerInstall', { provider: 'cursor' }); if (result) setProcessView({ id: result.id, command: result.command, title: 'Install Cursor CLI', kind: 'install' }); } catch (error) { failed(error); } finally { setCheckingProvider(false); } }
+  async function loginCursor() { if (checkingProvider) return; setProviderNote(''); setCheckingProvider(true); try { const result = await api<{ id: string }>('providerLogin', { provider: 'cursor' }); setProcessView({ id: result.id, command: 'agent login', title: 'Sign in to Cursor', kind: 'login' }); } catch (error) { failed(error); } finally { setCheckingProvider(false); } }
   const projectBranchChanged = session && state && !session.workspaceId && session.projectId === state.project.id && isLive(session) && session.branch !== undefined && session.branch !== state.project.branch;
   // One timeline fetch and one changes source per session, shared by the header, status bar and inspector.
   const { events } = useSessionEvents(session?.id ?? null, liveEvents, `${session?.status ?? ''}:${connected}`);
@@ -369,12 +392,15 @@ export default function App() {
   const filesView = filesChoice ?? (changed ? 'changed' : 'all');
   // A preview or an older record never feeds the status bar.
   const sessionReceipt = session && receipt?.id === session.receiptId ? receipt : null;
+  // A note's origin opens its session when it is loaded; otherwise the card shows no link.
+  const openSession = (id: string) => { const target = sessions[id]; if (target) void selectSession(target); };
   const showSent = () => { setPanel('session'); layout.showInspector(); setPacketRequest(n => (n ?? 0) + 1); };
   // === Region B: inspector ===
   const inspector = (pane: 'full' | 'rail', overlay: boolean) => state && <Inspector pane={pane} inOverlay={overlay} overlayOpen={layout.inspector === 'overlay'} tab={panel} onTab={setPanel} badges={{ files: changed, memory: proposals.length }} shortcuts={bootstrap?.shortcuts}
       
     onHide={overlay ? () => layout.closeOverlays(true) : layout.mode === 'wide' ? layout.toggleInspector : undefined} onShow={tab => tab ? layout.showInspector() : layout.toggleInspector()}>
       {panel === 'session' && <SessionTab session={session} events={events} now={now} onShowSent={showSent} context={<ContextPanel receipt={receipt} session={session} bootstrap={bootstrap} history={state.receipts} disabled={disabled} events={events} now={now} packetRequest={packetRequest} onPacketShown={() => setPacketRequest(null)}
+        project={state.project} trustVersion={trustVersion} sessions={ordered} onOpenSession={openSession}
         onToggle={id => { const next = disabled.includes(id) ? disabled.filter(x => x !== id) : [...disabled, id]; setDisabled(next); if (receipt?.state === 'prepared') void api<Receipt>('prepareContext', { projectId: state.project.id, task: receipt.query, workspaceId: workspaceId || null, disabled: next, references: referenceInputs }).then(setReceipt).catch(failed); }}
         onSelectReceipt={setReceipt} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />} />}
       {panel === 'files' && <FilesTab hasSession={!!session} view={filesView} onView={setFilesChoice} changed={changed}
@@ -387,7 +413,7 @@ export default function App() {
           setReferences(current => current.some(r => r.rootKey === described.rootKey && r.path === described.path && r.startLine === described.startLine && r.endLine === described.endLine) ? current : [...current, described].slice(-20));
         }}
         onSaveEvidence={source => setEvidenceSource({ kind: 'file', path: source.path, startLine: source.startLine, endLine: source.endLine, ...(source.rootKey.startsWith('root:') ? { rootId: source.rootKey.slice(5) } : {}) })} />} />}
-      {panel === 'memory' && <MemoryTab><KnowledgePanel project={state.project} version={knowledgeVersion} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} /></MemoryTab>}
+      {panel === 'memory' && <MemoryTab><KnowledgePanel project={state.project} version={knowledgeVersion} trustVersion={trustVersion} sessions={ordered} filters={memoryFilters} onFilters={setMemoryFilters} onOpenSession={openSession} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} /></MemoryTab>}
   </Inspector>;
   // === End region B: inspector ===
   // === Region C: the ResizableWorkspace wrapper (layout modes) ===
@@ -439,7 +465,7 @@ export default function App() {
     {renameTarget?.kind === 'session' && <RenameDialog title="Rename session" label="Session name" value={renameTarget.session.displayName} fallback={renameTarget.session.title}
       note="Only Journal's label changes. The native Claude, Codex or Cursor session ID and continuing the same conversation are unaffected." onClose={() => setRenameTarget(null)}
       onSave={async name => { merge([await api<Session>('renameSession', { id: renameTarget.session.id, name })]); }} />}
-    {processView && <ProcessDialog id={processView.id} title={processView.title} command={processView.command} appearance={appearance} onClose={() => setProcessView(null)} onExit={() => void checkCursor(processView.kind)} />}
+    {processView && <ProcessDialog id={processView.id} title={processView.title} command={processView.command} appearance={appearance} onClose={() => setProcessView(null)} onExit={() => {}} />}
     {settingsOpen && <SettingsDialog appearance={appearance} onAppearance={setAppearance} update={update} project={state?.project ?? null} onClose={() => setSettingsOpen(false)} onDataChanged={() => { setKnowledgeVersion(v => v + 1); void refresh().catch(() => {}); }} />}
     {state && workspaceDialog && <WorkspaceDialog project={state.project} onClose={() => setWorkspaceDialog(false)} onChanged={() => void refresh().catch(failed)} />}
     {state && evidenceSource && <KnowledgeForm project={state.project} initialSource={evidenceSource} onClose={() => setEvidenceSource(null)} onSaved={() => { setEvidenceSource(null); setPanel('memory'); setKnowledgeVersion(v => v + 1); }} />}

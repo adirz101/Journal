@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ProviderMark } from './ProviderMark';
-import { api, PROVIDER_NAMES, type Bootstrap, type FileReference, type Receipt, type Session, type TimelineEvent } from './types';
-import { category, composer, copy, count, deliveryState, excludedReason, selectionReason, shell, warningText } from './copy';
+import { api, PROVIDER_NAMES, type Bootstrap, type FileReference, type Project, type Receipt, type Session, type TimelineEvent } from './types';
+import { composer, copy, count, deliveryState, excludedReason, shell, warningText } from './copy';
+import { NoteCard } from './NoteCard';
+import { receiptVariant } from './noteCardModel';
+import { useNoteTrust, useOpenable } from './useNoteTrust';
 import { relativeTime } from './sidebarModel';
 
 // Files the user referenced, with whether each still matches what was referenced.
@@ -36,8 +39,11 @@ function SessionReferences({ session, events }: { session: Session; events: Time
 // "See what was sent", which shows the exact text and moves focus to it once:
 // onPacketShown clears it in App, so a later remount (a tab switch, a layout
 // change) never takes focus again.
-export function ContextPanel({ receipt, session, bootstrap, history, disabled, events = [], now = Date.now(), packetRequest = null, onPacketShown, onToggle, onSelectReceipt, onChanged, onError }: {
+// Phase 5: each delivered note is a NoteCard (receipt variant) with where it came from and how
+// many conversations it was sent to; project, trustVersion, sessions and onOpenSession feed it.
+export function ContextPanel({ receipt, session, bootstrap, history, disabled, events = [], now = Date.now(), packetRequest = null, project = null, trustVersion = 0, sessions = [], onOpenSession, onPacketShown, onToggle, onSelectReceipt, onChanged, onError }: {
   receipt: Receipt | null; session: Session | null; bootstrap: Bootstrap | null; history: Receipt[]; disabled: string[]; events?: TimelineEvent[]; now?: number; packetRequest?: number | null; onPacketShown?: () => void;
+  project?: Project | null; trustVersion?: number; sessions?: Session[]; onOpenSession?: (sessionId: string) => void;
   onToggle: (id: string) => void; onSelectReceipt: (receipt: Receipt) => void; onChanged: () => void; onError: (error: unknown) => void;
 }) {
   const [raw, setRaw] = useState(false); const [open, setOpen] = useState<string | null>(null);
@@ -49,6 +55,8 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, e
     requestAnimationFrame(() => { packet.current?.scrollIntoView({ block: 'nearest' }); heading.current?.focus({ preventScroll: true }); });
   }, [packetRequest]); // eslint-disable-line react-hooks/exhaustive-deps
   const preview = receipt?.state === 'prepared';
+  const trust = useNoteTrust(project?.id ?? null, useMemo(() => receipt?.items.map(item => item.id) ?? [], [receipt]), trustVersion);
+  const openable = useOpenable(sessions);
   // The selected session's own record reads as what this agent knows; an
   // uncertain delivery never reads as sent.
   const own = !!session && receipt?.id === session.receiptId;
@@ -62,18 +70,17 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, e
         <dt>Checkout</dt><dd>⑂ {(receipt as any).checkout?.branch ?? 'detached'} @ {String((receipt as any).checkout?.head ?? '').slice(0, 7) || 'unborn'}{receipt.workspaceId ? ' · worktree' : ''}</dd>
         {session && <><dt>Route</dt><dd><ProviderMark provider={session.provider} size={16} />{PROVIDER_NAMES[session.provider]} {agent?.version ?? ''} · initial CLI prompt{session.plan ? ' · plan mode' : ''}{session.research ? ' · read-only mode' : ''}</dd>
           <dt>Not observable</dt><dd>{session.provider === 'claude' ? 'Whether the model read or used each note; tool output; hidden reasoning.' : 'Whether the model read or used each note; commands and test results; tool output; hidden reasoning.'}</dd></>}</dl>
-      <ol className="receipt-items">{receipt.items.map(item => <li key={item.id}>
-        <div className="memory-meta"><span>{category(item.category, item.scope)}{item.pinned ? ' · pinned' : ''}</span><span>{item.selection?.terms?.length ? composer.matchesTerms(item.selection.terms) : selectionReason(item.selection?.reason, item.area)} · {item.selection?.bytes ?? 0} B</span></div>
-        <p dir="auto">{item.statement}</p>
-        <small className="memory-scope">{item.scope === 'branch' ? `⑂ ${copy.onlyOn(item.branch)}` : copy.allBranches}{item.area ? ` · ${item.area}` : ''}{item.environment ? ` · applies when: ${item.environment}` : ''} · r{item.revision}</small>
-        <button className="source-button" aria-expanded={open === item.id} onClick={() => setOpen(open === item.id ? null : item.id)}>{item.source.kind === 'file' ? `↗ ${item.source.path}:${item.source.startLine}` : item.source.kind === 'git' ? '↗ Git history' : '↗ Your statement'}<span>{open === item.id ? '−' : '+'}</span></button>
-        {open === item.id && <div className="evidence-details"><pre dir="auto">{item.source.excerpt ?? item.source.note ?? `${item.source.base ?? ''} → ${item.source.head ?? ''}`}</pre></div>}
-        <div className="memory-actions">
-          {preview && <button onClick={() => onToggle(item.id)}>{copy.leaveOut}</button>}
+      <ol className="receipt-items">{receipt.items.map(item => {
+        const actions = <>{preview && <button onClick={() => onToggle(item.id)}>{copy.leaveOut}</button>}
           {item.category !== 'brief' && <button onClick={() => void act(() => api('setPinned', { id: item.id, pinned: !item.pinned }))}>{item.pinned ? 'Unpin' : 'Pin'}</button>}
-          <button onClick={() => void act(() => api('markIncorrect', { id: item.id }))}>Mark incorrect</button>
-        </div>
-      </li>)}</ol>
+          <button onClick={() => void act(() => api('markIncorrect', { id: item.id }))}>Mark incorrect</button></>;
+        const details = <><button className="source-button" aria-expanded={open === item.id} onClick={() => setOpen(open === item.id ? null : item.id)}>{open === item.id ? copy.trust.hideSource : copy.trust.showSource}<span aria-hidden="true">{open === item.id ? '−' : '+'}</span></button>
+          {open === item.id && <div className="evidence-details"><pre dir="auto">{item.source.excerpt ?? item.source.note ?? `${item.source.base ?? ''} → ${item.source.head ?? ''}`}</pre></div>}</>;
+        const sessionId = trust[item.id]?.origin?.session?.id;
+        // A delivered snapshot never changes; a preview's notes are checked again at the start.
+        return <li key={item.id}>{project ? <NoteCard note={item} project={project} variant={receiptVariant(receipt.state)} receiptState={receipt.state} trust={trust[item.id]} matched={item.selection?.terms} onOpenSession={sessionId && openable.has(sessionId) ? onOpenSession : undefined} actions={actions}>{details}</NoteCard>
+          : <><p dir="auto">{item.statement}</p>{details}<div className="memory-actions">{actions}</div></>}</li>;
+      })}</ol>
       {receipt.references?.length ? <References title={`Referenced for this task · ${receipt.references.length}`} projectId={(receipt as any).projectId} workspaceId={receipt.workspaceId ?? null} references={receipt.references} /> : null}
       {session && <SessionReferences session={session} events={events} />}
       {preview && disabled.length > 0 && <p className="hint">{count(disabled.length, 'note')} left out for the next start. <button className="text-button" onClick={() => disabled.forEach(onToggle)}>Restore all</button></p>}

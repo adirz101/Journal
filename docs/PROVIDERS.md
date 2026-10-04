@@ -31,6 +31,20 @@ Hooks are added per launch through `--settings`; existing user and project hooks
 - Cursor appears as a provider even when its CLI is missing. **Install Cursor CLI** shows the exact official command (`curl https://cursor.com/install -fsS | bash` on macOS and Linux; `irm 'https://cursor.com/install?win32=true' | iex` in Windows PowerShell), runs it only after confirmation, without shell startup files, elevation or execution-policy changes, in a visible terminal with its exit code, then detects the CLI again with `--version`. If the CLI landed outside Journal's `PATH`, Journal uses it from the installer's location and says how to add it to `PATH`; it never edits shell startup files.
 - **Sign in to Cursor** runs `agent login` in a visible terminal. Sign-in state comes from `agent status` (JSON when available) and only "signed in", "signed out" or "unknown" is kept; Journal never reads, copies or stores Cursor credentials, and sign-in output is not saved.
 
+## Claude Code and Codex: detection, install and sign-in (Phase 7)
+- Detection is asynchronous and never blocks startup: every row starts as "Checking…", then `--version` (4 s) decides installed or not. One `--help` read (4 s) decides what Journal may run: Claude's sign-in and status check need an `auth` command in its help; Codex's sign-in needs `login` in its top-level help and its status check needs `status` in `codex login --help`. Nothing else is tried, because an unknown subcommand could reach the CLI as a prompt (a model request) or start a login flow.
+- Sign-in state comes from `claude auth status --json` (only a boolean `loggedIn` counts) and `codex login status` (a line starting `Not logged in` is signed out; a line starting `Logged in` with exit code 0 is signed in; an exit code alone never decides). Both run with stdin closed, an 8-second limit that ends the whole process tree, and `NO_OPEN_BROWSER=1`. The output is parsed in memory to "signed in", "signed out" or "unknown" and is never logged, stored, sent or put in an error; anything unrecognized, a timeout or a spawn error is "unknown". Journal never reads credential files. Real output shapes are a manual check (see [native validation](NATIVE-VALIDATION.md)).
+- **Sign in** runs a constant command per provider in a visible terminal: `claude auth login`, `codex login`, `agent login` (Cursor). The executable is the one detection found, never one named by the window.
+- **Install** commands, checked against the official pages on 4 October 2026 and shown verbatim before anything runs (native confirmation, visible terminal, no shell startup files, no elevation, no execution-policy change):
+
+| Provider | macOS and Linux | Windows | Source |
+|---|---|---|---|
+| Claude Code | `curl -fsSL https://claude.ai/install.sh \| bash` | `irm https://claude.ai/install.ps1 \| iex` (PowerShell) | https://code.claude.com/docs/en/setup |
+| Codex | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh` | none: the official command (`powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 \| iex"`) changes the execution policy, which Journal never does; the row offers **Open install page** | https://developers.openai.com/codex/cli (redirects to learn.chatgpt.com/docs/codex/cli) |
+| Cursor | `curl https://cursor.com/install -fsS \| bash` | `irm 'https://cursor.com/install?win32=true' \| iex` | https://cursor.com/docs/cli/installation |
+
+  Without `curl` on `PATH` the Claude and Codex rows offer the install page instead. Claude Code and Codex installed outside `PATH` are not looked up in known locations (Cursor's are); the row says so after an install.
+
 ## Known gaps
 - Whether a model read or used a supplied claim is not observable for either provider.
 - Hidden reasoning and full model context are never shown.

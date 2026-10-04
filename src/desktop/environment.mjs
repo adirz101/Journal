@@ -42,3 +42,8 @@ export const dataDirectory = (env, appData) => env.JOURNAL_DATA_DIR ? resolve(en
 // Files a separate Node-mode process executes must come from the unpacked copy
 // when Journal runs from app.asar (only the first, still-packed occurrence changes).
 export const unpackedPath = (path, sep = pathSep) => path.replace(`app.asar${sep}`, `app.asar.unpacked${sep}`);
+
+// Windows UNC paths (\\host\share, //host/share, \\?\UNC\...) name another computer:
+// even a stat contacts that SMB host and can send the user's NTLM credentials, so a
+// dropped path like that is refused before any file system call.
+export const isNetworkPath = (path, platform = process.platform) => platform === 'win32' && typeof path === 'string' && /^[\\/]{2}/.test(path);

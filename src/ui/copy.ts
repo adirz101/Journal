@@ -27,13 +27,13 @@ export const copy = {
     added: (date: string) => `You added this on ${date}`, git: (range: string) => `Drafted from Git (${range})`, upTo: (head: string) => `up to ${head}`,
     imported: (date: string) => `Imported on ${date}`, promoted: (branch: string) => `Proposed for all branches from ⑂ ${branch}`,
     basedOn: (where: string) => `Based on ${where}`, unchanged: 'file unchanged since you saved it', fileChanged: 'file changed',
-    atStart: 'checked when the session started', onlyOn: (branch: string) => `only on ⑂ ${branch}`, anotherBranch: 'another branch', folderRemoved: 'its folder was removed from the project',
+    atStart: 'checked when the session started', atPrepared: 'checked when this launch was prepared', onlyOn: (branch: string) => `only on ⑂ ${branch}`, anotherBranch: 'another branch', folderRemoved: 'its folder was removed from the project',
     notSent: 'Not sent yet', sentTo: (n: number) => n === 1 ? 'Sent to 1 session' : `Sent to ${n} sessions`,
     sentTip: 'Counted once per conversation, including resumes. Includes starts where Journal could not confirm delivery.',
     // Memory tab filters (board WrapUp): chips by category, then two attention toggles.
     category: 'Category', otherBranches: 'Other branches', checking: '…', checked: (n: number, total: number) => `Checked ${n} of ${total}`,
     needCheck: (n: number) => n === 1 ? '1 note needs a check' : `${n} notes need a check`, firstOnly: (n: number) => `Showing the first ${n}`,
-    noneNeedCheck: 'No notes need a check', noneOtherBranch: 'No notes for other branches', showSource: 'Show source', hideSource: 'Hide source',
+    noneNeedCheck: 'No notes need a check', checkingNotes: 'Checking notes…', noneOtherBranch: 'No notes for other branches', showSource: 'Show source', hideSource: 'Hide source',
   },
 } as const;
 
@@ -162,6 +162,55 @@ export const wrapUp = {
   notSaved: 'Terminal output is kept in memory only while Journal’s runtime runs. It was not saved and is no longer available.',
   lastOutput: 'Last thing in the terminal', copyOutput: 'Copy output', copied: 'Copied',
   ended: (suggestions: number) => `Session ended. ${count(suggestions, 'suggestion')}.`,
+} as const;
+
+// Phase 7: first run (boards 1, 2, 3 and 12). Voice (board 12): plain and calm, no exclamation
+// marks or emoji. First person ("I") only in onboarding, empty states and explanations, never in
+// status or errors. tests/copy.test.mjs enforces the rules (Phase 7 B5).
+export const firstRun = {
+  welcomeTitle: 'Your agents remember your project',
+  welcomeBody: 'Journal runs Claude Code, Codex and Cursor in their own terminals, and gives every new session what you taught the last one.',
+  openProject: 'Open a project…', openHint: 'Any Git folder. Or drop one on this window.',
+  agentsHeading: 'Agents on this computer', agentsHint: 'You need at least one',
+  localOnly: 'Everything stays on this computer. Your agents keep their own logins, settings and approvals.',
+  knowTitle: 'I read your project. Here’s what I’d tell an agent.',
+  // "Drafted from Git: README, 8 top-level folders, 93 commits · no AI call · nothing left this computer".
+  facts: (f: { readme: string | null; folders: number; commits: number; counted: boolean }) => `Drafted from Git: ${[
+    f.readme ? 'README' : null,
+    `${f.folders} top-level ${f.counted ? (f.folders === 1 ? 'folder' : 'folders') : (f.folders === 1 ? 'entry' : 'entries')}`,
+    `${f.commits} ${f.commits === 1 ? 'commit' : 'commits'}`,
+  ].filter(Boolean).join(', ')} · no AI call · nothing left this computer`,
+  aboutProject: 'About this project', branchStands: 'Where this branch stands',
+  workingOn: 'Working on now', next: 'Next', rulesToKeep: 'Rules to keep', optional: 'optional',
+  onlyYou: 'Only you know these two lines. Git can’t tell an agent what you meant to do next.',
+  rememberBoth: 'Remember both', rememberOne: 'Remember', skip: 'Skip for now', editLater: 'You can edit these any time in Project memory.',
+  howTitle: 'How Journal remembers',
+  howSteps: [
+    'You review every note before an agent gets it.',
+    'Each new session starts with the notes that apply to its branch and task.',
+    'After a session, I suggest what was worth keeping. Nothing is kept unless you choose.',
+  ],
+  noBranch: {
+    detached: 'This checkout isn’t on a branch, so I drafted only “About this project”.',
+    unborn: 'This repository has no commits yet. Make a first commit and I’ll draft these notes.',
+    failed: 'I couldn’t read this branch’s history from Git, so I drafted only “About this project”.',
+  },
+  noProject: {
+    failed: 'I couldn’t read this project’s files from Git, so I drafted only “Where this branch stands”.',
+  },
+  firstNote: 'First note remembered. Every new session in Journal will know it.',
+  draftBranch: 'Draft “Where this branch stands”', draftProject: 'Draft “About this project”',
+  dropNotFolder: 'Drop a folder from Finder or File Explorer.',
+} as const;
+
+// Phase 7: the agent rows (Welcome, composer cards and Cursor status share them).
+export const providers = {
+  checking: 'Checking…', installedAs: (version: string | null) => version ? `Installed · ${version}` : 'Installed',
+  signedIn: 'Signed in', signInNeeded: 'Sign in needed', notInstalled: 'Not installed',
+  install: 'Install…', signIn: 'Sign in…', checkAgain: 'Check again', openInstallPage: 'Open install page',
+  offPath: (name: string) => `Installed, but Journal can’t find ${name} on PATH. Restart Journal, or add its folder to PATH.`,
+  loginTitle: (name: string) => `Sign in to ${name}`, installTitle: (name: string) => `Install ${name}`,
+  installedHere: (name: string) => `${name} is installed on this computer.`,
 } as const;
 
 const CATEGORIES: Record<string, string> = { constraint: copy.rule, decision: 'Decision', convention: 'Convention', lesson: 'Lesson', issue: 'Known issue' };

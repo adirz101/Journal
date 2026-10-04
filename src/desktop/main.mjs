@@ -1,16 +1,16 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, shell } from 'electron';
 import { spawn } from 'node:child_process';
-import { resolve, dirname, join, sep } from 'node:path';
+import { resolve, dirname, isAbsolute, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { StoreClient } from './store-client.mjs';
 import { RuntimeClient } from './runtime-client.mjs';
 import { buildId } from '../runtime/protocol.mjs';
-import { detectAgents, detectCursor } from '../core/agents.mjs';
+import { PROVIDER_COMMANDS, PROVIDER_NAMES, PROVIDERS, commandsFor, detectCursor, detectProvider, initialAgents, installFor, probeAuth } from '../core/agents.mjs';
 import { cursorAuth, findCursor, installCommand, installEnv } from '../core/cursor.mjs';
 import { ProcessRunner } from './processes.mjs';
 import { homedir } from 'node:os';
-import { relativePath, text } from '../core/validation.mjs';
+import { choice, relativePath, text } from '../core/validation.mjs';
 import { SESSION_USER_FIELDS, survivorScanPending } from '../core/sessions.mjs';
 import { headDiff, listDirectory, locate, previewFile, treePath } from '../core/files.mjs';
 import { gitStatus } from '../core/git-status.mjs';
@@ -24,7 +24,7 @@ import { APP_USER_MODEL_ID, createNotifier, readPreferences, systemSurface, writ
 import { matchShortcut, shortcutKeys, shouldDispatch } from './shortcuts.mjs';
 import { settledError } from './ipc-error.mjs';
 import electronUpdater from 'electron-updater';
-import { dataDirectory, unpackedPath, withGuiPath } from './environment.mjs';
+import { dataDirectory, isNetworkPath, unpackedPath, withGuiPath } from './environment.mjs';
 import { WINDOW_BACKGROUND } from './window-colors.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -167,7 +167,7 @@ const fileRoot = async (projectId, rootKey) => {
   if (cached && Date.now() - cached.at < 5000) return cached.root;
   const root = await store.fileRoot(projectId, rootKey); rootCache.set(key, { root, at: Date.now() }); return root;
 };
-const ROOT_CHANGES = new Set(['addProjectFolder', 'removeProjectFolder', 'removeProject', 'openProject', 'createWorkspace', 'importWorkspace', 'removeWorkspace', 'forgetWorkspace']);
+const ROOT_CHANGES = new Set(['addProjectFolder', 'removeProjectFolder', 'removeProject', 'openProject', 'openProjectPath', 'createWorkspace', 'importWorkspace', 'removeWorkspace', 'forgetWorkspace']);
 const EDITORS = { code: line => file => ['--goto', `${file}:${line}`], cursor: line => file => ['--goto', `${file}:${line}`], zed: line => file => [`${file}:${line}`], subl: line => file => [`${file}:${line}`] };
 let editor;
 const findEditor = () => {
@@ -181,29 +181,48 @@ runtime.on('warning', message => { runtimeWarning = message; send({ type: 'runti
 runtime.on('disconnected', () => { runtimeState = 'disconnected'; send({ type: 'runtime', state: 'disconnected' }); });
 runtime.on('failed', message => { runtimeWarning = message; send({ type: 'runtime', state: 'disconnected', warning: message }); });
 runtime.on('reconnected', () => { runtimeState = 'connected'; send({ type: 'runtime', state: 'connected', recovered: true }); void seedNotifier(); });
-let agents = detectAgents();
-// Cursor's sign-in state is checked off the startup path, again after install
-// or sign-in, and on request. Only signed in / signed out is kept.
-let cursorCheck = null;
-const refreshCursor = async ({ fresh = false } = {}) => {
-  // One check at a time. After an install or sign-in a running (older) check
-  // is waited for and a new one started, so the result reflects the change.
-  if (cursorCheck && !fresh) return cursorCheck;
-  if (cursorCheck) await cursorCheck.catch(() => {});
-  if (cursorCheck) return cursorCheck;
+// Phase 7: every provider starts as "checking"; detection, help reads and sign-in
+// probes start at once when main loads (refreshProviders below), before the window
+// exists, and run asynchronously beside it, one check in flight per provider. Only signed in / signed out / unknown is kept.
+let agents = initialAgents(process.platform, process.env);
+// Headless test runs: fixture CLIs treat any argument but --version as a session (and
+// log it as a launch), so help reads and probes run only when a spec asks for them.
+const probesAllowed = () => !headless || globalThis.__journalAuthProbes === true;
+const checks = new Map();
+const refreshProvider = async (provider, { fresh = false, after = null } = {}) => {
+  // After an install or sign-in a running (older) check is waited for and a new
+  // one started, so the result reflects the change.
+  if (checks.has(provider) && !fresh) return checks.get(provider);
+  if (checks.has(provider)) await checks.get(provider).catch(() => {});
+  if (checks.has(provider)) return checks.get(provider);
   const check = (async () => {
-    const row = await detectCursor(process.env);
-    const auth = row.available ? await cursorAuth(row.path, process.env) : 'unchecked';
-    const next = { ...row, auth, state: row.available && auth === 'signed-out' ? 'login-required' : row.state };
-    agents = agents.map(agent => agent.provider === 'cursor' ? next : agent);
-    send({ type: 'providers', agents });
-    return next;
+    let row;
+    if (provider === 'cursor') {
+      row = await detectCursor(process.env);
+      const auth = row.available ? await cursorAuth(row.path, process.env) : 'unchecked';
+      row = { ...row, auth, state: row.available && auth === 'signed-out' ? 'login-required' : row.state };
+    } else {
+      const probes = probesAllowed();
+      row = await detectProvider(provider, process.env, { probes });
+      if (probes) row = { ...row, auth: await probeAuth(row, process.env) };
+    }
+    agents = agents.map(agent => agent.provider === provider ? row : agent);
+    // after names the install or sign-in that ended, so the renderer can say what changed.
+    send({ type: 'providers', agents, ...(after ? { after: { provider, kind: after } } : {}) });
+    return row;
   })();
-  cursorCheck = check; void check.finally(() => { if (cursorCheck === check) cursorCheck = null; }).catch(() => {});
+  checks.set(provider, check); void check.finally(() => { if (checks.get(provider) === check) checks.delete(provider); }).catch(() => {});
   return check;
 };
-void refreshCursor().catch(() => {});
-const processes = new ProcessRunner(send, async (file, args, options) => (await import('node-pty')).spawn(file, args, options));
+const refreshProviders = () => Promise.all(PROVIDERS.map(provider => refreshProvider(provider).catch(() => {})));
+// The row to act on: the check in flight, else the last detected one.
+// Started at once and never awaited: detection runs beside the runtime connection and the
+// first window, and never delays either (Phase 7). Rows arrive as providers events.
+void refreshProviders();
+const currentRow = provider => checks.get(provider) ?? agents.find(agent => agent.provider === provider);
+// After an install or sign-in ends, main checks that provider again itself.
+const processes = new ProcessRunner(event => { send(event); if (event.type === 'process-exit') void refreshProvider(event.provider, { fresh: true, after: event.kind }).catch(() => {}); },
+  async (file, args, options) => (await import('node-pty')).spawn(file, args, options));
 const runnable = env => { const next = { ...env }; delete next.ELECTRON_RUN_AS_NODE; return next; };
 const actions = {
   setAppearance: ({ appearance }) => {
@@ -219,8 +238,14 @@ const actions = {
   // Notification preferences (Settings). writePreferences accepts only known keys with boolean values.
   preferences: () => preferences,
   setPreference: ({ key, value }) => { if (typeof key !== 'string') throw new Error('Invalid preference'); preferences = writePreferences(preferencesFile, { [key]: value }); return preferences; },
-  bootstrap: async () => ({ projects: await store.listProjects(), agents, platform: process.platform, shortcuts: shortcutKeys(process.platform), runtime: { state: runtimeState, warning: runtimeWarning },
-    live: runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [], active: await store.activeSessions() }),
+  // agents is read after the last await, so a providers event sent while bootstrap waited
+  // is already in it (the renderer also keeps such events and applies the newest).
+  bootstrap: async () => {
+    const projects = await store.listProjects(); const runtimeInfo = { state: runtimeState, warning: runtimeWarning };
+    const live = runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [];
+    const active = await store.activeSessions(); const hasNotes = await store.hasActiveNotes();
+    return { projects, agents, platform: process.platform, shortcuts: shortcutKeys(process.platform), runtime: runtimeInfo, live, active, hasNotes };
+  },
   openProject: async () => {
     const result = await dialog.showOpenDialog(window, { title: 'Open a Git project', properties: ['openDirectory'] });
     return result.canceled ? null : store.openProject(result.filePaths[0]);
@@ -461,23 +486,64 @@ const actions = {
     const { cliVersion: _ignored, ...request } = input;
     return runtime.call('start', { ...request, cliVersion: agents.find(agent => agent.provider === input.provider)?.version ?? null });
   },
-  // ----- Cursor CLI: install and sign in run visibly, only after the user asks. -----
-  providerStatus: ({ provider, fresh }) => { if (provider !== 'cursor') throw new Error('Only Cursor needs a status check'); return refreshCursor({ fresh: fresh === true }); },
-  installCursor: async () => {
-    const command = installCommand(process.platform, process.env);
-    const { response } = await dialog.showMessageBox(window, { type: 'question', buttons: ['Install', 'Cancel'], defaultId: 1, cancelId: 1, message: 'Install Cursor CLI?',
-      detail: `Journal will run Cursor's official installation command:\n\n${command.display}\n\nThis downloads and installs the Cursor Agent CLI on your computer from cursor.com.${process.platform === 'win32' ? ' The installer also adds its folder to your user PATH.' : ''} It runs as you, without administrator rights, in a window where you can watch its output. Journal will not receive or store your Cursor credentials.` });
+  // ----- Provider CLIs: install and sign in run visibly, only after the user asks. The renderer
+  // names a provider; the executable comes from detection and the argv from PROVIDER_COMMANDS. -----
+  providerStatus: ({ provider, fresh }) => refreshProvider(choice(provider, PROVIDERS, 'provider'), { fresh: fresh === true }),
+  providerInstall: async ({ provider }) => {
+    choice(provider, PROVIDERS, 'provider'); const name = PROVIDER_NAMES[provider];
+    const command = installFor(provider, process.platform, process.env);
+    if (!command) throw new Error('Open the install page instead');
+    const from = { claude: 'claude.ai', codex: 'chatgpt.com', cursor: 'cursor.com' }[provider];
+    const { response } = await dialog.showMessageBox(window, provider === 'cursor'
+      ? { type: 'question', buttons: ['Install', 'Cancel'], defaultId: 1, cancelId: 1, message: 'Install Cursor CLI?',
+        detail: `Journal will run Cursor's official installation command:\n\n${command.display}\n\nThis downloads and installs the Cursor Agent CLI on your computer from cursor.com.${process.platform === 'win32' ? ' The installer also adds its folder to your user PATH.' : ''} It runs as you, without administrator rights, in a window where you can watch its output. Journal will not receive or store your Cursor credentials.` }
+      : { type: 'question', buttons: ['Install', 'Cancel'], defaultId: 1, cancelId: 1, message: `Install ${name}?`,
+        detail: `Journal will run ${name}'s official installation command:\n\n${command.display}\n\nThis downloads and installs ${name} on your computer from ${from}. It runs as you, without administrator rights, in a window where you can watch its output. Journal will not receive or store your ${name} credentials.` });
     if (response !== 0) return null;
     // Automated tests substitute a local fixture installer; nothing else can.
-    const run = headless && globalThis.__journalCursorInstall ? globalThis.__journalCursorInstall : command;
-    return { ...(await processes.start('install', { file: run.file, args: run.args, env: installEnv(process.env), cwd: homedir() })), command: command.display };
+    const fixture = headless ? (globalThis.__journalInstall?.[provider] ?? (provider === 'cursor' ? globalThis.__journalCursorInstall : null)) : null;
+    const run = fixture ?? command;
+    return { ...(await processes.start({ provider, kind: 'install' }, { file: run.file, args: run.args, env: installEnv(process.env), cwd: homedir() })), command: command.display };
   },
-  cursorLogin: async () => {
-    const found = await findCursor(process.env);
-    if (!found.path) throw new Error('Install the Cursor CLI first');
-    const target = launchTarget(found.path, ['login'], { env: process.env });
-    return processes.start('login', { file: target.file, args: target.args, env: runnable(process.env), cwd: homedir() });
+  // No confirmation, as before: signing in is the CLI's own flow, in a visible terminal.
+  providerLogin: async ({ provider }) => {
+    choice(provider, PROVIDERS, 'provider'); const name = PROVIDER_NAMES[provider];
+    let path;
+    if (provider === 'cursor') {
+      const found = await findCursor(process.env);
+      if (!found.path) throw new Error('Install the Cursor CLI first');
+      path = found.path;
+    } else {
+      const row = await currentRow(provider);
+      if (!row?.available || !row.path) throw new Error(`Install ${name} first`);
+      if (row.supports?.login !== true) throw new Error(`${name}${row.version ? ` ${row.version}` : ''} can’t sign in from Journal. Run ${name} in a terminal and sign in there.`);
+      path = row.path;
+    }
+    const target = launchTarget(path, [...PROVIDER_COMMANDS[provider].login], { env: process.env });
+    return { ...(await processes.start({ provider, kind: 'login' }, { file: target.file, args: target.args, env: runnable(process.env), cwd: homedir() })), command: commandsFor(provider).login };
   },
+  // The official page from the constant table; the renderer never supplies a URL.
+  // Headless test runs record the URL instead (globalThis.__journalOpenedUrls) and never open a browser.
+  openInstallPage: async ({ provider }) => {
+    const url = PROVIDER_COMMANDS[choice(provider, PROVIDERS, 'provider')].installPage;
+    if (headless) { (globalThis.__journalOpenedUrls ??= []).push(url); return; }
+    await shell.openExternal(url);
+  },
+  // ----- Phase 7: first run -----
+  // A folder dropped on the window (preload pathForFile): an absolute, existing directory,
+  // then the store's own Git check. The same trust as the open dialog.
+  openProjectPath: ({ path }) => {
+    if (typeof path !== 'string' || !path || path.length > 4096 || !isAbsolute(path)) throw new Error('Drop a Git folder');
+    if (isNetworkPath(path)) throw new Error('Drop a folder on this computer, not a network share');
+    let directory = false; try { directory = statSync(path).isDirectory(); } catch { /* missing */ }
+    if (!directory) throw new Error('Drop a Git folder');
+    return store.openProject(path);
+  },
+  // Gated in headless runs: many specs open a fresh repository and go straight to Start.
+  firstRunDrafts: ({ projectId }) => !headless || globalThis.__journalFirstRun === true ? store.firstRunDrafts(text(projectId, 'project ID', 100)) : null,
+  // via is fixed here; the renderer cannot label its own audit entries.
+  rememberDraft: ({ projectId, overview, branch }) => store.rememberDraft(text(projectId, 'project ID', 100), { overview: overview ?? null, branch: branch ?? null }, { via: 'first-run' }),
+  skipOrientation: ({ projectId }) => store.skipOrientation(text(projectId, 'project ID', 100)),
   processInput: ({ id, data }) => processes.write(text(id, 'process', 40), data),
   processResize: ({ id, cols, rows }) => processes.resize(text(id, 'process', 40), cols, rows),
   processStop: ({ id }) => processes.stop(text(id, 'process', 40)),
@@ -524,7 +590,9 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
     if (!validSender(event)) throw new Error('Untrusted desktop caller');
     if (!Object.hasOwn(actions, action) || !input || typeof input !== 'object' || Array.isArray(input) || JSON.stringify(input).length > 100000) throw new Error('Invalid desktop request');
     if (ROOT_CHANGES.has(action)) rootCache.clear();
-    try { return { ok: true, value: await actions[action](input) }; } finally { if (ROOT_CHANGES.has(action)) rootCache.clear(); }
+    // Headless test runs may wrap a request (globalThis.__journalRequestHook(action, run)) to count or delay it.
+    const hook = headless && typeof globalThis.__journalRequestHook === 'function' ? globalThis.__journalRequestHook : null;
+    try { return { ok: true, value: await (hook ? hook(action, () => actions[action](input)) : actions[action](input)) }; } finally { if (ROOT_CHANGES.has(action)) rootCache.clear(); }
   } catch (error) { return settledError(error); }
 });
 try { await runtime.connect(); runtimeState = 'connected'; await seedNotifier(); }
@@ -572,12 +640,14 @@ app.on('before-quit', event => {
     let live = [];
     // Never start a runtime while quitting: only ask a connected one.
     if (runtime.socket) { try { live = (await runtime.call('list')).filter(session => LIVE.includes(session.status)); } catch { /* runtime unavailable */ } }
-    // A half-finished Cursor install could leave a broken CLI behind: ask first.
+    // A half-finished install could leave a broken CLI behind: ask first.
     const running = processes.running();
     if (running.length && !headless) {
+      // An installation is named first: stopping it can leave a broken CLI behind.
+      const first = running.find(entry => entry.kind === 'install') ?? running[0]; const name = PROVIDER_NAMES[first.provider];
       const { response } = await dialog.showMessageBox({ type: 'warning', buttons: ['Stop it and quit', 'Cancel'], defaultId: 1, cancelId: 1,
-        message: running.includes('install') ? 'The Cursor CLI installation is still running.' : 'Cursor sign-in is still running.',
-        detail: running.includes('install') ? 'Quitting now stops the installer and may leave an incomplete installation. You can run the installer again afterwards.' : 'Quitting now cancels the sign-in.' });
+        message: first.kind === 'install' ? `The ${name} installation is still running.` : `${name} sign-in is still running.`,
+        detail: first.kind === 'install' ? 'Quitting now stops the installer and may leave an incomplete installation. You can run the installer again afterwards.' : 'Quitting now cancels the sign-in.' });
       if (response === 1) { closing = false; if (updatePolicy) { updatePolicy = null; updater.setInstalling(false); } if (!window) createWindow(); return; }
     }
     // An update install already asked what to do with running sessions.
