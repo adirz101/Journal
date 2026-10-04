@@ -81,4 +81,23 @@ test('a suggestion from a purged session can still be accepted; forged sessions 
   assert.equal(kept.evidence.sessionId, null);
   assert.equal(kept.evidence.sessionPurged, true);
   assert.equal(f.store.acceptProposal(created.id).status, 'candidate');
+  const other = f.session('Rule: Migrations must be reversible before they merge.', { survivors: [] });
+  const [forged] = f.store.generateProposals(other.id);
+  f.store.db.prepare(`UPDATE proposals SET body=json_set(body, '$.evidence.sessionId', 'invented') WHERE id=?`).run(forged.id);
+  assert.throws(() => f.store.acceptProposal(forged.id), /Unknown session/);
+});
+
+test('purging detaches open test-command suggestions from the session and its events; handled ones are left alone', t => {
+  const f = fixture(t);
+  const run = (s, id, text) => { f.store.appendEvent(s.id, 'command-start', { toolUseId: id, command: text, test: true }); f.store.appendEvent(s.id, 'command-end', { toolUseId: id, status: 'succeeded', exitCode: 0 }); };
+  const s = f.session('', { survivors: [] }); run(s, 'a', 'npm test'); run(s, 'b', 'node --test');
+  const [open, handled] = f.store.generateProposals(s.id).filter(p => p.kind === 'test-command');
+  assert.ok(open.evidence.eventId, 'the fixture links an event');
+  f.store.acceptProposal(handled.id);
+  f.store.purgeSession(s.id);
+  const after = f.store.getProposal(open.id);
+  assert.ok(!after.source.note.includes(s.id)); assert.match(after.source.note, /a purged session/);
+  assert.equal(after.evidence.eventId, null); assert.equal(after.evidence.sessionId, null);
+  assert.equal(f.store.getProposal(handled.id).evidence.sessionId, s.id, 'Only open proposals are detached');
+  assert.equal(f.store.acceptProposal(open.id).status, 'candidate');
 });
