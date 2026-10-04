@@ -190,3 +190,11 @@ test('Phase 4 composer: selection, focus and the underline mirror survive forced
   assert.ok(forced('.task-mirror').some(rule => declares(rule, 'forced-color-adjust', 'none') && declares(rule, 'color', 'transparent')), 'mirror text stays transparent');
   assert.ok(forced('.task-mirror mark').some(rule => declares(rule, 'text-decoration-color', 'Highlight')), 'underline in a system color');
 });
+
+test('Phase 4 composer: empty live regions collapse without leaving the accessibility tree', () => {
+  for (const selector of ['.start-reason:empty', '.preview-error:empty']) {
+    assert.ok(rulesFor(selector).length > 0, selector);
+    assert.ok(!rulesFor(selector).some(rule => declares(rule, 'display', 'none') || declares(rule, 'visibility', 'hidden')), `${selector} stays in the tree`);
+    assert.ok(rulesFor(selector).some(rule => declares(rule, 'position', 'absolute') && declares(rule, 'width', '1px')), `${selector} collapses`);
+  }
+});

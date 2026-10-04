@@ -327,6 +327,7 @@ The main column scrolls in this view. The layout is `grid-template-columns: minm
    - Disabled while `startBlock` returns a reason, which shows beside it (`role="status"`).
    - `nativeStays` sits under it.
    - **⌘↵ / Ctrl+Enter** is handled by the form's `onKeyDown`, scoped to the composer. It isn't routed through `shortcuts.mjs`: the terminal can't hold focus in this view, and IME composition (`event.isComposing`) is ignored.
+   - **Scope (review fix):** the shortcut works with focus anywhere in the composer form: the task box, the agent cards, the mode switch, the workspace controls and Start. The agent cards stay included, because choosing an agent and starting at once is the common path. It doesn't work inside the hover card (`.task-card`), whose keys belong to the card's own controls, or in the preview beside the form, which is outside the form.
    - A rejected start with `code === 'SLOTS_FULL'` shows `slotsFull` inline; `PROVIDER_MISSING` asks for `providerStatus` and shows the card state. Other codes use the existing banner; the Phase 8 states sheet replaces it.
    - After a start, App selects the new session (unchanged); the text in the task box is taken at submit time, as today.
 

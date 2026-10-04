@@ -100,6 +100,35 @@ test('matched words are underlined and the hover card leaves a note out', async 
   } finally { await closeApp(app); f.cleanup(); }
 });
 
+test('a hover card closes when the task box scrolls; Cmd/Ctrl+Enter in the card starts nothing', async () => {
+  const f = setup(); const { app, page } = await open(f);
+  try {
+    await remember(page, [{ statement: NOTE }]);
+    const long = Array.from({ length: 12 }, (_, i) => `line ${i} keeps going long enough to wrap inside the task box`).join('\n') + '\nworktree removal';
+    await taskBox(page).fill(long);
+    const mark = page.locator('.task-mirror mark', { hasText: /^worktree$/ });
+    await expect(mark).toHaveCount(1);
+    await page.evaluate(() => { const area = document.querySelector<HTMLTextAreaElement>('#task')!; area.scrollTop = area.scrollHeight; });
+    await expect(mark).toBeInViewport();
+    const box = (await mark.boundingBox())!;
+    await page.mouse.move(box.x + 2, box.y + box.height / 2); await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    const card = page.getByRole('dialog', { name: 'Notes matching “worktree”' });
+    await expect(card).toBeVisible();
+    // The word moves away under the card: the card closes.
+    await page.evaluate(() => { const area = document.querySelector<HTMLTextAreaElement>('#task')!; area.scrollTop = 0; });
+    await expect(card).toHaveCount(0);
+    // Opened from the button, the card holds focus; the start shortcut does nothing there.
+    await page.mouse.move(0, 0);
+    await page.getByRole('button', { name: '1 note matches', exact: true }).click();
+    const fromButton = page.getByRole('dialog', { name: 'Notes matching your task' });
+    await expect(fromButton).toBeFocused();
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
+    await expect(fromButton).toBeVisible();
+    await expect(taskBox(page)).toBeVisible();
+    expect(f.launches()).toHaveLength(0);
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
 test('underlines stay aligned through wrapping, scrolling and right-to-left text', async () => {
   const f = setup(); const { app, page } = await open(f);
   try {
@@ -119,9 +148,24 @@ test('underlines stay aligned through wrapping, scrolling and right-to-left text
     // The underline sits inside the visible box after scrolling.
     const box = (await taskBox(page).boundingBox())!; const mark = (await page.locator('.task-mirror mark', { hasText: /^worktree$/ }).boundingBox())!;
     expect(mark.y).toBeGreaterThanOrEqual(box.y); expect(mark.y + mark.height).toBeLessThanOrEqual(box.y + box.height);
-    // Right-to-left text: the mirror takes the same direction as the textarea.
-    await taskBox(page).fill('\u05e9\u05dc\u05d5\u05dd worktree');
+    // Right-to-left text: the mirror takes the same direction as the textarea, and each underline
+    // sits on its own characters. A click on a mark's left and right edges (and centre) puts the
+    // textarea's caret inside that word, for the right-to-left word and the left-to-right one.
+    await remember(page, [{ statement: 'The \u05e9\u05dc\u05d5\u05dd banner greets returning users' }]);
+    const task = '\u05e9\u05dc\u05d5\u05dd \u05e2\u05d5\u05dc\u05dd worktree';
+    await taskBox(page).fill(task);
     await expect.poll(() => page.evaluate(() => [getComputedStyle(document.querySelector('#task')!).direction, getComputedStyle(document.querySelector('.task-mirror')!).direction])).toEqual(['rtl', 'rtl']);
+    for (const word of ['\u05e9\u05dc\u05d5\u05dd', 'worktree']) {
+      const mark = page.locator('.task-mirror mark', { hasText: new RegExp(`^${word}$`) });
+      await expect(mark).toHaveCount(1);
+      const rect = (await mark.boundingBox())!; const start = task.indexOf(word); const end = start + word.length;
+      for (const x of [rect.x + 2, rect.x + rect.width / 2, rect.x + rect.width - 2]) {
+        await page.mouse.click(x, rect.y + rect.height / 2);
+        const caret = await taskBox(page).evaluate(el => (el as HTMLTextAreaElement).selectionStart);
+        expect(caret, `${word} at x=${Math.round(x - rect.x)} of ${Math.round(rect.width)}`).toBeGreaterThanOrEqual(start);
+        expect(caret, `${word} at x=${Math.round(x - rect.x)} of ${Math.round(rect.width)}`).toBeLessThanOrEqual(end);
+      }
+    }
   } finally { await closeApp(app); f.cleanup(); }
 });
 
@@ -299,6 +343,19 @@ test('the empty Relevant state shows the first-session copy', async () => {
   } finally { await closeApp(app); f.cleanup(); }
 });
 
+test('Relevant asks for a task while the task box is empty', async () => {
+  const f = setup(); const { app, page } = await open(f);
+  try {
+    await remember(page, [{ statement: NOTE }]);
+    await taskBox(page).fill('worktree');
+    await expect(relevant(page)).toContainText(NOTE);
+    await taskBox(page).fill('');
+    await expect(relevant(page)).toContainText('Type a task to see matching notes.');
+    await taskBox(page).fill('nothing relevant here');
+    await expect(relevant(page)).toContainText('No remembered note matches this task yet.');
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
 test('Inspect all shows the checked packet in the Session tab', async () => {
   const f = setup(); const { app, page } = await open(f);
   try {
@@ -322,7 +379,9 @@ test('preview errors stay in the preview', async () => {
     await expect(page.getByRole('alert')).toHaveCount(0);
     // Fixing the task clears it.
     await taskBox(page).fill('use the fixture');
-    await expect(contextPreview(page).getByRole('status')).toHaveCount(0);
+    // The live region stays (so the next error is announced); only its text goes.
+    await expect(contextPreview(page).getByRole('status')).toHaveText('');
+    await expect(contextPreview(page).getByRole('status')).toHaveCount(1);
   } finally { await closeApp(app); f.cleanup(); }
 });
 

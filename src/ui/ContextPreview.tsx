@@ -49,8 +49,10 @@ function Meter({ label, value, max, text }: { label: string; value: number; max:
 // "What the agent will know" (board B5): the meter, the notes every session
 // gets, the notes this task picks, what was left out and why. The list is
 // replaced in place as replies arrive; nothing animates.
-export function ContextPreview({ view, error, taskNotes, project, mac, onLeaveOut, onRestore, onInspect }: {
-  view: PreviewView | null; error: string | null; taskNotes: number | null; project: Project; mac: boolean;
+// Memoized: the composer passes stable callbacks, so typing re-renders it only when a reply
+// or the task's emptiness changes. hasTask: the task box holds more than whitespace.
+export const ContextPreview = memo(function ContextPreview({ view, error, taskNotes, project, mac, hasTask, onLeaveOut, onRestore, onInspect }: {
+  view: PreviewView | null; error: string | null; taskNotes: number | null; project: Project; mac: boolean; hasTask: boolean;
   onLeaveOut(id: string): void; onRestore(): void; onInspect(): void;
 }) {
   const aside = useRef<HTMLElement>(null);
@@ -63,7 +65,8 @@ export function ContextPreview({ view, error, taskNotes, project, mac, onLeaveOu
   const relevantEmpty = taskNotes === 0;
   return <aside ref={aside} className="context-preview" aria-label="Context preview" tabIndex={-1}>
     <h2 className="preview-heading">{copy.willKnow}<span className="preview-live">{composer.updatesAsYouType}</span></h2>
-    {error && <p className="preview-error" role="status">{composer.previewFailed(error)}</p>}
+    {/* Always rendered, so a new error is announced; only its text changes (empty collapses). */}
+    <p className="preview-error" role="status">{error ? composer.previewFailed(error) : ''}</p>
     {view && meter && <>
       <div className="meter">
         <Meter label={composer.notes} value={view.notes} max={NOTE_LIMIT} text={meter.notes} />
@@ -78,7 +81,7 @@ export function ContextPreview({ view, error, taskNotes, project, mac, onLeaveOu
         <h3>{copy.relevant}</h3>
         {view.relevant.length > 0 ? <NoteList label={copy.relevant} items={view.relevant} render={note} onLeaveOut={onLeaveOut} onLastLeft={() => { lastLeft.current = true; }} />
           : relevantEmpty ? <p className="preview-empty">{composer.relevantEmpty}</p>
-          : <p className="muted preview-none">{composer.relevantNone}</p>}
+          : <p className="muted preview-none">{hasTask ? composer.relevantNone : composer.relevantNoTask}</p>}
       </section>
       <div className="preview-excluded">
         {view.notIncluded.length > 0 && <span className="preview-excluded-label">{copy.notIncluded}</span>}
@@ -89,4 +92,4 @@ export function ContextPreview({ view, error, taskNotes, project, mac, onLeaveOu
     </>}
     <p className="preview-tip">{composer.leaveOutTip(mac)}</p>
   </aside>;
-}
+});

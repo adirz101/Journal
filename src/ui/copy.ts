@@ -73,7 +73,7 @@ export const composer = {
   notesMatch: (n: number) => n === 1 ? '1 note matches' : `${n} notes match`, hoverHint: 'hover an underline',
   notesMatching: (word: string) => `Notes matching “${word}”`, matches: 'matches', leaveOutShort: 'Leave out',
   leaveOutTip: (mac: boolean) => `Tip: press ${mac ? '⌫' : 'Delete'} on a note to leave it out of this session only.`,
-  inspectAll: 'Inspect all', restore: 'Restore', relevantNone: 'No remembered note matches this task yet.',
+  inspectAll: 'Inspect all', restore: 'Restore', relevantNone: 'No remembered note matches this task yet.', relevantNoTask: 'Type a task to see matching notes.',
   relevantEmpty: 'Nothing here yet. After this session, I’ll suggest rules and lessons worth keeping. The ones you remember show up here when they match your task.',
   previewFailed: (message: string) => `Preview unavailable: ${message}`, previewTimedOut: 'it took more than 20 seconds. Keep typing to try again.',
   // Group B: the renderer's own words.

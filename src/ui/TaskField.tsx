@@ -1,6 +1,6 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { queryTermSpans } from '../core/retrieval.mjs';
-import { segments, type Segment } from './taskMirror';
+import { segments } from './taskMirror';
 import { composer } from './copy';
 
 const HOVER = '(hover: hover) and (pointer: fine)';
@@ -23,8 +23,9 @@ function useFinePointer() {
 // an underline never lands on the wrong characters; only the matched set lags.
 // Hovering an underline for 300 ms opens a card with its notes (fine pointers
 // only); the "N notes match" button opens the same card for keyboard and touch.
-// Nothing here animates: typing and hovering are high-frequency.
-export const TaskField = forwardRef<HTMLTextAreaElement, {
+// Nothing here animates: typing and hovering are high-frequency. Memoized: the
+// composer passes stable props, so preview replies that change nothing here skip it.
+export const TaskField = memo(forwardRef<HTMLTextAreaElement, {
   value: string; onChange(value: string): void; matched: ReadonlySet<string>; matchCount: number;
   cardNotes(term: string | null): ReactNode; footer?: ReactNode;
 }>(function TaskField({ value, onChange, matched, matchCount, cardNotes, footer }, forwarded) {
@@ -33,11 +34,13 @@ export const TaskField = forwardRef<HTMLTextAreaElement, {
   useImperativeHandle(forwarded, () => textarea.current!, []);
   const fine = useFinePointer();
   const [card, setCard] = useState<Card | null>(null);
-  // IME: keep the last segments while a composition is open, so nothing flickers under it.
-  const composing = useRef(false); const last = useRef<Segment[]>([]); const [, setComposed] = useState(0);
-  const current = useMemo(() => segments(value, queryTermSpans(value), matched), [value, matched]);
-  if (!composing.current) last.current = current;
-  const shown = composing.current ? last.current : current;
+  // IME: while a composition is open the spans still come from the current text (so the
+  // mirror never lags the composed characters), but the matched set is frozen, so
+  // underlines do not flicker as previews of half-composed words arrive.
+  const composing = useRef(false); const frozen = useRef(matched); const [, setComposed] = useState(0);
+  if (!composing.current) frozen.current = matched;
+  const terms = frozen.current;
+  const shown = useMemo(() => segments(value, queryTermSpans(value), terms), [value, terms]);
 
   // Mark rectangles for hit-testing, measured once per render and dropped on scroll or resize.
   const rects = useRef<{ term: string; rect: DOMRect }[] | null>(null);
@@ -135,16 +138,22 @@ export const TaskField = forwardRef<HTMLTextAreaElement, {
       </div>
       <textarea ref={textarea} id="task" className="task-input" value={value} maxLength={4000} dir="auto" rows={MIN_ROWS} spellCheck
         placeholder={composer.taskPlaceholder} aria-describedby={matchCount > 0 ? 'task-hint task-matches' : 'task-hint'}
-        onChange={event => onChange(event.target.value)} onScroll={event => { if (mirror.current) mirror.current.scrollTop = event.currentTarget.scrollTop; rects.current = null; }}
+        onChange={event => onChange(event.target.value)} onScroll={event => {
+          if (mirror.current) mirror.current.scrollTop = event.currentTarget.scrollTop; rects.current = null;
+          // A hover card points at a word that has just moved: close it (a card opened from the button stays).
+          cancelOpen(); if (card?.source === 'hover') { cancelClose(); setCard(null); }
+        }}
         onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; setComposed(n => n + 1); }}
         onPointerMove={onPointerMove} onPointerLeave={onPointerLeave} />
     </div>
     {(footer || matchCount > 0) && <div className="task-footer">
       {footer}
       {matchCount > 0 && <button ref={button} type="button" className="task-matches" aria-expanded={card?.source === 'button'} aria-controls={card ? 'task-card' : undefined} onClick={toggleFromButton}>
-        <span className="task-matches-dot" aria-hidden="true" /><span id="task-matches" aria-live="polite">{composer.notesMatch(matchCount)}</span>{fine && <span aria-hidden="true"> · {composer.hoverHint}</span>}
+        <span className="task-matches-dot" aria-hidden="true" /><span id="task-matches">{composer.notesMatch(matchCount)}</span>{fine && <span aria-hidden="true"> · {composer.hoverHint}</span>}
       </button>}
     </div>}
+    {/* Always rendered, so screen readers hear each change of the count; only its text changes. */}
+    <span className="visually-hidden" aria-live="polite">{matchCount > 0 ? composer.notesMatch(matchCount) : ''}</span>
     {card && <div ref={dialog} id="task-card" className="task-card" role="dialog" tabIndex={-1} aria-label={card.term ? composer.notesMatching(card.term) : composer.notesMatchingTask}
       style={{ left: card.left, top: card.top }} onKeyDown={onCardKey}
       onFocus={() => { inCard.current = true; }} onBlur={event => { if (event.relatedTarget && !dialog.current?.contains(event.relatedTarget as Node)) inCard.current = false; }}
@@ -152,4 +161,4 @@ export const TaskField = forwardRef<HTMLTextAreaElement, {
       {cardNotes(card.term)}
     </div>}
   </div>;
-});
+}));

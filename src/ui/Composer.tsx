@@ -1,4 +1,4 @@
-import { useMemo, useRef, type FormEvent, type KeyboardEvent, type RefObject } from 'react';
+import { useCallback, useMemo, useRef, type FormEvent, type KeyboardEvent, type RefObject } from 'react';
 import { TaskField } from './TaskField';
 import { ContextPreview, PreviewNote } from './ContextPreview';
 import { CursorStatus } from './ProviderStatus';
@@ -61,19 +61,31 @@ export function Composer(props: ComposerProps) {
   const taskNotes = useRef<{ scope: string; count: number | null }>({ scope, count: null });
   if (taskNotes.current.scope !== scope) taskNotes.current = { scope, count: null };
   if (view?.taskNotes !== null && view?.taskNotes !== undefined) taskNotes.current.count = view.taskNotes;
-  const leaveOut = (id: string) => { if (!disabled.includes(id)) props.onDisabled([...disabled, id]); };
-  const restore = () => props.onDisabled([]);
+  // Stable callbacks (they read the newest props through a ref), so the memoized task box and
+  // preview re-render only when their data changes.
+  const live = useRef(props); live.current = props;
+  const leaveOut = useCallback((id: string) => { const { disabled: current, onDisabled } = live.current; if (!current.includes(id)) onDisabled([...current, id]); }, []);
+  const restore = useCallback(() => live.current.onDisabled([]), []);
   const block = startBlock({ connected: props.connected, liveCount: props.liveCount, busy: props.busy, agent, provider, mode });
   const support = modeSupport(provider, agent);
   const start = (event?: FormEvent) => { event?.preventDefault(); if (block === null) props.onStart(); };
+  // ⌘↵ / Ctrl+Enter: anywhere in the composer form (task box, agent cards, mode, workspace,
+  // Start), but not inside the hover card, whose keys belong to the card's own controls.
   const keys = (event: KeyboardEvent<HTMLFormElement>) => {
     if (event.key !== 'Enter' || event.nativeEvent.isComposing || !(mac ? event.metaKey : event.ctrlKey) || event.altKey || event.shiftKey) return;
+    if ((event.target as Element).closest?.('.task-card')) return;
     event.preventDefault(); start();
   };
-  const inspect = async () => { const receipt = await preview.flush(); if (receipt) props.onInspect(receipt); };
-  const matchedNotes = (term: string | null) => (view?.relevant ?? []).filter(item => term ? item.selection?.terms?.includes(term) : item.selection?.terms?.length);
-  const card = (term: string | null) => <ul className="task-card-list">{matchedNotes(term).map((item: PreviewItem) => <li key={item.id}>
-    <PreviewNote item={item} project={project} variant="hover" checked={!!view?.checked} onLeaveOut={() => leaveOut(item.id)} /></li>)}</ul>;
+  const flush = preview.flush;
+  const inspect = useCallback(async () => { const receipt = await flush(); if (receipt) live.current.onInspect(receipt); }, [flush]);
+  const relevantNotes = view?.relevant; const viewChecked = !!view?.checked;
+  const card = useCallback((term: string | null) => <ul className="task-card-list">{(relevantNotes ?? []).filter(item => term ? item.selection?.terms?.includes(term) : item.selection?.terms?.length).map((item: PreviewItem) => <li key={item.id}>
+    <PreviewNote item={item} project={project} variant="hover" checked={viewChecked} onLeaveOut={() => leaveOut(item.id)} /></li>)}</ul>, [relevantNotes, viewChecked, project, leaveOut]);
+  const onRemoveReference = props.onRemoveReference;
+  const footer = useMemo(() => references.length > 0 && <ul className="reference-chips" aria-label={composer.referencesLabel}>{references.map((ref, index) => <li key={`${ref.rootKey}:${ref.path}:${ref.startLine}`}>
+    <span title={`${ref.rootLabel ?? ''} · ${ref.path}${ref.contentHash ? ` · sha256 ${ref.contentHash.slice(0, 12)}` : ''}`}>{ref.kind === 'folder' ? '▸ ' : ''}{ref.display ?? ref.path}{ref.startLine ? `:${ref.startLine}${ref.endLine !== ref.startLine ? `-${ref.endLine}` : ''}` : ''}</span>
+    <button type="button" aria-label={`Remove ${ref.path} from the next task`} onClick={() => onRemoveReference(index)}>×</button></li>)}
+    <li className="muted">{composer.referencesHint}</li></ul>, [references, onRemoveReference]);
   const worktree = !!workspaceId && !workspaceId.startsWith('root:');
   const startKeys = mac ? '⌘↵' : 'Ctrl+Enter';
   // A refused start is explained while its cause holds: "4 sessions are running" goes once a slot frees.
@@ -84,11 +96,7 @@ export function Composer(props: ComposerProps) {
     <form className="composer-form" aria-label="Start a session" onSubmit={start} onKeyDown={keys}>
       <div className="composer-field">
         <div className="field-label"><label htmlFor="task">{composer.task}</label><span id="task-hint">· {composer.taskHint}</span></div>
-        <TaskField ref={props.taskRef} value={task} onChange={props.onTask} matched={view?.matchedTerms ?? EMPTY} matchCount={view?.matchCount ?? 0} cardNotes={card}
-          footer={references.length > 0 && <ul className="reference-chips" aria-label={composer.referencesLabel}>{references.map((ref, index) => <li key={`${ref.rootKey}:${ref.path}:${ref.startLine}`}>
-            <span title={`${ref.rootLabel ?? ''} · ${ref.path}${ref.contentHash ? ` · sha256 ${ref.contentHash.slice(0, 12)}` : ''}`}>{ref.kind === 'folder' ? '▸ ' : ''}{ref.display ?? ref.path}{ref.startLine ? `:${ref.startLine}${ref.endLine !== ref.startLine ? `-${ref.endLine}` : ''}` : ''}</span>
-            <button type="button" aria-label={`Remove ${ref.path} from the next task`} onClick={() => props.onRemoveReference(index)}>×</button></li>)}
-            <li className="muted">{composer.referencesHint}</li></ul>} />
+        <TaskField ref={props.taskRef} value={task} onChange={props.onTask} matched={view?.matchedTerms ?? EMPTY} matchCount={view?.matchCount ?? 0} cardNotes={card} footer={footer} />
       </div>
 
       <div className="composer-field">
@@ -142,8 +150,8 @@ export function Composer(props: ComposerProps) {
       </div>
       <p className="field-help native-stays">{composer.nativeStays}</p>
     </form>
-    <ContextPreview view={view} error={preview.error} taskNotes={taskNotes.current.count} project={project} mac={mac}
-      onLeaveOut={leaveOut} onRestore={restore} onInspect={() => void inspect()} />
+    <ContextPreview view={view} error={preview.error} taskNotes={taskNotes.current.count} project={project} mac={mac} hasTask={task.trim().length > 0}
+      onLeaveOut={leaveOut} onRestore={restore} onInspect={inspect} />
   </div>;
 }
 

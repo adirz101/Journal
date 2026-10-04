@@ -237,7 +237,8 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .start-button{display:inline-flex;align-items:center;gap:10px;height:38px;padding:0 18px;font-size:14px;transition:transform 120ms ease-out}.start-button kbd{color:var(--on-acc);border-color:transparent;padding:0}
 .start-button:not(:disabled):active{transform:scale(.97)}
 @media(prefers-reduced-motion:reduce){.start-button{transition:none}.start-button:not(:disabled):active{transform:none}}
-.start-reason{font-size:var(--text-meta);color:var(--tx2)}.start-reason:empty{display:none}.native-stays{margin-top:-14px}
+/* Live regions stay in the tree (display:none would drop them); empty, they collapse out of the flow. */
+.start-reason{font-size:var(--text-meta);color:var(--tx2)}.start-reason:empty,.preview-error:empty{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;margin:0;padding:0}.native-stays{margin-top:-14px}
 /* What the agent will know: replaced in place as replies arrive; bars change width without a transition. */
 .context-preview{grid-column:2;grid-row:1/span 2;display:flex;flex-direction:column;gap:14px;min-width:0;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
 .preview-heading{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;font-size:14px}.preview-live{margin-left:auto;font-size:var(--text-meta);font-weight:400;color:var(--tx3);white-space:nowrap}
