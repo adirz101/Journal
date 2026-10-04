@@ -16,7 +16,7 @@ export function WorkspaceDialog({ project, onClose, onChanged }: { project: Proj
   const act = async (action: () => Promise<unknown>) => { setBusy(true); setError(''); try { await action(); await load(); onChanged(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
   async function preview() { setError(''); setPlan(null); try { setPlan(await api('planWorkspace', { projectId: project.id, branch, base })); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } }
   return <dialog ref={dialog} onCancel={onClose} aria-labelledby="workspace-title" className="knowledge-dialog workspace-dialog">
-    <div className="dialog-heading"><div><span className="eyebrow">ISOLATION</span><h2 id="workspace-title">Workspaces</h2></div><button type="button" onClick={onClose} aria-label="Close workspaces" className="icon-button">×</button></div>
+    <div className="dialog-heading"><div><span className="eyebrow">Isolation</span><h2 id="workspace-title">Workspaces</h2></div><button type="button" onClick={onClose} aria-label="Close workspaces" className="icon-button">×</button></div>
     <p className="muted">Run sessions in the current checkout or in a separate Git worktree. Journal never stashes, copies or force-removes your work.</p>
     <section aria-label="Create a worktree" className="workspace-create">
       <div className="form-row"><label>New branch<input value={branch} onChange={e => { setBranch(e.target.value); setPlan(null); }} placeholder="journal/feature-name" maxLength={200} /></label>

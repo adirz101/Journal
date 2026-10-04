@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { switchProject } from './support/ui';
 
 // This verifies owned real processes, not assistant text or a simulated interrupt.
 test('running child cancellation, terminal stop and app exit leave no owned fixture processes', async () => {
@@ -91,7 +92,7 @@ else console.log('ECHO '+command);
     await expect.poll(() => alive(quittingParent)).toBe(false);
     const count = launches().length;
     app = await electron.launch({ args: ['.'], env }); page = await app.firstWindow();
-    await page.getByRole('button', { name: /^fixture project/ }).click();
+    await switchProject(app, page, 'fixture project');
     const after = await page.evaluate(async () => {
       const boot = await (window as any).journal.request('bootstrap');
       return { active: boot.live.filter((x: any) => ['starting', 'running', 'waiting', 'stopping'].includes(x.status)), project: await (window as any).journal.request('project', { projectId: boot.projects[0].id }) };

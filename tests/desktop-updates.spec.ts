@@ -1,6 +1,7 @@
 import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { openSettings, statusBar } from './support/ui';
 
 // Development and test builds never contact GitHub; the update UI is driven by
 // sending the window the same events the updater sends.
@@ -14,7 +15,7 @@ test('update notices: progress, restart only for a downloaded update, settings i
     await expect(page.getByText('Runtime connected')).toBeVisible();
     await expect(page.locator('.update-notice')).toHaveCount(0);
 
-    await page.getByRole('button', { name: 'Data and backups' }).click();
+    await openSettings(page, 'updates');
     await expect(page.getByRole('heading', { name: 'Updates' })).toBeVisible();
     await expect(page.getByText(/Updates are available in installed builds only/)).toBeVisible();
     await page.getByRole('button', { name: 'Done' }).click();
@@ -58,9 +59,9 @@ test('update notices: progress, restart only for a downloaded update, settings i
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
     await emit({ status: 'ready', version: '0.2.0-alpha.4', percent: 100 });
-    await expect(page.locator('.terminal-footer .update-notice')).toContainText('Journal 0.2.0-alpha.4 is ready.');
+    await expect(statusBar(page).locator('.update-notice')).toContainText('Journal 0.2.0-alpha.4 is ready.');
     await expect(page.locator('.sidebar-footer .update-notice')).toHaveCount(0);
-    await expect(page.locator('.terminal-footer').getByRole('button', { name: 'Restart to update' })).toBeVisible();
-    if (process.env.JOURNAL_SCREENSHOT) { await page.screenshot({ path: process.env.JOURNAL_SCREENSHOT }); await page.locator('.terminal-footer').screenshot({ path: process.env.JOURNAL_SCREENSHOT.replace('.png', '-bar.png') }); }
+    await expect(statusBar(page).getByRole('button', { name: 'Restart to update' })).toBeVisible();
+    if (process.env.JOURNAL_SCREENSHOT) { await page.screenshot({ path: process.env.JOURNAL_SCREENSHOT }); await statusBar(page).screenshot({ path: process.env.JOURNAL_SCREENSHOT.replace('.png', '-bar.png') }); }
   } finally { await app.close(); rmSync(root, { recursive: true, force: true }); }
 });

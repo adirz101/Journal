@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { inspectorToggle, setTheme } from './support/ui';
 
 test('both sidebars resize by pointer and keyboard, persist, and leave room for the workspace', async () => {
   mkdirSync(resolve('.cache/tmp'), { recursive: true });
@@ -46,7 +47,7 @@ test('both sidebars resize by pointer and keyboard, persist, and leave room for 
       return 'clear';
     });
     for (const tab of await page.getByRole('tab').all()) if (await tab.isEnabled()) expect(await ringClear(tab)).toBe('clear');
-    expect(await ringClear(page.getByRole('button', { name: 'Hide side panel' }))).toBe('clear');
+    expect(await ringClear(inspectorToggle(page, 'hide'))).toBe('clear');
     const drag = async (handle: typeof left, distance: number) => {
       const box = await handle.boundingBox(); expect(box).not.toBeNull();
       const x = box!.x + box!.width / 2; const y = box!.y + 180;
@@ -84,7 +85,7 @@ test('both sidebars resize by pointer and keyboard, persist, and leave room for 
     await left.dblclick(); await right.dblclick();
     await expect.poll(() => width('.sidebar')).toBe(initialLeft);
     await expect.poll(() => width('.knowledge-panel')).toBe(initialRight);
-    await page.getByRole('button', { name: 'Switch to light mode' }).click();
+    await setTheme(page, 'light');
     await page.getByRole('tab', { name: /^Memory/ }).hover();
     mkdirSync(resolve('.cache/screenshots'), { recursive: true });
     await page.screenshot({ path: resolve('.cache/screenshots/journal-resizable-light.png') });

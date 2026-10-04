@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { inspectorTab, switchProject } from './support/ui';
 
 test('empty-task launches carry an approved repo overview and current branch update to either provider', async () => {
   test.skip(process.platform === 'win32', 'POSIX provider fixture; native Windows is verified separately');
@@ -29,7 +30,7 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
     await page.getByRole('button', { name: 'Save for review' }).click();
     await page.getByRole('button', { name: 'Preview context' }).click();
     await expect(page.getByTestId('context-packet')).not.toContainText('REPO_PURPOSE');
-    await page.getByRole('tab', { name: /^Memory/ }).click();
+    await inspectorTab(page, 'Memory');
     await page.getByRole('button', { name: 'Remember', exact: true }).click();
     const addUpdate = async (statement: string) => {
       await page.getByRole('button', { name: 'Add project summary', exact: true }).click();
@@ -49,8 +50,8 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Start Codex', exact: true })).toBeEnabled();
     git('switch', '-c', 'feature');
-    await page.getByRole('button', { name: /^orientation project/ }).click();
-    await page.getByRole('tab', { name: /^Memory/ }).click();
+    await switchProject(app, page, 'orientation project');
+    await inspectorTab(page, 'Memory');
     await addUpdate('FEATURE_PROGRESS: feature work is underway; next is feature review.');
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('REPO_PURPOSE');
@@ -59,7 +60,7 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Start Claude', exact: true })).toBeEnabled();
     // Withdrawing a status update excludes it from subsequent context.
-    await page.getByRole('tab', { name: /^Memory/ }).click();
+    await inspectorTab(page, 'Memory');
     const card = page.locator('.memory-card').filter({ hasText: 'FEATURE_PROGRESS' });
     // Forgetting cannot be undone, so it asks first: Cancel keeps the note, Forget archives it.
     const answer = (response: number) => app.evaluate(({ dialog }, r) => { (dialog as any).showMessageBox = async (_w: unknown, options: any) => { (globalThis as any).__lastDialog = options; return { response: r }; }; }, response);
@@ -84,5 +85,17 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await page.getByRole('button', { name: 'Preview context' }).click();
     await expect(page.getByTestId('context-packet')).toContainText('REPO_PURPOSE');
+    // Suggestions are fetched once for the window (App) and reach the Memory tab:
+    // a rule stated in a task becomes one shortly after its session ends, and dismissing it refetches.
+    await page.getByLabel('Initial task').fill('rule: Release tags must be signed by maintainers');
+    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await expect(page.locator('.terminal-surface')).toContainText('PTY_READY');
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await inspectorTab(page, 'Memory');
+    const suggestion = page.locator('.proposal').filter({ hasText: 'Release tags must be signed by maintainers' });
+    await expect(suggestion).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('region', { name: 'Suggestions' })).toContainText(/Suggestions from your sessions · \d/);
+    await suggestion.getByRole('button', { name: 'Dismiss', exact: true }).click();
+    await expect(suggestion).toHaveCount(0);
   } finally { await app.close(); rmSync(root, { recursive: true, force: true }); }
 });

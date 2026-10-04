@@ -40,7 +40,7 @@ export function ProcessDialog({ id, title, command, appearance, onClose, onExit 
   }, [id]);
   const running = code === undefined;
   return <dialog ref={dialog} className="knowledge-dialog process-dialog" aria-labelledby="process-title" onCancel={event => { if (running) event.preventDefault(); else onClose(); }}>
-    <div className="dialog-heading"><div><span className="eyebrow">VISIBLE PROCESS</span><h2 id="process-title">{title}</h2></div></div>
+    <div className="dialog-heading"><div><span className="eyebrow">Visible process</span><h2 id="process-title">{title}</h2></div></div>
     {command && <p className="muted">Running <code>{command}</code></p>}
     <div className="process-terminal" ref={host} />
     <p className="process-status" role="status">{running ? 'Running…' : code === 0 ? 'Finished (exit 0).' : `Finished with exit code ${code ?? 'unknown'}.`}</p>

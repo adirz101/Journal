@@ -32,7 +32,7 @@ function SessionReferences({ session, live }: { session: Session; live: Timeline
     const seen = new Set(stored.map(e => e.at));
     return [...stored, ...own.filter(e => !seen.has(e.at))].map(e => { const b = e.body as Record<string, any>; return { kind: b.kind, rootKey: b.rootKey, rootLabel: b.rootLabel, path: b.path, display: b.path, startLine: b.startLine, endLine: b.endLine, contentHash: b.contentHash, rangeHash: b.rangeHash, note: `${b.delivery === 'inserted' ? 'typed' : 'copied'} ${new Date(e.at).toLocaleTimeString()}` } as FileReference & { note: string }; });
   }, [stored, own]);
-  return <References title="REFERENCED DURING THIS SESSION" projectId={session.projectId} workspaceId={session.workspaceId ?? null} references={references} />;
+  return <References title="Referenced during this session" projectId={session.projectId} workspaceId={session.workspaceId ?? null} references={references} />;
 }
 
 // What the agent receives: the exact packet, why each note is there, what
@@ -45,7 +45,7 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, l
   const preview = receipt?.state === 'prepared';
   const agent = session ? bootstrap?.agents.find(a => a.provider === session.provider) : null;
   const act = async (action: () => Promise<unknown>) => { try { await action(); onChanged(); } catch (error) { onError(error); } };
-  return <div className="panel-content context-content"><div className="section-heading"><div><span className="eyebrow">WHAT THE AGENT RECEIVES</span><h2>{!receipt || preview ? copy.willKnow : receipt.state === 'failed' ? copy.wasGoingToSend : copy.whatWasSent}</h2></div></div>
+  return <div className="panel-content context-content"><div className="section-heading"><div><span className="eyebrow">What the agent receives</span><h2>{!receipt || preview ? copy.willKnow : receipt.state === 'failed' ? copy.wasGoingToSend : copy.whatWasSent}</h2></div></div>
     {!receipt ? <div className="knowledge-empty"><h3>Inspect before you start.</h3><p>Enter an initial task and preview its context.</p></div> : <>
       <div className="receipt-meta"><span>{count(receipt.items.length, 'note')}</span><span>{new TextEncoder().encode(receipt.packet).length} bytes · ≈{receipt.estimatedTokens} tokens</span><span className="receipt-state">{deliveryState(receipt.state)}</span></div>
       <dl className="receipt-facts"><dt>Task</dt><dd>{receipt.query || <em>none (only what {copy.everySession.toLowerCase()})</em>}</dd>
@@ -64,7 +64,7 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, l
           <button onClick={() => void act(() => api('markIncorrect', { id: item.id }))}>Mark incorrect</button>
         </div>
       </li>)}</ol>
-      {receipt.references?.length ? <References title={`REFERENCED FOR THIS TASK · ${receipt.references.length}`} projectId={(receipt as any).projectId} workspaceId={receipt.workspaceId ?? null} references={receipt.references} /> : null}
+      {receipt.references?.length ? <References title={`Referenced for this task · ${receipt.references.length}`} projectId={(receipt as any).projectId} workspaceId={receipt.workspaceId ?? null} references={receipt.references} /> : null}
       {session && <SessionReferences session={session} live={live} />}
       {preview && disabled.length > 0 && <p className="hint">{count(disabled.length, 'note')} left out for the next start. <button className="text-button" onClick={() => disabled.forEach(onToggle)}>Restore all</button></p>}
       {receipt.excluded.length > 0 && <details><summary>{copy.notIncluded} · {receipt.excluded.length}</summary>{receipt.excluded.map(x => <p key={x.id + x.reason} className="muted">{x.id.slice(0, 8)} · {excludedReason(x.reason)}{x.reason === 'left-out-for-task' && preview ? <> · <button className="text-button" onClick={() => onToggle(x.id)}>restore</button></> : null}</p>)}</details>}
@@ -74,6 +74,6 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, l
       {!raw && <pre className="context-packet visually-hidden" data-testid="context-packet" aria-hidden="true">{(receipt.launchPrompt ?? receipt.packet) || 'No Journal text supplied at launch.'}</pre>}
       <p className="receipt-note">{receipt.state === 'prepared' ? 'Preview only. Sources are checked again when you start.' : receipt.state === 'submitted' ? 'Sent means the CLI process started with this text. It does not prove the model read or used it.' : receipt.state === 'failed' ? 'Launch failed. Delivery to the native CLI was not confirmed.' : 'Delivery is uncertain after interruption. No input will be replayed automatically.'}{receipt.preview ? '' : ' This record never changes.'}</p>{!receipt.preview && <small className="receipt-id">{receipt.id}</small>}
     </>}
-    {history.length > 0 && <div className="receipt-history"><span className="eyebrow">SENT BEFORE</span>{history.slice(0, 10).map(r => <button key={r.id} onClick={() => onSelectReceipt(r)}><span>{r.query || 'Interactive session'}</span><small>{count(r.items.length, 'note')} · {deliveryState(r.state)} · {new Date(r.createdAt).toLocaleString()}</small></button>)}</div>}
+    {history.length > 0 && <div className="receipt-history"><span className="eyebrow">Sent before</span>{history.slice(0, 10).map(r => <button key={r.id} onClick={() => onSelectReceipt(r)}><span>{r.query || 'Interactive session'}</span><small>{count(r.items.length, 'note')} · {deliveryState(r.state)} · {new Date(r.createdAt).toLocaleString()}</small></button>)}</div>}
   </div>;
 }

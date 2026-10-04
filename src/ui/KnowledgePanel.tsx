@@ -4,12 +4,14 @@ import { category, copy, memoryState, tip } from './copy';
 
 const PAGE = 50;
 
-export function KnowledgePanel({ project, version, busy, onEdit, onPropose, onChanged, onError }: {
-  project: Project; version: number; busy: boolean; onEdit: (form: { memory?: Memory; supersedes?: Memory; initialCategory?: string; draft?: StatusDraft }) => void;
+export function KnowledgePanel({ project, version, busy, proposals: shared, onEdit, onPropose, onChanged, onError }: {
+  // proposals: App's window-wide fetch (useProposals); when set, the panel does not fetch its own.
+  project: Project; version: number; busy: boolean; proposals?: Proposal[]; onEdit: (form: { memory?: Memory; supersedes?: Memory; initialCategory?: string; draft?: StatusDraft }) => void;
   onPropose: (scope: 'checkout' | 'branch') => void; onChanged: () => void; onError: (error: unknown) => void;
 }) {
   const [filter, setFilter] = useState('all'); const [search, setSearch] = useState(''); const [expanded, setExpanded] = useState<string | null>(null);
-  const [page, setPage] = useState<MemoryPage | null>(null); const [items, setItems] = useState<Memory[]>([]); const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [page, setPage] = useState<MemoryPage | null>(null); const [items, setItems] = useState<Memory[]>([]); const [own, setOwn] = useState<Proposal[]>([]);
+  const proposals = shared ?? own; const fetchOwn = !shared;
   // Loads overlap (approvals, search, project switches). A response renders
   // only if it was requested after the one on screen, so an older response
   // can never replace newer data, and a newer one is never held back.
@@ -23,7 +25,7 @@ export function KnowledgePanel({ project, version, busy, onEdit, onPropose, onCh
     setPage(next); setItems(current => offset ? [...current, ...next.items] : next.items);
   }, [project.id, filter, search]);
   useEffect(() => { const timer = setTimeout(() => void load(0).catch(onError), search ? 150 : 0); return () => clearTimeout(timer); }, [load, version, search, onError]);
-  useEffect(() => { let current = true; void api<Proposal[]>('proposals', { projectId: project.id }).then(next => { if (current) setProposals(next); }).catch(onError); return () => { current = false; }; }, [project.id, version, onError]);
+  useEffect(() => { if (!fetchOwn) return; let current = true; void api<Proposal[]>('proposals', { projectId: project.id }).then(next => { if (current) setOwn(next); }).catch(onError); return () => { current = false; }; }, [project.id, version, onError, fetchOwn]);
   // While an action and its reload are in flight, every action button is
   // disabled: the list on screen may be stale, and a second click on it
   // would act on an outdated item.
@@ -42,9 +44,9 @@ export function KnowledgePanel({ project, version, busy, onEdit, onPropose, onCh
     } catch (error) { onError(error); } finally { setPending(false); }
   };
   const counts = page?.counts ?? {};
-  return <div className="panel-content"><div className="section-heading"><div><span className="eyebrow">A SHARED FOUNDATION</span><h2>{copy.memory}</h2></div><button className="icon-button" aria-label={copy.addNote} onClick={() => onEdit({})}>＋</button></div><p className="muted panel-intro">{copy.aboutProject} and {copy.branchStands} reach every session. Relevant decisions, rules and lessons are added for the task.</p>
+  return <div className="panel-content"><div className="section-heading"><div><span className="eyebrow">A shared foundation</span><h2>{copy.memory}</h2></div><button className="icon-button" aria-label={copy.addNote} onClick={() => onEdit({})}>＋</button></div><p className="muted panel-intro">{copy.aboutProject} and {copy.branchStands} reach every session. Relevant decisions, rules and lessons are added for the task.</p>
     <div className="brief-actions"><button onClick={() => onEdit({ initialCategory: 'brief' })}>{copy.addSummary}</button><button disabled={busy || !project.branch} onClick={() => onPropose('branch')}>Propose branch update</button><button disabled={busy} onClick={() => onPropose('checkout')}>Propose overview</button></div>
-    {proposals.length > 0 && <section className="proposal-inbox" aria-label={copy.suggestions}><span className="eyebrow">SUGGESTIONS FROM YOUR SESSIONS · {proposals.length}</span>
+    {proposals.length > 0 && <section className="proposal-inbox" aria-label={copy.suggestions}><span className="eyebrow">Suggestions from your sessions · {proposals.length}</span>
       {proposals.map(proposal => <article key={proposal.id} className="proposal"><p dir="auto">{proposal.statement}</p><small className="muted">{proposal.kind === 'rule' ? 'You stated this rule in a task' : proposal.kind === 'test-command' ? 'Seen passing in your sessions' : 'Branch moved after a session'} · {category(proposal.category, proposal.scope)}{proposal.branch ? ` · ⑂ ${proposal.branch}` : ''}</small>
         <div className="memory-actions">{proposal.kind === 'branch-status' ? <button disabled={proposal.branch !== project.branch} title={proposal.branch !== project.branch ? `Switch to ${proposal.branch} to update it` : undefined} onClick={() => onPropose('branch')}>Propose branch update</button>
           : <button className="approve" disabled={pending} onClick={() => void act(() => api('acceptProposal', { id: proposal.id }))}>Add for review</button>}<button disabled={pending} onClick={() => void act(() => api('dismissProposal', { id: proposal.id }))}>Dismiss</button></div></article>)}

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import ts from 'typescript';
-import { copy, excludedReason, memoryState, selectionReason, tip, warningText } from '../src/ui/copy.ts';
+import { copy, excludedReason, memoryState, selectionReason, shell, tip, warningText } from '../src/ui/copy.ts';
 
 // Plain-language vocabulary (design board B8). The technical term may stay in a
 // tooltip (the title attribute of an element) but not in visible text or names.
@@ -93,8 +93,73 @@ test('an allowed code value does not exempt the same word shown elsewhere in the
   assert.deepEqual(strings.filter(entry => !exempt(entry)).map(([, text, , position]) => [text, position]), [['constraint', 'JSX text']]);
 });
 
+// Shell strings that use a listed word in its everyday sense: [key, why].
+const SHELL_ALLOWED = [['neverApproves', 'tool approval in the CLI, not note review: "Journal never approves for you."']];
+// Every shell string, functions called with sample arguments (a count and a size, or a name).
+const shellStrings = () => Object.entries(shell).flatMap(([key, value]) => typeof value === 'function'
+  ? (value.length === 2 ? [[key, value(2, '1.9 KB')]] : [[key, value(1)], [key, value(2)], [key, value('Codex')]]) : [[key, value]]);
+const CAPS_RUN = /\b[A-Z]{2,}\s+[A-Z]{2,}\b/;
+
 test('the vocabulary itself avoids the old terms, except in tooltips', () => {
   for (const [key, value] of Object.entries(copy)) if (typeof value === 'string') assert.doesNotMatch(value, OLD_TERMS, key);
+  const strings = shellStrings();
+  assert.ok(strings.length > 60 && strings.some(([key, text]) => key === 'activityHiddenBody' && text.startsWith('Codex ')), 'the shell strings were read');
+  for (const [key, text] of strings) {
+    assert.equal(typeof text, 'string', key);
+    if (!SHELL_ALLOWED.some(([allowed]) => allowed === key)) assert.doesNotMatch(text, OLD_TERMS, key);
+    assert.doesNotMatch(text, CAPS_RUN, key);
+  }
+  assert.deepEqual(SHELL_ALLOWED.filter(([key]) => !(key in shell)), [], 'remove allow-list entries whose key is gone');
+});
+
+// Eyebrows and region names read as sentence case (Phase 1 review): no
+// uppercase eyebrow, and no run of all-caps words in an accessible name or a
+// component's title (such as a reference list's region name). Abbreviations
+// may stand alone.
+const ABBREVIATIONS = new Set(['KB', 'ID', 'PID', 'UUID', 'CLI', 'PATH', 'HEAD', 'URL']);
+function caseIssues(file, code = readFileSync(new URL(`../src/ui/${file}`, import.meta.url), 'utf8')) {
+  const source = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const found = []; let eyebrows = 0; let names = 0;
+  const at = node => `${file}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}`;
+  // Literal text of an attribute value or of JSX children, template parts included.
+  const texts = node => {
+    const out = []; const visit = n => {
+      if (ts.isJsxText(n) || ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) { if (n.text.trim()) out.push(n.text.trim()); }
+      if (ts.isJsxElement(n) && n !== node) return; // nested elements are checked on their own
+      ts.forEachChild(n, visit);
+    };
+    visit(node); return out;
+  };
+  const visit = node => {
+    if (ts.isJsxElement(node)) {
+      const className = node.openingElement.attributes.properties.find(a => ts.isJsxAttribute(a) && a.name.getText() === 'className');
+      if (className?.initializer && ts.isStringLiteral(className.initializer) && className.initializer.text.split(/\s+/).includes('eyebrow')) {
+        eyebrows++;
+        for (const text of texts(node)) if (text.split(/[^A-Za-z]+/).some(word => word.length > 1 && word === word.toUpperCase() && !ABBREVIATIONS.has(word))) found.push(`${at(node)}: eyebrow ${text}`);
+      }
+    }
+    if (ts.isJsxAttribute(node) && node.initializer) {
+      const tag = node.parent.parent.tagName.getText(); const name = node.name.getText();
+      if (name === 'aria-label' || (name === 'title' && /^[A-Z]/.test(tag))) {
+        names++;
+        for (const text of texts(node.initializer)) if (CAPS_RUN.test(text)) found.push(`${at(node)}: ${name} ${text}`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return { found, eyebrows, names };
+}
+
+test('eyebrows are sentence case', () => {
+  const files = readdirSync(new URL('../src/ui/', import.meta.url)).filter(name => name.endsWith('.tsx'));
+  const results = files.map(file => caseIssues(file));
+  assert.ok(results.reduce((n, r) => n + r.eyebrows, 0) >= 15 && results.reduce((n, r) => n + r.names, 0) >= 40, 'the scan found eyebrows and names');
+  assert.deepEqual(results.flatMap(r => r.found), []);
+  // The scanner itself: uppercase eyebrows, caps runs in names and component titles fail; abbreviations pass.
+  const probe = caseIssues('probe.tsx', `const A = () => <><span className="eyebrow">COMMANDS</span><span className="eyebrow">Timeline · {n} KB</span>
+    <section aria-label="WHAT IT DID" /><References title={\`REFERENCED FOR THIS TASK · \${n}\`} /><p aria-label="Session ID" title="NOT A NAME" /></>;`);
+  assert.deepEqual(probe.found.map(entry => entry.replace(/^probe\.tsx:\d+: /, '')), ['eyebrow COMMANDS', 'aria-label WHAT IT DID', 'title REFERENCED FOR THIS TASK ·']);
 });
 
 test('core reasons and warnings are shown in the plain vocabulary; packet text is not touched', () => {

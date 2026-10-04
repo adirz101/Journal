@@ -31,9 +31,47 @@ export const tip = {
   memoryTab: 'Reviewed project knowledge that agents receive',
   separateCopy: 'A separate Git worktree on its own branch',
   limitedStatus: "Journal sees output, not the agent's state. Check the terminal for prompts.",
+  outputNotSaved: 'Journal never stores terminal output. The runtime keeps a bounded buffer while the session lives.',
+  seeWhatWasSent: 'The record of the exact text handed to the CLI at launch (receipt)',
+  uncommitted: 'Files with Git status changes in the working tree',
 } as const;
 
 export const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+// The Phase 3 shell (sidebar, session header, status bar, inspector, layout).
+// Every key exists from the start so the three groups never edit the same
+// lines; a group adds new keys only in its own block.
+export const shell = {
+  // A: sidebar and settings
+  newSession: 'New session', active: 'Active', slotsUsed: (n: number) => `${n} of 4`,
+  recent: 'Recent', today: 'Today', yesterday: 'Yesterday', earlier: 'Earlier', archived: 'Archived',
+  suggestionCount: (n: number) => count(n, 'suggestion'), canContinue: 'Can continue', settings: 'Settings',
+  runtimeConnected: 'Runtime connected · local only', runtimeStarting: 'Starting runtime…', runtimeDisconnected: 'Runtime disconnected',
+  switchProject: (name: string) => `Switch project. Current: ${name}`, noProject: 'No project open',
+  appearance: 'Appearance', dark: 'Dark', light: 'Light', notifications: 'Notifications',
+  notifyApproval: 'Notify me when Claude needs approval', notifyCommand: 'Show the command in notifications',
+  notifyCommandHint: 'Notifications can appear on the lock screen.', dataAndBackups: 'Data and backups', updates: 'Updates',
+  // B: header, banner, status bar, inspector
+  buildMode: 'Build mode', planMode: 'Plan mode', started: (ago: string) => `Started ${ago} ago`, limitedStatus: 'Limited status',
+  interrupt: 'Interrupt', approvalTitle: 'Claude is waiting for your approval', answerInTerminal: 'Answer in the terminal.',
+  neverApproves: 'Journal never approves for you.',
+  agentGot: (n: number, size: string) => `Agent got ${count(n, 'note')} · ${size}`, agentGotNone: 'Agent got no notes',
+  deliveryUncertain: (n: number, size: string) => `Delivery uncertain · ${count(n, 'note')} · ${size}`, notSent: 'Nothing was sent',
+  seeWhatWasSent: 'See what was sent', seeWhatWasPrepared: 'See what was prepared',
+  diffFiles: (files: number) => `in ${count(files, 'file')}`, noChanges: 'No changes yet',
+  nativePermissions: 'Native permissions', outputNotSaved: 'Output not saved',
+  sentUncertain: 'What was prepared (delivery uncertain)', // heading for an uncertain delivery (Phase 1 review note)
+  inspector: 'Inspector', tabSession: 'Session', tabFiles: 'Files', tabMemory: 'Memory',
+  whatThisAgentKnows: 'What this agent knows', atLaunch: (ago: string) => `at launch, ${ago} ago`,
+  whatItDid: 'What it did', fromHooks: 'from Claude hooks', showTimeline: 'Show full timeline',
+  activityHidden: (provider: string) => `Activity isn't visible for ${provider}`,
+  activityHiddenBody: (provider: string) => `${provider} doesn't report its commands or approval prompts to Journal. Its terminal shows everything. Changes are still tracked in Files.`,
+  lastOutput: (detail: string) => `Last output: ${detail}`,
+  changedCount: (n: number) => `Changed (${n})`, allFiles: 'All files', changesSinceStart: 'Changes since start', uncommitted: 'Uncommitted',
+  // C: layout
+  showInspector: 'Show inspector', hideInspector: 'Hide inspector', expandSidebar: 'Expand sidebar', collapseSidebar: 'Collapse sidebar',
+  recentSessions: 'Recent sessions',
+} as const;
 
 const CATEGORIES: Record<string, string> = { constraint: copy.rule, decision: 'Decision', convention: 'Convention', lesson: 'Lesson', issue: 'Known issue' };
 // A brief is "About this project" (checkout scope) or "Where this branch stands" (branch scope).

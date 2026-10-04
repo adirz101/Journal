@@ -67,20 +67,20 @@ export function ActivityPanel({ session, live }: { session: Session; live: Timel
   const tests = commands.filter(c => c.test);
   const observable = session.provider === 'claude';
   return <div className="panel-content activity-content">
-    <div className="section-heading"><div><span className="eyebrow">OBSERVED ACTIVITY</span><h2>Commands and timeline</h2></div></div>
+    <div className="section-heading"><div><span className="eyebrow">Observed activity</span><h2>Commands and timeline</h2></div></div>
     <p className="muted panel-intro">{observable ? 'Commands and exit codes come from Claude Code hooks. Running commands without a reported exit are shown as running or unknown.' : `${session.provider === 'cursor' ? 'Cursor' : 'Codex'} does not expose command events to Journal in this mode, so commands and test results are unknown. The timeline shows what Journal itself observed.`}</p>
     {error && <p className="form-error" role="alert">{error}</p>}
     {observable && <section aria-label="Tests" className="test-summary">
-      <span className="eyebrow">TEST COMMANDS</span>
+      <span className="eyebrow">Test commands</span>
       {tests.length ? <p>{tests.filter(t => t.status === 'succeeded').length} exited 0 · {tests.filter(t => t.status === 'failed').length} failed · {tests.filter(t => !['succeeded', 'failed'].includes(t.status)).length} running or unknown</p> : <p className="muted">No test commands observed.</p>}
       <small>Exit status only, from Claude Code hooks. Journal does not parse test reports or infer results from agent text, and does not store command output.</small>
     </section>}
-    {observable && <section aria-label="Commands"><span className="eyebrow">COMMANDS</span>
+    {observable && <section aria-label="Commands"><span className="eyebrow">Commands</span>
       {commands.length ? <ul className="command-list">{commands.slice(0, 100).map(c => <li key={c.toolUseId}>
         <code title={`${c.command}\nin ${c.cwd ?? 'unknown directory'} · started ${new Date(c.at).toLocaleTimeString()}${c.endedAt ? ` · ended ${new Date(c.endedAt).toLocaleTimeString()}` : ''} · output not stored`}>{c.cwd && c.cwd !== '.' ? `${c.cwd} $ ` : ''}{c.command}</code>
         <span className={`command-status ${c.status}`}>{c.status === 'succeeded' ? 'exit 0' : c.exitCode !== null ? `exit ${c.exitCode}` : c.status}{c.durationMs !== null ? ` · ${(c.durationMs / 1000).toFixed(1)}s` : ''}{c.test ? ' · test' : ''}</span>
       </li>)}</ul> : <p className="muted">No commands observed yet.</p>}
     </section>}
-    <section aria-label="Timeline" className="timeline-section"><span className="eyebrow">TIMELINE · {events.length}</span><Timeline events={events} /></section>
+    <section aria-label="Timeline" className="timeline-section"><span className="eyebrow">Timeline · {events.length}</span><Timeline events={events} /></section>
   </div>;
 }
