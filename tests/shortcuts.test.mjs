@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { COMMAND_IDS, matchShortcut, shortcutLabels } from '../src/desktop/shortcuts.mjs';
+import { COMMAND_IDS, matchShortcut, shortcutLabels, shortcutRows, shouldDispatch } from '../src/desktop/shortcuts.mjs';
 
 // Electron Input objects as before-input-event delivers them.
 const key = (spec, extra = {}) => {
@@ -20,9 +20,9 @@ ROUTED.linux = ROUTED.win32;
 
 // Keys the terminal and its CLI own: never intercepted.
 const TERMINAL = {
-  darwin: ['Control+C', 'Control+D', 'Control+Z', 'Control+L', 'Control+R', 'Control+O', 'Control+1', 'Alt+1', 'Alt+B', 'Meta+C', 'Meta+V', 'Meta+Q', 'Meta+W', 'Meta+R', 'Meta+5', 'Meta+K', 'Meta+P', 'Meta+Enter'],
-  win32: ['Control+C', 'Control+D', 'Control+Z', 'Control+L', 'Control+R', 'Control+O', 'Control+N', 'Control+P', 'Control+K', 'Control+W', 'Control+E', 'Control+B', 'Control+A',
-    'Control+1', 'Control+Enter', 'Alt+B', 'Alt+F', 'Alt+5', 'Control+Alt+2', 'Control+Shift+C', 'Control+Shift+V', 'Control+Shift+P', 'Meta+1', 'Meta+N'],
+  darwin: ['Control+C', 'Control+D', 'Control+Z', 'Control+L', 'Control+R', 'Control+O', 'Control+A', 'Control+E', 'Control+K', 'Control+U', 'Control+W', 'Control+1', 'Alt+1', 'Alt+B', 'Meta+C', 'Meta+V', 'Meta+Q', 'Meta+W', 'Meta+R', 'Meta+5', 'Meta+K', 'Meta+P', 'Meta+Enter'],
+  win32: ['Control+C', 'Control+D', 'Control+Z', 'Control+L', 'Control+R', 'Control+O', 'Control+N', 'Control+P', 'Control+K', 'Control+W', 'Control+E', 'Control+B', 'Control+A', 'Control+U',
+    'Control+1', 'Control+Enter', 'Alt+B', 'Alt+F', 'Alt+5', 'Control+Alt+2', 'Control+Shift+C', 'Control+Shift+V', 'Control+Shift+P', 'Control+Shift+T', 'Control+Shift+W', 'Control+Shift+F', 'Control+Shift+X', 'Control+Shift+Z', 'Control+Shift+A', 'Meta+1', 'Meta+N'],
 };
 TERMINAL.linux = TERMINAL.win32;
 
@@ -54,7 +54,7 @@ test('letters follow the layout; digits and non-Latin layouts follow the physica
 });
 
 test('every routed command has a label, and the renderer knows every id', () => {
-  for (const platform of ['darwin', 'win32']) {
+  for (const platform of ['darwin', 'win32', 'linux']) {
     const labels = shortcutLabels(platform);
     assert.deepEqual(Object.keys(labels).sort(), [...COMMAND_IDS].sort(), platform);
   }
@@ -62,4 +62,27 @@ test('every routed command has a label, and the renderer knows every id', () => 
   const types = readFileSync(new URL('../src/ui/types.ts', import.meta.url), 'utf8');
   const union = types.match(/export type CommandId = ([^;]+);/)[1].match(/'[^']+'/g).map(id => id.slice(1, -1));
   assert.deepEqual(union.sort(), [...COMMAND_IDS].sort());
+});
+
+test('punctuation is never mistaken for a letter by its physical position', () => {
+  // Dvorak: the key labelled "." sits where QWERTY has E.
+  assert.equal(matchShortcut({ ...key('Meta+E'), key: '.', code: 'KeyE' }, 'darwin'), null);
+  assert.equal(matchShortcut({ ...key('Control+Shift+E'), key: '>', code: 'KeyE' }, 'linux'), null);
+  // Non-Latin layouts still fall back to the physical key.
+  assert.equal(matchShortcut({ ...key('Meta+E'), key: 'у' }, 'darwin'), 'focus-terminal');
+});
+
+test('auto-repeat is still claimed but not dispatched', () => {
+  const repeat = key('Meta+N', { isAutoRepeat: true });
+  assert.equal(matchShortcut(repeat, 'darwin'), 'new-session');
+  assert.equal(shouldDispatch(repeat), false);
+  assert.equal(shouldDispatch(key('Meta+N')), true);
+  assert.equal(shouldDispatch(null), false);
+});
+
+test('no two rows on a platform share a key combination', () => {
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    const seen = shortcutRows(platform).map(r => [!!r.meta, !!r.control, !!r.alt, !!r.shift, r.code ?? r.key].join());
+    assert.equal(new Set(seen).size, seen.length, platform);
+  }
 });

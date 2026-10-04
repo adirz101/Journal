@@ -23,6 +23,7 @@ Before advertising Windows support:
 2. Run the desktop scenarios with Windows fixture CLIs (`.cmd` and `.exe`).
 3. Manually check ConPTY input (IME, Ctrl+C, resize), runtime survival after closing the app window, runtime crash recovery, and named-pipe access by another local user (it must be refused).
 4. Verify that Claude permission answer keys (digit, Enter, Esc, Ctrl+C) reach Journal's `write()` as plain characters on Windows ConPTY, not win32-input-mode sequences, since detecting an answered prompt depends on it.
+5. Verify that Alt+Shift+1 to Alt+Shift+3 (Journal's tab shortcuts) do not switch the keyboard language on Windows, or that the Journal shortcut still fires when they do.
 
 ## Windows on CI (4 October 2026)
 The unit tests run on hosted `windows-latest` runners and are required. Their first run found 37 failures, now fixed:
