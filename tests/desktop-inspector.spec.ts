@@ -17,7 +17,8 @@ function setup(name: string) {
   const git = (...args: string[]) => execFileSync('git', ['-C', project, ...args], { stdio: 'pipe' });
   git('init', '-b', 'main'); writeFileSync(resolve(project, 'README.md'), 'Inspector fixture\n'); git('add', '.');
   git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'init');
-  // `perm <command>` and `post` play Journal's own PermissionRequest and PostToolUse hooks; `write <file>` edits a file.
+  // `perm <command>` and `post` play Journal's own PermissionRequest and PostToolUse hooks; `write <file>` edits a file;
+  // `edit <file>` edits one and plays PostToolUse for a Write, as Claude does.
   const fixture = `#!${process.execPath}
 const fs=require('node:fs');const {spawn}=require('node:child_process');
 if(process.argv.includes('--version')){console.log('fixture 1.0');process.exit(0)}
@@ -33,6 +34,7 @@ const command=input;input='';
 if(command.startsWith('perm ')){last=command.slice(5);play('PermissionRequest',{tool_input:{command:last}},'ASKED')}
 else if(command==='post'){play('PostToolUse',{tool_input:{command:last},tool_response:{}},'POSTED')}
 else if(command.startsWith('write ')){fs.writeFileSync(command.slice(6),'created by agent\\n');console.log('WROTE')}
+else if(command.startsWith('edit ')){const file=require('node:path').resolve(command.slice(5));fs.writeFileSync(file,'edited by agent\\n');play('PostToolUse',{tool_name:'Write',tool_use_id:'edit1',tool_input:{file_path:file},tool_response:{}},'EDITED')}
 else console.log('ECHO '+command);
 }});`;
   for (const provider of ['claude', 'codex']) { writeFileSync(resolve(bin, provider), fixture); chmodSync(resolve(bin, provider), 0o755); }
@@ -136,11 +138,10 @@ test('the diff updates from file events (Claude) and polling (Codex)', async () 
   try {
     await start(page, 'CLAUDE_WRITES');
     await expect(statusBar(page)).toContainText('No changes yet');
-    // The fixture writes without a hook event, so Refresh picks the change up.
-    await typeLine(page, 'write agent-output.txt');
-    await expect(page.locator('.terminal-surface')).toContainText('WROTE');
+    // Claude's PostToolUse hook for the Write records a file event, which refreshes the diff without Refresh or polling.
     await inspectorTab(page, 'Files'); await filesView(page, 'changed');
-    await page.getByRole('button', { name: 'Refresh' }).click();
+    await typeLine(page, 'edit agent-output.txt');
+    await expect(page.locator('.terminal-surface')).toContainText('EDITED');
     await expect(statusBar(page)).toContainText('+1');
     await expect(statusBar(page)).toContainText('in 1 file');
     await expect(page.getByRole('tab', { name: /^Files/ })).toContainText('1');

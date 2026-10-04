@@ -55,6 +55,8 @@ export default function App() {
   const [knowledgeVersion, setKnowledgeVersion] = useState(0);
   const [runtime, setRuntime] = useState<{ state: string; warning?: string | null }>({ state: 'connecting' });
   const [liveEvents, setLiveEvents] = useState<TimelineEvent[]>([]);
+  // File and command-end events per session, counted as they arrive: liveEvents is capped, so its length stops changing.
+  const [fileEventCounts, setFileEventCounts] = useState<Record<string, number>>({});
   const [now, setNow] = useState(Date.now());
   const [workspaces, setWorkspaces] = useState<WorkspaceList | null>(null); const [workspaceId, setWorkspaceId] = useState<string>(''); const [research, setResearch] = useState(false); const [plan, setPlan] = useState(false);
   const [processView, setProcessView] = useState<{ id: string; title: string; command?: string; kind: 'install' | 'login' } | null>(null); const [providerNote, setProviderNote] = useState(''); const [checkingProvider, setCheckingProvider] = useState(false);
@@ -152,7 +154,12 @@ export default function App() {
         if (event.state === 'connected') void reloadSessions().then(() => refresh()).catch(failed);
         return;
       }
-      if (event.type === 'timeline') { setLiveEvents(current => [...current.slice(-1999), event.event]); return; }
+      if (event.type === 'timeline') {
+        setLiveEvents(current => [...current.slice(-1999), event.event]);
+        const { sessionId, kind } = event.event;
+        if (sessionId && (kind === 'file' || kind === 'command-end')) setFileEventCounts(current => ({ ...current, [sessionId]: (current[sessionId] ?? 0) + 1 }));
+        return;
+      }
       if (event.type === 'proposals') { setKnowledgeVersion(v => v + 1); return; }
       if (event.type === 'providers') { setBootstrap(current => current ? { ...current, agents: event.agents } : current); return; }
       if (event.type === 'activity') { noteActivity(event.sessionId, event.lastOutputAt); return; }
@@ -342,7 +349,7 @@ export default function App() {
   const projectBranchChanged = session && state && !session.workspaceId && session.projectId === state.project.id && isLive(session) && session.branch !== undefined && session.branch !== state.project.branch;
   // One timeline fetch and one changes source per session, shared by the header, status bar and inspector.
   const { events } = useSessionEvents(session?.id ?? null, liveEvents, `${session?.status ?? ''}:${connected}`);
-  const fileEvents = useMemo(() => session ? liveEvents.filter(e => e.sessionId === session.id && (e.kind === 'file' || e.kind === 'command-end')).length : 0, [liveEvents, session]);
+  const fileEvents = session ? fileEventCounts[session.id] ?? 0 : 0;
   const sessionChanges = useSessionChanges(session, fileEvents);
   const changed = diffSummary(sessionChanges.changes)?.files ?? 0;
   const filesView = filesChoice ?? (changed ? 'changed' : 'all');
