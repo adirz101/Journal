@@ -28,6 +28,7 @@ console.log('PTY_READY '+process.stdout.isTTY);console.log('TASK '+task);console
 process.stdin.setRawMode(true);process.stdin.setEncoding('utf8');let input='';
 process.stdin.on('data',data=>{for(const char of data){
 if(char==='\\x03'){console.log('INTERRUPTED');continue}
+if(char==='\\x0f'){console.log('CTRL_O');continue}
 if(char!=='\\r'&&char!=='\\n'){input+=char;continue}
 const command=input;input='';
 if(command==='daemon'){const c=spawn(process.execPath,['-e',${JSON.stringify(daemonCode)}],{detached:true,stdio:'ignore'});c.unref();console.log('DAEMON_STARTED')}
@@ -128,6 +129,33 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.locator('.terminal-label')).toContainText('stopped');
     await expect(page.getByRole('button', { name: 'Start Claude', exact: true })).toBeEnabled();
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+// Windows and Linux leave Ctrl+O to the CLI inside the terminal; elsewhere in
+// the window it opens a project (macOS routes ⌘O instead). Windows has no POSIX
+// fixture CLIs, so Linux carries this check.
+test('Ctrl+O opens a project outside the terminal and reaches the CLI inside it', async () => {
+  test.skip(process.platform !== 'linux', 'Ctrl+O is a page shortcut only on Windows and Linux');
+  const f = setup('ctrl-o'); const { app, page } = await open(f.env, f.project);
+  try {
+    await app.evaluate(({ dialog }, selected) => {
+      (globalThis as any).__opens = 0;
+      dialog.showOpenDialog = async () => { (globalThis as any).__opens += 1; return { canceled: false, filePaths: [selected] }; };
+    }, f.project);
+    const opens = () => app.evaluate(() => (globalThis as any).__opens as number);
+    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await expect.poll(opens).toBe(1);
+    await page.getByLabel('Initial task').fill('PLAIN_TASK');
+    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await expect(page.locator('.terminal-surface')).toContainText('TASK PLAIN_TASK');
+    await page.locator('.xterm-helper-textarea').focus();
+    await pressKey(app, 'O', ['control']);
+    await expect(page.locator('.terminal-surface')).toContainText('CTRL_O');
+    expect(await opens()).toBe(1);
+    await page.getByRole('button', { name: 'New session' }).focus();
+    await pressKey(app, 'O', ['control']);
+    await expect.poll(opens).toBe(2);
   } finally { await closeApp(app); f.cleanup(); }
 });
 

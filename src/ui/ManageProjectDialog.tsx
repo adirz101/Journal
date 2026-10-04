@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, type ProjectDetails } from './types';
 import { copy } from './copy';
+import { useModalDialog } from './useModalDialog';
 
 // Journal-side project settings. Nothing here renames, moves or deletes files.
 export function ManageProjectDialog({ projectId, onClose, onChanged, onRemoved }: { projectId: string; onClose: () => void; onChanged: () => void; onRemoved: () => void }) {
@@ -8,7 +9,8 @@ export function ManageProjectDialog({ projectId, onClose, onChanged, onRemoved }
   const [details, setDetails] = useState<ProjectDetails | null>(null); const [name, setName] = useState('');
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const load = async () => { const next = await api<ProjectDetails>('projectDetails', { id: projectId }); setDetails(next); setName(next.project.displayName ?? ''); };
-  useEffect(() => { dialog.current?.showModal(); void load().catch(e => setError(e.message)); }, []);
+  useModalDialog(dialog);
+  useEffect(() => { void load().catch(e => setError(e.message)); }, []);
   // reload=false after removal: the project no longer exists to load.
   const act = async (action: () => Promise<unknown>, reload = true) => { setBusy(true); setError(''); try { await action(); if (reload) { await load(); onChanged(); } } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
   const project = details?.project;

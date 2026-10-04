@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { COMMAND_IDS, matchShortcut, shortcutLabels, shortcutRows, shouldDispatch } from '../src/desktop/shortcuts.mjs';
+import { COMMAND_IDS, matchShortcut, shortcutKeys, shortcutLabels, shortcutRows, shouldDispatch } from '../src/desktop/shortcuts.mjs';
 
 // Electron Input objects as before-input-event delivers them.
 const key = (spec, extra = {}) => {
@@ -85,4 +85,21 @@ test('no two rows on a platform share a key combination', () => {
     const seen = shortcutRows(platform).map(r => [!!r.meta, !!r.control, !!r.alt, !!r.shift, r.code ?? r.key].join());
     assert.equal(new Set(seen).size, seen.length, platform);
   }
+});
+
+test('aria-keyshortcuts strings name the same keys as each row', () => {
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    for (const row of shortcutRows(platform)) {
+      const modifiers = [row.alt && 'Alt', row.control && 'Control', row.meta && 'Meta', row.shift && 'Shift'].filter(Boolean);
+      const name = row.code ? row.code.replace(/^Digit/, '') : row.key.toUpperCase();
+      assert.equal(row.aria, [...modifiers, name].join('+'), `${platform} ${row.id}`);
+    }
+    const keys = shortcutKeys(platform);
+    assert.deepEqual(Object.keys(keys).sort(), [...COMMAND_IDS].sort(), platform);
+    for (const [id, value] of Object.entries(keys)) assert.equal(value.label, shortcutLabels(platform)[id]);
+  }
+  assert.deepEqual(shortcutKeys('darwin')['open-project'], { label: '⌘O', aria: 'Meta+O' });
+  assert.deepEqual(shortcutKeys('linux')['open-project'], { label: 'Ctrl+O', aria: 'Control+O' });
+  assert.deepEqual(shortcutKeys('win32')['new-session'], { label: 'Ctrl+Shift+N', aria: 'Control+Shift+N' });
+  assert.equal(shortcutKeys('darwin')['tab-files'].aria, 'Alt+Meta+2');
 });

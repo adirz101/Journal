@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
+import { useModalDialog } from './useModalDialog';
 
 // Renames only Journal's label; the default is restored by saving empty or "Use default".
 export function RenameDialog({ title, label, value, fallback, note, onSave, onClose }: { title: string; label: string; value: string | null | undefined; fallback: string; note: string; onSave: (name: string | null) => Promise<void>; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [name, setName] = useState(value ?? ''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
-  useEffect(() => { dialog.current?.showModal(); }, []);
+  useModalDialog(dialog);
   const save = async (next: string | null) => { setBusy(true); setError(''); try { await onSave(next); onClose(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
   return <dialog ref={dialog} onCancel={onClose} aria-labelledby="rename-title" className="knowledge-dialog rename-dialog">
     <form onSubmit={event => { event.preventDefault(); void save(name.trim() || null); }}>

@@ -20,7 +20,7 @@ import { launchTarget, resolveExecutable } from '../core/process.mjs';
 import { RootWatcher } from './watch.mjs';
 import { Updater, updateMode } from './updater.mjs';
 import { checkOutcome, menuTemplate } from './menu.mjs';
-import { matchShortcut, shortcutLabels, shouldDispatch } from './shortcuts.mjs';
+import { matchShortcut, shortcutKeys, shouldDispatch } from './shortcuts.mjs';
 import electronUpdater from 'electron-updater';
 import { dataDirectory, unpackedPath, withGuiPath } from './environment.mjs';
 import { WINDOW_BACKGROUND } from './window-colors.mjs';
@@ -182,7 +182,7 @@ const actions = {
     if (typeof open !== 'boolean') throw new Error('Invalid dialog state');
     modalOpen = open;
   },
-  bootstrap: async () => ({ projects: await store.listProjects(), agents, platform: process.platform, shortcuts: shortcutLabels(process.platform), runtime: { state: runtimeState, warning: runtimeWarning },
+  bootstrap: async () => ({ projects: await store.listProjects(), agents, platform: process.platform, shortcuts: shortcutKeys(process.platform), runtime: { state: runtimeState, warning: runtimeWarning },
     live: runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [], active: await store.activeSessions() }),
   openProject: async () => {
     const result = await dialog.showOpenDialog(window, { title: 'Open a Git project', properties: ['openDirectory'] });

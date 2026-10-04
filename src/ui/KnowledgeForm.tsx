@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { api, type Memory, type Project, type StatusDraft } from './types';
 import { category as categoryName, copy } from './copy';
+import { useModalDialog } from './useModalDialog';
 
 const placeholder = /\[describe[^\]]*\]/;
 
@@ -16,7 +17,7 @@ export function KnowledgeForm({ project, memory: revising, supersedes, initialCa
   const memoryId = draft ? draft.memoryId ?? undefined : supersedes ? undefined : memory?.id; const [note, setNote] = useState(memory?.source.note ?? '');
   const [path, setPath] = useState(memory?.source.path ?? initialSource?.path ?? ''); const [rootId, setRootId] = useState((memory?.source as { rootId?: string } | undefined)?.rootId ?? initialSource?.rootId ?? ''); const [startLine, setStartLine] = useState(memory?.source.startLine ?? initialSource?.startLine ?? 1); const [endLine, setEndLine] = useState(memory?.source.endLine ?? initialSource?.endLine ?? 1);
   const [error, setError] = useState(''); const [saving, setSaving] = useState(false);
-  useEffect(() => { dialog.current?.showModal(); }, []);
+  useModalDialog(dialog);
   async function save(event: React.FormEvent) {
     event.preventDefault(); setError('');
     if (placeholder.test(statement)) { setError('Replace the bracketed placeholders with the reviewed status before saving.'); return; }

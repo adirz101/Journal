@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, type Project, type UpdateState } from './types';
 import { UpdateSettings } from './UpdateNotice';
+import { useModalDialog } from './useModalDialog';
 
 interface StorageInfo { database: number; wal: number; tables: Record<string, number>; freeBytes: number | null; lowDisk: boolean | null; }
 const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -8,7 +9,8 @@ const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 export function DataDialog({ project, update, onClose, onChanged }: { project: Project | null; update: UpdateState | null; onClose: () => void; onChanged: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [info, setInfo] = useState<StorageInfo | null>(null); const [message, setMessage] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
-  useEffect(() => { dialog.current?.showModal(); void api<StorageInfo>('storageInfo').then(setInfo).catch(e => setError(e.message)); }, []);
+  useModalDialog(dialog);
+  useEffect(() => { void api<StorageInfo>('storageInfo').then(setInfo).catch(e => setError(e.message)); }, []);
   const act = async (action: () => Promise<string | null>) => { setBusy(true); setError(''); setMessage(''); try { const text = await action(); if (text) setMessage(text); onChanged(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
   return <dialog ref={dialog} onCancel={onClose} aria-labelledby="data-title" className="knowledge-dialog">
     <div className="dialog-heading"><div><span className="eyebrow">LOCAL DATA</span><h2 id="data-title">Data and backups</h2></div><button type="button" onClick={onClose} aria-label="Close data" className="icon-button">×</button></div>

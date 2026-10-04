@@ -10,24 +10,27 @@
 //
 // Add a row only together with the renderer code that handles its id: a row
 // without a handler would swallow a key and do nothing.
+//
+// label: shown in tooltips and <kbd>. aria: the same keys in the format of the
+// aria-keyshortcuts attribute (modifiers Alt, Control, Meta, Shift, then the key).
 const digit = n => `Digit${n}`;
 const MAC = [
-  { id: 'new-session', meta: true, key: 'n', label: '⌘N' },
-  { id: 'open-project', meta: true, key: 'o', label: '⌘O' },
-  { id: 'add-note', meta: true, shift: true, key: 'k', label: '⇧⌘K' },
-  { id: 'focus-terminal', meta: true, key: 'e', label: '⌘E' },
-  { id: 'toggle-inspector', meta: true, key: 'i', label: '⌘I' },
-  ...[1, 2, 3, 4].map(n => ({ id: `slot-${n}`, meta: true, code: digit(n), label: `⌘${n}` })),
-  ...['session', 'files', 'memory'].map((tab, i) => ({ id: `tab-${tab}`, meta: true, alt: true, code: digit(i + 1), label: `⌥⌘${i + 1}` })),
+  { id: 'new-session', meta: true, key: 'n', label: '⌘N', aria: 'Meta+N' },
+  { id: 'open-project', meta: true, key: 'o', label: '⌘O', aria: 'Meta+O' },
+  { id: 'add-note', meta: true, shift: true, key: 'k', label: '⇧⌘K', aria: 'Meta+Shift+K' },
+  { id: 'focus-terminal', meta: true, key: 'e', label: '⌘E', aria: 'Meta+E' },
+  { id: 'toggle-inspector', meta: true, key: 'i', label: '⌘I', aria: 'Meta+I' },
+  ...[1, 2, 3, 4].map(n => ({ id: `slot-${n}`, meta: true, code: digit(n), label: `⌘${n}`, aria: `Meta+${n}` })),
+  ...['session', 'files', 'memory'].map((tab, i) => ({ id: `tab-${tab}`, meta: true, alt: true, code: digit(i + 1), label: `⌥⌘${i + 1}`, aria: `Alt+Meta+${i + 1}` })),
 ];
 const OTHER = [
-  { id: 'new-session', control: true, shift: true, key: 'n', label: 'Ctrl+Shift+N' },
-  { id: 'add-note', control: true, shift: true, key: 'k', label: 'Ctrl+Shift+K' },
-  { id: 'focus-terminal', control: true, shift: true, key: 'e', label: 'Ctrl+Shift+E' },
+  { id: 'new-session', control: true, shift: true, key: 'n', label: 'Ctrl+Shift+N', aria: 'Control+Shift+N' },
+  { id: 'add-note', control: true, shift: true, key: 'k', label: 'Ctrl+Shift+K', aria: 'Control+Shift+K' },
+  { id: 'focus-terminal', control: true, shift: true, key: 'e', label: 'Ctrl+Shift+E', aria: 'Control+Shift+E' },
   // Ctrl+Shift+I opens developer tools in development builds.
-  { id: 'toggle-inspector', control: true, shift: true, key: 'b', label: 'Ctrl+Shift+B' },
-  ...[1, 2, 3, 4].map(n => ({ id: `slot-${n}`, alt: true, code: digit(n), label: `Alt+${n}` })),
-  ...['session', 'files', 'memory'].map((tab, i) => ({ id: `tab-${tab}`, alt: true, shift: true, code: digit(i + 1), label: `Alt+Shift+${i + 1}` })),
+  { id: 'toggle-inspector', control: true, shift: true, key: 'b', label: 'Ctrl+Shift+B', aria: 'Control+Shift+B' },
+  ...[1, 2, 3, 4].map(n => ({ id: `slot-${n}`, alt: true, code: digit(n), label: `Alt+${n}`, aria: `Alt+${n}` })),
+  ...['session', 'files', 'memory'].map((tab, i) => ({ id: `tab-${tab}`, alt: true, shift: true, code: digit(i + 1), label: `Alt+Shift+${i + 1}`, aria: `Alt+Shift+${i + 1}` })),
 ];
 export const shortcutRows = platform => platform === 'darwin' ? MAC : OTHER;
 
@@ -64,8 +67,13 @@ export function matchShortcut(input, platform) {
 // not routed (the CLI owns it while the terminal has focus); the renderer
 // handles it when focus is elsewhere in the window.
 export function shortcutLabels(platform) {
-  const labels = Object.fromEntries(shortcutRows(platform).map(row => [row.id, row.label]));
-  return platform === 'darwin' ? labels : { ...labels, 'open-project': 'Ctrl+O' };
+  return Object.fromEntries(Object.entries(shortcutKeys(platform)).map(([id, keys]) => [id, keys.label]));
+}
+
+// { label, aria } by command id: what the renderer receives as bootstrap.shortcuts.
+export function shortcutKeys(platform) {
+  const keys = Object.fromEntries(shortcutRows(platform).map(row => [row.id, { label: row.label, aria: row.aria }]));
+  return platform === 'darwin' ? keys : { ...keys, 'open-project': { label: 'Ctrl+O', aria: 'Control+O' } };
 }
 
 export const COMMAND_IDS = [...new Set([...MAC, ...OTHER].map(row => row.id))];

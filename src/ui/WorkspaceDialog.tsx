@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, type Project, type WorkspaceList } from './types';
+import { useModalDialog } from './useModalDialog';
 
 // Managed worktrees: created from an explicit base, never forced or stashed;
 // removed only when clean and idle; imported worktrees are never deleted.
@@ -10,7 +11,8 @@ export function WorkspaceDialog({ project, onClose, onChanged }: { project: Proj
   const [plan, setPlan] = useState<{ id: string; path: string; notices: string[]; base: string } | null>(null);
   const [blockers, setBlockers] = useState<Record<string, string[]>>({});
   const load = async () => setList(await api<WorkspaceList>('workspaces', { projectId: project.id }));
-  useEffect(() => { dialog.current?.showModal(); void load().catch(e => setError(e.message)); }, []);
+  useModalDialog(dialog);
+  useEffect(() => { void load().catch(e => setError(e.message)); }, []);
   const act = async (action: () => Promise<unknown>) => { setBusy(true); setError(''); try { await action(); await load(); onChanged(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
   async function preview() { setError(''); setPlan(null); try { setPlan(await api('planWorkspace', { projectId: project.id, branch, base })); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } }
   return <dialog ref={dialog} onCancel={onClose} aria-labelledby="workspace-title" className="knowledge-dialog workspace-dialog">
