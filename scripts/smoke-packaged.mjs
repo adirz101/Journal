@@ -36,6 +36,16 @@ const env = { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, JOU
 delete env.ELECTRON_RUN_AS_NODE;
 
 const step = async (label, action) => { process.stdout.write(`- ${label}… `); await action(); console.log('ok'); };
+// The same selectors as tests/support/ui.ts (currentProject, sessionStatus): the Phase 3 shell.
+const currentProject = page => page.locator('.project-switcher .project-name');
+const sessionStatus = page => page.locator('.session-header .session-meta');
+// inspectorTab: a medium or narrow window folds the inspector into a rail, whose button opens the tab.
+async function inspectorTab(page, name) {
+  const tab = page.getByRole('tab', { name: new RegExp(`^${name}`) }); const rail = page.locator('.inspector-rail').getByRole('button', { name: new RegExp(`^${name}`) });
+  await tab.or(rail).first().waitFor({ timeout: 15000 });
+  if (!await tab.count()) await rail.click();
+  await tab.click();
+}
 const expectText = async (locator, text, timeout = 30000) => { await locator.filter({ hasText: text }).first().waitFor({ timeout }); };
 
 async function run(first) {
@@ -50,7 +60,7 @@ async function run(first) {
     await page.waitForLoadState('domcontentloaded');
     if (first) {
       await step(`launch ${info.name} ${info.version} (packaged)`, async () => {});
-      await step('open a project', async () => { await page.getByRole('button', { name: 'Open project', exact: true }).first().click(); await expectText(page.locator('.project-link'), 'smoke project'); });
+      await step('open a project', async () => { await page.getByRole('button', { name: 'Open project', exact: true }).first().click(); await expectText(currentProject(page), 'smoke project'); });
       await step('provider detection (Claude, Codex, Cursor rows)', async () => { const cards = page.getByRole('radiogroup', { name: 'Agent' }); await expectText(cards.getByRole('radio', { name: 'Claude Code', exact: true }), 'Installed · fixture 1.0'); await expectText(cards.getByRole('radio', { name: 'Codex', exact: true }), 'Installed · fixture 1.0'); await expectText(cards.getByRole('radio', { name: 'Cursor', exact: true }), /Installed|Not installed|Sign in needed|Not the Cursor CLI|Unsupported version|Can’t launch/); });
       await step('terminal session through the runtime and node-pty', async () => {
         await page.getByRole('radio', { name: 'Claude Code', exact: true }).click();
@@ -59,14 +69,14 @@ async function run(first) {
         await expectText(page.locator('.terminal-surface'), 'PTY_READY true');
         await expectText(page.locator('.terminal-surface'), 'SMOKE_TASK');
         await page.getByRole('button', { name: 'Stop', exact: true }).click();
-        await expectText(page.locator('.terminal-label'), 'stopped');
+        await expectText(sessionStatus(page), 'Stopped');
       });
-      await step('file explorer', async () => { await page.getByRole('tab', { name: 'Files' }).click(); await page.getByRole('treeitem', { name: /^README\.md/ }).waitFor({ timeout: 15000 }); });
+      await step('file explorer', async () => { await inspectorTab(page, 'Files'); await page.getByRole('treeitem', { name: /^README\.md/ }).waitFor({ timeout: 15000 }); });
     } else {
       await step('restart keeps the project, the session and its receipt', async () => {
-        await expectText(page.locator('.project-link'), 'smoke project');
-        await page.locator('.project-link').first().click();
-        await page.getByRole('button', { name: /^Claude Code: SMOKE_TASK/ }).waitFor({ timeout: 15000 });
+        // The remembered project reopens on its own; its ended session is listed in the sidebar.
+        await expectText(currentProject(page), 'smoke project');
+        await page.locator('.sidebar').getByRole('button', { name: /^Claude Code: SMOKE_TASK/ }).waitFor({ timeout: 15000 });
       });
     }
   } catch (error) {
