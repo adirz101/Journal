@@ -182,7 +182,10 @@ export default function App() {
       setSelectedId(next.id); setReceipt(await api<Receipt>('getReceipt', { id: next.receiptId }));
     });
   }
-  function newSession() { userChose.current = true; setSelectedId(null); requestAnimationFrame(() => taskRef.current?.focus()); }
+  // The task box takes focus once the New session view has rendered (an effect, not a frame callback, which can run before the commit).
+  const [taskFocus, setTaskFocus] = useState(0);
+  useEffect(() => { if (taskFocus) taskRef.current?.focus(); }, [taskFocus]);
+  function newSession() { userChose.current = true; setSelectedId(null); setTaskFocus(n => n + 1); }
   // === Region: command handler (Phase 3: A adds settings, B the tab commands, C the layout toggles) ===
   // App shortcuts arrive as commands from the main process (src/desktop/shortcuts.mjs),
   // so they also work while the terminal has focus. The ref keeps the handler current.
