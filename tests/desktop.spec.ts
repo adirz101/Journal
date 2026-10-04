@@ -51,6 +51,9 @@ process.stdin.on('data',data=>{
     await expect(page.getByLabel('Initial task')).toHaveValue('');
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
+    // JetBrains Mono ships inside the app (CSP font-src 'self') and the terminal uses it.
+    expect(await page.evaluate(() => [...document.fonts].some(face => face.family.replace(/"/g, '') === 'JetBrains Mono' && face.status === 'loaded'))).toBe(true);
+    await expect(page.locator('.xterm-rows')).toHaveCSS('font-family', /^"JetBrains Mono"/);
     // The terminal is a real native PTY; user input traverses the preload and owned session.
     await page.locator('.xterm-helper-textarea').pressSequentially('hello-terminal');
     await page.locator('.xterm-helper-textarea').press('Enter');

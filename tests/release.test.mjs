@@ -68,6 +68,7 @@ test('notices cover everything that ships', () => {
   const shipped = productionPackages(JSON.parse(readFileSync('package-lock.json', 'utf8'))).map(path => path.split('node_modules/').at(-1));
   assert.ok(shipped.includes('electron-updater') && shipped.includes('sax'), 'Updater dependencies, including deduplicated ones');
   for (const name of [...pkg.journal.rendererBundle, ...shipped, 'node-pty', 'electron']) assert.match(notices, new RegExp(`^## ${name.replace(/[/@.]/g, '\\$&')} `, 'm'), name);
+  assert.match(notices, /^## @fontsource\/jetbrains-mono .*\n\nLicense: OFL-1\.1$/m, 'The bundled monospace font');
 });
 
 test('the node-pty spawn-helper path fix is applied once and fails closed on change', t => {
@@ -86,7 +87,8 @@ test('the node-pty spawn-helper path fix is applied once and fails closed on cha
 
 test('package audit: allow-list, forbidden files and leaks', () => {
   assert.deepEqual(auditEntries(['dist/index.html', 'dist/assets/index-abc.js', 'src/core/store.mjs', 'src/desktop/main.mjs', 'src/runtime/runtime.mjs', 'package.json', 'THIRD_PARTY_NOTICES.md',
-    'node_modules/node-pty/lib/index.js', 'node_modules/node-pty/build/Release/pty.node', 'node_modules/node-pty/build/Release/spawn-helper', 'assets/branding/journal-app-icon.png']), []);
+    'node_modules/node-pty/lib/index.js', 'node_modules/node-pty/build/Release/pty.node', 'node_modules/node-pty/build/Release/spawn-helper', 'assets/branding/journal-app-icon.png',
+    'dist/assets/jetbrains-mono-latin-400-normal-V6pRDFza.woff2']), []);
   for (const bad of ['.env', 'src/core/.env.local', 'data/journal.sqlite', 'runtime-stderr.log', 'dist/assets/index.js.map', '.cache/tmp/x', 'tests/a.test.mjs', 'fixtures/x.json', 'docs/a.md', 'src/ui/App.tsx', 'certs/dev.p12'])
     assert.equal(auditEntries([bad]).length, 1, bad);
   assert.match(auditEntries(['node_modules/react/index.js'])[0], /not on the allow-list/);

@@ -48,3 +48,11 @@ for (const [name, t] of Object.entries(themes)) {
       assert.equal(terminal[key]?.toUpperCase(), t[token].toUpperCase(), `${key} = --${token}`);
   });
 }
+
+test('the terminal font stack is the --font-mono token', async () => {
+  const { MONO_FONT } = await import('../src/ui/theme.ts');
+  const tokens = readFileSync(new URL('../src/ui/tokens.css', import.meta.url), 'utf8');
+  const stack = tokens.match(/--font-mono:([^;]+);/)[1];
+  assert.equal(MONO_FONT.replace(/\s*,\s*/g, ','), stack.replace(/\s*,\s*/g, ','));
+  assert.match(stack, /^"JetBrains Mono",/);
+});

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { api } from './types';
-import { terminalThemes, type Appearance } from './theme';
+import { MONO_FONT, terminalThemes, type Appearance } from './theme';
 
 // A visible terminal for a one-off process Journal started at the user's
 // request (installing or signing in to a CLI). Output is shown, never stored.
@@ -16,7 +16,7 @@ export function ProcessDialog({ id, title, command, appearance, onClose, onExit 
   useEffect(() => { appearanceRef.current = appearance; if (terminalRef.current) terminalRef.current.options.theme = terminalThemes[appearance]; }, [appearance]);
   useEffect(() => { dialog.current?.showModal(); }, []);
   useEffect(() => {
-    const terminal = new Terminal({ fontSize: 12, lineHeight: 1.3, scrollback: 2000, convertEol: false, theme: terminalThemes[appearanceRef.current], fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace' });
+    const terminal = new Terminal({ fontSize: 12, lineHeight: 1.3, scrollback: 2000, convertEol: false, theme: terminalThemes[appearanceRef.current], fontFamily: MONO_FONT, fontWeight: 400, fontWeightBold: 600 });
     const fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(host.current!); terminalRef.current = terminal;
     terminal.parser.registerOscHandler(52, () => true); // no clipboard writes from the process
     requestAnimationFrame(() => { fit.fit(); void api('processResize', { id, cols: terminal.cols, rows: terminal.rows }).catch(() => {}); terminal.focus(); });

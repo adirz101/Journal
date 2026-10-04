@@ -7,6 +7,9 @@ export function storedAppearance(): Appearance {
   catch { return 'dark'; }
 }
 
+// The --font-mono stack from src/ui/tokens.css (xterm measures glyphs on a canvas).
+export const MONO_FONT = '"JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace';
+
 // xterm cannot read CSS variables: these repeat src/ui/tokens.css (--term, --tx,
 // --acc, --line2, --tx3); tests/tokens.test.mjs keeps the two in step.
 export const terminalThemes: Record<Appearance, ITheme> = {
