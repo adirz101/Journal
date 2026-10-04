@@ -386,6 +386,11 @@ test('next needs-you jumps to a Claude session waiting for approval and shows wh
     await page.locator('.xterm-helper-textarea').press('Escape');
     await expect(page.locator('.terminal-label')).toContainText('Your turn');
     await expect(asking).not.toContainText('Needs approval');
+    // A notification click: main sends focus-session, which selects the session like a click.
+    const calmId = await page.evaluate(async () => (await (window as any).journal.request('sessions')).live.find((s: any) => s.title === 'CALM_ONE').id);
+    await app.evaluate(({ BrowserWindow }, sessionId) => { BrowserWindow.getAllWindows()[0].webContents.send('journal:event', { type: 'focus-session', sessionId }); }, calmId);
+    await expect(sessionButton(page, 'CALM_ONE')).toHaveAttribute('aria-current', 'true');
+    await expect(page.locator('.terminal-surface')).toContainText('TASK CALM_ONE');
   } finally { await closeApp(app); f.cleanup(); }
 });
 
