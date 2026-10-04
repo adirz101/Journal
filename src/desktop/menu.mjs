@@ -2,16 +2,20 @@
 // "Check for Updates…", in the app menu on macOS and in Help elsewhere.
 export const PROJECT_URL = 'https://github.com/adirz101/Journal';
 
-export function menuTemplate({ platform, name, checkForUpdates, openUrl }) {
+export function menuTemplate({ platform, name, checkForUpdates, openUrl, packaged = false }) {
+  // Released builds: zoom and full screen only. Reload would drop the renderer mid-session for no user benefit.
+  const view = packaged
+    ? { label: 'View', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] }
+    : { role: 'viewMenu' };
   const check = { id: 'check-for-updates', label: 'Check for Updates…', click: () => checkForUpdates() };
   const help = { role: 'help', submenu: [{ label: 'Journal on GitHub', click: () => openUrl(PROJECT_URL) }, { label: 'Releases', click: () => openUrl(`${PROJECT_URL}/releases`) }] };
   if (platform === 'darwin') {
     return [
       { label: name, submenu: [{ role: 'about' }, check, { type: 'separator' }, { role: 'services' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
-      { role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }, help,
+      { role: 'fileMenu' }, { role: 'editMenu' }, view, { role: 'windowMenu' }, help,
     ];
   }
-  return [{ role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }, { ...help, submenu: [check, { type: 'separator' }, ...help.submenu] }];
+  return [{ role: 'fileMenu' }, { role: 'editMenu' }, view, { role: 'windowMenu' }, { ...help, submenu: [check, { type: 'separator' }, ...help.submenu] }];
 }
 
 // What to tell the user after a check they started from the menu. The sidebar

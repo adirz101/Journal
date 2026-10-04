@@ -28,3 +28,13 @@ test('menu check results', () => {
   assert.deepEqual(checkOutcome({ ...base, status: 'error', message: 'offline' }), { kind: 'error', message: 'Could not check for updates.', detail: 'offline' });
   assert.equal(checkOutcome({ ...base, status: 'checking' }), null);
 });
+
+test('released builds have no Reload or developer tools in the View menu', () => {
+  const options = { name: 'Journal', checkForUpdates() {}, openUrl() {}, packaged: true };
+  for (const platform of ['darwin', 'win32']) {
+    const template = menuTemplate({ ...options, platform });
+    assert.ok(!template.some(item => item.role === 'viewMenu'), platform);
+    const view = template.find(item => item.label === 'View');
+    assert.deepEqual(view.submenu.filter(item => item.role).map(item => item.role), ['resetZoom', 'zoomIn', 'zoomOut', 'togglefullscreen'], platform);
+  }
+});
