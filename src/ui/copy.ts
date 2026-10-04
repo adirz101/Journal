@@ -19,6 +19,22 @@ export const copy = {
     stopped: 'Stopped', interrupted: 'Interrupted', orphaned: 'Still running outside Journal',
     noOutput: 'no output yet', outputNow: 'output just now', quiet: (span: string) => `quiet ${span}`, limited: 'limited status',
   },
+  // Phase 5: a note card's trust lines (src/ui/noteCardModel.ts composes them). Never "used": Journal sees delivery only.
+  trust: {
+    today: 'today', yesterday: 'yesterday', daysAgo: (n: number) => `${n} days ago`, onDate: (date: string) => `on ${date}`,
+    rememberedBy: 'You remembered this', rememberedSuffix: ', remembered by you',
+    fromSession: (title: string) => `from the session '${title}'`, fromUntitled: 'from a session', removedSession: 'From a removed session',
+    added: (date: string) => `You added this on ${date}`, git: (range: string) => `Drafted from Git (${range})`, upTo: (head: string) => `up to ${head}`,
+    imported: (date: string) => `Imported on ${date}`, promoted: (branch: string) => `Proposed for all branches from ⑂ ${branch}`,
+    basedOn: (where: string) => `Based on ${where}`, unchanged: 'file unchanged since you saved it', fileChanged: 'file changed',
+    atStart: 'checked when the session started', atPrepared: 'checked when this launch was prepared', onlyOn: (branch: string) => `only on ⑂ ${branch}`, anotherBranch: 'another branch', folderRemoved: 'its folder was removed from the project',
+    notSent: 'Not sent yet', sentTo: (n: number) => n === 1 ? 'Sent to 1 session' : `Sent to ${n} sessions`,
+    sentTip: 'Counted once per conversation, including resumes. Includes starts where Journal could not confirm delivery.',
+    // Memory tab filters (board WrapUp): chips by category, then two attention toggles.
+    category: 'Category', otherBranches: 'Other branches', checking: '…', checked: (n: number, total: number) => `Checked ${n} of ${total}`,
+    needCheck: (n: number) => n === 1 ? '1 note needs a check' : `${n} notes need a check`, firstOnly: (n: number) => `Showing the first ${n}`,
+    noneNeedCheck: 'No notes need a check', checkingNotes: 'Checking notes…', noneOtherBranch: 'No notes for other branches', showSource: 'Show source', hideSource: 'Hide source',
+  },
 } as const;
 
 // Tooltips keep the precise term.

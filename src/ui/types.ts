@@ -28,7 +28,20 @@ export interface SelectionPreview {
   terms: string[];                                     // queryTerms(task + reference paths)
   taskNotes: number;                                   // remembered non-brief notes on this branch or all branches
 }
-export interface MemoryPage { items: Memory[]; total: number; offset: number; limit: number; counts: Record<string, number>; }
+// categoryCounts: per category under the other filters (not the category one); otherBranch: notes of other branches (Phase 5).
+export interface MemoryPage { items: Memory[]; total: number; offset: number; limit: number; counts: Record<string, number>; categoryCounts?: Record<string, number>; otherBranch?: number; }
+// Where a note came from (memoryOrigins, src/core/insights.mjs). createdAt: revision 1. A session's
+// id and title are set only while it is present; a removed or purged session keeps its provider and date.
+export interface MemoryOrigin {
+  kind: 'session' | 'manual' | 'git' | 'import' | 'promoted';
+  createdAt: string; approvedAt: string | null; approvedRevision: number | null;
+  session?: { id: string | null; title: string | null; provider: string | null; date: string | null; state: 'present' | 'removed' | 'purged' };
+  git?: { base: string | null; head: string };
+  promotedFrom?: { branch: string };
+}
+// A note card's trust lines. undefined = still loading (the line renders nothing); null = unavailable.
+// sent: distinct conversations the note was sent to (deliveryCounts, decision D6).
+export interface NoteTrust { origin?: MemoryOrigin | null; sent?: number | null }
 export interface Receipt { terms?: string[]; preview?: boolean; references?: FileReference[]; disabled?: string[]; workspaceId?: string | null; sessionId?: string; id: string; packet: string; launchPrompt?: string; query: string; items: Memory[]; excluded: { id: string; reason: string }[]; warnings?: string[]; state: string; estimatedTokens: number; createdAt: string; }
 export type SessionStatus = 'starting' | 'running' | 'waiting' | 'stopping' | 'stopped' | 'exited' | 'failed' | 'interrupted' | 'orphaned';
 export interface Survivor { pid: number; started: string; command: string; }
