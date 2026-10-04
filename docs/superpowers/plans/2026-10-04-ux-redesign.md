@@ -718,6 +718,10 @@ Each task lists **files**, **what to build** (signatures and behaviour), **tests
   - Settings opens with ⌘, and contains Dark mode and Data and backups.
 - **Acceptance:** board B4's sidebar.
 
+**Phase 1 visual review notes (carry into Phase 3):**
+- Session rows currently show both a status dot and a provider mark. The mockup uses the mark as the row's leading glyph, with the state as a word.
+- Uppercase eyebrow labels remain ("WHAT THE AGENT RECEIVES", "SENT BEFORE", category eyebrows). Board B12's voice rules use sentence case, so convert them when these panels are rebuilt.
+
 **Task 3.2: Session header and status bar (F10)**
 - **Files:** create `src/ui/SessionHeader.tsx` and `src/ui/StatusBar.tsx`; modify `App.tsx:297-312`.
 - **Build:**
