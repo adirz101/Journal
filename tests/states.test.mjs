@@ -89,3 +89,24 @@ test('Continue is blocked with the slots-full reason', async t => {
   const view = recoveryView(recovery('a', 'b'), byId(row('a'), row('b', { status: 'orphaned' })), reason);
   assert.deepEqual(view.rows.map(r => [r.action, r.reason]), [['continue', reason], ['running', null]]);
 });
+
+test('a refused start says "Nothing was sent" only when nothing can have been sent (review I2, M8)', async t => {
+  const m = await load(t);
+  for (const kind of ['missing', 'unsupported', 'signed-out']) assert.equal(m.keptText({ kind, provider: 'codex', command: null, detail: '' }), 'Your task text is kept. Nothing was sent.', kind);
+  const failed = m.startProblem({ provider: 'claude', agent: agent('claude'), error: failure('START_FAILED', 'Could not start claude') });
+  assert.equal(failed.kind, 'failed');
+  assert.equal(m.keptText(failed), 'Your task text is kept.');
+  assert.equal(m.terminalActionLabel({ kind: 'missing', provider: 'codex', command: null }), 'Install…');
+  assert.equal(m.terminalActionLabel({ kind: 'signed-out', provider: 'codex', command: 'codex login' }), 'Open terminal');
+});
+
+test('Continue in the recovery panel has its own reason when every slot is taken (review M5)', async t => {
+  const m = await load(t);
+  const { states } = await import('../src/ui/copy.ts');
+  const recovery = { at: 't', runtimeId: 'r', sessions: [{ id: 's1', status: 'interrupted', identityVerified: true }] };
+  const session = { id: 's1', projectId: 'p', provider: 'claude', nativeId: '11111111-2222-4333-8444-555555555555', nativeIdConfirmed: true, title: 'x', status: 'interrupted', receiptId: 'r', createdAt: 't' };
+  const blocked = '4 of 4 running. Stop or finish one to continue this session.';
+  const view = m.recoveryView(recovery, { s1: session }, blocked);
+  assert.equal(view.rows[0].reason, blocked);
+  assert.equal(states.continueSlotsFull, blocked); assert.doesNotMatch(states.continueSlotsFull, /write the task/);
+});

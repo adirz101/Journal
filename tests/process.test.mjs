@@ -103,7 +103,7 @@ if(a[0]==='hang'){const {spawn}=require('node:child_process');const c=spawn(proc
   assert.equal(await runFile(cli, ['stdin'], process.env), 'stdin:0\n', 'stdin is closed, so nothing waits on input');
   assert.deepEqual(JSON.parse(await runFile(cli, ['env'], { ...process.env, ELECTRON_RUN_AS_NODE: '1' })), { open: '1', node: null });
   const started = Date.now();
-  await assert.rejects(runFile(cli, ['hang'], process.env, { timeout: 500 }), error => error.timedOut === true);
+  await assert.rejects(runFile(cli, ['hang'], process.env, { timeout: 500 }), error => error.timedOut === true && error.settledBy === 'close', 'a run whose group ends settles by close, not the deadline');
   assert.ok(Date.now() - started < 4000);
   const { readFileSync } = await import('node:fs');
   const child = Number(readFileSync(join(dir, 'child'), 'utf8'));
@@ -129,14 +129,10 @@ require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));conso
     removeLater(dir);
   });
   // The timeout leaves the fixture ample time to start Node, spawn the grandchild and print
-  // "started" even on a loaded machine (300 ms failed about 1 run in 6). The run still settles
-  // only through the hard deadline (2.5 s after the kill), which the elapsed bounds pin down.
+  // "started" even on a loaded machine (300 ms failed about 1 run in 6). The error says how the
+  // run settled (settledBy), so the mechanism is checked without timing it.
   const timeout = 2000;
-  const started = Date.now();
-  await assert.rejects(runFile(cli, [], process.env, { timeout }), error => error.timedOut === true && error.killed === true && error.stdout === 'started\n');
-  const elapsed = Date.now() - started;
-  assert.ok(elapsed >= timeout + 2400, `settled after ${elapsed} ms, before the hard deadline`);
-  assert.ok(elapsed < timeout + 2500 + 3000, `settled after ${elapsed} ms`);
+  await assert.rejects(runFile(cli, [], process.env, { timeout }), error => error.timedOut === true && error.killed === true && error.settledBy === 'deadline' && error.stdout === 'started\n');
   assert.equal(isAlive(Number(readFileSync(pidFile, 'utf8'))), true, 'the grandchild escaped the group, so only the deadline could settle the run');
 
   // The overflow path uses the same deadline.
@@ -147,7 +143,5 @@ const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,
 require('node:fs').writeFileSync(${JSON.stringify(join(dir, 'loud-grandchild'))},String(c.pid));process.stdout.write('x'.repeat(4096));setInterval(()=>{},1000);
 `);
   chmodSync(loud, 0o755);
-  const loudStarted = Date.now();
-  await assert.rejects(runFile(loud, [], process.env, { timeout: 60000, maxBuffer: 1024 }), error => error.killed === true && error.timedOut === undefined);
-  assert.ok(Date.now() - loudStarted < 5000);
+  await assert.rejects(runFile(loud, [], process.env, { timeout: 60000, maxBuffer: 1024 }), error => error.killed === true && error.timedOut === undefined && error.settledBy === 'deadline');
 });

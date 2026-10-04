@@ -154,11 +154,14 @@ export function runFile(path, args, env = process.env, { platform = process.plat
     try { child = spawn(target.file, target.args, { cwd, env: childEnv(env), windowsHide: true, detached: platform !== 'win32', stdio: [stdin === 'ignore' ? 'ignore' : 'pipe', 'pipe', 'pipe'] }); }
     catch (error) { reject(error); return; }
     let stdout = ''; let stderr = ''; let size = 0; let done = false; let timedOut = false; let overflow = false; let deadline = null;
+    // How a killed run settled: 'close' (its pipes ended) or 'deadline' (they were dropped). Set on
+    // the timeout and overflow errors, so callers and tests can tell without timing the run.
+    let settledBy = 'close';
     const end = () => {
       // 'close' waits for stdout and stderr to end. A grandchild that left the group
       // (setsid or detached) can hold them open forever, so after the kill the run
       // settles by a hard deadline, dropping the pipes, whether or not 'close' came.
-      deadline ??= setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); finish(null); }, KILL_DEADLINE);
+      deadline ??= setTimeout(() => { settledBy = 'deadline'; child.stdout.destroy(); child.stderr.destroy(); finish(null); }, KILL_DEADLINE);
       if (!child.pid) return;
       if (platform === 'win32') { execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {}); return; }
       try { process.kill(-child.pid, 'SIGTERM'); } catch { try { child.kill('SIGTERM'); } catch { /* gone */ } }
@@ -175,8 +178,8 @@ export function runFile(path, args, env = process.env, { platform = process.plat
     const finish = (error, code, signal) => {
       if (done) return; done = true; clearTimeout(timer); clearTimeout(deadline);
       if (error) { reject(Object.assign(error, { stdout, stderr })); return; }
-      if (timedOut) { reject(Object.assign(new Error('Timed out'), { timedOut: true, killed: true, stdout, stderr })); return; }
-      if (overflow) { reject(Object.assign(new Error('Output exceeded the limit'), { killed: true, stdout, stderr })); return; }
+      if (timedOut) { reject(Object.assign(new Error('Timed out'), { timedOut: true, killed: true, settledBy, stdout, stderr })); return; }
+      if (overflow) { reject(Object.assign(new Error('Output exceeded the limit'), { killed: true, settledBy, stdout, stderr })); return; }
       if (code !== 0) { reject(Object.assign(new Error(`Exited with ${signal ?? code}`), { code: signal ? null : code, signal, stdout, stderr })); return; }
       resolve(output === 'both' ? { stdout, stderr } : stdout);
     };

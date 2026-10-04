@@ -3,6 +3,7 @@
 // tests/states.test.mjs checks them. Each state is one honest sentence and one next step.
 import { errorCode, isLive, type AgentInfo, type Provider, type Recovery, type Session } from './types';
 import { resumable } from './sessionState';
+import { states } from './copy';
 
 export type StartProblem =
   | { kind: 'signed-out'; provider: Provider; command: string | null }
@@ -34,6 +35,13 @@ export function startProblem({ provider, agent, error }: { provider: Provider; a
   if (!agent.available || agent.state === 'missing') return { kind: 'missing', provider, command: agent.commands?.install ?? null };
   return null;
 }
+
+// What a refused start's card says about the task and delivery (review I2). "Nothing was sent"
+// only where nothing can have been: a missing or unsupported agent, or one signed out. A failed
+// start may have reached the agent (its receipt can be uncertain), so it says only that the task
+// text is kept. Its terminal action: a missing agent's runs the installer, so it says Install….
+export const keptText = (problem: StartProblem) => problem.kind === 'failed' ? states.kept : `${states.kept} ${states.nothingSent}`;
+export const terminalActionLabel = (problem: StartProblem) => problem.kind === 'missing' ? states.install : states.openTerminal;
 
 export type RecoveryAction = 'continue' | 'needs-id' | 'running' | 'gone';
 export interface RecoveryRow { session: Session; action: RecoveryAction; reason: string | null }

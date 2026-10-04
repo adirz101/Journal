@@ -33,8 +33,10 @@ function lookup(status: FileStatus | undefined) {
   };
 }
 
-export function ExplorerPanel({ project, session, rootsVersion, revealLabel, focusSignal, onFocusHandled, onPreviewing, onAddReference, onSaveEvidence, onError, reveal }: {
+export function ExplorerPanel({ project, session, rootsVersion, revealLabel, focusSignal, onFocusHandled, onPreviewing, onAddReference, onSaveEvidence, onError, reveal, onRoot }: {
   project: Project; session: Session | null; rootsVersion: string; revealLabel: string; focusSignal: number; onFocusHandled?: () => void;
+  // Phase 8 review M2: the root shown (the palette searches it), and null on unmount.
+  onRoot?: (projectId: string, rootKey: string | null) => void;
   // Phase 8: a file opened from the palette (seq increases per request); previewed once its root is shown.
   reveal?: { projectId: string; rootKey: string; path: string; seq: number } | null;
   onPreviewing: (previewing: boolean) => void; onAddReference: (reference: FileReference) => Promise<void>;
@@ -58,6 +60,9 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
   const primary = roots?.primary.find(root => root.key === primaryKey) ?? null;
   const visible = useMemo(() => primary ? [primary, ...(roots?.folders.filter(root => root.exists !== false) ?? [])] : [], [primary, roots]);
   const visibleKey = visible.map(root => root.key).join('|');
+  const onRootRef = useRef(onRoot); onRootRef.current = onRoot;
+  useEffect(() => { if (primary) onRootRef.current?.(project.id, primaryKey); }, [project.id, primaryKey, primary]);
+  useEffect(() => () => onRootRef.current?.(project.id, null), [project.id]);
   const rootFor = (key: string) => visible.find(root => root.key === key) ?? null;
 
   useEffect(() => { setOverride(null); }, [ownSession?.id]);

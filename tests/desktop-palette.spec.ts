@@ -88,6 +88,50 @@ test('the palette key opens it while the terminal has focus; Escape and the key 
   } finally { await closeApp(app); f.cleanup(); }
 });
 
+test('Enter typed straight after the palette or open-file key never reaches the agent (review I5)', async () => {
+  const f = setup('palette-early'); const { app, page } = await open(f.env, f.project);
+  try {
+    await startSession(page, 'claude', { task: 'EARLY_KEYS' });
+    await expect(page.locator('.terminal-surface')).toContainText('TASK EARLY_KEYS');
+    for (const [key, name] of [[mac ? 'K' : 'P', 'Command palette'], [mac ? 'P' : 'O', 'Open a file']] as const) {
+      await page.locator('.xterm-helper-textarea').focus();
+      expect(await terminalHasFocus(page)).toBe(true);
+      // The shortcut and Enter in one go, as fast as the OS can deliver them: Enter is handled
+      // before React has rendered the palette or focused its input.
+      await app.evaluate(({ BrowserWindow }, shortcut) => {
+        const contents = BrowserWindow.getAllWindows()[0].webContents;
+        contents.sendInputEvent({ type: 'keyDown', keyCode: shortcut.key, modifiers: shortcut.modifiers });
+        contents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); contents.sendInputEvent({ type: 'char', keyCode: '\r' }); contents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+      }, { key, modifiers: (mac ? ['meta'] : ['control', 'shift']) as ('meta' | 'control' | 'shift')[] });
+      await page.waitForTimeout(400);
+      if (await paletteDialog(page, name).count()) await page.keyboard.press('Escape');
+      await expect(page.locator('dialog[open]')).toHaveCount(0);
+    }
+    // The fixture echoes every line it receives: only the line typed now arrives.
+    await page.locator('.xterm-helper-textarea').focus();
+    await page.locator('.xterm-helper-textarea').pressSequentially('after'); await page.locator('.xterm-helper-textarea').press('Enter');
+    await expect(page.locator('.terminal-surface')).toContainText('ECHO after');
+    expect((await page.locator('.terminal-surface').innerText()).match(/ECHO/g)).toHaveLength(1);
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('open-file without a project opens the palette with Open project… first (review M6)', async () => {
+  const f = setup('palette-noproject');
+  const app = await electron.launch({ args: ['.'], env: f.env });
+  try {
+    await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, f.project);
+    const page = await app.firstWindow();
+    await expect(page.getByRole('button', { name: 'Open a project…', exact: true }).first()).toBeVisible();
+    await pressKey(app, mac ? 'P' : 'O', mac ? ['meta'] : ['control', 'shift']);
+    await expect(paletteDialog(page)).toBeVisible();
+    await expect(combobox(page)).toBeFocused();
+    await expect(results(page).getByRole('option').first()).toContainText('Open project…');
+    expect(await activeOption(page)).toContain('Open project…');
+    await page.keyboard.press('Enter');
+    await expect(taskBox(page)).toBeVisible();
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
 test('keyboard only: type, arrow down and Enter open a session; aria-activedescendant follows the active option', async () => {
   const f = setup('palette-keys'); const { app, page } = await open(f.env, f.project);
   try {
@@ -220,6 +264,12 @@ test('no results: New session with this task fills the task box without starting
     await expect(results(page).getByRole('option', { name: /New session with this task/ })).toBeVisible();
     await page.keyboard.press('Enter');
     await expect(taskBox(page)).toHaveValue('flaky ci on windows\nsecond idea xyzzy');
+    // Enter at once, while the note search for the text is still loading (nothing listed yet),
+    // waits for it and then takes New session with this task (review M1).
+    await openPalette(app, page);
+    await page.keyboard.type('qq'); await page.keyboard.press('Enter');
+    await expect(paletteDialog(page)).toHaveCount(0);
+    await expect(taskBox(page)).toHaveValue('flaky ci on windows\nsecond idea xyzzy\nqq');
     await page.waitForTimeout(500);
     expect(f.launches()).toHaveLength(1);
   } finally { await closeApp(app); f.cleanup(); }

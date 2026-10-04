@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { states } from './copy';
 import { api, PROVIDER_NAMES } from './types';
-import type { StartProblem } from './statesModel';
+import { keptText, terminalActionLabel, type StartProblem } from './statesModel';
 
 // An agent that can't start (board 9, panel 3), above Start in the composer: what is wrong,
 // the command to run, and Open terminal, Copy command and Check again. Open terminal runs
@@ -24,10 +24,10 @@ export function StartError({ problem, alert, onOpenTerminal }: { problem: StartP
     {body && <p className="start-error-body">{body}</p>}
     {command && <code className="start-error-command">{command}</code>}
     <div className="start-error-actions">
-      {onOpenTerminal && <button type="button" className="primary" onClick={onOpenTerminal}>{states.openTerminal}</button>}
+      {onOpenTerminal && <button type="button" className="primary" onClick={onOpenTerminal}>{terminalActionLabel(problem)}</button>}
       {command && <button type="button" onClick={() => void copy()}>{copied === 'done' ? states.copied : copied === 'failed' ? states.copyFailed : states.copyCommand}</button>}
       <button type="button" className="ghost" disabled={checking} onClick={() => void check()}>{states.checkAgain}</button>
     </div>
-    {alert && <p className="start-error-kept">{states.kept}</p>}
+    {alert && <p className="start-error-kept">{keptText(problem)}</p>}
   </div>;
 }

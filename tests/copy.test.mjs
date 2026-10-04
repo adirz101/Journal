@@ -422,4 +422,9 @@ test('Phase 8: a truncated file search names its reason, and the crash count cov
   assert.equal(states.crashBody({ total: 140, sessions }), '140 sessions were interrupted. Nothing was resent to the agents.');
   assert.equal(states.crashBody({ sessions: sessions.slice(0, 1) }), '1 session was interrupted. Nothing was resent to the agents.');
   for (const text of [palette.filesTruncated(5, 'timeout'), states.crashBody({ total: 2, sessions })]) assert.doesNotMatch(text, OLD_TERMS);
+  // Orphaned rows ("still running outside Journal") are not counted as interrupted (review M4).
+  const mixed = [{ status: 'interrupted' }, { status: 'orphaned' }, { status: 'interrupted' }];
+  assert.equal(states.crashBody({ total: 3, sessions: mixed }), '2 sessions were interrupted. 1 session is still running outside Journal. Nothing was resent to the agents.');
+  assert.equal(states.crashBody({ total: 2, sessions: [{ status: 'orphaned' }, { status: 'orphaned' }] }), '2 sessions are still running outside Journal. Nothing was resent to the agents.');
+  assert.equal(states.crashBody({ total: 140, sessions: [...sessions.slice(0, 99), { status: 'orphaned' }] }), '139 sessions were interrupted. 1 session is still running outside Journal. Nothing was resent to the agents.');
 });

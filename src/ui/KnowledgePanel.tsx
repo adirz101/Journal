@@ -120,9 +120,10 @@ export function KnowledgePanel({ project, workspaces = [], version, trustVersion
     return () => { current = false; };
   }, [version, focusedId, project.id]);
   const shownItems = focusNote && focusNote.note.projectId === project.id && !items.some(item => item.id === focusNote.note.id) ? [focusNote.note, ...items] : items;
-  const focusIndex = focusNote ? shownItems.findIndex(item => item.id === focusNote.note.id) : -1;
+  // The card is found by its note ID (data-note-id), never by its position in the list.
   useEffect(() => {
-    const card = focusIndex < 0 ? null : list.current?.children[focusIndex] as HTMLElement | undefined;
+    if (!focusNote) return;
+    const card = [...(list.current?.querySelectorAll<HTMLElement>('[data-note-id]') ?? [])].find(element => element.dataset.noteId === focusNote.note.id);
     if (!card) return;
     card.tabIndex = -1; card.scrollIntoView({ block: 'nearest' }); card.focus({ preventScroll: true });
   }, [focusNote?.seq]); // eslint-disable-line react-hooks/exhaustive-deps

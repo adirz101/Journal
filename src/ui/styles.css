@@ -519,7 +519,8 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .palette-footer{display:flex;align-items:center;gap:16px;padding:10px 16px;border-top:1px solid var(--line);font-size:var(--text-meta);color:var(--tx3);flex:none}
 .palette-footer kbd{margin-right:2px}.palette-footer-end{margin-left:auto}
 @media(hover:hover) and (pointer:fine){.palette-option{cursor:pointer}.palette-option[aria-disabled=true]{cursor:default}}
-@media(max-width:560px){.palette{margin-top:16px}.palette-detail{display:none}}
+/* Narrow: session details give way, but an unavailable action keeps its reason (wrapped under its label). */
+@media(max-width:560px){.palette{margin-top:16px}.palette-detail:not(.palette-reason){display:none}.palette-option:has(.palette-reason){flex-wrap:wrap}.palette-reason{order:1;flex:1 0 100%;max-width:none;white-space:normal;padding-left:28px}}
 
 /* Runtime disconnected (board 9, panel 1): amber, because it needs the user. */
 .runtime-banner{margin:12px 25px 0;padding:10px 12px;border:1px solid var(--ambline);border-radius:8px;background:var(--ambsoft);color:var(--tx);display:flex;flex-direction:column;align-items:flex-start;gap:6px;font-size:var(--text-body)}

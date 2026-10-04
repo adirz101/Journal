@@ -83,9 +83,15 @@ test('runtime crash → the recovery panel lists the interrupted sessions; nothi
     await expect(codexRow).toContainText('Needs the conversation ID before continuing');
     await page.waitForTimeout(500);
     expect(f.launches()).toHaveLength(2); // nothing was resent
+    // The ended terminal is unavailable, not an error: no app banner beside the panel (review I1).
+    await expect(page.locator('.error-banner')).toHaveCount(0);
     await codexRow.getByRole('button', { name: 'Confirm ID…', exact: true }).click();
     await expect(page.locator('.session-header')).toContainText('CODEX_CRASH');
     await expect(sessionStatus(page)).toContainText('Interrupted');
+    // A window resize reaches no live terminal: still no banner.
+    await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; const [width, height] = w.getSize(); w.setSize(width - 40, height); });
+    await page.waitForTimeout(500);
+    await expect(page.locator('.error-banner')).toHaveCount(0);
     // Continue reopens the same Claude conversation (exact ID), only when clicked.
     await claudeRow.getByRole('button', { name: 'Continue', exact: true }).click();
     await expect.poll(() => f.launches().length).toBe(3);
@@ -93,6 +99,7 @@ test('runtime crash → the recovery panel lists the interrupted sessions; nothi
     expect(resumed).toContain('--resume'); expect(resumed[resumed.indexOf('--resume') + 1]).toBe((f.launches()[0].argv as string[])[(f.launches()[0].argv as string[]).indexOf('--session-id') + 1]);
     await expect(claudeRow).toHaveCount(0);
     await expect(codexRow).toBeVisible();
+    await expect(page.locator('.error-banner')).toHaveCount(0);
     await panel.getByRole('button', { name: 'Done', exact: true }).click();
     await expect(panel).toHaveCount(0);
     await expect.poll(async () => (await request(page, 'bootstrap')).recovery).toBeNull();
@@ -121,46 +128,46 @@ test('disconnected banner: Reconnect now waits for the next runtime event, and t
     await expect(banner).not.toContainText('could not be started');
     await emit({ type: 'runtime', state: 'connected', recovered: true, recovery: null });
     await expect(banner).toHaveCount(0);
-    // A real crash: the runtime is relaunched and the banner goes once it is back.
+    // A real crash: the runtime is relaunched and the banner goes once it is back. Reconnect now,
+    // asked the moment the disconnect arrives (before the relaunch connects), retries: retrying is true.
+    await page.evaluate(() => { const w = window as any; w.__retry = null; const off = w.journal.onEvent((event: any) => { if (event.type === 'runtime' && event.state === 'disconnected' && !w.__retry) { w.__retry = w.journal.request('reconnectRuntime', {}); off?.(); } }); });
     const before = f.runtimeInfo(); process.kill(before.pid, 'SIGKILL');
+    await expect.poll(() => page.evaluate(async () => { const retry = (window as any).__retry; return retry ? await retry : null; }), { timeout: 20000 }).toEqual({ retrying: true });
     await expect.poll(() => { try { return f.runtimeInfo().runtimeId !== before.runtimeId; } catch { return false; } }, { timeout: 20000 }).toBe(true);
     await expect(page.getByText('Runtime connected')).toBeVisible({ timeout: 20000 });
     await expect(page.getByText('Lost connection to the session runtime')).toHaveCount(0);
   } finally { await closeApp(app); f.cleanup(); }
 });
 
-test('a provider removed after detection → "isn’t installed" with Check again; the task text is kept', async () => {
-  // The Cursor CLI disappears after detection: its start is refused with PROVIDER_MISSING
-  // (a missing Claude or Codex executable makes node-pty's child exit instead on POSIX).
+test('a provider removed after detection → "isn’t installed" with Install… and Check again; the task text is kept', async () => {
+  // The Codex CLI disappears after detection: the runtime looks for it before preparing any
+  // context, so the start is refused with PROVIDER_MISSING and nothing is sent (review I4).
   const f = setup('states-missing');
-  const cursorCli = `#!${process.execPath}
-const a=process.argv.slice(2);
-if(a[0]==='--version'){console.log('2026.10.01-e373342');process.exit(0)}
-if(a[0]==='--help'){console.log('Start the Cursor Agent\\n  --resume [chatId]\\n  --mode <mode>\\n  login\\n  create-chat');process.exit(0)}
-if(a[0]==='status'){console.log(a.includes('--format')?JSON.stringify({authenticated:true}):'Logged in');process.exit(0)}
-process.exit(1)`;
-  const agent = resolve(f.bin, 'agent'); writeFileSync(agent, cursorCli); chmodSync(agent, 0o755);
+  const codexCli = resolve(f.bin, 'codex'); const fixture = readFileSync(codexCli);
   const { app, page } = await open(f.env, f.project);
   try {
-    // Headless runs look for Cursor only when a spec allows Cursor's probes: allow them, then check.
-    await app.evaluate(() => { (globalThis as any).__journalAuthProbes = ['cursor']; });
-    await request(page, 'providerStatus', { provider: 'cursor', fresh: true });
-    const cursor = page.getByRole('radiogroup', { name: 'Agent' }).getByRole('radio', { name: 'Cursor', exact: true });
-    await expect(cursor).toContainText('Signed in');
-    await chooseAgent(page, 'cursor');
+    const codex = page.getByRole('radiogroup', { name: 'Agent' }).getByRole('radio', { name: 'Codex', exact: true });
+    await expect(codex).toContainText('Installed');
+    await chooseAgent(page, 'codex');
     await taskBox(page).fill('KEEP_THIS_TASK');
-    rmSync(agent);
+    rmSync(codexCli);
     await startButton(page).click();
     const card = startError(page);
     await expect(card).toHaveAttribute('role', 'alert');
-    await expect(card).toContainText('Cursor isn’t installed');
+    await expect(card).toContainText('Codex isn’t installed');
     await expect(card).toContainText('Your task text is kept. Nothing was sent.');
+    // A missing agent's terminal action runs its installer, so it says so (review M8).
+    await expect(card.getByRole('button', { name: 'Install…', exact: true })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Open terminal', exact: true })).toHaveCount(0);
     await expect(card.getByRole('button', { name: 'Check again', exact: true })).toBeVisible();
     await expect(taskBox(page)).toHaveValue('KEEP_THIS_TASK');
     await expect(page.locator('.error-banner')).toHaveCount(0);
     expect(f.launches()).toHaveLength(0);
+    // No session and no receipt were recorded for the refused start.
+    const state = await request(page, 'project', { projectId: (await request(page, 'bootstrap')).projects[0].id });
+    expect(state.sessions).toHaveLength(0); expect(state.receipts).toHaveLength(0);
     // Installed again: Check again clears the card.
-    writeFileSync(agent, cursorCli); chmodSync(agent, 0o755);
+    writeFileSync(codexCli, fixture); chmodSync(codexCli, 0o755);
     await card.getByRole('button', { name: 'Check again', exact: true }).click();
     await expect(card).toHaveCount(0, { timeout: 15000 });
     await expect(startButton(page)).toBeEnabled();

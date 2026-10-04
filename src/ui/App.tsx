@@ -21,6 +21,7 @@ import { RuntimeBanner } from './RuntimeBanner'; // Phase 8
 import { RecoveryPanel } from './RecoveryPanel'; // Phase 8
 import { recoveryView } from './statesModel'; // Phase 8
 import { PALETTE_ACTIONS, type PaletteActionId } from './paletteModel'; // Phase 8
+import { expectModalDialog } from './modal'; // Phase 8 review I5
 import { Inspector } from './Inspector';
 import { SessionTab } from './SessionTab';
 import { FilesTab } from './FilesTab';
@@ -119,9 +120,13 @@ export default function App() {
   const [workspaceDialog, setWorkspaceDialog] = useState(false); const [disabled, setDisabled] = useState<string[]>([]); const [settingsOpen, setSettingsOpen] = useState(false); const [manageId, setManageId] = useState<string | null>(null);
   // === Phase 8: palette and states ===
   // The command palette (null when closed); purpose reference: the composer's Add reference….
-  const [palette, setPalette] = useState<{ mode: 'all' | 'files'; purpose: 'open' | 'reference' } | null>(null);
+  // lead: the action listed (and active) first; open-file without a project leads with Open project….
+  const [palette, setPalette] = useState<{ mode: 'all' | 'files'; purpose: 'open' | 'reference'; lead?: PaletteActionId } | null>(null);
   // A note or file opened from the palette (seq: one request each).
   const [memoryFocus, setMemoryFocus] = useState<{ id: string; seq: number } | null>(null);
+  // The Files tab's shown root while it is mounted (null after it unmounts: it then follows the session again).
+  const [explorerRoot, setExplorerRoot] = useState<{ projectId: string; rootKey: string } | null>(null);
+  const onExplorerRoot = useCallback((projectId: string, rootKey: string | null) => setExplorerRoot(rootKey ? { projectId, rootKey } : null), []);
   const [filesReveal, setFilesReveal] = useState<{ projectId: string; rootKey: string; path: string; seq: number } | null>(null);
   // Sessions a crashed runtime left behind, until Done (acknowledgeRecovery); loadedAt: the recovery whose rows are fetched.
   const [recovery, setRecovery] = useState<Recovery | null>(null); const [recoveryLoadedAt, setRecoveryLoadedAt] = useState<string | null>(null);
@@ -351,7 +356,8 @@ export default function App() {
     const reasons = paletteCopy.reasons;
     if (id === 'next-needs-you') return busy ? reasons.busy : nextNeedsYou(ordered, selectedId) ? null : reasons.noneNeedsYou;
     if (id === 'open-project') return busy ? reasons.busy : null;
-    if (id === 'settings' || id === 'toggle-sidebar' || id === 'command-palette' || id === 'check-agents' || /^slot-/.test(id)) return null;
+    // open-file without a project opens the palette with Open project… first (plan 3, B1).
+    if (id === 'settings' || id === 'toggle-sidebar' || id === 'command-palette' || id === 'open-file' || id === 'check-agents' || /^slot-/.test(id)) return null;
     if (!state) return reasons.needsProject;
     if (id === 'focus-terminal') return session ? null : reasons.needsSession;
     return null;
@@ -376,7 +382,16 @@ export default function App() {
     if (id === 'open-project') { void openProject(); return; }
     if (id === 'settings') { setSettingsOpen(true); return; }
     // Phase 8: open-file needs a project; without one the palette lists Open project.
-    if (id === 'command-palette' || id === 'open-file') { setPalette({ mode: id === 'open-file' && state ? 'files' : 'all', purpose: 'open' }); return; }
+    if (id === 'command-palette' || id === 'open-file') {
+      // Synchronously, before React renders the palette: the terminal lets go of the keyboard and
+      // drops input until the dialog is open, so a key typed right after the shortcut never
+      // reaches the agent (review I5).
+      const focused = document.activeElement;
+      const terminal = focused instanceof HTMLElement && focused.closest('.terminal-surface') ? focused : null;
+      expectModalDialog(Date.now(), terminal); terminal?.blur();
+      setPalette(id === 'open-file' && !state ? { mode: 'all', purpose: 'open', lead: 'open-project' } : { mode: id === 'open-file' ? 'files' : 'all', purpose: 'open' });
+      return;
+    }
     if (id === 'toggle-sidebar') { layout.toggleSidebar(); return; }
     if (!projectRef.current) return;
     if (id === 'add-note') setForm({});
@@ -617,10 +632,14 @@ export default function App() {
     if (projectRef.current?.id !== projectId) return; // switched projects meanwhile
     setReferences(current => current.some(r => r.rootKey === described.rootKey && r.path === described.path && r.startLine === described.startLine && r.endLine === described.endLine) ? current : [...current, described].slice(-20));
   }
-  // The palette searches the Files tab's root: the selected session's separate copy, else the checkout.
-  const filesRoot = session && session.projectId === state?.project.id && session.workspaceId && !session.workspaceId.startsWith('root:') ? session.workspaceId : 'checkout';
-  // The palette's callbacks stay the same object (they read the newest App state through a ref),
-  // so terminal and timeline events do not re-render the open palette.
+  // The palette searches the Files tab's current root (plan decision 12): the root the Files tab
+  // shows (reported while it is mounted, so a root picked there counts), else the one it would
+  // show: the selected session's separate copy, else the checkout. Its additional folders too.
+  const followRoot = session && session.projectId === state?.project.id && session.workspaceId && !session.workspaceId.startsWith('root:') ? session.workspaceId : 'checkout';
+  const filesRoot = explorerRoot && explorerRoot.projectId === state?.project.id ? explorerRoot.rootKey : followRoot;
+  // The palette's callbacks and blocks keep their identity (callbacks read the newest App state
+  // through a ref), so the open palette re-renders only when its own props change: the session
+  // list, the clock, the connection or the root, not on terminal output.
   const paletteLatest = useRef({ palette, filesRoot, projectId: state?.project.id ?? null, selectSession, newSession, addReference, checkProvider, runCommand, commandBlock, showInspector: layout.showInspector, failed });
   paletteLatest.current = { palette, filesRoot, projectId: state?.project.id ?? null, selectSession, newSession, addReference, checkProvider, runCommand, commandBlock, showInspector: layout.showInspector, failed };
   const paletteCallbacks = useMemo(() => ({
@@ -639,8 +658,8 @@ export default function App() {
     },
     onOpenSession: (target: Session) => { setPalette(null); void paletteLatest.current.selectSession(target); },
     onOpenNote: (id: string) => { setPalette(null); setPanel('memory'); paletteLatest.current.showInspector(); setMemoryFocus(current => ({ id, seq: (current?.seq ?? 0) + 1 })); },
-    onOpenFile: (path: string) => {
-      const { palette: open, filesRoot: rootKey, projectId } = paletteLatest.current; setPalette(null);
+    onOpenFile: (path: string, rootKey: string) => {
+      const { palette: open, projectId } = paletteLatest.current; setPalette(null);
       if (!projectId) return;
       if (open?.purpose === 'reference') { void paletteLatest.current.addReference({ rootKey, path, startLine: null, endLine: null }).catch(paletteLatest.current.failed); return; }
       setFilesChoice('all'); setPanel('files'); paletteLatest.current.showInspector(); setFilesReveal(current => ({ projectId, rootKey, path, seq: (current?.seq ?? 0) + 1 }));
@@ -667,7 +686,9 @@ export default function App() {
     return () => { current = false; };
   }, [recovery, merge]);
   const startBlocked = !connected ? composer.runtimeDown : liveCount >= MAX_SESSIONS ? statesCopy.slotsFull : null;
-  const recoveryShown = useMemo(() => recoveryView(recovery, sessions, startBlocked), [recovery, sessions, startBlocked]);
+  // Continue in the recovery panel has its own slots-full sentence (no task to write there).
+  const continueBlocked = !connected ? composer.runtimeDown : liveCount >= MAX_SESSIONS ? statesCopy.continueSlotsFull : null;
+  const recoveryShown = useMemo(() => recoveryView(recovery, sessions, continueBlocked), [recovery, sessions, continueBlocked]);
   const acknowledgeRecovery = useCallback((at: string) => {
     setRecovery(current => current?.at === at ? null : current);
     void api('acknowledgeRecovery', { at }).catch(() => {});
@@ -697,7 +718,7 @@ export default function App() {
         onSelectReceipt={setReceipt} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />} />}
       {panel === 'files' && <FilesTab hasSession={!!session} view={filesView} onView={setFilesChoice} changed={changed}
         changes={session && <ChangesPanel session={session} changes={sessionChanges.changes} loading={sessionChanges.loading} error={sessionChanges.error} refresh={sessionChanges.refresh} />}
-        files={<ExplorerPanel key={state.project.id} project={state.project} session={session} rootsVersion={workspaces?.workspaces.map(w => `${w.id}:${w.state}`).join(',') ?? ''} revealLabel={`Reveal in ${revealLabel}`} focusSignal={explorerFocus} onFocusHandled={() => setExplorerFocus(0)} onPreviewing={setPreviewing} onError={failed}
+        files={<ExplorerPanel key={state.project.id} project={state.project} session={session} onRoot={onExplorerRoot} rootsVersion={workspaces?.workspaces.map(w => `${w.id}:${w.state}`).join(',') ?? ''} revealLabel={`Reveal in ${revealLabel}`} focusSignal={explorerFocus} onFocusHandled={() => setExplorerFocus(0)} onPreviewing={setPreviewing} onError={failed}
         onAddReference={addReference} reveal={filesReveal}
         onSaveEvidence={source => setEvidenceSource({ kind: 'file', path: source.path, startLine: source.startLine, endLine: source.endLine, ...(source.rootKey.startsWith('root:') ? { rootId: source.rootKey.slice(5) } : {}) })} />} />}
       {panel === 'memory' && <MemoryTab><KnowledgePanel project={state.project} workspaces={workspaces?.workspaces} version={knowledgeVersion} trustVersion={trustVersion} sessions={ordered} filters={memoryFilters} onFilters={setMemoryFilters} focus={memoryFocus} onOpenSession={openSession} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} onRemembered={noteRemembered} justRemembered={justRemembered} /></MemoryTab>}
@@ -777,7 +798,7 @@ export default function App() {
       note="Only Journal's label changes. The native Claude, Codex or Cursor session ID and continuing the same conversation are unaffected." onClose={() => setRenameTarget(null)}
       onSave={async name => { merge([await api<Session>('renameSession', { id: renameTarget.session.id, name })]); }} />}
     {processView && <ProcessDialog id={processView.id} title={processView.title} command={processView.command} appearance={appearance} onClose={() => setProcessView(null)} onExit={() => {}} />}
-    {palette && <CommandPalette mode={palette.mode} purpose={palette.purpose} projectId={state?.project.id ?? null} rootKey={filesRoot} projectName={state?.project.name ?? null}
+    {palette && <CommandPalette mode={palette.mode} purpose={palette.purpose} lead={palette.lead} projectId={state?.project.id ?? null} rootKey={filesRoot} projectName={state?.project.name ?? null}
       sessions={ordered} now={now} connected={connected} mac={bootstrap?.platform === 'darwin'} keys={bootstrap?.shortcuts ?? NO_KEYS} blocks={paletteBlocks} {...paletteCallbacks} />}
     {settingsOpen && <SettingsDialog appearance={appearance} onAppearance={setAppearance} update={update} project={state?.project ?? null} onClose={() => setSettingsOpen(false)} onDataChanged={() => { setKnowledgeVersion(v => v + 1); void refresh().catch(() => {}); }} />}
     {state && workspaceDialog && <WorkspaceDialog project={state.project} onClose={() => setWorkspaceDialog(false)} onChanged={() => void refresh().catch(failed)} />}

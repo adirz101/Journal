@@ -14,7 +14,7 @@ export type PaletteItem =
   | { kind: 'session'; id: string; session: Session; label: string; detail: string; keys: string | null; action: 'open' | 'continue'; spans: Span[] }
   | { kind: 'action'; id: string; action: PaletteActionId; label: string; keys: string | null; enabled: boolean; reason: string | null; spans: Span[] }
   | { kind: 'note'; id: string; noteId: string; label: string; category: string; spans: Span[] }
-  | { kind: 'file'; id: string; path: string; spans: Span[] }
+  | { kind: 'file'; id: string; path: string; spans: Span[]; rootKey: string; rootLabel: string | null }
   | { kind: 'fallback'; id: 'new-with-task' | 'add-as-note'; label: string };
 export type GroupId = 'sessions' | 'quiet' | 'actions' | 'memory' | 'files' | 'none';
 export interface PaletteGroup { id: GroupId; label: string; items: PaletteItem[] }
@@ -78,7 +78,9 @@ export function quietSessions(sessions: Session[], now: number): Session[] {
   return sessions.filter(s => !s.removed && isLive(s) && s.provider !== 'claude' && now - since(s) >= QUIET_MS)
     .sort((a, b) => since(a) - since(b) || a.id.localeCompare(b.id));
 }
-export function quietItems(sessions: Session[], now: number): PaletteItem[] {
+// While disconnected nothing is known about output, so no session is called quiet.
+export function quietItems(sessions: Session[], now: number, connected = true): PaletteItem[] {
+  if (!connected) return [];
   return quietSessions(sessions, now).map(session => ({ kind: 'session', id: `quiet:${session.id}`, session, label: sessionName(session),
     detail: `${PROVIDER_NAMES[session.provider]} · ${outputDetail(session.lastOutputAt, now)}`, keys: null, action: 'open', spans: [] }));
 }
@@ -105,18 +107,50 @@ export const searchesMemory = (text: string, actionsOnly: boolean) => !actionsOn
 // lists sessions, actions and notes; '>' lists actions only. When everything is empty
 // (and no note search is in flight) the two fallbacks prefill, they never start.
 // fallbacks: false without a project (there is no task box or note form to fill); the message stays.
-export function buildGroups(input: { text: string; actionsOnly: boolean; sessions: PaletteItem[]; quiet: PaletteItem[]; actions: PaletteItem[]; notes: PaletteItem[]; notesLoading: boolean; fallbacks?: boolean }): PaletteGroup[] {
+// A quiet session is listed once, under Quiet sessions to check (not also under Sessions).
+// actionsFirst: the Actions group leads an empty query (open-file without a project, whose
+// first action is Open project…).
+export function buildGroups(input: { text: string; actionsOnly: boolean; sessions: PaletteItem[]; quiet: PaletteItem[]; actions: PaletteItem[]; notes: PaletteItem[]; notesLoading: boolean; fallbacks?: boolean; actionsFirst?: boolean }): PaletteGroup[] {
   const { text, actionsOnly } = input;
-  const groups: PaletteGroup[] = actionsOnly ? [{ id: 'actions', label: words.groups.actions, items: input.actions }]
-    : !text ? [{ id: 'sessions', label: words.groups.sessions, items: input.sessions }, { id: 'quiet', label: words.groups.quiet, items: input.quiet }, { id: 'actions', label: words.groups.actions, items: input.actions }]
+  const quietIds = new Set(input.quiet.flatMap(item => item.kind === 'session' ? [item.session.id] : []));
+  const sessions = input.sessions.filter(item => item.kind !== 'session' || !quietIds.has(item.session.id));
+  const empty: PaletteGroup[] = [{ id: 'sessions', label: words.groups.sessions, items: sessions }, { id: 'quiet', label: words.groups.quiet, items: input.quiet }];
+  const actions: PaletteGroup = { id: 'actions', label: words.groups.actions, items: input.actions };
+  const groups: PaletteGroup[] = actionsOnly ? [actions]
+    : !text ? (input.actionsFirst ? [actions, ...empty] : [...empty, actions])
     : [{ id: 'sessions', label: words.groups.sessions, items: input.sessions }, { id: 'actions', label: words.groups.actions, items: input.actions }, { id: 'memory', label: words.groups.memory, items: input.notes }];
   const shown = groups.filter(group => group.items.length);
   if (shown.length || !text || input.notesLoading) return shown;
   return [{ id: 'none', label: words.noResults(text), items: input.fallbacks === false ? [] : [{ kind: 'fallback', id: 'new-with-task', label: words.newWithTask }, { kind: 'fallback', id: 'add-as-note', label: words.addAsNote }] }];
 }
 
-export function fileGroup(hits: { path: string; spans: Span[] }[]): PaletteGroup[] {
-  return hits.length ? [{ id: 'files', label: words.groups.files, items: hits.map(hit => ({ kind: 'file', id: `file:${hit.path}`, path: hit.path, spans: hit.spans })) }] : [];
+// Hits of the Files tab's roots (its current root, then its additional folders), already merged.
+// rootLabel names an additional folder, so its files are told apart from the root's.
+export function fileGroup(hits: { path: string; spans: Span[]; rootKey?: string; rootLabel?: string | null }[]): PaletteGroup[] {
+  return hits.length ? [{ id: 'files', label: words.groups.files, items: hits.map(hit => ({ kind: 'file', id: `file:${hit.rootKey ?? ''}\u0000${hit.path}`, path: hit.path, spans: hit.spans,
+    rootKey: hit.rootKey ?? '', rootLabel: hit.rootLabel ?? null })) }] : [];
+}
+
+// One search over several roots: hits by score (the earlier root first on a tie, then the path),
+// at most limit. Available when any root is; otherwise the first root's reason. Truncation and
+// the number of files searched add up.
+export interface RootSearch { rootKey: string; rootLabel: string | null; result: { available: boolean; reason?: 'not-git' | 'failed'; hits: { path: string; score: number; spans: Span[] }[]; total: number; truncated: boolean; truncatedBy?: 'timeout' | 'size' | 'limit'; listed?: number } | null }
+export function mergeFileSearches(searches: RootSearch[], limit = 50) {
+  const ok = searches.filter(search => search.result?.available);
+  const hits = ok.flatMap((search, order) => search.result!.hits.map(hit => ({ ...hit, rootKey: search.rootKey, rootLabel: search.rootLabel, order })))
+    .sort((a, b) => b.score - a.score || a.order - b.order || a.path.localeCompare(b.path)).slice(0, limit);
+  const truncated = ok.filter(search => search.result!.truncated);
+  return { available: ok.length > 0, reason: ok.length ? undefined : searches[0]?.result?.reason ?? 'failed', hits,
+    total: ok.reduce((sum, search) => sum + search.result!.total, 0), truncated: truncated.length > 0, truncatedBy: truncated[0]?.result!.truncatedBy,
+    listed: truncated.length ? ok.reduce((sum, search) => sum + (search.result!.listed ?? search.result!.total), 0) : undefined };
+}
+
+// A stable DOM id for an option, from its own id (never its position), so a screen reader
+// announces a new top result as the list changes under aria-activedescendant. FNV-1a, base 36.
+export function optionDomId(id: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < id.length; i++) { hash ^= id.charCodeAt(i); hash = Math.imul(hash, 0x01000193); }
+  return `palette-opt-${(hash >>> 0).toString(36)}`;
 }
 
 // Arrow keys wrap; Page Up and Page Down jump to the first option of the previous or next group.

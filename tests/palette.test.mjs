@@ -72,9 +72,53 @@ test('quiet sessions are Codex and Cursor live sessions quiet for at least 2 min
   const items = m.quietItems([cursor], NOW);
   assert.equal(items[0].detail, 'Cursor · no output yet');
   assert.equal(m.quietItems([codex], NOW)[0].detail, 'Codex · quiet 2m');
-  // The palette passes no quiet sessions while disconnected; buildGroups lists what it gets.
-  const empty = m.buildGroups({ text: '', actionsOnly: false, sessions: [], quiet: [], actions: [], notes: [], notesLoading: false });
+  // Disconnected: no session is called quiet, so the group is empty and not listed.
+  assert.deepEqual(m.quietItems([codex, cursor], NOW, false), []);
+  assert.equal(m.quietItems([codex, cursor], NOW, true).length, 2);
+  const empty = m.buildGroups({ text: '', actionsOnly: false, sessions: [], quiet: m.quietItems([codex], NOW, false), actions: [], notes: [], notesLoading: false });
   assert.deepEqual(empty, []);
+});
+
+test('an empty query lists a quiet session once, under Quiet sessions to check (review M3)', async t => {
+  const m = await load(t);
+  const quiet = session({ provider: 'codex', lastOutputAt: ago(300_000), slot: 1, title: 'Quiet one' });
+  const busy = session({ provider: 'claude', slot: 2, title: 'Busy one' });
+  const groups = m.buildGroups({ text: '', actionsOnly: false, sessions: m.sessionMatches([quiet, busy], 'p1', '', NOW, true), quiet: m.quietItems([quiet, busy], NOW), actions: [], notes: [], notesLoading: false });
+  assert.deepEqual(groups.map(group => [group.id, group.items.map(item => item.session.id)]), [['sessions', [busy.id]], ['quiet', [quiet.id]]]);
+});
+
+test('open-file without a project leads with Open project… (review M6)', async t => {
+  const m = await load(t);
+  const order = ['open-project', ...m.PALETTE_ACTIONS.filter(id => id !== 'open-project')];
+  const actions = m.actionItems(order, {}, () => null, '');
+  const someone = m.sessionMatches([session({ slot: 1 })], null, '', NOW, true);
+  const groups = m.buildGroups({ text: '', actionsOnly: false, sessions: someone, quiet: [], actions, notes: [], notesLoading: false, fallbacks: false, actionsFirst: true });
+  assert.equal(groups[0].id, 'actions'); assert.equal(groups[0].items[0].id, 'action:open-project');
+  assert.equal(m.keepActive(groups, 'action:open-project'), 'action:open-project');
+});
+
+test('option DOM ids follow the option, not its position (review I3)', async t => {
+  const m = await load(t);
+  const a = m.optionDomId('session:1111'); const b = m.optionDomId('action:new-session');
+  assert.match(a, /^palette-opt-[0-9a-z]+$/); assert.notEqual(a, b);
+  assert.equal(m.optionDomId('session:1111'), a, 'stable across renders and positions');
+  assert.match(m.optionDomId('file:checkout\u0000src/a b/"x".ts'), /^palette-opt-[0-9a-z]+$/, 'any id gives a valid DOM id');
+});
+
+test('file search over the Files tab root and its folders merges hits by score (review M2)', async t => {
+  const m = await load(t);
+  const merged = m.mergeFileSearches([
+    { rootKey: 'checkout', rootLabel: null, result: { available: true, hits: [{ path: 'src/a.ts', score: 10, spans: [] }, { path: 'b.ts', score: 3, spans: [] }], total: 2, truncated: false } },
+    { rootKey: 'root:x', rootLabel: 'docs', result: { available: true, hits: [{ path: 'guide.md', score: 10, spans: [] }, { path: 'c.md', score: 7, spans: [] }], total: 2, truncated: true, truncatedBy: 'limit', listed: 5 } },
+    { rootKey: 'root:y', rootLabel: 'gone', result: null },
+  ], 3);
+  assert.deepEqual(merged.hits.map(hit => [hit.rootKey, hit.path]), [['checkout', 'src/a.ts'], ['root:x', 'guide.md'], ['root:x', 'c.md']]);
+  assert.equal(merged.available, true); assert.equal(merged.truncated, true); assert.equal(merged.truncatedBy, 'limit'); assert.equal(merged.listed, 7);
+  const items = m.fileGroup(merged.hits)[0].items;
+  assert.deepEqual(items.map(item => [item.rootKey, item.rootLabel]), [['checkout', null], ['root:x', 'docs'], ['root:x', 'docs']]);
+  assert.notEqual(m.fileGroup([{ path: 'a.md', spans: [], rootKey: 'checkout' }])[0].items[0].id, m.fileGroup([{ path: 'a.md', spans: [], rootKey: 'root:x' }])[0].items[0].id, 'the same path in two roots is two options');
+  const none = m.mergeFileSearches([{ rootKey: 'checkout', rootLabel: null, result: { available: false, reason: 'not-git', hits: [], total: 0, truncated: false } }]);
+  assert.equal(none.available, false); assert.equal(none.reason, 'not-git');
 });
 
 test('every routed command except slots and the palette itself is an action with its key label', async t => {
@@ -150,5 +194,6 @@ test('highlights merge overlapping words and file paths split into name and fold
   assert.deepEqual(m.splitPath('src/core/terminal.mjs'), { name: 'terminal.mjs', folder: 'src/core', nameStart: 9 });
   assert.deepEqual(m.splitPath('README.md'), { name: 'README.md', folder: '', nameStart: 0 });
   assert.deepEqual(m.fileGroup([]), []);
-  assert.equal(m.fileGroup([{ path: 'README.md', spans: [[0, 6]] }])[0].items[0].id, 'file:README.md');
+  // A file option's id names its root and path (the same path in two roots is two options).
+  assert.equal(m.fileGroup([{ path: 'README.md', spans: [[0, 6]], rootKey: 'checkout' }])[0].items[0].id, 'file:checkout\u0000README.md');
 });
