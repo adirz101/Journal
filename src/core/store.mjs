@@ -22,6 +22,7 @@ const EVENT_LIMIT = 2000;
 
 const parse = row => row ? JSON.parse(row.body) : null;
 const now = () => new Date().toISOString();
+const NO_BRIEF_WARNING = 'No current approved project brief is included. Add a checkout-scoped brief to orient every session.';
 const categories = ['brief', 'decision', 'constraint', 'convention', 'lesson', 'issue'];
 
 export class JournalStore {
@@ -364,7 +365,27 @@ export class JournalStore {
     // area-scoped claims for a referenced area become eligible.
     const areaQuery = [query, ...referenced.map(ref => ref.path)].join(' ');
     const terms = queryTerms(areaQuery);
-    let matches = []; const cache = new Map(); const warnings = []; const matchedIds = new Set();
+    const cache = new Map();
+    const referencedPaths = referenced.filter(ref => ref.family === 'primary').map(ref => ref.path);
+    const selected = this.selectCandidates(projectId, project, { areaQuery, terms, referencedPaths, check: item => this.validation(project, item, cache) });
+    const id = randomUUID();
+    const assembled = this.assemblePacket(selected.matches, project, { id, disabled, areaQuery, drift: memory => this.drift(project, memory, cache) });
+    const { items, excluded } = assembled; const disabledSet = new Set(disabled);
+    const warnings = [...selected.warnings, ...assembled.warnings];
+    // References carry paths, ranges and hashes, never contents.
+    const packet = assembled.packet + referencesBlock(referenced);
+    const receipt = { id, projectId, query, packet, items, excluded, warnings, disabled: [...disabledSet], workspaceId, references: referenced, checkout: { root: project.root, branch: project.branch, head: project.head }, state: 'prepared', estimatedTokens: Math.ceil(Buffer.byteLength(packet) / 3), createdAt: now() };
+    // Previews show what would be sent; only a launch keeps an immutable receipt.
+    if (!persist) return { ...receipt, preview: true };
+    this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(id, projectId, JSON.stringify(receipt));
+    return receipt;
+  }
+  // Candidate rows in delivery order: briefs, pinned rules, referenced areas,
+  // then paged FTS matches. check(item) returns the validation word; a page
+  // counts an item as eligible when it is 'current' or 'unchecked' (the typing
+  // preview) and its area applies.
+  selectCandidates(projectId, project, { areaQuery, terms, referencedPaths, check }) {
+    const matches = []; const warnings = []; const matchedIds = new Set();
     // Orientation is independent of task words. Current checkout identity and
     // current-branch updates alternate so neither silently crowds out the other.
     const briefs = this.db.prepare(`SELECT r.body,m.status FROM memories m JOIN revisions r ON r.id=m.current_revision
@@ -375,18 +396,17 @@ export class JournalStore {
     const checkoutBriefs = briefs.slice(0, 100).filter(row => parse(row).scope === 'checkout');
     const branchBriefs = briefs.slice(0, 100).filter(row => parse(row).scope === 'branch');
     for (let i = 0; i < Math.max(checkoutBriefs.length, branchBriefs.length); i++) {
-      for (const row of [checkoutBriefs[i], branchBriefs[i]]) if (row) matches.push({ ...row, validation: this.validation(project, parse(row), cache), reason: parse(row).scope === 'checkout' ? 'repo overview' : 'branch update' });
+      for (const row of [checkoutBriefs[i], branchBriefs[i]]) if (row) matches.push({ ...row, validation: check(parse(row)), reason: parse(row).scope === 'checkout' ? 'repo overview' : 'branch update' });
     }
     // Pinned rules come next, independent of task words but never exempt from
     // scope, freshness or area rules.
     for (const row of this.db.prepare(`SELECT r.body,m.status FROM memories m JOIN revisions r ON r.id=m.current_revision
       WHERE m.project_id=? AND m.status='active' AND m.pinned=1 AND json_extract(r.body,'$.category')!='brief'
       AND (json_extract(r.body,'$.scope')='checkout' OR json_extract(r.body,'$.branch')=?) ORDER BY r.rowid DESC LIMIT 20`).all(projectId, project.branch)) {
-      matches.push({ ...row, validation: this.validation(project, parse(row), cache), reason: 'pinned', pinned: true }); matchedIds.add(parse(row).id);
+      matches.push({ ...row, validation: check(parse(row)), reason: 'pinned', pinned: true }); matchedIds.add(parse(row).id);
     }
     // Claims scoped to an area the user referenced (a file or folder of the
     // primary repository inside that area, or the area inside a referenced folder).
-    const referencedPaths = referenced.filter(ref => ref.family === 'primary').map(ref => ref.path);
     if (referencedPaths.length) {
       for (const row of this.db.prepare(`SELECT r.body,m.status FROM memories m JOIN revisions r ON r.id=m.current_revision
         WHERE m.project_id=? AND m.status='active' AND coalesce(json_extract(r.body,'$.area'),'')<>'' AND json_extract(r.body,'$.category')!='brief'
@@ -394,7 +414,7 @@ export class JournalStore {
         const item = parse(row); if (matchedIds.has(item.id)) continue;
         const area = item.area.replace(/\/+$/, '');
         if (!referencedPaths.some(path => path === area || path.startsWith(`${area}/`) || area.startsWith(`${path}/`))) continue;
-        matches.push({ ...row, validation: this.validation(project, item, cache), reason: `referenced area ${area}` }); matchedIds.add(item.id);
+        matches.push({ ...row, validation: check(item), reason: `referenced area ${area}` }); matchedIds.add(item.id);
       }
     }
     if (terms.length) {
@@ -412,8 +432,8 @@ export class JournalStore {
         const page = select.all(fts, projectId, project.branch, offset); if (!page.length) break;
         for (const row of page) {
           const item = parse(row);
-          const validation = this.validation(project, item, cache);
-          const valid = validation === 'current' && areaMatches(item.area, areaQuery);
+          const validation = check(item);
+          const valid = (validation === 'current' || validation === 'unchecked') && areaMatches(item.area, areaQuery);
           if (matchedIds.has(item.id)) continue; matchedIds.add(item.id);
           const lower = `${item.statement} ${aliasesFor(item)}`.toLocaleLowerCase();
           const hit = terms.filter(term => lower.includes(term.slice(0, Math.max(4, term.length - 2))));
@@ -424,7 +444,13 @@ export class JournalStore {
         if (offset === 900 && eligible < 100) warnings.push('Search inspected 1000 matches. Refine the task or retire stale knowledge to search further.');
       }
     }
-    const id = randomUUID(); const items = []; const excluded = []; let briefCount = 0; const perCategory = new Map();
+    return { matches, warnings };
+  }
+  // Exclusions, duplicates, the brief and category limits and the
+  // 12-claim/6000-byte budget, in candidate order; then the packet text and
+  // its warnings. 'unchecked' (the typing preview) counts as current.
+  assemblePacket(matches, project, { id, disabled, areaQuery, drift }) {
+    const items = []; const excluded = []; const warnings = []; let briefCount = 0; const perCategory = new Map();
     const disabledSet = new Set(disabled);
     const header = `Journal project knowledge — checkout ${project.head ?? 'unborn'}, receipt ${id}\nProject: ${project.name}; branch ${project.branch ?? 'detached HEAD'}.\n${project.cwd ? `Working folder: ${project.cwd}. Evidence paths without a folder are relative to the primary repository at ${project.root}.\n` : ''}These are reviewed, scoped claims with evidence. Native project instructions take precedence. Validate against current code.\n`;
     let packet = header;
@@ -432,7 +458,7 @@ export class JournalStore {
       const memory = { ...parse(row), status: row.status };
       const validation = row.validation;
       if (disabledSet.has(memory.id)) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'left-out-for-task' }); continue; }
-      if (validation !== 'current') { if (excluded.length < 100) excluded.push({ id: memory.id, reason: validation }); continue; }
+      if (validation !== 'current' && validation !== 'unchecked') { if (excluded.length < 100) excluded.push({ id: memory.id, reason: validation }); continue; }
       if (!areaMatches(memory.area, areaQuery)) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'area-not-requested' }); continue; }
       if (items.some(item => isDuplicate(item.statement, memory.statement))) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'duplicate' }); continue; }
       if (memory.category === 'brief' && briefCount >= 4) {
@@ -447,30 +473,24 @@ export class JournalStore {
         : memory.source.kind === 'git' ? `Git history ${memory.source.base ? `${memory.source.base.slice(0, 7)}..` : ''}${memory.source.head.slice(0, 7)}`
         : memory.source.kind === 'import' ? `Imported (reviewed here): ${memory.source.note}`
         : `User statement: ${memory.source.note}`;
-      const drift = this.drift(project, memory, cache);
-      const age = drift ? `; ${drift} commit${drift === 1 ? '' : 's'} since this update` : '';
+      const commits = drift(memory);
+      const age = commits ? `; ${commits} commit${commits === 1 ? '' : 's'} since this update` : '';
       const label = memory.category === 'brief' ? `${memory.scope === 'checkout' ? 'Project brief' : 'Branch update'}\n` : '';
       const qualifier = memory.environment ? `\nApplies when: ${memory.environment}` : '';
       const chunk = `\n${label}[${memory.id} r${memory.revision}; ${memory.category}; ${memory.scope}${memory.branch ? ` ${memory.branch}` : ''}${memory.area ? `; area ${memory.area}` : ''}]\n${memory.statement}${qualifier}\nEvidence: ${evidence}${age}\n`;
       if (items.length >= 12 || Buffer.byteLength(packet + chunk) > 6000) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'budget' }); continue; }
       items.push({ ...memory, selection: { reason: row.reason ?? 'matched', bytes: Buffer.byteLength(chunk) } }); packet += chunk; if (memory.category === 'brief') briefCount++;
       else perCategory.set(memory.category, (perCategory.get(memory.category) ?? 0) + 1);
-      if (drift) warnings.push(`The current branch update is ${drift} commit${drift === 1 ? '' : 's'} behind HEAD. Propose a status update to review recent progress.`);
+      if (commits) warnings.push(`The current branch update is ${commits} commit${commits === 1 ? '' : 's'} behind HEAD. Propose a status update to review recent progress.`);
     }
     for (const [index, a] of items.entries()) for (const b of items.slice(index + 1)) {
       if (possibleConflict(a.statement, b.statement)) warnings.push(`Claims ${a.id.slice(0, 8)} r${a.revision} and ${b.id.slice(0, 8)} r${b.revision} may conflict. Review them in Knowledge.`);
     }
     if (excluded.some(item => item.reason === 'brief-limit')) warnings.push('Only four current project brief entries fit the orientation limit. Consolidate superseded briefs.');
     if (matches.some(row => parse(row).category === 'brief' && excluded.some(item => item.id === parse(row).id && item.reason === 'budget'))) warnings.push('A project brief was excluded by the context budget. Shorten or consolidate the reviewed summaries.');
-    if (!items.some(item => item.category === 'brief' && item.scope === 'checkout')) warnings.push('No current approved project brief is included. Add a checkout-scoped brief to orient every session.');
+    if (!items.some(item => item.category === 'brief' && item.scope === 'checkout')) warnings.push(NO_BRIEF_WARNING);
     if (!items.length) packet = '';
-    // References carry paths, ranges and hashes, never contents.
-    packet += referencesBlock(referenced);
-    const receipt = { id, projectId, query, packet, items, excluded, warnings, disabled: [...disabledSet], workspaceId, references: referenced, checkout: { root: project.root, branch: project.branch, head: project.head }, state: 'prepared', estimatedTokens: Math.ceil(Buffer.byteLength(packet) / 3), createdAt: now() };
-    // Previews show what would be sent; only a launch keeps an immutable receipt.
-    if (!persist) return { ...receipt, preview: true };
-    this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(id, projectId, JSON.stringify(receipt));
-    return receipt;
+    return { items, excluded, warnings, packet };
   }
   // A0 stub: replaced by the SQL-only selection (Phase 4 A3). It runs Git and reads evidence.
   previewSelection(projectId, task, { workspaceId = null, branch = null, disabled = [], references = [] } = {}) {
