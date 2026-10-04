@@ -6,7 +6,8 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { JournalStore } from '../src/core/store.mjs';
 import { removeLater } from './support/cleanup.mjs';
-import { structure, describeStructure } from '../src/core/status.mjs';
+import { structure, describeStructure, fillDraft, overviewDraft } from '../src/core/status.mjs';
+import { git as realGit } from '../src/core/project.mjs';
 
 function fixture(t) {
   const root = mkdtempSync(resolve(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'journal-status-'));
@@ -192,4 +193,48 @@ test('non-ASCII directory names are listed unquoted', t => {
   const f = fixture(t);
   f.commit('\u05de\u05e1\u05de\u05db\u05d9\u05dd/a.md', 'x\n', 'Add Hebrew folder');
   assert.match(describeStructure(structure(f.repo, 'HEAD')), /\u05de\u05e1\u05de\u05db\u05d9\u05dd \(1\)/);
+});
+
+// ----- Phase 7: filled fields and facts for the first-run cards -----
+const BRANCH = ['Completed (2 commits since branching from main (abc1234); HEAD def5678):', '- Add refunds (def5678)', 'Changed areas: src (2)', 'Uncommitted: none',
+  'Current work: [describe what this branch is doing now]', 'Next: [describe the next concrete step and any blocker]'].join('\n');
+const OVERVIEW = ['Purpose: Ledger records invoices.', 'Structure: src (1); key files: README.md', 'Constraints: [describe decisions the next session must preserve]'].join('\n');
+
+test('fillDraft replaces placeholders and drops empty optional lines', () => {
+  const filled = fillDraft(BRANCH, { currentWork: '  Refund export  ', next: 'Wire the CSV button' });
+  assert.match(filled, /^Current work: Refund export$/m); assert.match(filled, /^Next: Wire the CSV button$/m);
+  assert.ok(filled.startsWith('Completed (2 commits'), 'other lines are kept verbatim');
+  const dropped = fillDraft(BRANCH, { currentWork: '', next: '   ' });
+  assert.doesNotMatch(dropped, /Current work|Next:/); assert.match(dropped, /Uncommitted: none$/);
+  assert.equal(fillDraft(OVERVIEW, {}), 'Purpose: Ledger records invoices.\nStructure: src (1); key files: README.md');
+  assert.match(fillDraft(OVERVIEW, { constraints: 'Never edit the ledger by hand' }), /^Constraints: Never edit the ledger by hand$/m);
+});
+
+test('fillDraft never edits a carried line', () => {
+  const carried = BRANCH.replace('Current work: [describe what this branch is doing now]', 'Current work: Refund export');
+  const filled = fillDraft(carried, { currentWork: 'Something else', next: 'Ship it' });
+  assert.match(filled, /^Current work: Refund export$/m); assert.match(filled, /^Next: Ship it$/m);
+  assert.equal(fillDraft(carried, { currentWork: '' }).includes('Current work: Refund export'), true, 'an empty field never removes a line the user owns');
+});
+
+test('fillDraft refuses a remaining placeholder and a credential', () => {
+  assert.throws(() => fillDraft('Purpose: [describe what this repo delivers and for whom]\nStructure: src', {}), /Replace the bracketed placeholders before saving the update/);
+  assert.throws(() => fillDraft(BRANCH, { currentWork: 'token ghp_0123456789abcdefghijklmnopqrstuvwxyzAB', next: '' }), /credential|secret|token/i);
+  assert.throws(() => fillDraft(BRANCH, { currentWork: 'two\nlines' }), /one line/);
+  assert.throws(() => fillDraft(BRANCH, { currentWork: 'x'.repeat(501) }), /500/);
+  assert.throws(() => fillDraft(BRANCH, { currentWork: 42 }), /Invalid/);
+  assert.throws(() => fillDraft(BRANCH, { next: '[describe it later]' }), /placeholders/, 'a field cannot put a placeholder back');
+});
+
+test('overview facts count README, folders and commits, including the large-repo fallback', t => {
+  const f = fixture(t);
+  f.commit('docs/guide.md', 'Guide\n', 'Add docs');
+  const draft = f.store.proposeStatusUpdate(f.project.id, 'checkout');
+  assert.deepEqual(draft.basis.facts, { readme: 'README.md', folders: 2, commits: 3, counted: true });
+  const project = f.store.project(f.project.id);
+  const run = (root, args) => { if (args.includes('-r')) throw new Error('stdout maxBuffer length exceeded'); return realGit(root, args); };
+  const large = overviewDraft(project, null, { run });
+  assert.deepEqual(large.basis.facts, { readme: 'README.md', folders: 2, commits: 3, counted: false });
+  f.git('rm', '-q', 'README.md'); f.git('-c', 'user.name=Fixture', '-c', 'user.email=test@example.test', 'commit', '-qm', 'Drop readme');
+  assert.equal(f.store.proposeStatusUpdate(f.project.id, 'checkout').basis.facts.readme, null);
 });
