@@ -29,8 +29,9 @@ export function SettingsDialog({ appearance, onAppearance, update, project, onCl
     <div className="dialog-heading"><h2 id="settings-title">{shell.settings}</h2><button type="button" onClick={onClose} aria-label="Close settings" className="icon-button">×</button></div>
     <section className="settings-section" aria-labelledby="settings-appearance"><h3 id="settings-appearance">{shell.appearance}</h3>
       <div role="radiogroup" aria-labelledby="settings-appearance" className="settings-choices">
-        {(['dark', 'light'] as const).map(value => <label key={value} className="inline-check"><input type="radio" name="appearance" checked={appearance === value} onChange={() => onAppearance(value)} /> {value === 'dark' ? shell.dark : shell.light}</label>)}
-      </div></section>
+        {(['dark', 'light'] as const).map(value => <label key={value} className="inline-check"><input type="radio" name="appearance" checked={appearance === value} onChange={() => onAppearance(value)} aria-describedby="settings-appearance-hint" /> {value === 'dark' ? shell.dark : shell.light}</label>)}
+      </div>
+      <p className="muted small-print" id="settings-appearance-hint">{shell.appearanceAgents}</p></section>
     <section className="settings-section" aria-labelledby="settings-notifications"><h3 id="settings-notifications">{shell.notifications}</h3>
       {/* Shown once the stored values are known, never as a guessed state. */}
       {preferences ? <><label className="inline-check"><input type="checkbox" checked={preferences.notifications} onChange={e => prefer('notifications', e.target.checked)} /> {shell.notifyApproval}</label>

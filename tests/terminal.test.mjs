@@ -895,7 +895,8 @@ test('an attached exited buffer outlives older detached ones', async t => {
   }
   assert.match(f.manager.attach(ids[0]).chunks.map(c => c.data).join(''), /output 0/, 'the viewed buffer is kept');
   assert.deepEqual(f.manager.attach(ids[1]), { chunks: [], gap: true, lastSequence: 0 }, 'the oldest detached one goes instead');
-  f.manager.detach(ids[0]);
+  // Attached twice (once more to read it above): attaches are counted, so both panes detach.
+  f.manager.detach(ids[0]); f.manager.detach(ids[0]);
   const tenth = await f.start(); f.procs[9].callbacks.exit({ exitCode: 0 }); await f.manager.entry(tenth.id)?.changeSnapshot;
   assert.deepEqual(f.manager.attach(ids[0]), { chunks: [], gap: true, lastSequence: 0 }, 'once detached it is trimmed on a later exit');
 });
@@ -1004,7 +1005,7 @@ test('the agent launch environment drops repository-redirecting Git variables an
   finally { for (const [name, value] of Object.entries(saved)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; } }
   const { env, cwd } = launches[0].options;
   for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) assert.equal(env[name], undefined, name);
-  assert.equal(env.GIT_AUTHOR_NAME, 'Kept'); assert.equal(env.TERM, 'xterm-256color'); assert.ok(env.JOURNAL_SESSION_ID);
+  assert.equal(env.GIT_AUTHOR_NAME, 'Kept'); assert.equal(env.TERM, 'xterm-256color'); assert.equal(env.TERM_PROGRAM, 'Journal'); assert.ok(env.JOURNAL_SESSION_ID);
   assert.equal(cwd, project.root);
   await manager.dispose();
 });

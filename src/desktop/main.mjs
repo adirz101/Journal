@@ -50,6 +50,10 @@ app.setPath('userData', userData);
 // The last chosen appearance, so the first frame of a new window has the right background.
 const appearancePrefs = join(userData, 'appearance.json');
 const lastAppearance = () => { try { return JSON.parse(readFileSync(appearancePrefs, 'utf8')).appearance === 'light' ? 'light' : 'dark'; } catch { return 'dark'; } };
+// The current appearance, for the runtime: it sets COLORFGBG at launch and answers colour queries with it.
+let appearance = lastAppearance();
+// A runtime from an earlier build has no setAppearance; its sessions keep the window's answers.
+const tellRuntimeAppearance = () => { void runtime?.call('setAppearance', { appearance }).catch(() => {}); };
 // Notification preferences (two booleans; see notify.mjs). Local to this device, read without a store round trip.
 const preferencesFile = join(userData, 'preferences.json');
 let preferences = readPreferences(preferencesFile);
@@ -92,7 +96,8 @@ function validSender(event) {
 // The runtime is detached from this process so an app crash or window close
 // does not end running agents. Its output goes to a bounded log, not a pipe.
 function launchRuntime() {
-  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+  // The runtime names Journal's version to agents as TERM_PROGRAM_VERSION.
+  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', JOURNAL_APP_VERSION: app.getVersion() };
   const log = openSync(join(userData, 'runtime-stderr.log'), 'a', 0o600);
   const child = spawn(process.execPath, [unpacked(resolve(here, '../runtime/runtime.mjs')), '--data', userData], { detached: true, stdio: ['ignore', 'ignore', log], env, windowsHide: true });
   // Report exit from the child handle: a killed, not yet reaped runtime still
@@ -128,6 +133,8 @@ function createWindow() {
   });
   // A reloading renderer re-attaches; until then the runtime keeps buffering.
   window.webContents.on('did-start-loading', () => { modalOpen = false; void runtime?.call('detach', {}).catch(() => {}); });
+  // A crashed or killed renderer never detaches its panes itself.
+  window.webContents.on('render-process-gone', () => { modalOpen = false; void runtime?.call('detach', {}).catch(() => {}); });
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   window.on('closed', () => { window = null; });
   // Windows and Linux flash the taskbar while something waits; looking at Journal stops it.
@@ -211,7 +218,7 @@ runtime.on('failed', message => { runtimeWarning = message; send({ type: 'runtim
 // a build mismatch of the new connection is kept (the client reports it again when adopting it).
 runtime.on('reconnected', hello => {
   runtimeState = 'connected'; runtimeWarning = runtime.warning ?? null; recovery = recoveryFrom(hello);
-  send({ type: 'runtime', state: 'connected', recovered: true, recovery, ...(runtimeWarning ? { warning: runtimeWarning } : {}) }); void seedNotifier();
+  send({ type: 'runtime', state: 'connected', recovered: true, recovery, ...(runtimeWarning ? { warning: runtimeWarning } : {}) }); void seedNotifier(); tellRuntimeAppearance();
 });
 // Phase 7: every provider starts as "checking"; detection, help reads and sign-in
 // probes start at once when main loads (refreshProviders below), before the window
@@ -266,8 +273,9 @@ const processes = new ProcessRunner(event => { send(event); if (event.type === '
   async (file, args, options) => (await import('node-pty')).spawn(file, args, options));
 const runnable = env => { const next = { ...env }; delete next.ELECTRON_RUN_AS_NODE; return next; };
 const actions = {
-  setAppearance: ({ appearance }) => {
-    if (appearance !== 'light' && appearance !== 'dark') throw new Error('Invalid appearance');
+  setAppearance: ({ appearance: chosen }) => {
+    if (chosen !== 'light' && chosen !== 'dark') throw new Error('Invalid appearance');
+    appearance = chosen; tellRuntimeAppearance();
     nativeTheme.themeSource = appearance;
     window?.setBackgroundColor(WINDOW_BACKGROUND[appearance]);
     try { writeFileSync(appearancePrefs, JSON.stringify({ appearance })); } catch { /* The next launch starts dark. */ }
@@ -545,9 +553,9 @@ const actions = {
     // A runtime from another build may not understand newer launch options;
     // never let it silently run in the wrong workspace or mode.
     if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.plan || input.provider === 'cursor' || input.disabled?.length || input.references?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, read-only or plan mode, Cursor, leave-out or file references.');
-    // The CLI version comes from main's own provider detection, never from the renderer.
-    const { cliVersion: _ignored, ...request } = input;
-    return runtime.call('start', { ...request, cliVersion: agents.find(agent => agent.provider === input.provider)?.version ?? null });
+    // The CLI version comes from main's own provider detection, and the appearance from main, never from the renderer.
+    const { cliVersion: _ignored, appearance: _alsoIgnored, ...request } = input;
+    return runtime.call('start', { ...request, appearance, cliVersion: agents.find(agent => agent.provider === input.provider)?.version ?? null });
   },
   // ----- Provider CLIs: install and sign in run visibly, only after the user asks. The renderer
   // names a provider; the executable comes from detection and the argv from PROVIDER_COMMANDS. -----
@@ -666,7 +674,7 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
     try { return { ok: true, value: await (hook ? hook(action, () => actions[action](input)) : actions[action](input)) }; } finally { if (ROOT_CHANGES.has(action)) { rootCache.clear(); listings.clear(); } }
   } catch (error) { return settledError(error); }
 });
-try { recovery = recoveryFrom(await runtime.connect()); runtimeState = 'connected'; await seedNotifier(); }
+try { recovery = recoveryFrom(await runtime.connect()); runtimeState = 'connected'; tellRuntimeAppearance(); await seedNotifier(); }
 catch (error) { runtimeState = 'disconnected'; console.error('Journal runtime unavailable:', error.message); void runtime.reconnect(); }
 createWindow();
 // Updates: packaged builds only. The automatic-check preference lives in the data folder.

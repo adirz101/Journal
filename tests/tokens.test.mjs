@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { terminalThemes } from '../src/ui/theme.ts';
+import { TERMINAL_COLORS } from '../src/core/terminal-queries.mjs';
 import { WINDOW_BACKGROUND } from '../src/desktop/window-colors.mjs';
 
 // Token values per theme, read from src/ui/tokens.css (comments stripped).
@@ -164,6 +165,11 @@ for (const [name, t] of Object.entries(themes)) {
       ['scrollbarSliderBackground', 'scroll-thumb'], ['scrollbarSliderHoverBackground', 'tx3'], ['scrollbarSliderActiveBackground', 'tx3']];
     if (name === 'light') mirrored.push(['selectionForeground', 'tx']);
     for (const [key, token] of mirrored) assert.equal(terminal[key]?.toUpperCase(), t[token].toUpperCase(), `${key} = --${token}`);
+  });
+
+  test(`${name} theme: the runtime answers colour queries with the terminal's colours`, () => {
+    const terminal = terminalThemes[name];
+    assert.deepEqual(TERMINAL_COLORS[name], { 10: terminal.foreground, 11: terminal.background, 12: terminal.cursor });
   });
 
   test(`${name} theme: the window background is the --bg token`, () => {
