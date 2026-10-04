@@ -47,7 +47,7 @@ Download the latest build from [GitHub Releases](https://github.com/adirz101/Jou
 1. Download `Journal-<version>-arm64.dmg`.
 2. Open it.
 3. Drag **Journal** to **Applications**.
-4. Open Journal from Applications. macOS builds are signed with an Apple Developer ID and notarized by Apple, so they open without security warnings.
+4. Open Journal from Applications. macOS builds are signed with an Apple Developer ID and notarized by Apple, so Gatekeeper does not block them (macOS still asks once to confirm opening an app downloaded from the internet).
 
 **Windows (x64)**
 1. Download `Journal-Setup-<version>-x64.exe` (installs for your user in one click, no administrator rights, Start Menu shortcut, uninstall from Settings → Apps) or `Journal-Portable-<version>-x64.exe` (runs without installing).
