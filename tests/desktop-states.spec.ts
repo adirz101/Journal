@@ -1,8 +1,9 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
-import { resolve, delimiter, dirname } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { chooseAgent, newSession, sessionStatus, slotsUsed, startButton, startSession, taskBox } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 // Phase 8 Group B: failure states (board 9): runtime disconnected, crash recovery, an agent
 // that can't start, and all slots in use. Real Electron, runtime and node-pty with fixture
@@ -31,9 +32,7 @@ fs.appendFileSync(${JSON.stringify(ledger)},JSON.stringify({pid:process.pid,argv
 console.log('TASK '+(process.argv.at(-1)||'').split('\\n').at(-1));process.stdin.setRawMode(true);process.stdin.resume();`;
   const write = (provider: string) => { writeFileSync(resolve(bin, provider), fixture(provider === 'codex')); chmodSync(resolve(bin, provider), 0o755); };
   for (const provider of ['claude', 'codex']) write(provider);
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: [bin, '/usr/bin', '/bin', dirname(process.execPath)].join(delimiter), HOME: home, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' };
-  // PATH holds only the fixtures, system tools and node, and HOME is empty: a real provider CLI
-  // (for example Cursor's ~/.local/bin/agent) is never found.
+  const env = fixtureEnv({ root, bin, home, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   delete env.ELECTRON_RUN_AS_NODE;
   const launches = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
   const runtimeInfo = () => JSON.parse(readFileSync(resolve(root, 'data/runtime.json'), 'utf8'));
@@ -143,6 +142,9 @@ process.exit(1)`;
   const agent = resolve(f.bin, 'agent'); writeFileSync(agent, cursorCli); chmodSync(agent, 0o755);
   const { app, page } = await open(f.env, f.project);
   try {
+    // Headless runs look for Cursor only when a spec allows Cursor's probes: allow them, then check.
+    await app.evaluate(() => { (globalThis as any).__journalAuthProbes = ['cursor']; });
+    await request(page, 'providerStatus', { provider: 'cursor', fresh: true });
     const cursor = page.getByRole('radiogroup', { name: 'Agent' }).getByRole('radio', { name: 'Cursor', exact: true });
     await expect(cursor).toContainText('Signed in');
     await chooseAgent(page, 'cursor');

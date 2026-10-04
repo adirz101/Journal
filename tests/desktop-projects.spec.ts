@@ -3,13 +3,14 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { currentProject, manageProject, openAnotherProject, projectNames, switchProject } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 test('projects can be renamed, pinned, given extra folders and removed from Journal without touching files', async () => {
   mkdirSync(resolve('.cache/tmp'), { recursive: true });
   const root = mkdtempSync(resolve('.cache/tmp', 'projects-'));
   const repo = (name: string) => { const dir = resolve(root, name); mkdirSync(dir); execFileSync('git', ['init', '-q', '-b', 'main', dir]); writeFileSync(resolve(dir, 'README.md'), `${name}\n`); execFileSync('git', ['-C', dir, 'add', '.']); execFileSync('git', ['-C', dir, '-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qm', 'init']); return dir; };
   const alpha = repo('alpha'); const beta = repo('beta'); const docs = resolve(root, 'docs'); mkdirSync(docs);
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)), JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin: resolve(root, 'bin'), extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const app = await electron.launch({ args: ['.'], env });
   try {
     const page = await app.firstWindow();

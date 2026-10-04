@@ -1,10 +1,11 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { contextPreview, inspectorTab, newSession, openAnotherProject, skipFirstRun, startSession, switchProject, taskBox } from './support/ui';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
+import { fixtureEnv } from './support/env';
 
 // Phase 7, Group A: providers are detected after the window shows, sign-in runs a
 // constant command per provider, and the first-run actions are reachable over IPC.
@@ -24,9 +25,7 @@ function setup(prefix: string) {
   const git = (...args: string[]) => execFileSync('git', ['-C', project, '-c', 'user.name=a', '-c', 'user.email=a@a', ...args], { stdio: 'pipe' });
   git('init', '-q', '-b', 'main'); writeFileSync(resolve(project, 'README.md'), '# First run fixture\n\nA fixture project.\n'); git('add', '.'); git('commit', '-qm', 'init');
   const calls = resolve(root, 'calls.jsonl');
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)),
-    PATH: `${bin}${delimiter}/usr/bin${delimiter}/bin${delimiter}${resolve(process.execPath, '..')}`, HOME: home, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' };
-  delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, home, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const cli = (name: string, body: string) => { writeFileSync(resolve(bin, name), `#!${process.execPath}\nconst fs=require('node:fs');const a=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({bin:${JSON.stringify(name)},argv:a})+'\\n');\n${body}`); chmodSync(resolve(bin, name), 0o755); };
   const log = () => existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { bin: string; argv: string[] }) : [];
   return { root, bin, home, project, env, cli, log };

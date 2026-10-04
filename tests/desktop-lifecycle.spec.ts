@@ -1,8 +1,9 @@
 import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { newSession, startSession, switchProject } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 // This verifies owned real processes, not assistant text or a simulated interrupt.
 test('running child cancellation, terminal stop and app exit leave no owned fixture processes', async () => {
@@ -36,8 +37,7 @@ if(command==='run'){child=spawn(process.execPath,['-e',${JSON.stringify(childCod
 else console.log('ECHO '+command);
 }});`;
   for (const name of ['claude', 'codex']) { writeFileSync(resolve(bin, name), fixture); chmodSync(resolve(bin, name), 0o755); }
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' };
-  delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false; throw error; } };
   const launches = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
   const ownedChildren: number[] = [];

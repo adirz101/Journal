@@ -1,9 +1,10 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
-import { resolve, delimiter, dirname } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
 import { inspectorTab, newSession, openPalette, paletteDialog, paletteInput, referenceChips, startSession, taskBox } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 // Phase 8 Group B: the command palette and open-file (board 7). Real Electron, runtime
 // and node-pty with fixture CLIs; hidden windows, no notifications, no provider logins.
@@ -28,9 +29,7 @@ fs.appendFileSync(${JSON.stringify(ledger)},JSON.stringify({pid:process.pid,argv
 console.log('TASK '+(process.argv.at(-1)||'').split('\\n').at(-1));process.stdin.setRawMode(true);let line='';
 process.stdin.on('data',d=>{for(const c of d.toString()){if(c==='\\r'){process.stdout.write('\\r\\nECHO '+line+'\\r\\n');line=''}else line+=c}});`;
   for (const provider of ['claude', 'codex']) { writeFileSync(resolve(bin, provider), fixture); chmodSync(resolve(bin, provider), 0o755); }
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: [bin, '/usr/bin', '/bin', dirname(process.execPath)].join(delimiter), HOME: home, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' };
-  // PATH holds only the fixtures, system tools and node, and HOME is empty: a real provider CLI
-  // (for example Cursor's ~/.local/bin/agent) is never found.
+  const env = fixtureEnv({ root, bin, home, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   delete env.ELECTRON_RUN_AS_NODE;
   const launches = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
   const cleanup = () => {

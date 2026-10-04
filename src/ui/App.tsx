@@ -273,7 +273,10 @@ export default function App() {
       setSelectedId(live?.id ?? null); setReceipt(next?.receipts[0] ?? null); setTask(''); });
   }
   async function opened(project: Project) {
-    setProjects(items => [project, ...items.filter(p => p.id !== project.id)]); await refresh(project.id); try { localStorage.setItem('journal-project', project.id); } catch { /* optional */ } setSelectedId(null); setReceipt(null);
+    // Remembered before the refresh: its first reply already shows the project (and asks for
+    // first-run drafts), so a reload while the rest of the refresh runs must reopen it.
+    try { localStorage.setItem('journal-project', project.id); } catch { /* optional */ }
+    setProjects(items => [project, ...items.filter(p => p.id !== project.id)]); await refresh(project.id); setSelectedId(null); setReceipt(null);
   }
   async function openProject() {
     userChose.current = true;

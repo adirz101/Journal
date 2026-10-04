@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { buildAgentLaunch, captureCodexId, CODEX_RESUME_MARKER, PROVIDER_NAMES, PROVIDERS, UUID } from './agents.mjs';
 import { captureCursorId, createChat, CURSOR_RESUME_MARKER, findCursor } from './cursor.mjs';
-import { descendants, isAlive, processIdentity, processTable, sameIdentity, signalVerified, survivors } from './process.mjs';
+import { descendants, isAlive, processIdentity, processTable, resolveExecutable, sameIdentity, signalVerified, survivors, testProviderAllowed } from './process.mjs';
 import { redact, text } from './validation.mjs';
 import { generateTitle } from './sessions.mjs';
 import { referenceEvent } from './references.mjs';
@@ -35,7 +35,7 @@ const isLive = status => LIVE_STATES.includes(status);
 export const ERROR_CODES = Object.freeze({
   SLOTS_FULL: 'SLOTS_FULL',                 // start: 4 live (or pending) sessions
   SHUTTING_DOWN: 'SHUTTING_DOWN',
-  PROVIDER_MISSING: 'PROVIDER_MISSING',     // Cursor CLI not found; spawn ENOENT
+  PROVIDER_MISSING: 'PROVIDER_MISSING',     // CLI not found before the start; spawn ENOENT
   PROVIDER_UNSUPPORTED: 'PROVIDER_UNSUPPORTED', // Cursor lacks resume/createChat/mode
   ID_UNCONFIRMED: 'ID_UNCONFIRMED',         // resume without a confirmed native ID
   CONVERSATION_OPEN: 'CONVERSATION_OPEN',   // same native conversation already live
@@ -87,14 +87,21 @@ export class OutputBuffer {
   }
 }
 
+// The production resolver: a Claude or Codex CLI on PATH (PATHEXT on Windows), or null.
+export const providerResolver = (env = process.env, platform = process.platform) => name => resolveExecutable(name, env, platform);
+
 // Owns up to four native terminals. Every operation names a session ID, and
 // only entries this manager spawned (and that have not exited) accept input or
 // signals. Output stays in bounded memory; nothing raw is persisted.
 export class TerminalManager extends EventEmitter {
   constructor({ store, spawn, makeSettings = () => null, runtimeId = randomUUID(), platform = process.platform,
     identify = processIdentity, table = processTable, verifiedSignal = signalVerified, alive = isAlive, stopGraceMs = 3000, trackMs = 5000,
-    cursor = { find: () => findCursor(process.env), createChat: (path, cwd) => createChat(path, cwd, process.env) } }) {
-    super(); this.cursor = cursor; this.store = store; this.spawn = spawn; this.makeSettings = makeSettings; this.runtimeId = runtimeId; this.platform = platform;
+    cursor = { find: () => findCursor(process.env), createChat: (path, cwd) => createChat(path, cwd, process.env) },
+    // Where a Claude or Codex CLI is now (PATH, PATHEXT on Windows), or null; checked before any
+    // start. The runtime passes providerResolver(); unit tests with an injected spawn pass their own
+    // or none (then the spawn alone decides, as before).
+    resolveProvider = null, env = process.env }) {
+    super(); this.cursor = cursor; this.resolveProvider = resolveProvider; this.env = env; this.store = store; this.spawn = spawn; this.makeSettings = makeSettings; this.runtimeId = runtimeId; this.platform = platform;
     this.identify = identify; this.table = table; this.verifiedSignal = verifiedSignal; this.alive = alive; this.stopGraceMs = stopGraceMs;
     // Slots 1-4 are reserved synchronously at start so concurrent starts never share one.
     this.entries = new Map(); this.reservedSlots = new Set(); this.flushPending = false; this.disposed = false; this.settling = new Set();
@@ -147,6 +154,13 @@ export class TerminalManager extends EventEmitter {
       if (!cursor.supports?.resume || !cursor.supports?.createChat) throw fail(ERROR_CODES.PROVIDER_UNSUPPORTED, 'This Cursor CLI version cannot open a chat by its exact ID. Update it with "agent update".');
       if ((research || plan) && !cursor.supports?.mode) throw fail(ERROR_CODES.PROVIDER_UNSUPPORTED, `This Cursor CLI version has no ${research ? 'Ask' : 'Plan'} mode. Update it with "agent update", or start without ${research ? 'Read-only' : 'Plan'}.`);
     }
+    // Claude and Codex: the CLI must be found now, before any context is prepared or any receipt
+    // is written, so a missing CLI is PROVIDER_MISSING with nothing sent (not an exit after a
+    // submitted prompt). The launch itself still names the provider as before.
+    const executablePath = provider === 'cursor' ? cursor.path : this.resolveProvider ? this.resolveProvider(provider) : provider;
+    if (!executablePath) throw fail(ERROR_CODES.PROVIDER_MISSING, `${PROVIDER_NAMES[provider]} is not installed or not on PATH. Install it, then start again.`);
+    // A headless test run never launches a provider CLI outside its fixture folder (process.mjs).
+    if (executablePath !== provider && !testProviderAllowed(executablePath, this.env)) throw fail(ERROR_CODES.PROVIDER_MISSING, `${PROVIDER_NAMES[provider]} is outside the test provider folder; it is treated as not installed.`);
     // Always reselect and revalidate here; a stale preview never authorizes delivery.
     const oldReceipt = prior ? await this.store.latestNativeReceipt(projectId, provider, prior.nativeId) : null;
     const receipt = await this.store.prepareContext(projectId, task || oldReceipt?.query || '', { workspaceId, disabled, references: prior ? [] : references });

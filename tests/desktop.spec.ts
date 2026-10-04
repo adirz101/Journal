@@ -1,8 +1,9 @@
 import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { inspectContext, inspectorTab, newSession, sessionActions, sessionStatus, setTheme, startSession, switchProject } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 test('reviewed file knowledge reaches a real PTY and survives renderer and app restart', async () => {
   // A long scenario: each start now begins with New session (Phase 3 split view), and hidden test windows click slowly.
@@ -31,7 +32,7 @@ process.stdin.on('data',data=>{
   }
 });`;
   for (const provider of ['claude', 'codex']) { writeFileSync(resolve(bin, provider), fixture); chmodSync(resolve(bin, provider), 0o755); }
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   let app = await electron.launch({ args: ['.'], env });
   app.process().stderr?.on('data', chunk => process.stderr.write(chunk));
   try {

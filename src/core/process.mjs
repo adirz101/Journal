@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { delimiter, isAbsolute, join, win32 } from 'node:path';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { delimiter, isAbsolute, join, relative, win32 } from 'node:path';
 
 // Process ownership. A PID alone is never authority to signal: after a runtime
 // restart a PID may belong to an unrelated program. Journal signals a process
@@ -90,6 +90,20 @@ export function survivors(recorded, table) {
   return recorded.filter(row => sameIdentity(current.get(row.pid), row));
 }
 
+// Test isolation (app side). In a headless test run (JOURNAL_HEADLESS=1) that names its fixture
+// folder in JOURNAL_TEST_PROVIDER_DIR, a provider CLI may be probed or launched only when its
+// real path lies inside that folder: a real claude, codex or agent elsewhere on the computer is
+// treated as not installed and never run. Outside such runs every path is allowed.
+export function testProviderAllowed(path, env = process.env) {
+  const dir = env.JOURNAL_TEST_PROVIDER_DIR;
+  if (env.JOURNAL_HEADLESS !== '1' || !dir) return true;
+  if (typeof path !== 'string' || !path) return false;
+  try {
+    const inside = relative(realpathSync(dir), realpathSync(path));
+    return !!inside && !inside.startsWith('..') && !isAbsolute(inside);
+  } catch { return false; }
+}
+
 // PATH lookup including Windows PATHEXT, so `claude` resolves to claude.cmd.
 export function resolveExecutable(name, env = process.env, platform = process.platform) {
   if (isAbsolute(name)) return existsSync(name) ? name : null;
@@ -131,6 +145,8 @@ export const childEnv = env => { const next = { ...env, NO_OPEN_BROWSER: '1' }; 
 const KILL_DEADLINE = 2500;
 export function runFile(path, args, env = process.env, { platform = process.platform, cwd, timeout = 8000, stdin = 'ignore', output = 'stdout', maxBuffer = 256 * 1024 } = {}) {
   return new Promise((resolve, reject) => {
+    // runFile runs only provider CLIs (detection, help and sign-in checks).
+    if (!testProviderAllowed(path, env)) { reject(Object.assign(new Error('Outside the test provider folder'), { testGuard: true })); return; }
     let target;
     try { target = launchTarget(path, args, { env, platform }); } catch (error) { error.unlaunchable = true; reject(error); return; }
     // spawn, not execFile: execFile drops `detached`, and the group is what a timeout ends.

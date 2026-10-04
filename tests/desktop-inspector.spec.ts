@@ -1,9 +1,10 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
 import { filesView, inspectorTab, newSession, sessionStatus, startSession, statusBar } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 // The Phase 3 session view: header, attention banner, status bar and the
 // three-tab inspector. Real Electron, runtime and node-pty with fixture CLIs.
@@ -38,8 +39,7 @@ else if(command.startsWith('edit ')){const file=require('node:path').resolve(com
 else console.log('ECHO '+command);
 }});`;
   for (const provider of ['claude', 'codex']) { writeFileSync(resolve(bin, provider), fixture); chmodSync(resolve(bin, provider), 0o755); }
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' };
-  delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   return { root, project, env, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
