@@ -20,6 +20,10 @@ process.stdin.on('end', () => {
     const response = event.tool_response && typeof event.tool_response === 'object' ? event.tool_response : {};
     const observation = { token, id: process.env.JOURNAL_SESSION_ID, nativeId: event.session_id, event: event.hook_event_name, cwd: event.cwd, at: Date.now(),
       tool, toolUseId: typeof event.tool_use_id === 'string' ? event.tool_use_id.slice(0, 100) : null };
+    // Every event, PermissionRequest included, carries tool_use_id, the Bash
+    // command and the file tools' path: Journal's pending-approval detail
+    // relies on these fields. Whether native PermissionRequest payloads include
+    // tool_input is still to verify (docs/NATIVE-VALIDATION.md).
     if (tool === 'Bash') {
       observation.command = redact(String(event.tool_input?.command ?? ''), 600);
       observation.background = !!(event.tool_input?.run_in_background || response.backgroundTaskId);

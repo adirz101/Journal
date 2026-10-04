@@ -128,7 +128,7 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
       try {
         if (!METHODS.has(method)) throw new Error('Unknown runtime operation');
         connection.send({ id, value: await handlers[method](params ?? {}) ?? null });
-      } catch (error) { connection.send({ id, error: error instanceof Error ? error.message : 'Runtime operation failed' }); }
+      } catch (error) { connection.send({ id, error: error instanceof Error ? error.message : 'Runtime operation failed', ...(error?.code ? { code: String(error.code).slice(0, 40) } : {}) }); }
     }, () => socket.destroy()));
     socket.on('error', () => {});
     socket.on('close', () => { if (client === connection) { client = null; lastClientAt = Date.now(); manager.detach(); log('client disconnected'); } });

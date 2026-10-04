@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { JournalStore } from '../src/core/store.mjs';
@@ -164,15 +164,23 @@ test('spawn failure records failed session and receipt rather than a successful 
 test('a foreign hook UUID cannot silently replace the native resume identity', async t => {
   const f = runtime(t); const started = await f.manager.start({ projectId: f.project.id, provider: 'claude' });
   const nativeId = started.session.nativeId;
-  const errors = []; f.manager.on('event', e => { if (e.type === 'error') errors.push(e.message); });
+  const errors = []; f.manager.on('event', e => { if (e.type === 'error') errors.push(e); });
+  assert.equal(started.session.identityMismatch, false);
   f.manager.observe(started.session.id, 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', 'waiting');
-  assert.deepEqual(errors, ['Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.']);
+  assert.deepEqual(errors.map(e => [e.message, e.code]), [['Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.', 'IDENTITY_CHANGED']]);
+  assert.equal(f.store.getSession(started.session.id).identityMismatch, true);
   assert.equal(f.manager.entry(started.session.id).session.nativeId, nativeId);
   assert.equal(f.manager.entry(started.session.id).session.nativeIdConfirmed, false);
   f.manager.observe(started.session.id, nativeId, 'running');
   assert.equal(f.manager.entry(started.session.id).session.nativeIdConfirmed, false);
+  assert.equal(f.manager.entry(started.session.id).session.nativeIdSource, 'preassigned', 'A matching hook after a mismatch does not restore confidence');
   f.callbacks.exit({ exitCode: 0 });
+  assert.equal(f.store.getSession(started.session.id).identityMismatch, true);
   await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'claude', resumeId: started.session.id }), /Confirm the conversation ID before continuing/);
+  await f.manager.confirmNativeId(started.session.id, nativeId);
+  for (const session of [f.store.getSession(started.session.id), f.manager.entry(started.session.id).session]) {
+    assert.equal(session.identityMismatch, false); assert.equal(session.nativeIdSource, 'user');
+  }
 });
 
 test('display credit stays bounded during flood while interrupts still reach the process', async t => {
@@ -320,8 +328,9 @@ test('a lone Esc answers (denies) a prompt; a new request resets an unsettled an
   write('\x1b'); send('PreToolUse', { tool: 'Grep', toolUseId: 'g2' });
   write('\x1b'); send('PreToolUse', { tool: 'Grep', toolUseId: 'g3' });
   assert.equal(state(), 'waiting/permission');
+  // Esc at the last prompt ends Claude's turn: back at its input box.
   write('\x1b');
-  assert.equal(state(), 'running/working');
+  assert.equal(state(), 'running/idle');
 });
 
 test('an auto-approved sibling failing does not hide an open approval', async t => {
@@ -361,13 +370,13 @@ test('two open prompts need two answers; one answer settles one prompt', async t
 });
 
 test('which input counts as answering the prompt', async t => {
-  for (const [data, answers] of [['\r\n', true], ['\x1bb', false], ['\x1b[200~ok\r\x1b[201~', false], ['\x03', true]]) {
+  for (const [data, after] of [['\r\n', 'running/working'], ['\x1bb', 'waiting/permission'], ['\x1b[200~ok\r\x1b[201~', 'waiting/permission'], ['\x03', 'running/idle']]) {
     const { send, state, write } = await hooked(t);
     send('PermissionRequest', { tool: 'Bash' });
     write(data);
-    assert.equal(state(), answers ? 'running/working' : 'waiting/permission', JSON.stringify(data));
+    assert.equal(state(), after, JSON.stringify(data));
     send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
-    assert.equal(state(), answers ? 'running/working' : 'waiting/permission', JSON.stringify(data));
+    assert.equal(state(), after === 'waiting/permission' ? after : 'running/working', JSON.stringify(data));
   }
 });
 
@@ -387,13 +396,13 @@ test("Journal's Interrupt counts as answering the prompt, like a typed Ctrl+C", 
   send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
   assert.equal(state(), 'waiting/permission');
   f.manager.interrupt(session.id);
-  assert.equal(state(), 'running/working');
+  assert.equal(state(), 'running/idle', 'Ctrl+C at the only prompt returns Claude to its input box');
   send('PreToolUse', { tool: 'Grep', toolUseId: 'g2' });
-  assert.equal(state(), 'running/working');
+  assert.equal(state(), 'running/working', 'A following tool event restores Working');
 });
 
 test('answering the only open prompt shows Working at once, before any tool event', async t => {
-  for (const keys of [['1'], ['3', 'use rg instead\r'], ['\r'], ['\x1b'], ['\x03']]) {
+  for (const keys of [['1'], ['3', 'use rg instead\r'], ['\r']]) {
     const { send, state, write, f, session } = await hooked(t);
     send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'sleep 600' });
     send('PermissionRequest', { tool: 'Bash' });
@@ -401,6 +410,21 @@ test('answering the only open prompt shows Working at once, before any tool even
     assert.equal(state(), 'running/working', JSON.stringify(keys));
     const entry = f.manager.entries.get(session.id);
     assert.deepEqual(entry.pending, []); assert.equal(entry.answered, false);
+  }
+});
+
+test('Esc or Ctrl+C at the only open prompt shows Your turn at once', async t => {
+  for (const keys of [['\x1b'], ['\x03']]) {
+    const { send, state, write, f, session } = await hooked(t);
+    send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'sleep 600' });
+    send('PermissionRequest', { tool: 'Bash' });
+    for (const key of keys) write(key);
+    assert.equal(state(), 'running/idle', JSON.stringify(keys));
+    const entry = f.manager.entries.get(session.id);
+    assert.deepEqual(entry.pending, []); assert.equal(entry.answered, false);
+    // The rejected tool reports its failure; that is not new work.
+    send('PostToolUseFailure', { tool: 'Bash', toolUseId: 'b1' });
+    assert.equal(state(), 'running/idle', JSON.stringify(keys));
   }
 });
 
@@ -434,4 +458,297 @@ test('an answer is consumed by the prompt its tool resolved', async t => {
   send('PostToolUse', { tool: 'Bash', toolUseId: 'a1' });
   send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
   assert.equal(state(), 'waiting/permission');
+});
+
+// Phase 2: stable slots and error codes.
+// Each start gets its own fake PTY so tests can end one session at a time.
+function multi(t) {
+  const f = runtime(t); const procs = [];
+  f.manager.spawn = () => {
+    const proc = { callbacks: {}, onData(fn) { this.callbacks.data = fn; }, onExit(fn) { this.callbacks.exit = fn; }, write() {}, resize() {}, kill() {} };
+    procs.push(proc); return proc;
+  };
+  const start = (provider = 'claude', extra = {}) => f.manager.start({ projectId: f.project.id, provider, task: 'x', ...extra }).then(r => r.session);
+  return { ...f, procs, start };
+}
+
+test('slots: lowest free slot, kept across stops of others', async t => {
+  const f = multi(t);
+  const a = await f.start(); const b = await f.start(); const c = await f.start();
+  assert.deepEqual([a.slot, b.slot, c.slot], [1, 2, 3]);
+  f.procs[1].callbacks.exit({ exitCode: 0 });
+  assert.equal(f.manager.entry(b.id).session.slot, null);
+  assert.equal(f.store.getSession(b.id).slot, null);
+  const d = await f.start();
+  assert.equal(d.slot, 2);
+  assert.equal(f.manager.entry(a.id).session.slot, 1);
+  assert.deepEqual(f.manager.list().filter(s => s.slot).map(s => s.slot).sort(), [1, 2, 3]);
+});
+
+test('concurrent starts never share a slot; a fifth is refused with SLOTS_FULL', async t => {
+  const f = multi(t);
+  const sessions = await Promise.all([1, 2, 3, 4].map(() => f.start()));
+  assert.deepEqual(sessions.map(s => s.slot).sort(), [1, 2, 3, 4]);
+  await assert.rejects(f.start(), error => error.code === 'SLOTS_FULL' && /up to 4 sessions/.test(error.message));
+});
+
+test('a failed launch frees its reserved slot', async t => {
+  const f = multi(t); const spawn = f.manager.spawn;
+  f.manager.spawn = () => { throw new Error('fixture launch failure'); };
+  await assert.rejects(f.start(), error => error.code === 'START_FAILED' && /Could not start/.test(error.message));
+  const failed = f.store.listSessions(f.project.id)[0];
+  assert.equal(failed.status, 'failed'); assert.equal(failed.slot, null);
+  f.manager.spawn = spawn;
+  assert.equal((await f.start()).slot, 1);
+});
+
+test('a missing executable gives PROVIDER_MISSING', async t => {
+  const f = multi(t);
+  f.manager.spawn = () => { throw Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' }); };
+  await assert.rejects(f.start(), error => error.code === 'PROVIDER_MISSING' && /Could not start/.test(error.message));
+});
+
+test('recovered sessions have no slot', async t => {
+  const f = multi(t);
+  const now = new Date().toISOString();
+  f.store.saveSession({ id: 'foreign', projectId: f.project.id, provider: 'claude', nativeId: null, title: 'old', status: 'running', slot: 2, runtimeId: 'another-runtime', createdAt: now, lastActivityAt: now,
+    pending: { tool: 'Bash', command: 'ls', path: null, at: now } });
+  const [recovered] = await f.manager.recover();
+  assert.equal(recovered.slot, null); assert.equal(recovered.pending, null);
+  assert.equal(f.store.getSession('foreign').slot, null);
+  assert.equal(f.store.getSession('foreign').pending, null);
+});
+
+test('error codes: SLOTS_FULL, ID_UNCONFIRMED, CONVERSATION_OPEN, NOT_LIVE and SHUTTING_DOWN', async t => {
+  const { ERROR_CODES } = await import('../src/core/terminal.mjs');
+  assert.deepEqual(Object.keys(ERROR_CODES), ['SLOTS_FULL', 'SHUTTING_DOWN', 'PROVIDER_MISSING', 'PROVIDER_UNSUPPORTED', 'ID_UNCONFIRMED', 'CONVERSATION_OPEN', 'ORPHAN_RUNNING', 'START_FAILED', 'NOT_LIVE']);
+  assert.ok(Object.isFrozen(ERROR_CODES));
+  const f = multi(t);
+  const codex = await f.start('codex');
+  f.procs[0].callbacks.exit({ exitCode: 0 });
+  await assert.rejects(f.start('codex', { resumeId: codex.id }), error => error.code === 'ID_UNCONFIRMED' && /Confirm the conversation ID/.test(error.message));
+  assert.throws(() => f.manager.write(codex.id, 'x'), error => error.code === 'NOT_LIVE' && /not active or owned/.test(error.message));
+  const claude = await f.start();
+  f.procs[1].callbacks.exit({ exitCode: 0 });
+  const resumed = await f.start('claude', { resumeId: claude.id });
+  await assert.rejects(f.start('claude', { resumeId: claude.id }), error => error.code === 'CONVERSATION_OPEN');
+  assert.equal(resumed.slot, 1);
+  for (let i = 0; i < 3; i++) await f.start();
+  await assert.rejects(f.start(), error => error.code === 'SLOTS_FULL');
+  await f.manager.dispose({ stopSessions: false });
+  await assert.rejects(f.start(), error => error.code === 'SHUTTING_DOWN');
+});
+
+test('cursor errors carry PROVIDER_MISSING and PROVIDER_UNSUPPORTED', async t => {
+  const f = multi(t);
+  f.manager.cursor = { find: async () => null, createChat: async () => null };
+  await assert.rejects(f.start('cursor'), error => error.code === 'PROVIDER_MISSING' && /Cursor CLI is not installed/.test(error.message));
+  f.manager.cursor = { find: async () => ({ path: '/bin/agent', cursor: true, supports: { resume: false, createChat: true } }), createChat: async () => null };
+  await assert.rejects(f.start('cursor'), error => error.code === 'PROVIDER_UNSUPPORTED');
+});
+
+test('nativeIdSource transitions', async t => {
+  const f = multi(t); const codexId = '01a0f661-908b-7193-8520-6ac6f3b44aeb'; const cursorId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const claude = await f.start();
+  assert.equal(claude.nativeIdSource, 'preassigned');
+  f.manager.ingest(claude.id, { event: 'SessionStart', nativeId: claude.nativeId });
+  assert.equal(f.store.getSession(claude.id).nativeIdSource, 'preassigned-observed');
+  f.procs[0].callbacks.exit({ exitCode: 0 });
+  const resumed = await f.start('claude', { resumeId: claude.id });
+  assert.equal(resumed.nativeIdSource, 'preassigned-observed', 'Resume copies the source of the prior ID');
+  const codex = await f.start('codex');
+  assert.equal(codex.nativeIdSource, null);
+  f.procs[2].callbacks.data(`To continue this session, run codex resume ${codexId}\n`);
+  assert.equal(f.store.getSession(codex.id).nativeIdSource, 'exit-banner');
+  f.procs[2].callbacks.data('To continue this session, run:\n  codex resume ');
+  assert.equal(f.store.getSession(codex.id).nativeIdSource, null, 'A cleared hint has no source');
+  f.procs[2].callbacks.data(`To continue this session, run codex resume ${codexId}\n`);
+  f.procs[2].callbacks.exit({ exitCode: 0 });
+  await f.manager.confirmNativeId(codex.id, codexId);
+  assert.equal(f.store.getSession(codex.id).nativeIdSource, 'user');
+  f.manager.cursor = { find: async () => ({ path: '/bin/agent', cursor: true, supports: { resume: true, createChat: true, mode: true } }), createChat: async () => cursorId };
+  const cursor = await f.start('cursor');
+  assert.equal(cursor.nativeIdSource, 'create-chat'); assert.equal(cursor.identityMismatch, false);
+});
+
+// Phase 2: output activity. Mocked clock; enabled after start so launch runs on real timers.
+async function outputting(t, provider = 'codex') {
+  const f = multi(t); const session = await f.start(provider);
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  const events = []; f.manager.on('event', e => { if (e.type === 'activity') events.push(e); });
+  const data = text => f.procs[0].callbacks.data(text);
+  const latest = () => f.manager.entry(session.id).session.lastOutputAt;
+  return { ...f, session, events, data, latest };
+}
+
+test('a flood of output emits one activity event per throttle window', async t => {
+  const f = await outputting(t);
+  assert.equal(f.session.lastOutputAt, null);
+  for (let i = 0; i < 1000; i++) f.data('x');
+  assert.equal(f.events.length, 1);
+  assert.deepEqual(f.events[0], { type: 'activity', sessionId: f.session.id, lastOutputAt: f.latest() });
+  for (let i = 0; i < 5; i++) { t.mock.timers.tick(999); f.data('y'); }
+  assert.equal(f.events.length, 1, 'Still inside the first throttle window');
+  t.mock.timers.tick(5);
+  assert.equal(f.events.length, 2, 'The trailing heartbeat fires once');
+  assert.equal(f.events[1].lastOutputAt, f.latest());
+  assert.equal(Date.parse(f.events[1].lastOutputAt), Date.parse(f.events[0].lastOutputAt) + 4995);
+  t.mock.timers.tick(60_000);
+  assert.equal(f.events.length, 2, 'No output, no further events');
+});
+
+test('output after ten seconds of quiet emits at once', async t => {
+  const f = await outputting(t);
+  f.data('first'); t.mock.timers.tick(11_000);
+  assert.equal(f.events.length, 1);
+  f.data('again');
+  assert.equal(f.events.length, 2);
+  assert.equal(f.events[1].lastOutputAt, f.latest());
+});
+
+test('echo and resize repaint do not count as output', async t => {
+  const f = await outputting(t);
+  f.data('before'); const first = f.latest();
+  t.mock.timers.tick(20_000);
+  f.manager.write(f.session.id, 'a'); t.mock.timers.tick(299); f.data('a');
+  assert.equal(f.latest(), first, 'Echo within 300 ms is not activity');
+  t.mock.timers.tick(20_000);
+  f.manager.resize(f.session.id, 120, 40); t.mock.timers.tick(299); f.data('repaint');
+  assert.equal(f.latest(), first, 'A resize repaint is not activity');
+  t.mock.timers.tick(2); f.data('real output');
+  assert.notEqual(f.latest(), first);
+  assert.equal(f.events.length, 2);
+});
+
+test('Claude sessions record lastOutputAt but emit no activity events', async t => {
+  const f = await outputting(t, 'claude');
+  f.data('hello'); t.mock.timers.tick(20_000); f.data('again'); t.mock.timers.tick(20_000);
+  assert.ok(f.latest()); assert.equal(f.events.length, 0);
+});
+
+test('lastOutputAt is persisted with the five-second metadata save', async t => {
+  const f = await outputting(t);
+  f.data('one'); t.mock.timers.tick(5001); f.data('two');
+  assert.ok(f.latest());
+  assert.equal(f.store.getSession(f.session.id).lastOutputAt, f.latest());
+});
+
+test('exit clears the pending heartbeat', async t => {
+  const f = await outputting(t);
+  f.data('one'); t.mock.timers.tick(100); f.data('two');
+  assert.ok(f.manager.entry(f.session.id).activityTimer);
+  f.procs[0].callbacks.exit({ exitCode: 0 });
+  assert.equal(f.manager.entry(f.session.id).activityTimer, null);
+  t.mock.timers.tick(10_000);
+  assert.equal(f.events.length, 1);
+});
+
+// Phase 2: what an open Claude permission prompt asks, redacted and bounded.
+const pendingOf = h => { const { pending } = h.f.store.getSession(h.session.id); return pending && { tool: pending.tool, command: pending.command, path: pending.path, ...('inferred' in pending ? { inferred: pending.inferred } : {}) }; };
+
+test('a PermissionRequest with a command sets a redacted pending snapshot', async t => {
+  const h = await hooked(t); const statuses = []; h.f.manager.on('event', e => { if (e.type === 'status') statuses.push(e.session); });
+  assert.equal(h.session.pending, null);
+  h.send('PermissionRequest', { tool: 'Bash', toolUseId: 'b1', command: 'TOKEN=abc123456 npm publish' });
+  assert.deepEqual(pendingOf(h), { tool: 'Bash', command: 'TOKEN=[redacted] npm publish', path: null });
+  assert.ok(!Number.isNaN(Date.parse(h.f.store.getSession(h.session.id).pending.at)));
+  assert.equal(statuses.length, 1, 'One status event carries both the state and the detail');
+  assert.equal(statuses[0].status, 'waiting'); assert.equal(statuses[0].pending.command, 'TOKEN=[redacted] npm publish');
+  h.send('PostToolUse', { tool: 'Bash', toolUseId: 'b1' });
+  assert.equal(h.f.store.getSession(h.session.id).pending, null);
+  assert.equal(statuses.at(-1).pending, null);
+});
+
+test('pending is inferred from the in-flight tool when the request has no command', async t => {
+  const h = await hooked(t);
+  h.send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'npm test' });
+  h.send('PermissionRequest', { tool: 'Bash', command: '' });
+  assert.deepEqual(pendingOf(h), { tool: 'Bash', command: 'npm test', path: null, inferred: true });
+});
+
+test('pending path is workspace-relative and null outside it', async t => {
+  const h = await hooked(t);
+  h.send('PermissionRequest', { tool: 'Write', toolUseId: 'w1', filePath: join(h.session.cwd, 'src', 'a.mjs') });
+  assert.deepEqual(pendingOf(h), { tool: 'Write', command: null, path: 'src/a.mjs' });
+  h.send('Stop');
+  h.send('PermissionRequest', { tool: 'Write', toolUseId: 'w2', filePath: resolve(h.session.cwd, '..', 'elsewhere.txt') });
+  assert.deepEqual(pendingOf(h), { tool: 'Write', command: null, path: null });
+  h.send('Stop');
+  h.send('PermissionRequest', { tool: 'Write', toolUseId: 'w3', filePath: '' });
+  assert.deepEqual(pendingOf(h), { tool: 'Write', command: null, path: null });
+});
+
+test('pending clears on settlement, Stop, UserPromptSubmit, an answer key, SessionStart and exit', async t => {
+  const cases = {
+    'tool completion': h => h.send('PostToolUse', { tool: 'Bash', toolUseId: 'b1' }),
+    'Stop': h => h.send('Stop'),
+    'UserPromptSubmit': h => h.send('UserPromptSubmit'),
+    'SessionStart': h => h.send('SessionStart'),
+    'answer key': h => h.write('1'),
+    'Esc': h => h.write('\x1b'),
+    'exit': h => h.f.callbacks.exit({ exitCode: 0 }),
+  };
+  for (const [name, settle] of Object.entries(cases)) {
+    const h = await hooked(t);
+    h.send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'rm -rf build' });
+    h.send('PermissionRequest', { tool: 'Bash', toolUseId: 'b1', command: 'rm -rf build' });
+    assert.equal(pendingOf(h).command, 'rm -rf build', name);
+    settle(h);
+    assert.equal(h.f.store.getSession(h.session.id).pending, null, name);
+    assert.equal(h.f.manager.entry(h.session.id).session.pending, null, name);
+  }
+});
+
+test('with two open prompts pending shows the oldest, then the next', async t => {
+  const h = await hooked(t);
+  h.send('PermissionRequest', { tool: 'Bash', command: 'first' });
+  h.send('PermissionRequest', { tool: 'Edit', filePath: join(h.session.cwd, 'b.txt') });
+  assert.equal(pendingOf(h).command, 'first');
+  h.write('1'); h.send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
+  assert.deepEqual(pendingOf(h), { tool: 'Edit', command: null, path: 'b.txt' }, 'PreToolUse settlement moves to the next prompt');
+  assert.equal(h.state(), 'waiting/permission');
+  h.write('1');
+  assert.equal(pendingOf(h), null);
+});
+
+test('the permission timeline event carries tool, command, path and toolUseId', async t => {
+  const h = await hooked(t);
+  h.send('PermissionRequest', { tool: 'Bash', toolUseId: 'b9', command: 'API_KEY=abcd1234 rm x' });
+  h.send('PermissionRequest', { tool: 'Write', toolUseId: 'w9', filePath: join(h.session.cwd, 'c.txt') });
+  const bodies = h.f.store.listEvents(h.session.id).filter(e => e.kind === 'permission').map(e => e.body);
+  assert.deepEqual(bodies, [{ tool: 'Bash', command: 'API_KEY=[redacted] rm x', path: null, toolUseId: 'b9' }, { tool: 'Write', command: null, path: 'c.txt', toolUseId: 'w9' }]);
+});
+
+test('Esc or Ctrl+C while working shows Your turn; a later tool event restores Working', async t => {
+  for (const key of ['\x1b', '\x03']) {
+    const { send, state, write } = await hooked(t);
+    send('UserPromptSubmit');
+    send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'sleep 600' });
+    assert.equal(state(), 'running/working');
+    write(key);
+    assert.equal(state(), 'running/idle', JSON.stringify(key));
+    // The interrupted command reports its end; that is not new work.
+    send('PostToolUseFailure', { tool: 'Bash', toolUseId: 'b1', interrupted: true });
+    assert.equal(state(), 'running/idle', JSON.stringify(key));
+    // If the key did not end the turn (it closed a menu), the next tool event says so.
+    send('PreToolUse', { tool: 'Read', toolUseId: 'r1' });
+    assert.equal(state(), 'running/working', JSON.stringify(key));
+    write(key); assert.equal(state(), 'running/idle');
+    send('PostToolUse', { tool: 'Read', toolUseId: 'r1' });
+    assert.equal(state(), 'running/working', 'A completed tool also restores Working');
+  }
+});
+
+test('arrow keys and Alt+letter while working do not change state', async t => {
+  const { send, state, write } = await hooked(t);
+  send('UserPromptSubmit');
+  for (const key of ['\x1b[A', '\x1bb', 'abc', '\x1b\x1b']) { write(key); assert.equal(state(), 'running/working', JSON.stringify(key)); }
+});
+
+test('Esc while idle or for Codex changes nothing', async t => {
+  const { send, state, write } = await hooked(t);
+  send('Stop'); write('\x1b'); assert.equal(state(), 'running/idle');
+  const f = multi(t); const codex = await f.start('codex');
+  f.manager.write(codex.id, '\x03');
+  assert.equal(f.store.getSession(codex.id).status, 'running'); assert.equal(f.store.getSession(codex.id).activity, null);
 });

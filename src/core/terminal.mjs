@@ -11,8 +11,26 @@ import { realPath } from './paths.mjs';
 
 export const MAX_SESSIONS = 4;
 export const IDLE_SETTLE_MS = 750;
+export const ECHO_MS = 300;          // output this soon after input or resize is not "activity"
+export const QUIET_MS = 10_000;      // output after this much quiet is a resume edge
+export const ACTIVITY_THROTTLE_MS = 5_000;
 export const LIVE_STATES = ['starting', 'running', 'waiting', 'stopping'];
 const isLive = status => LIVE_STATES.includes(status);
+// Machine-readable reasons for refused or failed operations. Messages stay
+// human-readable; the renderer branches on `code`.
+export const ERROR_CODES = Object.freeze({
+  SLOTS_FULL: 'SLOTS_FULL',                 // start: 4 live (or pending) sessions
+  SHUTTING_DOWN: 'SHUTTING_DOWN',
+  PROVIDER_MISSING: 'PROVIDER_MISSING',     // Cursor CLI not found; spawn ENOENT
+  PROVIDER_UNSUPPORTED: 'PROVIDER_UNSUPPORTED', // Cursor lacks resume/createChat/mode
+  ID_UNCONFIRMED: 'ID_UNCONFIRMED',         // resume without a confirmed native ID
+  CONVERSATION_OPEN: 'CONVERSATION_OPEN',   // same native conversation already live
+  ORPHAN_RUNNING: 'ORPHAN_RUNNING',         // resume blocked by an orphan
+  START_FAILED: 'START_FAILED',             // other launch failure (wrapped)
+  NOT_LIVE: 'NOT_LIVE',                     // owned(): terminal not active
+});
+const CODES = new Set(Object.values(ERROR_CODES));
+const fail = (code, message) => Object.assign(new Error(message), { code });
 const TEST_COMMAND = /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|node\s+--test|npx\s+(?:jest|vitest|playwright\s+test|mocha)|pytest|jest|vitest|go\s+test|cargo\s+test|playwright\s+test|mocha|rspec|dotnet\s+test|gradle\w*\s+test|mvn\s+test)\b/;
 // Resolve the nearest existing ancestor so deleted or not-yet-created files
 // still compare correctly against the canonical checkout root.
@@ -58,19 +76,28 @@ export class TerminalManager extends EventEmitter {
     cursor = { find: () => findCursor(process.env), createChat: (path, cwd) => createChat(path, cwd, process.env) } }) {
     super(); this.cursor = cursor; this.store = store; this.spawn = spawn; this.makeSettings = makeSettings; this.runtimeId = runtimeId; this.platform = platform;
     this.identify = identify; this.table = table; this.verifiedSignal = verifiedSignal; this.alive = alive; this.stopGraceMs = stopGraceMs;
-    this.entries = new Map(); this.pending = 0; this.flushPending = false; this.disposed = false;
+    // Slots 1-4 are reserved synchronously at start so concurrent starts never share one.
+    this.entries = new Map(); this.reservedSlots = new Set(); this.pending = 0; this.flushPending = false; this.disposed = false;
     this.tracker = trackMs ? setInterval(() => { void this.trackDescendants().catch(() => {}); void this.recheckOrphans().catch(() => {}); }, trackMs) : null; this.tracker?.unref?.();
   }
   entry(id) { return this.entries.get(id) ?? null; }
   liveEntries() { return [...this.entries.values()].filter(entry => !entry.exited); }
   list() { return [...this.entries.values()].map(entry => ({ ...entry.session })); }
-  async start(request) {
-    if (this.disposed) throw new Error('Journal is shutting down');
-    if (this.liveEntries().length + this.pending >= MAX_SESSIONS) throw new Error(`Journal runs up to ${MAX_SESSIONS} sessions at once. Stop one before starting another.`);
-    this.pending++;
-    try { return await this.launch(request); } finally { this.pending--; }
+  // The lowest slot not held by a live session of this runtime or a start in progress.
+  // Orphans hold no slot: they do not count toward MAX_SESSIONS.
+  freeSlot() {
+    const used = new Set([...this.reservedSlots, ...this.liveEntries().map(entry => entry.session.slot)]);
+    for (let slot = 1; slot <= MAX_SESSIONS; slot++) if (!used.has(slot)) return slot;
+    return null;
   }
-  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, plan = false, disabled = [], references = [] }) {
+  async start(request) {
+    if (this.disposed) throw fail(ERROR_CODES.SHUTTING_DOWN, 'Journal is shutting down');
+    const slot = this.liveEntries().length + this.pending >= MAX_SESSIONS ? null : this.freeSlot();
+    if (!slot) throw fail(ERROR_CODES.SLOTS_FULL, `Journal runs up to ${MAX_SESSIONS} sessions at once. Stop one before starting another.`);
+    this.reservedSlots.add(slot); this.pending++;
+    try { return await this.launch({ ...request, slot }); } finally { this.pending--; this.reservedSlots.delete(slot); }
+  }
+  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, plan = false, disabled = [], references = [], slot = null }) {
     if (!PROVIDERS.includes(provider)) throw new Error('Unknown agent provider');
     if (typeof research !== 'boolean' || typeof plan !== 'boolean') throw new Error('Invalid mode option');
     if (plan && provider === 'codex') throw new Error('Codex has no plan mode; use Read-only instead');
@@ -82,11 +109,11 @@ export class TerminalManager extends EventEmitter {
       if (prior.projectId !== projectId || prior.provider !== provider) throw new Error('Session belongs to another project or provider');
       // Native conversations are tied to their working directory: resume in place.
       workspaceId = prior.workspaceId ?? null; research = !!prior.research; plan = !research && !!prior.plan;
-      if (!prior.nativeIdConfirmed || !UUID.test(prior.nativeId ?? '')) throw new Error('Confirm the conversation ID before continuing');
-      if (this.liveEntries().some(entry => entry.session.provider === provider && entry.session.nativeId === prior.nativeId)) throw new Error('This native conversation is already open in another session');
+      if (!prior.nativeIdConfirmed || !UUID.test(prior.nativeId ?? '')) throw fail(ERROR_CODES.ID_UNCONFIRMED, 'Confirm the conversation ID before continuing');
+      if (this.liveEntries().some(entry => entry.session.provider === provider && entry.session.nativeId === prior.nativeId)) throw fail(ERROR_CODES.CONVERSATION_OPEN, 'This native conversation is already open in another session');
       // An orphan may still be writing to the same conversation outside Journal.
       const orphans = await this.store.activeSessions?.() ?? [];
-      if (prior.status === 'orphaned' || orphans.some(other => other.status === 'orphaned' && other.provider === provider && other.nativeId === prior.nativeId)) throw new Error('This conversation may still be running in an orphaned process. End it before resuming.');
+      if (prior.status === 'orphaned' || orphans.some(other => other.status === 'orphaned' && other.provider === provider && other.nativeId === prior.nativeId)) throw fail(ERROR_CODES.ORPHAN_RUNNING, 'This conversation may still be running in an orphaned process. End it before resuming.');
     }
     // The cwd is a registered worktree of this project (or its checkout), never another session's.
     const project = await (this.store.view ? this.store.view(projectId, workspaceId) : this.store.project(projectId));
@@ -94,9 +121,9 @@ export class TerminalManager extends EventEmitter {
     let cursor = null;
     if (provider === 'cursor') {
       cursor = await this.cursor.find();
-      if (!cursor?.path || !cursor.cursor) throw new Error('Cursor CLI is not installed. Install it from the Cursor provider row, then try again.');
-      if (!cursor.supports?.resume || !cursor.supports?.createChat) throw new Error('This Cursor CLI version cannot open a chat by its exact ID. Update it with "agent update".');
-      if ((research || plan) && !cursor.supports?.mode) throw new Error(`This Cursor CLI version has no ${research ? 'Ask' : 'Plan'} mode. Update it with "agent update", or start without ${research ? 'Read-only' : 'Plan'}.`);
+      if (!cursor?.path || !cursor.cursor) throw fail(ERROR_CODES.PROVIDER_MISSING, 'Cursor CLI is not installed. Install it from the Cursor provider row, then try again.');
+      if (!cursor.supports?.resume || !cursor.supports?.createChat) throw fail(ERROR_CODES.PROVIDER_UNSUPPORTED, 'This Cursor CLI version cannot open a chat by its exact ID. Update it with "agent update".');
+      if ((research || plan) && !cursor.supports?.mode) throw fail(ERROR_CODES.PROVIDER_UNSUPPORTED, `This Cursor CLI version has no ${research ? 'Ask' : 'Plan'} mode. Update it with "agent update", or start without ${research ? 'Read-only' : 'Plan'}.`);
     }
     // Always reselect and revalidate here; a stale preview never authorizes delivery.
     const oldReceipt = prior ? await this.store.latestNativeReceipt(projectId, provider, prior.nativeId) : null;
@@ -107,11 +134,14 @@ export class TerminalManager extends EventEmitter {
     // Exact identity at launch: Claude takes a preassigned ID; Cursor's chat is created
     // first in the same folder (documented create-chat). Codex is confirmed after exit.
     const nativeId = prior?.nativeId ?? (provider === 'claude' ? randomUUID() : provider === 'cursor' ? await this.cursor.createChat(cursor.path, cwd) : null);
+    // Where the native ID came from: a resume keeps the prior session's source.
+    const nativeIdSource = prior ? prior.nativeIdSource ?? null : provider === 'claude' ? 'preassigned' : provider === 'cursor' && nativeId ? 'create-chat' : null;
     const session = { id: randomUUID(), projectId, provider, nativeId,
       nativeIdConfirmed: provider === 'claude' || !!prior || (provider === 'cursor' && !!nativeId), title: generateTitle(task, prior),
       status: 'starting', receiptId: receipt.id, resumedFrom: prior?.id ?? null, createdAt: now, lastActivityAt: now,
       // An additional-folder session runs in that folder with its own Git identity (if any).
-      branch: project.cwd ? project.cwdBranch ?? null : project.branch, head: project.cwd ? project.cwdHead ?? null : project.head, cwd, workspaceId, research, plan, baseline, runtimeId: this.runtimeId, activity: null };
+      branch: project.cwd ? project.cwdBranch ?? null : project.branch, head: project.cwd ? project.cwdHead ?? null : project.head, cwd, workspaceId, research, plan, baseline, runtimeId: this.runtimeId, activity: null,
+      slot, nativeIdSource, identityMismatch: false, lastOutputAt: null, pending: null };
     let prompt = task;
     if (receipt.packet || (prior && (oldReceipt?.hadKnowledge || oldReceipt?.items.length))) {
       const withdrawn = oldReceipt?.items.filter(item => !receipt.items.some(current => current.revisionId === item.revisionId)) ?? [];
@@ -122,14 +152,15 @@ export class TerminalManager extends EventEmitter {
     this.record(session.id, prior ? 'resume' : 'start', { provider, resumedFrom: prior?.id ?? null, branch: project.branch, head: project.head });
     let entry = null;
     try {
-      if (this.disposed) throw new Error('Journal is shutting down');
+      if (this.disposed) throw fail(ERROR_CODES.SHUTTING_DOWN, 'Journal is shutting down');
       const settingsFile = provider === 'claude' ? this.makeSettings(session, project) : null;
       const launch = buildAgentLaunch({ provider, nativeId: session.nativeId, resume: !!prior, prompt, settingsFile, research, plan, executable: cursor?.path });
       const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', JOURNAL_SESSION_ID: session.id };
       delete env.ELECTRON_RUN_AS_NODE;
       const proc = this.spawn(launch.executable, launch.argv, { cwd: session.cwd, env, name: 'xterm-256color', cols: 100, rows: 30 });
       entry = { session, proc, buffer: new OutputBuffer(), attached: false, sent: 0, acknowledged: 0, inflight: [], tail: '', exited: false,
-        stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), tools: new Map(), pending: [], answered: false, lastPersist: 0 };
+        stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), tools: new Map(), pending: [], answered: false, lastPersist: 0,
+        lastInputAt: 0, lastResizeAt: 0, lastActivityEmit: 0, activityTimer: null };
       this.entries.set(session.id, entry);
       session.status = 'running'; session.pid = Number.isInteger(proc.pid) ? proc.pid : null;
       // Identity is read asynchronously, and again on first output once the CLI is running.
@@ -145,13 +176,14 @@ export class TerminalManager extends EventEmitter {
       const spawned = !!entry;
       if (entry && !entry.exited) { try { entry.proc.kill(); } catch {} }
       this.entries.delete(session.id);
-      session.status = 'failed'; session.endedAt = new Date().toISOString(); await this.store.saveSession(session);
+      session.status = 'failed'; session.slot = null; session.endedAt = new Date().toISOString(); await this.store.saveSession(session);
       const current = await this.store.getReceipt(receipt.id);
       // Once the process started with the prompt, delivery may have happened.
       await this.store.updateReceiptState(receipt.id, current.state === 'prepared' && !spawned ? 'failed' : 'uncertain', session.id, prompt);
       this.record(session.id, 'error', { message: redact(error.message, 300) });
       this.emitStatus(session);
-      throw new Error(`Could not start ${provider}. Check that its CLI is installed and available on PATH. ${error.message}`);
+      const code = CODES.has(error.code) ? error.code : error.code === 'ENOENT' ? ERROR_CODES.PROVIDER_MISSING : ERROR_CODES.START_FAILED;
+      throw fail(code, `Could not start ${provider}. Check that its CLI is installed and available on PATH. ${error.message}`);
     }
   }
   async refreshIdentity(entry) {
@@ -164,6 +196,9 @@ export class TerminalManager extends EventEmitter {
     const { session } = entry;
     if (!entry.sawOutput) { entry.sawOutput = true; void this.refreshIdentity(entry); }
     entry.buffer.append(data); entry.tail = (entry.tail + data).slice(-8192);
+    const now = Date.now();
+    // Echo of typed input and full-screen repaints after a resize are not agent output.
+    if (now - Math.max(entry.lastInputAt, entry.lastResizeAt) >= ECHO_MS) this.noteOutput(entry, now);
     // Whether the CLI enabled bracketed paste (DECSET 2004), for inserted references.
     const on = entry.tail.lastIndexOf('\x1b[?2004h'); const off = entry.tail.lastIndexOf('\x1b[?2004l');
     if (on >= 0 || off >= 0) entry.bracketedPaste = on > off;
@@ -174,19 +209,37 @@ export class TerminalManager extends EventEmitter {
       // A newly printed incomplete/invalid banner revokes an earlier hint.
       // Do not clear hints merely because unrelated output evicted the banner.
       if (entry.tail.includes(marker) && session.nativeId !== captured) {
-        session.nativeId = captured; this.persist(session, true); this.emitStatus(session);
+        session.nativeId = captured; session.nativeIdSource = captured ? 'exit-banner' : null; this.persist(session, true); this.emitStatus(session);
       }
     }
     // Activity timestamps are metadata; persist them at most every five seconds.
     if (Date.now() - entry.lastPersist > 5000) this.persist(session);
     this.scheduleFlush();
   }
+  // Only the time of output is kept, never its content. Codex and Cursor have no
+  // state hooks, so they report output: at once after a quiet period, then at
+  // most one trailing event per throttle window carrying the latest time.
+  noteOutput(entry, now) {
+    const { session } = entry;
+    const previous = session.lastOutputAt ? Date.parse(session.lastOutputAt) : -Infinity;
+    session.lastOutputAt = new Date(now).toISOString();
+    if (session.provider !== 'codex' && session.provider !== 'cursor') return;
+    const emit = () => { if (!this.disposed && !entry.exited) this.emit('event', { type: 'activity', sessionId: session.id, lastOutputAt: session.lastOutputAt }); };
+    if (now - previous >= QUIET_MS) {
+      clearTimeout(entry.activityTimer); entry.activityTimer = null;
+      entry.lastActivityEmit = now; emit(); return;
+    }
+    if (entry.activityTimer) return;
+    entry.activityTimer = setTimeout(() => { entry.activityTimer = null; entry.lastActivityEmit = Date.now(); emit(); },
+      Math.max(0, entry.lastActivityEmit + ACTIVITY_THROTTLE_MS - now));
+    entry.activityTimer.unref?.();
+  }
   exited(entry, exitCode, signal) {
     if (this.disposed || entry.exited) return;
-    entry.exited = true; entry.tools.clear(); entry.commands.clear(); entry.pending = []; entry.answered = false; clearTimeout(entry.forceTimer); for (const resolve of entry.waiters.splice(0)) resolve();
+    entry.exited = true; entry.tools.clear(); entry.commands.clear(); entry.pending = []; entry.answered = false; this.syncPending(entry); clearTimeout(entry.forceTimer); clearTimeout(entry.activityTimer); entry.activityTimer = null; for (const resolve of entry.waiters.splice(0)) resolve();
     const { session } = entry;
     session.status = entry.stopping ? 'stopped' : 'exited'; session.exitCode = exitCode; session.signal = signal ?? null;
-    session.endedAt = new Date().toISOString(); session.activity = null;
+    session.endedAt = new Date().toISOString(); session.activity = null; session.slot = null;
     const recorded = [...entry.descendants.values()];
     session.survivors = recorded.length ? null : [];
     this.persist(session, true); this.emitStatus(session); this.scheduleFlush();
@@ -202,7 +255,7 @@ export class TerminalManager extends EventEmitter {
   }
   owned(id) {
     const entry = this.entries.get(id);
-    if (!entry || entry.exited) throw new Error('Terminal is not active or owned by this session');
+    if (!entry || entry.exited) throw fail(ERROR_CODES.NOT_LIVE, 'Terminal is not active or owned by this session');
     return entry;
   }
   write(id, data) {
@@ -210,10 +263,16 @@ export class TerminalManager extends EventEmitter {
     const entry = this.owned(id);
     // Claude's prompt answer keys: a digit selects, Enter confirms, Esc or Ctrl+C dismisses (deny with feedback ends with Enter).
     // Pasted text never counts. The only open prompt settles at once; with several, the next tool event settles one.
-    if (entry.pending.length && !data.startsWith('\x1b[200~') && (data.includes('\r') || data === '\x1b' || data === '\x03' || /^[1-9]$/.test(data))) entry.answered = true;
-    entry.proc.write(data);
-    if (entry.answered && entry.pending.length === 1 && entry.session.status === 'waiting') {
-      entry.pending = []; entry.answered = false; this.observe(id, entry.session.nativeId, 'running', 'working');
+    const dismiss = data === '\x1b' || data === '\x03';
+    if (entry.pending.length && !data.startsWith('\x1b[200~') && (data.includes('\r') || dismiss || /^[1-9]$/.test(data))) entry.answered = true;
+    entry.proc.write(data); entry.lastInputAt = Date.now();
+    const { session } = entry;
+    if (entry.answered && entry.pending.length === 1 && session.status === 'waiting') {
+      // Esc or Ctrl+C rejects the tool and interrupts the turn, which no hook reports: Claude is back at its input box.
+      entry.pending = []; entry.answered = false; this.syncPending(entry); this.observe(id, session.nativeId, 'running', dismiss ? 'idle' : 'working');
+    } else if (dismiss && !entry.pending.length && session.provider === 'claude' && session.status === 'running' && session.activity === 'working') {
+      // "esc to interrupt": Stop does not fire on a user interrupt. A later tool event corrects this if the turn went on.
+      this.observe(id, session.nativeId, 'running', 'idle');
     }
   }
   // Types a file reference into the agent's input without submitting it, only
@@ -231,13 +290,13 @@ export class TerminalManager extends EventEmitter {
       // only a turn that has been idle for a moment counts as ready.
       : session.activity !== 'idle' || Date.now() - (entry.activitySince ?? 0) < IDLE_SETTLE_MS ? 'Journal does not know yet whether the agent is ready for input' : null;
     if (reason) return { inserted: false, reason };
-    entry.proc.write(entry.bracketedPaste ? `\x1b[200~${text} \x1b[201~` : `${text} `);
+    entry.proc.write(entry.bracketedPaste ? `\x1b[200~${text} \x1b[201~` : `${text} `); entry.lastInputAt = Date.now();
     this.record(id, 'reference', referenceEvent(reference, 'inserted'));
     return { inserted: true };
   }
   resize(id, cols, rows) {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 2 || cols > 500 || rows > 300) throw new Error('Invalid terminal size');
-    const entry = this.owned(id); entry.proc.resize(cols, rows); entry.session.terminal = { cols, rows };
+    const entry = this.owned(id); entry.proc.resize(cols, rows); entry.lastResizeAt = Date.now(); entry.session.terminal = { cols, rows };
   }
   // Goes through write() so Ctrl+C counts as answering an open permission prompt.
   interrupt(id) { this.write(id, '\x03'); this.record(id, 'interrupt', {}); }
@@ -291,9 +350,10 @@ export class TerminalManager extends EventEmitter {
     if (!UUID.test(nativeId ?? '')) throw new Error('Enter the exact native session ID (UUID)');
     const session = await this.store.getSession(id);
     if (isLive(session.status) || session.status === 'orphaned') throw new Error('Stop this session before confirming its conversation ID');
-    session.nativeId = nativeId; session.nativeIdConfirmed = true;
+    const confirmed = { nativeId, nativeIdConfirmed: true, nativeIdSource: 'user', identityMismatch: false };
+    Object.assign(session, confirmed);
     // Keep a retained in-memory copy in step so a later save cannot revert it.
-    const entry = this.entries.get(id); if (entry) Object.assign(entry.session, { nativeId, nativeIdConfirmed: true });
+    const entry = this.entries.get(id); if (entry) Object.assign(entry.session, confirmed);
     await this.store.saveSession(session); this.emitStatus(session); return session;
   }
   observe(id, nativeId, status, activity) {
@@ -303,9 +363,11 @@ export class TerminalManager extends EventEmitter {
     // Child sessions and native /clear can report another ID. Never graft it
     // onto a confirmed parent or silently restore confidence on a later hook.
     if (nativeId !== session.nativeId && !entry.identityAmbiguous) {
-      entry.identityAmbiguous = true;
-      this.emit('event', { type: 'error', sessionId: id, message: 'Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.' });
+      entry.identityAmbiguous = true; session.identityMismatch = true;
+      this.emit('event', { type: 'error', sessionId: id, code: 'IDENTITY_CHANGED', message: 'Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.' });
     }
+    // The preassigned ID is now seen in Claude's own hook.
+    if (nativeId === session.nativeId && !entry.identityAmbiguous && session.nativeIdSource === 'preassigned') session.nativeIdSource = 'preassigned-observed';
     session.nativeIdConfirmed = !entry.identityAmbiguous;
     if (!entry.stopping && status) session.status = status;
     if (activity !== undefined) { if (activity !== session.activity) entry.activitySince = Date.now(); session.activity = activity; }
@@ -316,13 +378,32 @@ export class TerminalManager extends EventEmitter {
   // subagent event alone must not hide a prompt. `known` is undefined for a tool that is starting.
   settlePermissions(id, nativeId, toolUseId, known) {
     const entry = this.entries.get(id); if (!entry) return;
+    const before = entry.pending[0];
     if (known !== undefined) {
       const open = entry.pending.filter(p => !this.permissionResolvedBy(entry, p, toolUseId, known));
       // The answer belonged to the prompt this tool resolved.
       if (open.length < entry.pending.length) { entry.pending = open; entry.answered = false; }
     }
     if (entry.answered && entry.pending.length) { entry.pending.shift(); entry.answered = false; }
+    this.syncPending(entry);
     if (entry.session.status === 'waiting' && !entry.pending.length) this.observe(id, nativeId, 'running', 'working');
+    // Still waiting, now on the next prompt: report its detail.
+    else if (entry.session.status === 'waiting' && entry.pending[0] !== before) this.emitStatus(entry.session);
+  }
+  // The banner shows the oldest open prompt, the one the next answer settles.
+  syncPending(entry) { entry.session.pending = entry.pending[0]?.detail ?? null; }
+  // Workspace-relative, '/'-separated and bounded; null outside the workspace.
+  relativePath(session, file) {
+    if (typeof file !== 'string' || !file) return null;
+    // Compare canonical paths (for example /var vs /private/var on macOS).
+    const path = relative(session.cwd, canonical(isAbsolute(file) ? file : join(session.cwd, file)));
+    if (!path || path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path)) return null;
+    return path.split(sep).join('/').slice(0, 300);
+  }
+  // After Esc or Ctrl+C set Your turn, a tool that starts or completes shows the turn went on.
+  // Not after Stop: it clears entry.tools, so only tools of the current turn count.
+  restoreWorking(id, entry, nativeId) {
+    if (entry.session.status === 'running' && entry.session.activity === 'idle') this.observe(id, nativeId, 'running', 'working');
   }
   // A tool finished (already removed from entry.tools): was it the one that asked?
   permissionResolvedBy(entry, pending, toolUseId, known) {
@@ -338,21 +419,30 @@ export class TerminalManager extends EventEmitter {
     const { session } = entry;
     session.lastActivityAt = new Date().toISOString();
     switch (event.event) {
-      case 'SessionStart': entry.pending = []; entry.answered = false; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'idle'); break;
-      case 'UserPromptSubmit': entry.pending = []; entry.answered = false; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'working'); this.record(id, 'prompt', {}); break;
+      case 'SessionStart': entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry); this.observe(id, event.nativeId, 'running', 'idle'); break;
+      case 'UserPromptSubmit': entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry); this.observe(id, event.nativeId, 'running', 'working'); this.record(id, 'prompt', {}); break;
       case 'PermissionRequest': {
         // The request may not carry a tool id: match it to the in-flight tool that asked, if exactly one fits.
         const candidates = [...entry.tools].filter(([, tool]) => !tool.asked && tool.tool === event.tool
           && (!event.command || tool.command === event.command) && (!event.filePath || tool.filePath === event.filePath));
         const toolUseId = event.toolUseId ?? (candidates.length === 1 ? candidates[0][0] : null);
         if (toolUseId && entry.tools.has(toolUseId)) entry.tools.get(toolUseId).asked = true;
-        entry.pending.push({ toolUseId, tool: event.tool ?? null }); if (entry.pending.length > 100) entry.pending.shift(); entry.answered = false;
-        this.observe(id, event.nativeId, 'waiting', 'permission'); this.record(id, 'permission', { tool: event.tool ?? null }); break;
+        // What the prompt asks: from the request, else from the in-flight tool that asked ('' counts as missing).
+        const matched = toolUseId ? entry.tools.get(toolUseId) : null;
+        const rawCommand = event.command || matched?.command || null;
+        const rawPath = event.filePath || matched?.filePath || null;
+        const detail = { tool: event.tool ?? null, command: rawCommand ? redact(rawCommand, 300) : null, path: rawPath ? this.relativePath(session, rawPath) : null,
+          at: new Date().toISOString(), ...(!event.command && !event.filePath && matched ? { inferred: true } : {}) };
+        entry.pending.push({ toolUseId, tool: event.tool ?? null, detail }); if (entry.pending.length > 100) entry.pending.shift(); entry.answered = false;
+        this.syncPending(entry);
+        this.observe(id, event.nativeId, 'waiting', 'permission');
+        this.record(id, 'permission', { tool: detail.tool, command: detail.command, path: detail.path, toolUseId }); break;
       }
-      case 'Stop': entry.pending = []; entry.answered = false; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'idle'); this.record(id, 'turn-end', {}); break;
+      case 'Stop': entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry); this.observe(id, event.nativeId, 'running', 'idle'); this.record(id, 'turn-end', {}); break;
       case 'PreToolUse':
         if (event.toolUseId && entry.tools.size < 500) entry.tools.set(event.toolUseId, { tool: event.tool, command: event.command ?? null, filePath: event.filePath ?? null });
         this.settlePermissions(id, event.nativeId, event.toolUseId);
+        this.restoreWorking(id, entry, event.nativeId);
         if (event.tool === 'Bash' && event.toolUseId && entry.commands.size < 500) {
           const command = redact(event.command ?? '', 300);
           entry.commands.set(event.toolUseId, true);
@@ -364,18 +454,17 @@ export class TerminalManager extends EventEmitter {
         break;
       case 'PostToolUse': case 'PostToolUseFailure': {
         // The tool ran, so any permission prompt for it was answered, even if no further PreToolUse arrives.
-        const known = entry.tools.delete(event.toolUseId);
+        const tool = entry.tools.get(event.toolUseId); const known = entry.tools.delete(event.toolUseId);
         this.settlePermissions(id, event.nativeId, event.toolUseId, known);
+        // A rejected (asked) or interrupted tool failing is the end of the turn, not new work.
+        if (known && !(event.event === 'PostToolUseFailure' && (event.interrupted || tool.asked))) this.restoreWorking(id, entry, event.nativeId);
         if (event.tool === 'Bash' && entry.commands.delete(event.toolUseId)) {
           // Exit 0 only when Claude reported completion of a foreground command.
           const status = event.interrupted ? 'interrupted' : event.background ? 'unknown' : event.event === 'PostToolUse' ? 'succeeded' : Number.isInteger(event.exit) ? 'failed' : 'unknown';
           this.record(id, 'command-end', { toolUseId: event.toolUseId, status, exitCode: status === 'succeeded' ? 0 : Number.isInteger(event.exit) ? event.exit : null, durationMs: Number.isFinite(event.durationMs) ? event.durationMs : null });
         } else if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(event.tool) && event.filePath && event.event === 'PostToolUse') {
-          let absolute = isAbsolute(event.filePath) ? event.filePath : join(session.cwd, event.filePath);
-          // Compare canonical paths (for example /var vs /private/var on macOS).
-          absolute = canonical(absolute);
-          const path = relative(session.cwd, absolute);
-          if (path && !path.startsWith(`..${sep}`) && path !== '..') this.record(id, 'file', { path: path.split(sep).join('/').slice(0, 300), tool: event.tool });
+          const path = this.relativePath(session, event.filePath);
+          if (path) this.record(id, 'file', { path, tool: event.tool });
         }
         break;
       }
@@ -449,7 +538,7 @@ export class TerminalManager extends EventEmitter {
       const verified = !!session.identity && sameIdentity(current, session.identity);
       const unverified = !verified && !!session.pid && this.alive(session.pid) && (!current || !session.identity);
       const orphaned = verified || unverified;
-      const next = { ...session, status: orphaned ? 'orphaned' : 'interrupted', identityVerified: orphaned ? verified : undefined, activity: null, endedAt: orphaned ? null : new Date().toISOString(), recoveredAt: new Date().toISOString() };
+      const next = { ...session, status: orphaned ? 'orphaned' : 'interrupted', identityVerified: orphaned ? verified : undefined, activity: null, slot: null, pending: null, endedAt: orphaned ? null : new Date().toISOString(), recoveredAt: new Date().toISOString() };
       await this.store.saveSession(next);
       const receipt = await Promise.resolve().then(() => this.store.getReceipt(session.receiptId)).catch(() => null);
       if (receipt && ['prepared', 'submitted'].includes(receipt.state)) await this.store.updateReceiptState(receipt.id, 'uncertain', session.id);
@@ -503,9 +592,10 @@ export class TerminalManager extends EventEmitter {
       await Promise.all(live.map(entry => entry.survivorScan).filter(Boolean));
     }
     this.disposed = true; this.detach();
+    for (const entry of this.entries.values()) { clearTimeout(entry.activityTimer); entry.activityTimer = null; }
     for (const entry of this.liveEntries()) {
       try {
-        await this.store.saveSession({ ...entry.session, status: 'interrupted', endedAt: new Date().toISOString() });
+        await this.store.saveSession({ ...entry.session, status: 'interrupted', slot: null, pending: null, endedAt: new Date().toISOString() });
         const receipt = await this.store.getReceipt(entry.session.receiptId);
         if (['prepared', 'submitted'].includes(receipt.state)) await this.store.updateReceiptState(receipt.id, 'uncertain', entry.session.id);
       } finally { try { entry.proc.kill(); } catch {} }

@@ -101,7 +101,7 @@ export class RuntimeClient extends EventEmitter {
     if (message.event) { this.emit('event', message.event); return; }
     const pending = this.pending.get(message.id); if (!pending) return;
     this.pending.delete(message.id);
-    message.error ? pending.reject(new Error(message.error)) : pending.resolve(message.value);
+    message.error ? pending.reject(Object.assign(new Error(message.error), message.code ? { code: message.code } : {})) : pending.resolve(message.value);
   }
   async call(method, params = {}) {
     if (!this.socket) { if (this.closing) throw new Error('Journal runtime is closed'); await this.connect(); }
