@@ -198,3 +198,27 @@ test('Phase 4 composer: empty live regions collapse without leaving the accessib
     assert.ok(rulesFor(selector).some(rule => declares(rule, 'position', 'absolute') && declares(rule, 'width', '1px')), `${selector} collapses`);
   }
 });
+
+// Phase 9 (review-animations): the whole motion inventory. Anything new must be added here on
+// purpose: keyboard-triggered and frequent actions never animate, entrances stay under 300 ms on
+// transform and opacity, and the global reduced-motion rule removes every animation and transition.
+test('motion inventory: only the listed, budgeted motion exists, and reduced motion removes it all', () => {
+  const motion = RULES.filter(rule => /(?:^|;)\s*(?:transition|animation)(?:-[a-z-]+)?\s*:/.test(rule.body) && !/(?:transition|animation)\s*:\s*none/.test(rule.body))
+    .map(rule => `${rule.selectors.join(',')} { ${rule.body.split(';').filter(d => /^\s*(?:transition|animation)/.test(d)).join(';')} }`).sort();
+  assert.deepEqual(motion, [
+    '.first-note { animation:first-note-in 280ms var(--ease-out) }',          // once per install (board 12)
+    '.first-note-mark { animation:first-note-tilt 280ms var(--ease-out) 40ms both }',
+    '.start-button { transition:transform 120ms ease-out }',                   // pointer press feedback only
+    '.wrap-up button { transition:background-color 120ms ease,border-color 120ms ease }', // hover colour
+  ]);
+  for (const name of ['first-note-in', 'first-note-tilt']) {
+    const frames = stripComments(styles).match(new RegExp(`@keyframes ${name}\\{([^}]*\\})\\}`))?.[1] ?? '';
+    assert.doesNotMatch(frames, /scale\(0\)|width|height|top|left|margin|padding/, `${name} animates transform and opacity only`);
+  }
+  // A keyboard press of Start (Space or Enter) never scales it: :active is for the pointer.
+  assert.deepEqual(RULES.filter(rule => rule.selectors.some(s => s.startsWith('.start-button') && s.includes(':active')) && /transform\s*:\s*scale/.test(rule.body)).flatMap(rule => rule.selectors), ['.start-button:not(:disabled):active:not(:focus-visible)']);
+  const reduced = RULES.filter(rule => rule.at.some(at => /prefers-reduced-motion:\s*reduce/.test(at)) && rule.selectors.includes('*'));
+  assert.ok(reduced.some(rule => /animation:none!important/.test(rule.body.replace(/\s/g, '')) && /transition:none!important/.test(rule.body.replace(/\s/g, ''))), 'the global reduced-motion rule');
+  // No smooth scrolling anywhere in the renderer (it is motion too, and keyboard-triggered).
+  for (const name of readdirSync(UI).filter(file => /\.(tsx?|css)$/.test(file))) assert.doesNotMatch(read(name), /behavior:\s*['"]?smooth|scroll-behavior:\s*smooth/, name);
+});

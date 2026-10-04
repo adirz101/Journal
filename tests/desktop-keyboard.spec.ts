@@ -174,6 +174,8 @@ test('task 2 (a session needs you): ⌘J / Ctrl+Shift+J finds the waiting sessio
     await expect(page.locator('main.workspace')).not.toHaveAttribute('aria-busy', 'true');
     await press(app, 'nextNeedsYou');
     await expect(row('ASKING_TWO')).toHaveAttribute('aria-current', 'true');
+    // Keyboard switches never animate (review-animations): nothing is running after the switch.
+    expect(await page.evaluate(() => document.getAnimations().map(a => (a as CSSAnimation).animationName ?? a.constructor.name))).toEqual([]);
     // The banner is announced (a status region that stays mounted) and names the command.
     const status = page.locator('.attention-live[role=status]');
     await expect(status).toContainText('Claude is waiting for your approval');

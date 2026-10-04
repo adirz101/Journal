@@ -102,5 +102,5 @@ export function TerminalPane({ sessionId, live, appearance, onError, onUnavailab
     return () => { unfocus(); font.stop(); disposed = true; void api('detach', { id: sessionId }).catch(() => {}); cancelAnimationFrame(resizeFrame); observer.disconnect(); removeListener?.(); input.dispose(); terminalRef.current = null; terminal.dispose(); };
   }, [sessionId]);
   useEffect(() => { if (terminalRef.current) terminalRef.current.options.theme = terminalThemes[appearance]; }, [appearance]);
-  return <div ref={host} className="terminal-surface" aria-label="Agent terminal" />;
+  return <div ref={host} className="terminal-surface" role="group" aria-label="Agent terminal" />;
 }
