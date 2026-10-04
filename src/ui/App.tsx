@@ -28,9 +28,14 @@ import { useSessionChanges, useSessionEvents } from './useSessionData';
 import { diffSummary } from './sessionView';
 import { showMenu } from './menu';
 import { defaultProvider, isProvider, modeFlags } from './composerModel';
+import { ProviderMark } from './ProviderMark';
+import { EndedTerminal, WrapUp } from './WrapUp'; // Phase 6
+import { endedView, type HandoffPrefill } from './wrapUpModel'; // Phase 6
+import journalMarkWhite from '../../assets/branding/journal-mark-white.png';
+import journalMarkDark from '../../assets/branding/journal-mark.png';
 import journalWordmark from '../../assets/branding/journal-wordmark.png';
 import { storedAppearance, type Appearance } from './theme';
-import { composer, copy, shell } from './copy';
+import { composer, copy, shell, tip, wrapUp as wrapUpCopy } from './copy';
 import { keyLetter } from './keys';
 import { api, errorCode, isLive, PROVIDER_NAMES, type AgentInfo, type Bootstrap, type CommandId, type FileReference, type InspectorTab, type Memory, type Mode, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
 
@@ -48,7 +53,7 @@ export default function App() {
   const [sessions, setSessions] = useState<Record<string, Session>>({}); const [selectedId, setSelectedId] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null); const [task, setTask] = useState('');
   const [panel, setPanel] = useState<InspectorTab>('memory');
-  const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState<{ memory?: Memory; supersedes?: Memory; initialCategory?: string; draft?: StatusDraft } | null>(null);
+  const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState<{ memory?: Memory; supersedes?: Memory; initialCategory?: string; draft?: StatusDraft; after?: () => void } | null>(null);
   const [knowledgeVersion, setKnowledgeVersion] = useState(0);
   // Phase 5: note trust lines refetch on note changes and when a session starts running (a new delivery).
   // statuses: each live session's last status, pruned when sessions disappear.
@@ -92,6 +97,15 @@ export default function App() {
   const session = selectedId ? sessions[selectedId] ?? null : null;
   // A confirmation draft belongs to one launch, never to another conversation.
   const resumeValue = resumeDraft?.sessionId === session?.id ? resumeDraft?.value ?? '' : session?.nativeId ?? '';
+  // === Phase 6: session end ===
+  // Show terminal is chosen per ended session for this app run (never stored).
+  const [terminalShown, setTerminalShown] = useState<Record<string, boolean>>({});
+  // The selected session was live on the previous render: it just ended under the user.
+  const liveSeen = useRef<string | null>(null);
+  const justEnded = !!session && !isLive(session) && liveSeen.current === session.id;
+  useEffect(() => { liveSeen.current = session && isLive(session) ? session.id : null; });
+  const wrapUpShown = !!session && !!endedView(session) && !terminalShown[session.id];
+  // === End Phase 6 ===
   const taskRef = useRef<HTMLTextAreaElement>(null); const removedIds = useRef(new Set<string>()); const projectRef = useRef<Project | null>(null);
   // Set once the user picks a project or session: the startup selection, which
   // waits for project data, must not override a choice made meanwhile.
@@ -223,6 +237,14 @@ export default function App() {
   const [taskFocus, setTaskFocus] = useState(0);
   useEffect(() => { if (taskFocus) taskRef.current?.focus(); }, [taskFocus]);
   function newSession() { userChose.current = true; setSelectedId(null); setTaskFocus(n => n + 1); }
+  // === Phase 6: hand-off (D12) fills the composer and never starts a session ===
+  // The agent is preselected for this hand-off only; the remembered default agent is not changed.
+  function handoff(prefill: HandoffPrefill) {
+    newSession(); setTask(prefill.task); setReferences(prefill.references); setWorkspaceId(prefill.workspaceId); setDisabled([]);
+    setProviderState(prefill.provider); setMode(prefill.mode); setStartError(null);
+    requestAnimationFrame(() => { const field = taskRef.current; if (field) field.setSelectionRange(field.value.length, field.value.length); });
+  }
+  // === End Phase 6 ===
   // === Region: command handler (Phase 3: A adds settings, B the tab commands, C the layout toggles) ===
   // App shortcuts arrive as commands from the main process (src/desktop/shortcuts.mjs),
   // so they also work while the terminal has focus. The ref keeps the handler current.
@@ -436,7 +458,7 @@ export default function App() {
           setReferences(current => current.some(r => r.rootKey === described.rootKey && r.path === described.path && r.startLine === described.startLine && r.endLine === described.endLine) ? current : [...current, described].slice(-20));
         }}
         onSaveEvidence={source => setEvidenceSource({ kind: 'file', path: source.path, startLine: source.startLine, endLine: source.endLine, ...(source.rootKey.startsWith('root:') ? { rootId: source.rootKey.slice(5) } : {}) })} />} />}
-      {panel === 'memory' && <MemoryTab><KnowledgePanel project={state.project} version={knowledgeVersion} trustVersion={trustVersion} sessions={ordered} filters={memoryFilters} onFilters={setMemoryFilters} onOpenSession={openSession} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} /></MemoryTab>}
+      {panel === 'memory' && <MemoryTab><KnowledgePanel project={state.project} workspaces={workspaces?.workspaces} version={knowledgeVersion} trustVersion={trustVersion} sessions={ordered} filters={memoryFilters} onFilters={setMemoryFilters} onOpenSession={openSession} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} /></MemoryTab>}
   </Inspector>;
   // === End region B: inspector ===
   // === Region C: the ResizableWorkspace wrapper (layout modes) ===
@@ -462,7 +484,7 @@ export default function App() {
         : <section className="session-view" aria-label="Session">
           <SessionHeader session={session} state={stateFor(session, now, connected)} connected={connected} busy={busy} canStart={canStart} now={now} mac={bootstrap?.platform === 'darwin'}
             projectBranch={session.projectId === state.project.id ? state.project.branch : session.branch ?? null} agentVersion={bootstrap?.agents.find(a => a.provider === session.provider)?.version ?? null}
-            onInterrupt={() => void sessionAction('interrupt')} onStop={() => void sessionAction('stop')} onContinue={() => void start(session.provider, session)}
+            onInterrupt={() => void sessionAction('interrupt')} onStop={() => void sessionAction('stop')} onContinue={() => void start(session.provider, session)} hideContinue={wrapUpShown}
             onArchiveToggle={() => void (session.archived ? sessionActions.unarchive(session) : sessionActions.archive(session))}
             onEndOrphan={() => void sessionAction('terminateOrphan')} onEndSurvivors={() => void sessionAction('terminateSurvivors')} onMenu={position => void sessionMenu(session, position)} />
           <AttentionBanner session={session} />
@@ -470,8 +492,21 @@ export default function App() {
           {session.status === 'orphaned' && <p className="hint session-hint">{session.identityVerified === false ? `A process with this session's PID (${(session as { pid?: number }).pid ?? 'unknown'}) is still running, but Journal cannot verify it is the original agent, so it will not signal it. Continuing stays blocked until it ends; check it outside Journal.` : 'The runtime that owned this terminal stopped while its process kept running. Journal cannot reattach to it. End it here, or leave it running; continuing this conversation stays blocked while it runs.'}</p>}
           {session.status === 'interrupted' && <p className="hint session-hint">This session's runtime stopped unexpectedly. Whether its first message reached the agent is uncertain, and nothing was resent.{resumable(session) ? ' Continue reopens the same conversation.' : ''}</p>}
           {!!session.survivors?.length && <p className="hint session-hint">Child processes outlived the agent: {session.survivors.map(s => `${s.pid} ${s.command}`).join('; ')}</p>}
-          <div className="terminal-panel"><TerminalPane key={session.id} sessionId={session.id} live={isLive(session) && connected} appearance={appearance} onError={setError} /></div>
-          {!isLive(session) && session.status !== 'orphaned' && !session.nativeIdConfirmed && <div className="resume-id"><label>Native session ID<input value={resumeValue} onChange={e => setResumeDraft({ sessionId: session.id, value: e.target.value })} placeholder="Exact UUID from the native CLI" /></label><button disabled={busy} onClick={() => void run(async () => { const next = await api<Session>('confirmNativeId', { id: session.id, nativeId: resumeValue }); merge([next]); })}>Confirm conversation ID</button></div>}
+          {/* === Phase 6: the wrap-up replaces the terminal of an ended session (Show terminal brings it back) === */}
+          {/* Show terminal hides the wrap-up without unmounting it, so a staged Still true or Dismiss keeps its Undo;
+              only another session or project (the key) commits it. */}
+          {endedView(session) ? <><div className="wrap-scroll" hidden={!wrapUpShown}><WrapUp key={session.id} session={session} project={state.project} workspaces={workspaces?.workspaces ?? []} receipt={sessionReceipt} events={events} agents={bootstrap?.agents ?? []}
+            appearance={appearance} mac={bootstrap?.platform === 'darwin'} busy={busy} canStart={canStart} connected={connected} justEnded={justEnded} hidden={!wrapUpShown} knowledgeVersion={knowledgeVersion}
+            onShowTerminal={() => setTerminalShown(current => ({ ...current, [session.id]: true }))} onContinue={() => void start(session.provider, session)}
+            onConfirmId={nativeId => run(async () => { merge([await api<Session>('confirmNativeId', { id: session.id, nativeId })]); })} onCopyId={() => void sessionActions.copyNativeId(session)}
+            onOpenDiff={() => { setFilesChoice('changed'); setPanel('files'); layout.showInspector(); }} onOpenMemory={() => { setPanel('memory'); layout.showInspector(); }}
+            onEdit={(memory, done) => setForm({ memory, after: done })} onFinishDraft={() => void proposeUpdate('branch')} onHandoff={handoff}
+            onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} /></div>
+            {!wrapUpShown && <><div className="wrap-terminal-bar"><button type="button" onClick={() => setTerminalShown(current => ({ ...current, [session.id]: false }))}>{wrapUpCopy.showSummary}</button></div>
+            <div className="terminal-panel"><EndedTerminal session={session} appearance={appearance} onError={setError} /></div></>}</>
+          : <div className="terminal-panel"><TerminalPane key={session.id} sessionId={session.id} live={isLive(session) && connected} appearance={appearance} onError={setError} /></div>}
+          {/* === End Phase 6 === */}
+          {!wrapUpShown && !isLive(session) && session.status !== 'orphaned' && !session.nativeIdConfirmed && <div className="resume-id"><label>{wrapUpCopy.idLabel}<input value={resumeValue} onChange={e => setResumeDraft({ sessionId: session.id, value: e.target.value })} placeholder={wrapUpCopy.idPlaceholder} spellCheck={false} /></label><button disabled={busy} onClick={() => void run(async () => { const next = await api<Session>('confirmNativeId', { id: session.id, nativeId: resumeValue }); merge([next]); })}>{wrapUpCopy.confirmId}</button></div>}
           <StatusBar receipt={sessionReceipt} changes={sessionChanges.changes} update={update} onShowSent={showSent} onError={failed} />
         </section>}
     </main>
@@ -490,7 +525,7 @@ export default function App() {
     {settingsOpen && <SettingsDialog appearance={appearance} onAppearance={setAppearance} update={update} project={state?.project ?? null} onClose={() => setSettingsOpen(false)} onDataChanged={() => { setKnowledgeVersion(v => v + 1); void refresh().catch(() => {}); }} />}
     {state && workspaceDialog && <WorkspaceDialog project={state.project} onClose={() => setWorkspaceDialog(false)} onChanged={() => void refresh().catch(failed)} />}
     {state && evidenceSource && <KnowledgeForm project={state.project} initialSource={evidenceSource} onClose={() => setEvidenceSource(null)} onSaved={() => { setEvidenceSource(null); setPanel('memory'); setKnowledgeVersion(v => v + 1); }} />}
-    {state && form && <KnowledgeForm project={state.project} memory={form.memory} supersedes={form.supersedes} initialCategory={form.initialCategory} draft={form.draft} onClose={() => setForm(null)} onSaved={() => { setForm(null); setPanel('memory'); setKnowledgeVersion(v => v + 1); }} />}
+    {state && form && <KnowledgeForm project={state.project} memory={form.memory} supersedes={form.supersedes} initialCategory={form.initialCategory} draft={form.draft} onClose={() => setForm(null)} onSaved={() => { form.after?.(); setForm(null); setPanel('memory'); setKnowledgeVersion(v => v + 1); }} />}
   </ResizableWorkspace>;
   // === End region C ===
 }

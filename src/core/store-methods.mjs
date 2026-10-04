@@ -78,6 +78,7 @@ export const STORE_METHODS = [
   'memoryChecks',
   'sessionSummary',
   'staleNotesForSession',
+  'staleNoteDiff',
   'rememberProposals',
   'reaffirmMemory',
   'needsOrientation',

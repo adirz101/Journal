@@ -415,6 +415,7 @@ const actions = {
   // Phase 6: the session wrap-up. via is fixed here; the renderer cannot label its own audit entries.
   sessionSummary: ({ id }) => store.sessionSummary(id),
   staleNotes: ({ sessionId }) => store.staleNotesForSession(sessionId),
+  staleNoteDiff: ({ projectId, memoryId, sessionId }) => store.staleNoteDiff(text(projectId, 'project ID', 100), text(memoryId, 'note ID', 100), text(sessionId, 'session ID', 100)),
   rememberProposals: ({ ids }) => store.rememberProposals(ids, { via: 'wrap-up' }),
   reaffirmMemory: ({ id, startLine, endLine, workspaceId, expectedHash }) => store.reaffirmMemory(id, { startLine, endLine, workspaceId: workspaceId ?? null, expectedHash }),
   storageInfo: () => store.storageInfo(),

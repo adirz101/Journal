@@ -54,14 +54,14 @@ export interface Session { id: string; projectId: string; provider: Provider; na
   cliVersion?: string | null;
   nativeIdSource?: 'preassigned' | 'preassigned-observed' | 'create-chat' | 'exit-banner' | 'user' | null; identityMismatch?: boolean;
   // Phase 6: the end snapshot (taken once by the runtime when the session exits) and how it ended.
-  changeStats?: ChangeStats | null; signal?: string | null; }
+  changeStats?: ChangeStats | null; signal?: string | number | null; }
 // Changes in the session's checkout since it started, counted once when it ended (D11). paths: files the
 // session changed (not those already changed at its start), at most 200; from: a rename's old path.
 export interface ChangeStats { available: boolean; additions: number; deletions: number; files: number; preexisting: number;
   paths: { path: string; from: string | null }[]; truncated: boolean; at: string; reason?: string }
 // sessionSummary (src/core/insights.mjs): stored data only, no Git.
 export interface SessionSummary {
-  status: SessionStatus; exitCode: number | null; signal: string | null; durationMs: number | null;
+  status: SessionStatus; exitCode: number | null; signal: string | number | null; durationMs: number | null;
   changes: ChangeStats | null;                     // the end snapshot (D11); null when none was taken; available: false without a start baseline
   tests: { passed: number; failed: number; unknown: number; commands: string[] } | null;   // null for Codex and Cursor
   identity: { nativeId: string | null; confirmed: boolean; source: Session['nativeIdSource']; mismatch: boolean };

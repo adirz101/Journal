@@ -163,6 +163,23 @@ export const wrapUp = {
   notSaved: 'Terminal output is kept in memory only while Journal’s runtime runs. It was not saved and is no longer available.',
   lastOutput: 'Last thing in the terminal', copyOutput: 'Copy output', copied: 'Copied',
   ended: (suggestions: number) => `Session ended. ${count(suggestions, 'suggestion')}.`,
+  // --- Phase 6 Group B additions ---
+  unknown: (n: number) => `${n} without a result`, appliesAll: 'applies to all branches', cancel: 'Cancel',
+  showWholeChange: 'Show the whole change', wholeChangeNeeded: 'Part of this change is not shown. Show the whole change before you mark the note still true.',
+  wholeChangeTooLarge: 'This change is too large to show in full here. Update the note instead.', wholeChangeHidden: 'This file’s content is hidden because its name looks sensitive. Update the note instead.',
+  wholeChange: 'The whole change in this file since the note was saved',
+  wholeChangeAgain: 'The file changed again while it loaded. Check the new change.', wholeChangeFailed: 'Couldn’t load the whole change. Update the note instead.',
+  linesTo: 'to', rangeInvalid: 'Choose 1 to 30 lines.', rangeLabel: (edge: string) => `${edge} line`,
+  confirmId: 'Confirm conversation ID', idLabel: 'Conversation ID', idPlaceholder: 'Exact ID from the agent’s own CLI', copyId: 'Copy ID',
+  fromSession: 'Suggested from this session', branchUpdate: 'Drafted from this branch’s commits · needs your two lines',
+  checkFailed: (message: string) => `Couldn’t mark it still true: ${message}`,
+  // --- Phase 6 Group B review fixes ---
+  notSavedFailed: 'This session didn’t start, so Journal has no terminal output for it.',
+  moreSuggestions: (n: number) => `${n === 1 ? 'More suggestion' : 'More suggestions'} from this session`, moreSuggestionsLabel: (n: number) => `${count(n, 'more suggestion')} from this session`, review: 'Review',
+  source: (where: string) => `Source: ${where}`,
+  editOnBranch: (branch: string) => `To edit it, switch to ⑂ ${branch}`, finishOnBranch: (branch: string) => `Switch to ⑂ ${branch} to finish it`,
+  nothingToCopy: 'Nothing to copy yet',
+  savedLineHeader: 'Saved line', lineNowHeader: 'Line now', changeHeader: 'Change', textHeader: 'Text', lineHeader: 'Line',
 } as const;
 
 // Phase 7: first run (boards 1, 2, 3 and 12). Voice (board 12): plain and calm, no exclamation
