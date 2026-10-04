@@ -60,6 +60,9 @@ export default function App() {
   // A confirmation draft belongs to one launch, never to another conversation.
   const resumeValue = resumeDraft?.sessionId === session?.id ? resumeDraft?.value ?? '' : session?.nativeId ?? '';
   const taskRef = useRef<HTMLTextAreaElement>(null); const removedIds = useRef(new Set<string>()); const projectRef = useRef<Project | null>(null);
+  // Set once the user picks a project or session: the startup selection, which
+  // waits for project data, must not override a choice made meanwhile.
+  const userChose = useRef(false);
   projectRef.current = state?.project ?? null;
   const connected = runtime.state === 'connected';
   const failed = useCallback((error: unknown) => setError(error instanceof Error ? error.message : String(error)), []);
@@ -106,8 +109,8 @@ export default function App() {
       const remembered = (() => { try { return localStorage.getItem('journal-project'); } catch { return null; } })();
       const firstLive = activeOrder([...data.active, ...data.live]).find(isLive);
       const selected = data.projects.find(p => p.id === (firstLive?.projectId ?? remembered));
-      if (selected) {
-        const next = await refresh(selected.id);
+      if (selected && !userChose.current) {
+        const next = await refresh(selected.id); if (userChose.current) return;
         const live = data.live.find(s => isLive(s) && s.projectId === selected.id);
         if (live) { setSelectedId(live.id); setReceipt(await api<Receipt>('getReceipt', { id: live.receiptId })); }
         else if (next?.receipts[0]) setReceipt(next.receipts[0]);
@@ -130,23 +133,26 @@ export default function App() {
   }, [refresh, reloadSessions, merge, failed]);
   async function run(action: () => Promise<void>) { setBusy(true); setError(''); try { await action(); } catch (error) { failed(error); } finally { setBusy(false); } }
   async function chooseProject(project: Project) {
+    userChose.current = true;
     await run(async () => { const next = await refresh(project.id); try { localStorage.setItem('journal-project', project.id); } catch { /* optional */ }
       const live = activeOrder(Object.values(sessions)).find(s => isLive(s) && s.projectId === project.id);
       setSelectedId(live?.id ?? null); setReceipt(next?.receipts[0] ?? null); setTask(''); });
   }
   async function openProject() {
+    userChose.current = true;
     await run(async () => { const project = await api<Project | null>('openProject'); if (!project) return; setProjects(items => [project, ...items.filter(p => p.id !== project.id)]); await refresh(project.id); try { localStorage.setItem('journal-project', project.id); } catch { /* optional */ } setSelectedId(null); setReceipt(null); });
   }
   const ordered = useMemo(() => Object.values(sessions).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [sessions]);
   const liveCount = ordered.filter(isLive).length;
   const canStart = connected && liveCount < MAX_SESSIONS;
   async function selectSession(next: Session) {
+    userChose.current = true;
     await run(async () => {
       if (next.projectId !== state?.project.id) await refresh(next.projectId);
       setSelectedId(next.id); setReceipt(await api<Receipt>('getReceipt', { id: next.receiptId }));
     });
   }
-  function newSession() { setSelectedId(null); setPanel(current => current === 'changes' || current === 'activity' ? 'knowledge' : current); requestAnimationFrame(() => taskRef.current?.focus()); }
+  function newSession() { userChose.current = true; setSelectedId(null); setPanel(current => current === 'changes' || current === 'activity' ? 'knowledge' : current); requestAnimationFrame(() => taskRef.current?.focus()); }
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey;
