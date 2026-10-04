@@ -167,7 +167,7 @@ test('a foreign hook UUID cannot silently replace the native resume identity', a
   const errors = []; f.manager.on('event', e => { if (e.type === 'error') errors.push(e); });
   assert.equal(started.session.identityMismatch, false);
   f.manager.observe(started.session.id, 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', 'waiting');
-  assert.deepEqual(errors.map(e => [e.message, e.code]), [['Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.', 'IDENTITY_CHANGED']]);
+  assert.deepEqual(errors.map(e => [e.message, e.code]), [['Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.', (await import('../src/core/terminal.mjs')).IDENTITY_CHANGED]]);
   assert.equal(f.store.getSession(started.session.id).identityMismatch, true);
   assert.equal(f.manager.entry(started.session.id).session.nativeId, nativeId);
   assert.equal(f.manager.entry(started.session.id).session.nativeIdConfirmed, false);

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
-import { ERROR_CODES } from '../src/core/terminal.mjs';
+import { ERROR_CODES, IDENTITY_CHANGED } from '../src/core/terminal.mjs';
 
 // Transpiles sessionState.ts with the two renderer modules it imports into one
 // temporary directory, so the test runs the renderer's own code.
@@ -168,6 +168,8 @@ test('resumable needs an ended session with a confirmed native ID', async t => {
 test('the renderer branches only on the runtime error codes; any other code is no code', async t => {
   const { types } = await load(t);
   assert.deepEqual([...types.ERROR_CODES].sort(), Object.values(ERROR_CODES).sort());
+  // The identity-changed error event carries its own code, shared by name.
+  assert.equal(types.IDENTITY_CHANGED, IDENTITY_CHANGED);
   const coded = code => Object.assign(new Error('x'), { code });
   assert.equal(types.errorCode(coded('SLOTS_FULL')), 'SLOTS_FULL');
   for (const other of ['ENOENT', 42, { code: 'SLOTS_FULL' }, undefined, null, 'slots_full']) assert.equal(types.errorCode(coded(other)), null, String(other));

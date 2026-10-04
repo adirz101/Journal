@@ -30,6 +30,9 @@ export const ERROR_CODES = Object.freeze({
   NOT_LIVE: 'NOT_LIVE',                     // owned(): terminal not active
 });
 const CODES = new Set(Object.values(ERROR_CODES));
+// The code of the error event sent when a hook reports another native session ID
+// (src/ui/types.ts shares it by name).
+export const IDENTITY_CHANGED = 'IDENTITY_CHANGED';
 const fail = (code, message) => Object.assign(new Error(message), { code });
 const TEST_COMMAND = /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|node\s+--test|npx\s+(?:jest|vitest|playwright\s+test|mocha)|pytest|jest|vitest|go\s+test|cargo\s+test|playwright\s+test|mocha|rspec|dotnet\s+test|gradle\w*\s+test|mvn\s+test)\b/;
 // Resolve the nearest existing ancestor so deleted or not-yet-created files
@@ -373,7 +376,7 @@ export class TerminalManager extends EventEmitter {
     // onto a confirmed parent or silently restore confidence on a later hook.
     if (nativeId !== session.nativeId && !entry.identityAmbiguous) {
       entry.identityAmbiguous = true; session.identityMismatch = true;
-      this.emit('event', { type: 'error', sessionId: id, code: 'IDENTITY_CHANGED', message: 'Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.' });
+      this.emit('event', { type: 'error', sessionId: id, code: IDENTITY_CHANGED, message: 'Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.' });
     }
     // The preassigned ID is now seen in Claude's own hook.
     if (nativeId === session.nativeId && !entry.identityAmbiguous && session.nativeIdSource === 'preassigned') session.nativeIdSource = 'preassigned-observed';
