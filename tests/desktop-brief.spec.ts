@@ -2,7 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { inspectorTab, newSession, switchProject } from './support/ui';
+import { inspectorTab, newSession, sessionStatus, switchProject } from './support/ui';
 
 test('empty-task launches carry an approved repo overview and current branch update to either provider', async () => {
   // A long scenario: each start now begins with New session (Phase 3 split view), and hidden test windows click slowly.
@@ -50,6 +50,7 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
     await expect(page.getByTestId('context-packet')).toContainText('Project brief');
     await expect(page.getByTestId('context-packet')).toContainText('Branch update');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect(sessionStatus(page)).toContainText('Stopped');
     await newSession(page);
     await expect(page.getByRole('button', { name: 'Start Codex', exact: true })).toBeEnabled();
     git('switch', '-c', 'feature');
@@ -61,6 +62,7 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
     await expect(page.locator('.terminal-surface')).toContainText('FEATURE_PROGRESS');
     await expect(page.locator('.terminal-surface')).not.toContainText('MAIN_PROGRESS');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect(sessionStatus(page)).toContainText('Stopped');
     await newSession(page);
     await expect(page.getByRole('button', { name: 'Start Claude', exact: true })).toBeEnabled();
     // Withdrawing a status update excludes it from subsequent context.
@@ -87,6 +89,7 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
     await expect(page.locator('.terminal-surface')).not.toContainText('REPO_PURPOSE');
     await expect(page.getByText(/left out by you/)).toBeAttached();
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect(sessionStatus(page)).toContainText('Stopped');
     await newSession(page);
     await page.getByRole('button', { name: 'Preview context' }).click();
     await expect(page.getByTestId('context-packet')).toContainText('REPO_PURPOSE');

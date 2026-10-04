@@ -162,10 +162,12 @@ export default function App() {
     });
   }, [refresh, reloadSessions, merge, noteActivity, failed]);
   async function run(action: () => Promise<void>) { setBusy(true); setError(''); try { await action(); } catch (error) { failed(error); } finally { setBusy(false); } }
+  // Only a real project change resets the selection and the task; a stopping session is not picked.
   async function chooseProject(project: Project) {
     userChose.current = true;
+    if (project.id === state?.project.id) return;
     await run(async () => { const next = await refresh(project.id); try { localStorage.setItem('journal-project', project.id); } catch { /* optional */ }
-      const live = slotOrder(Object.values(sessions)).find(s => isLive(s) && s.projectId === project.id);
+      const live = slotOrder(Object.values(sessions)).find(s => isLive(s) && s.status !== 'stopping' && s.projectId === project.id);
       setSelectedId(live?.id ?? null); setReceipt(next?.receipts[0] ?? null); setTask(''); });
   }
   async function openProject() {
@@ -315,7 +317,7 @@ export default function App() {
     const choice = await showMenu([...listed.map((p, index) => ({ id: `project:${index}`, label: `${p.name}${p.pinned ? ' · Pinned' : ''}${p.id === current?.id ? ' · Current' : ''}` })), { separator: true },
       ...(current ? projectItems(current) : [{ id: 'open-project', label: 'Open project…' }])], position);
     const picked = choice?.startsWith('project:') ? listed[Number(choice.slice('project:'.length))] ?? null : null;
-    if (picked) await chooseProject(picked);
+    if (picked) { if (picked.id !== current?.id) await chooseProject(picked); }
     else if (current) await projectAction(choice, current);
     else if (choice === 'open-project') await openProject();
   }
