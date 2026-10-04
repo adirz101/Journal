@@ -151,3 +151,20 @@ test('scrollbar thumbs use their token and darken on hover and while dragged', (
 test('inputs, text areas and selects use the stronger field border (WCAG 1.4.11)', () => {
   for (const selector of ['input', 'textarea', 'select']) assert.ok(rulesFor(selector).some(rule => declares(rule, 'border', '1px solid var(--line-field)')), selector);
 });
+
+test('Phase 5 notes: Check needed is amber everywhere, never animated; note hovers are pointer-gated', () => {
+  // A changed source asks the user to look (decision 4): the chip, the evidence line and the toggle share amber.
+  assert.ok(rulesFor('.memory-state.stale').some(rule => declares(rule, 'background', 'var(--ambsoft)') && declares(rule, 'color', 'var(--amb)')), '.memory-state.stale');
+  assert.ok(!RULES.some(rule => rule.selectors.includes('.memory-state.stale') && /var\(--red/.test(rule.body)), '.memory-state.stale is no longer red');
+  assert.ok(rulesFor('.note-line.note-evidence.amber').some(rule => declares(rule, 'color', 'var(--amb)') && declares(rule, 'background', 'var(--ambsoft)')), 'evidence line');
+  assert.ok(rulesFor('.filter-tabs .attention-toggle.amber').some(rule => declares(rule, 'color', 'var(--amb)')), 'Check needed toggle');
+  // Pressed chips use the accent tint; pressed toggles add an underline, a cue that is not color.
+  assert.ok(rulesFor('.category-chips button[aria-pressed=true]').some(rule => declares(rule, 'background', 'var(--accsoft)') && declares(rule, 'border-color', 'var(--accline)')));
+  assert.ok(rulesFor('.filter-tabs .attention-toggle[aria-pressed=true]').some(rule => declares(rule, 'text-decoration', 'underline')));
+  // No motion on cards, chips or toggles: they change with typing, scans and terminal events.
+  const own = RULES.filter(rule => rule.selectors.some(selector => /\.(?:note-|category-chips|attention-toggle|memory-search)/.test(selector)));
+  assert.ok(own.length >= 15, 'the Phase 5 rules were found');
+  assert.deepEqual(own.filter(rule => /(?:^|;)\s*(?:transition|animation)/.test(rule.body)).map(rule => rule.selectors.join(',')), []);
+  for (const selector of ['.category-chips button:not([aria-pressed=true]):not(:disabled):hover', '.category-chips button[aria-pressed=true]:not(:disabled):hover', '.note-origin button.link:not(:disabled):hover'])
+    assert.ok(rulesFor(selector).some(rule => rule.at.some(at => /hover:hover/.test(at) && /pointer:fine/.test(at))), selector);
+});
