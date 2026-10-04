@@ -95,7 +95,7 @@ test('startBlock reports runtime, slots, missing agent and mode in order', async
   const all = { connected: false, liveCount: 4, busy: true, agent: missing, provider: 'codex', mode: 'plan' };
   assert.equal(startBlock(all), '', 'busy has no text');
   assert.equal(startBlock({ ...all, busy: false }), 'The runtime is reconnecting. Start is available again once it connects.');
-  assert.equal(startBlock({ ...all, busy: false, connected: true }), '4 sessions are running. Stop one to start another.');
+  assert.equal(startBlock({ ...all, busy: false, connected: true }), '4 of 4 running. Stop or finish one to start another. You can still write the task now.');
   assert.equal(startBlock({ ...all, busy: false, connected: true, liveCount: 3 }), 'Codex isn’t installed on this computer.');
   // With an install command or page, the reason names the card's button.
   const commands = { login: null, install: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh', installPage: 'https://example.test' };

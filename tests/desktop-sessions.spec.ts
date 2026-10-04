@@ -83,7 +83,7 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     // With every slot in use, the New session view still opens; Start waits and says why.
     await newSession(page); await chooseAgent(page, 'claude');
     await expect(startButton(page)).toBeDisabled();
-    await expect(page.getByText('4 sessions are running')).toBeVisible();
+    await expect(page.getByText('4 of 4 running. Stop or finish one to start another.')).toBeVisible();
     await expect(slotsUsed(page, 4)).toBeVisible();
     await sessionButton(page, 'TASK_1').click();
     await expect(page.locator('.terminal-surface')).toContainText('TASK TASK_1');

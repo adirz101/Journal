@@ -255,6 +255,14 @@ export const palette = {
     'tab-memory': 'Show the Memory tab', settings: 'Settings', 'command-palette': 'Command palette', 'open-file': 'Open a file…',
     'manage-workspaces': 'Manage workspaces…', 'new-session-separate-copy': 'New session in a separate copy', 'check-agents': 'Check agents again',
   },
+  // --- Phase 8 Group B ---
+  // Why an action is unavailable: the same guard the matching button or key uses.
+  reasons: { needsProject: 'Open a project first', needsSession: 'Open a session first', noneNeedsYou: 'No session needs you right now', busy: 'Wait for the current action to finish' },
+  noFiles: (q: string) => `No file name matches “${q}”.`, results: 'Results',
+  // The input's description: the footer says the same, but the footer is hidden from screen readers.
+  howTo: 'Up and down arrows move between results, Enter opens one. Type > for commands only.',
+  fileHowTo: 'Up and down arrows move between files, Enter opens one.',
+  addReference: 'Add reference…',
 } as const;
 
 // Phase 8: failure states (board 9): one honest sentence and one next step each.
@@ -275,6 +283,8 @@ export const states = {
   signInBody: 'Sign in once in a terminal, then start again. Journal never handles your login.',
   openTerminal: 'Open terminal', copyCommand: 'Copy command', copyFailed: 'Copy failed', checkAgain: 'Check again', kept: 'Your task text is kept. Nothing was sent.',
   slotsFull: '4 of 4 running. Stop or finish one to start another. You can still write the task now.',
+  // --- Phase 8 Group B ---
+  copied: 'Copied', recoveryLabel: 'Interrupted sessions', unsupportedBody: 'Update it, then check again.', missingBody: 'Install it, then check again.',
 } as const;
 
 const CATEGORIES: Record<string, string> = { constraint: copy.rule, decision: 'Decision', convention: 'Convention', lesson: 'Lesson', issue: 'Known issue' };

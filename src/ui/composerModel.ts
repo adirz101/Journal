@@ -1,6 +1,6 @@
 // The New session composer's rules (boards B5 and B13). Pure: Composer.tsx
 // renders them and tests/composer.test.mjs checks them.
-import { composer } from './copy';
+import { composer, states } from './copy';
 import { PROVIDER_NAMES, type AgentInfo, type Memory, type Mode, type Provider, type Receipt, type SelectionInfo, type SelectionPreview } from './types';
 
 export const MODES: readonly Mode[] = ['build', 'plan', 'read-only'];
@@ -72,7 +72,8 @@ export function defaultProvider(agents: AgentInfo[] | undefined, remembered: str
 export function startBlock({ connected, liveCount, busy, agent, provider, mode }: { connected: boolean; liveCount: number; busy: boolean; agent: AgentInfo | null | undefined; provider: Provider; mode: Mode }): string | null {
   if (busy) return '';
   if (!connected) return composer.runtimeDown;
-  if (liveCount >= MAX_LIVE) return composer.slotsFull;
+  // Phase 8: New session stays open while all slots are in use; Start says why it waits.
+  if (liveCount >= MAX_LIVE) return states.slotsFull;
   if (!agentReady(agent)) {
     const card = agentCard(agent);
     if (!agent || agent.state === 'missing' || (!agent.available && !agent.state)) return composer.agentMissing(PROVIDER_NAMES[provider], card.action);
