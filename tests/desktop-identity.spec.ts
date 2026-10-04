@@ -17,7 +17,7 @@ test('the branded macOS runtime opens Journal without an app argument and keeps 
     expect(identity.data).toBe(data);
     expect(identity.executable).toContain('/Journal.app/');
     const page = await app.firstWindow();
-    await expect(page.getByRole('heading', { name: 'Your project, remembered.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Your agents remember your project' })).toBeVisible();
     const images = await page.locator('img').evaluateAll(images => images.every(image => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0));
     expect(images).toBe(true);
   } finally {

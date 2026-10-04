@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { isLive, PROVIDER_NAMES, type Bootstrap, type CommandId, type Pane, type Project, type Proposal, type Session, type UpdateState } from './types';
 import { needsYou, slotOrder, stateFor, type SessionState } from './sessionState';
 import { byPin, endedTime, recentGroups, relativeTime, rowDetail, sessionName, suggestionCounts } from './sidebarModel';
-import { copy, shell, tip } from './copy';
+import { copy, firstRun, shell, tip } from './copy';
 import { menuPosition } from './menu';
 import { ProviderMark } from './ProviderMark';
 import { UpdateNotice } from './UpdateNotice';
@@ -111,7 +111,8 @@ export function Sidebar({ pane, inOverlay = false, projects, project, sessions, 
       {groups.map(group => <div key={group.key} className="day" role="group" aria-label={group.label}><div className="day-label" aria-hidden="true">{group.label}</div>{group.sessions.map(row)}</div>)}
       {archived.length > 0 && <button className="side-heading archived-toggle" aria-expanded={showArchived} onClick={() => setShowArchived(!showArchived)}><span aria-hidden="true">{showArchived ? '▾' : '▸'}</span> {shell.archived} · {archived.length}</button>}
       {showArchived && archived.length > 0 && <div className="session-group" role="group" aria-label="Archived sessions">{archived.map(row)}</div>}
-      {!active.length && !groups.length && !archived.length && <p className="nav-empty">Your sessions will appear here.</p>}
+      {/* Phase 7 (board 3): sparse first-session states. */}
+      {!active.length && !groups.length && !archived.length && <><p className="nav-empty">{firstRun.noSessionsYet}</p><div className="side-heading"><span>{shell.recent}</span></div><p className="nav-empty">{firstRun.firstSessionHere}</p></>}
     </nav>
     <div className="sidebar-footer">
       <UpdateNotice state={update} onError={onError} />

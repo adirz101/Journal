@@ -37,8 +37,8 @@ process.stdin.on('data',data=>{
   try {
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
     let page = await app.firstWindow();
-    await expect(page.getByRole('heading', { name: 'Your project, remembered.' })).toBeVisible();
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await expect(page.getByRole('heading', { name: 'Your agents remember your project' })).toBeVisible();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await expect(page.getByText('fixture project', { exact: true }).first()).toBeVisible();
     await page.getByRole('button', { name: 'Add a note' }).first().click();
     await page.getByRole('textbox', { name: 'Statement', exact: true }).fill('Fixture tests require Docker');

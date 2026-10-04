@@ -19,8 +19,8 @@ test('a Git-drafted branch update is saved only after review and approved before
   try {
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
     const page = await app.firstWindow();
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    await page.getByRole('button', { name: 'Propose branch update' }).click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Draft “Where this branch stands”' }).click();
     await expect(page.getByRole('heading', { name: 'Review: Where this branch stands' })).toBeVisible();
     // React renders a textarea's initial value as label text, so match by role name.
     const statement = page.getByRole('textbox', { name: 'Statement', exact: true });
@@ -41,7 +41,7 @@ test('a Git-drafted branch update is saved only after review and approved before
     expect(await receiptCount()).toBe(receiptsBefore);
 
     await inspectorTab(page, 'Memory');
-    await page.getByRole('button', { name: 'Propose branch update' }).click();
+    await page.getByRole('button', { name: 'Draft “Where this branch stands”' }).click();
     const draft = await statement.inputValue();
     await statement.fill(draft.replace(/Current work: .*/, 'Current work: REFUND_ROUTE_IN_PROGRESS').replace(/Next: .*/, 'Next: validate partial refunds'));
     await page.getByRole('button', { name: 'Save for review' }).click();
@@ -57,7 +57,7 @@ test('a Git-drafted branch update is saved only after review and approved before
     await switchProject(app, page, 'status project');
     await inspectorTab(page, 'Memory');
     await expect(page.getByText(/Updated 0 day\(s\) ago · 1 commit since/)).toBeVisible();
-    await page.getByRole('button', { name: 'Propose update', exact: true }).click();
+    await page.getByRole('button', { name: 'Draft an update', exact: true }).click();
     await expect(statement).toHaveValue(/REFUND_ROUTE_DONE/);
     await expect(statement).toHaveValue(/Current work: REFUND_ROUTE_IN_PROGRESS/);
     await expect(page.getByText(/Saving creates revision 2/)).toBeVisible();

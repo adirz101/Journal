@@ -53,19 +53,19 @@ console.log('Installed to ~/.local/bin/agent. Add ~/.local/bin to your PATH.');`
     await app.evaluate(({ dialog }, p) => { (dialog as any).showOpenDialog = async () => ({ canceled: false, filePaths: [p] }); }, project);
     await app.evaluate((_e, file) => { (globalThis as any).__journalCursorInstall = { file, args: [] }; }, installer);
     const page = await app.firstWindow();
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     const status = page.getByRole('region', { name: 'Cursor provider status' });
-    await expect(status).toContainText('CLI not found');
+    await expect(status).toContainText('Not installed');
     await expect(page.getByRole('button', { name: 'Start Cursor' })).toBeDisabled();
 
     // Cancel: nothing runs. The dialog shows the exact official command.
-    await answer(app, 1); await status.getByRole('button', { name: 'Install Cursor CLI' }).click();
+    await answer(app, 1); await status.getByRole('button', { name: 'Install Cursor…' }).click();
     const detail = await app.evaluate(() => (globalThis as any).__lastDialog.detail as string);
     expect(detail).toContain('curl https://cursor.com/install -fsS | bash'); expect(detail).toContain('will not receive or store your Cursor credentials');
     await expect(page.locator('.process-dialog')).toHaveCount(0);
 
     // A failed install is shown with its exit code and never reported as installed.
-    await answer(app, 0); await status.getByRole('button', { name: 'Install Cursor CLI' }).click();
+    await answer(app, 0); await status.getByRole('button', { name: 'Install Cursor…' }).click();
     const processDialog = page.locator('.process-dialog');
     await expect(processDialog).toContainText('Download failed');
     await expect(processDialog.getByRole('status')).toContainText('exit code 3');
@@ -75,20 +75,20 @@ console.log('Installed to ~/.local/bin/agent. Add ~/.local/bin to your PATH.');`
 
     // A successful install into ~/.local/bin, which is not on Journal's PATH.
     rmSync(failInstall);
-    await status.getByRole('button', { name: 'Install Cursor CLI' }).click();
+    await status.getByRole('button', { name: 'Install Cursor…' }).click();
     await expect(processDialog).toContainText('Installed to ~/.local/bin/agent');
     await expect(processDialog.getByRole('status')).toContainText('exit 0');
     await processDialog.getByRole('button', { name: 'Done' }).click();
-    await expect(status).toContainText('login required');
+    await expect(status).toContainText('Sign in needed');
     await expect(status).toContainText('not on your PATH');
 
     // Sign in through Cursor's own flow, visibly.
-    await status.getByRole('button', { name: 'Sign in to Cursor' }).click();
+    await status.getByRole('button', { name: 'Sign in to Cursor…' }).click();
     await expect(processDialog).toContainText('Open this URL to sign in');
     await expect(processDialog.getByRole('status')).toContainText('exit 0');
     await processDialog.getByRole('button', { name: 'Done' }).click();
     await expect(page.getByRole('button', { name: 'Start Cursor' })).toBeEnabled();
-    await expect(status).not.toContainText('login required');
+    await expect(status).not.toContainText('Sign in needed');
 
     // Launch with an exact chat ID in Ask mode, beside a Claude session.
     await page.getByLabel('Read-only', { exact: true }).check();

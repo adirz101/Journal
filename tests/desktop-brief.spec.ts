@@ -24,7 +24,7 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
   try {
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
     const page = await app.firstWindow();
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await page.getByRole('button', { name: 'Add project summary', exact: true }).click();
     await expect(page.getByLabel('Scope')).toHaveValue('checkout');
     await page.getByLabel('Statement', { exact: true }).fill('REPO_PURPOSE: a fixture developer cockpit with reviewed project memory.');

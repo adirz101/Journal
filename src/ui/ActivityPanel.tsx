@@ -65,7 +65,8 @@ const MAX_ROWS = 30;
 // "What it did" (Session tab): Claude's commands, edits and approval prompts,
 // newest last, at most 30; the full timeline and test summary on request.
 // observable false (Codex, Cursor): only Journal's own timeline, on request.
-export function ActivitySummary({ events, observable = true }: { events: TimelineEvent[]; observable?: boolean }) {
+// empty: what the list says before anything was observed (SessionTab explains it while the session runs).
+export function ActivitySummary({ events, observable = true, empty = 'No commands or edits observed yet.' }: { events: TimelineEvent[]; observable?: boolean; empty?: string }) {
   const [full, setFull] = useState(false);
   const commands = useMemo(() => commandsFrom(events), [events]);
   const byId = useMemo(() => new Map(commands.map(c => [c.toolUseId, c])), [commands]);
@@ -80,7 +81,7 @@ export function ActivitySummary({ events, observable = true }: { events: Timelin
         <code title={command ? `${command.command}\nin ${command.cwd ?? 'unknown directory'} · output not stored` : undefined}>{event.kind === 'command-start' ? b.command : event.kind === 'file' ? b.path : b.command ?? b.path ?? b.tool ?? 'permission'}</code>
         {command && command.status !== 'running' && <span className={`chip command-status ${command.status}`}>{exitChip(command)}</span>}
       </li>;
-    })}</ul> : <p className="muted">No commands or edits observed yet.</p>)}
+    })}</ul> : <p className="muted">{empty}</p>)}
     <button className="text-button" aria-expanded={full} onClick={() => setFull(!full)}>{full ? 'Hide full timeline' : shell.showTimeline}</button>
     {full && <>
       {observable && <section aria-label="Tests" className="test-summary"><span className="eyebrow">Test commands</span>

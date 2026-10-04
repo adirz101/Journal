@@ -50,7 +50,7 @@ test('every custom property styles.css uses is defined, in tokens.css', () => {
 
 test('the light theme comes from tokens; the few light-only rules change no color', () => {
   const light = RULES.filter(rule => rule.selectors.some(selector => selector.includes('[data-theme=light]'))).map(rule => `${rule.selectors.join(',')}{${rule.body}}`);
-  assert.deepEqual(light, [':root[data-theme=light] .welcome-wordmark{filter:none}', ':root[data-theme=light] .update-notice.compact{background:transparent}']);
+  assert.deepEqual(light, [':root[data-theme=light] .update-notice.compact{background:transparent}']);
 });
 
 test('states: primary hover keeps its text readable, selection survives hover and has a non-color cue', () => {

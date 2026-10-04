@@ -40,7 +40,7 @@ async function open(env: Record<string, string>, project: string, width: number,
   const page = await app.firstWindow();
   await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height), { width, height });
   await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
-  await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
   return { app, page };
 }
 const closeApp = async (app: ElectronApplication) => {

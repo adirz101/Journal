@@ -180,10 +180,23 @@ export const firstRun = {
   rememberBoth: 'Remember both', rememberOne: 'Remember', skip: 'Skip for now', editLater: 'You can edit these any time in Project memory.',
   howTitle: 'How Journal remembers',
   howSteps: [
-    'You review every note before an agent gets it.',
-    'Each new session starts with the notes that apply to its branch and task.',
-    'After a session, I suggest what was worth keeping. Nothing is kept unless you choose.',
+    { title: 'Every session knows these', body: 'Each agent you start here gets both notes, so you stop re-explaining the project.' },
+    { title: 'Sessions suggest new notes', body: 'When a session ends, I suggest rules and lessons from it. You choose what to remember.' },
+    { title: 'Out-of-date notes get caught', body: 'If the code a note is based on changes, the note stops going to agents until you check it.' },
   ],
+  // Phase 7 B: the cards, the first-note moment and the sparse first-session states.
+  draft: 'Draft', edit: 'Edit',
+  commitsSince: (n: number, since: string) => `${count(n, 'commit')} since ${since}`,
+  recentCommits: (n: number, head: string) => `${count(n, 'recent commit')} · ${head}`,
+  needsEdit: 'Git had no line for this part. Use Edit to write it, then review it in Project memory.',
+  rememberFailed: (message: string) => `Nothing was remembered. ${message}`,
+  justRemembered: 'Just remembered', close: 'Close',
+  noSessionsYet: 'No sessions yet.', firstSessionHere: 'Your first session will appear here.',
+  emptyTerminalTitle: 'A familiar place to work',
+  emptyTerminalBody: (keys: string | null) => `Start an agent${keys ? ` with ${keys}` : ''}. Your logins, settings and approvals stay with the CLI.`,
+  didEmpty: 'I’ll list what this agent does here while it runs.',
+  didEmptyEnded: 'No commands or edits were observed.',
+  dropHere: 'Drop a Git folder to open it',
   noBranch: {
     detached: 'This checkout isn’t on a branch, so I drafted only “About this project”.',
     unborn: 'This repository has no commits yet. Make a first commit and I’ll draft these notes.',
@@ -193,7 +206,8 @@ export const firstRun = {
     failed: 'I couldn’t read this project’s files from Git, so I drafted only “Where this branch stands”.',
   },
   firstNote: 'First note remembered. Every new session in Journal will know it.',
-  draftBranch: 'Draft “Where this branch stands”', draftProject: 'Draft “About this project”',
+  firstNoteTitle: 'First note remembered.', firstNoteBody: 'Every new session in Journal will know it.',
+  draftBranch: 'Draft “Where this branch stands”', draftProject: 'Draft “About this project”', draftUpdate: 'Draft an update',
   dropNotFolder: 'Drop a folder from Finder or File Explorer.',
 } as const;
 
@@ -205,6 +219,22 @@ export const providers = {
   offPath: (name: string) => `Installed, but Journal can’t find ${name} on PATH. Restart Journal, or add its folder to PATH.`,
   loginTitle: (name: string) => `Sign in to ${name}`, installTitle: (name: string) => `Install ${name}`,
   installedHere: (name: string) => `${name} is installed on this computer.`,
+  // Phase 7 B: row hints (Cursor's keep their earlier sentences), action names unique per provider, and notes after a process ends.
+  installHint: (name: string) => `Runs ${name}’s official installer in a visible terminal.`,
+  installPageHint: 'Opens the official install page in your browser.',
+  cantStart: (path: string, reason: string) => `Journal found ${path} but cannot start it safely${reason ? `: ${reason}` : '.'}`,
+  unsupportedHint: 'This version cannot open a chat by its exact ID. Update it in a terminal with agent update.',
+  notCursorHint: (path: string) => `An agent command at ${path} does not identify as the Cursor CLI, so Journal will not run it.`,
+  signInElsewhere: (name: string) => `Run ${name} in a terminal and sign in there.`,
+  installName: (name: string) => `Install ${name}…`, signInName: (name: string) => `Sign in to ${name}…`, installPageName: (name: string) => `Open ${name} install page`,
+  checkAgainName: (name: string) => `Check again: ${name}`,
+  signedInTo: (name: string) => `Signed in to ${name}.`, stillSignedOut: (name: string) => `${name} still reports that you are not signed in.`,
+  signInUnconfirmed: (name: string) => `Journal could not confirm the sign-in. Try starting a ${name} session.`,
+  cursorOffPath: (path: string) => `Journal uses ${path}, which is not on your PATH. To run agent in your own terminal, add its folder to PATH (the installer printed the command).`,
+  cursorInstalled: (version: string | null, signIn: boolean) => `Cursor CLI ${version ?? ''} is installed${signIn ? '. Sign in to continue.' : '.'}`,
+  cursorImpostor: 'The installer finished, but the agent command Journal finds is not the Cursor CLI.',
+  cursorNotFound: 'The installer finished, but Journal cannot find the agent command yet. Check the installer output; if it asks you to update PATH, do so and restart Journal.',
+  cursorNoModes: 'This version has no Ask or Plan mode, so Read-only and Plan are unavailable for Cursor. Update with agent update.',
 } as const;
 
 const CATEGORIES: Record<string, string> = { constraint: copy.rule, decision: 'Decision', convention: 'Convention', lesson: 'Lesson', issue: 'Known issue' };
