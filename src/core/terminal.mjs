@@ -131,12 +131,14 @@ export class TerminalManager extends EventEmitter {
     // Exact identity at launch: Claude takes a preassigned ID; Cursor's chat is created
     // first in the same folder (documented create-chat). Codex is confirmed after exit.
     const nativeId = prior?.nativeId ?? (provider === 'claude' ? randomUUID() : provider === 'cursor' ? await this.cursor.createChat(cursor.path, cwd) : null);
+    // Where the native ID came from: a resume keeps the prior session's source.
+    const nativeIdSource = prior ? prior.nativeIdSource ?? null : provider === 'claude' ? 'preassigned' : provider === 'cursor' && nativeId ? 'create-chat' : null;
     const session = { id: randomUUID(), projectId, provider, nativeId,
       nativeIdConfirmed: provider === 'claude' || !!prior || (provider === 'cursor' && !!nativeId), title: generateTitle(task, prior),
       status: 'starting', receiptId: receipt.id, resumedFrom: prior?.id ?? null, createdAt: now, lastActivityAt: now,
       // An additional-folder session runs in that folder with its own Git identity (if any).
       branch: project.cwd ? project.cwdBranch ?? null : project.branch, head: project.cwd ? project.cwdHead ?? null : project.head, cwd, workspaceId, research, plan, baseline, runtimeId: this.runtimeId, activity: null,
-      slot };
+      slot, nativeIdSource, identityMismatch: false };
     let prompt = task;
     if (receipt.packet || (prior && (oldReceipt?.hadKnowledge || oldReceipt?.items.length))) {
       const withdrawn = oldReceipt?.items.filter(item => !receipt.items.some(current => current.revisionId === item.revisionId)) ?? [];
@@ -200,7 +202,7 @@ export class TerminalManager extends EventEmitter {
       // A newly printed incomplete/invalid banner revokes an earlier hint.
       // Do not clear hints merely because unrelated output evicted the banner.
       if (entry.tail.includes(marker) && session.nativeId !== captured) {
-        session.nativeId = captured; this.persist(session, true); this.emitStatus(session);
+        session.nativeId = captured; session.nativeIdSource = captured ? 'exit-banner' : null; this.persist(session, true); this.emitStatus(session);
       }
     }
     // Activity timestamps are metadata; persist them at most every five seconds.
@@ -317,9 +319,10 @@ export class TerminalManager extends EventEmitter {
     if (!UUID.test(nativeId ?? '')) throw new Error('Enter the exact native session ID (UUID)');
     const session = await this.store.getSession(id);
     if (isLive(session.status) || session.status === 'orphaned') throw new Error('Stop this session before confirming its conversation ID');
-    session.nativeId = nativeId; session.nativeIdConfirmed = true;
+    const confirmed = { nativeId, nativeIdConfirmed: true, nativeIdSource: 'user', identityMismatch: false };
+    Object.assign(session, confirmed);
     // Keep a retained in-memory copy in step so a later save cannot revert it.
-    const entry = this.entries.get(id); if (entry) Object.assign(entry.session, { nativeId, nativeIdConfirmed: true });
+    const entry = this.entries.get(id); if (entry) Object.assign(entry.session, confirmed);
     await this.store.saveSession(session); this.emitStatus(session); return session;
   }
   observe(id, nativeId, status, activity) {
@@ -329,9 +332,11 @@ export class TerminalManager extends EventEmitter {
     // Child sessions and native /clear can report another ID. Never graft it
     // onto a confirmed parent or silently restore confidence on a later hook.
     if (nativeId !== session.nativeId && !entry.identityAmbiguous) {
-      entry.identityAmbiguous = true;
-      this.emit('event', { type: 'error', sessionId: id, message: 'Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.' });
+      entry.identityAmbiguous = true; session.identityMismatch = true;
+      this.emit('event', { type: 'error', sessionId: id, code: 'IDENTITY_CHANGED', message: 'Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.' });
     }
+    // The preassigned ID is now seen in Claude's own hook.
+    if (nativeId === session.nativeId && !entry.identityAmbiguous && session.nativeIdSource === 'preassigned') session.nativeIdSource = 'preassigned-observed';
     session.nativeIdConfirmed = !entry.identityAmbiguous;
     if (!entry.stopping && status) session.status = status;
     if (activity !== undefined) { if (activity !== session.activity) entry.activitySince = Date.now(); session.activity = activity; }

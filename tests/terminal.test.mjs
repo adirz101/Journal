@@ -164,15 +164,23 @@ test('spawn failure records failed session and receipt rather than a successful 
 test('a foreign hook UUID cannot silently replace the native resume identity', async t => {
   const f = runtime(t); const started = await f.manager.start({ projectId: f.project.id, provider: 'claude' });
   const nativeId = started.session.nativeId;
-  const errors = []; f.manager.on('event', e => { if (e.type === 'error') errors.push(e.message); });
+  const errors = []; f.manager.on('event', e => { if (e.type === 'error') errors.push(e); });
+  assert.equal(started.session.identityMismatch, false);
   f.manager.observe(started.session.id, 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', 'waiting');
-  assert.deepEqual(errors, ['Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.']);
+  assert.deepEqual(errors.map(e => [e.message, e.code]), [['Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.', 'IDENTITY_CHANGED']]);
+  assert.equal(f.store.getSession(started.session.id).identityMismatch, true);
   assert.equal(f.manager.entry(started.session.id).session.nativeId, nativeId);
   assert.equal(f.manager.entry(started.session.id).session.nativeIdConfirmed, false);
   f.manager.observe(started.session.id, nativeId, 'running');
   assert.equal(f.manager.entry(started.session.id).session.nativeIdConfirmed, false);
+  assert.equal(f.manager.entry(started.session.id).session.nativeIdSource, 'preassigned', 'A matching hook after a mismatch does not restore confidence');
   f.callbacks.exit({ exitCode: 0 });
+  assert.equal(f.store.getSession(started.session.id).identityMismatch, true);
   await assert.rejects(f.manager.start({ projectId: f.project.id, provider: 'claude', resumeId: started.session.id }), /Confirm the conversation ID before continuing/);
+  await f.manager.confirmNativeId(started.session.id, nativeId);
+  for (const session of [f.store.getSession(started.session.id), f.manager.entry(started.session.id).session]) {
+    assert.equal(session.identityMismatch, false); assert.equal(session.nativeIdSource, 'user');
+  }
 });
 
 test('display credit stays bounded during flood while interrupts still reach the process', async t => {
@@ -521,4 +529,28 @@ test('cursor errors carry PROVIDER_MISSING and PROVIDER_UNSUPPORTED', async t =>
   await assert.rejects(f.start('cursor'), error => error.code === 'PROVIDER_MISSING' && /Cursor CLI is not installed/.test(error.message));
   f.manager.cursor = { find: async () => ({ path: '/bin/agent', cursor: true, supports: { resume: false, createChat: true } }), createChat: async () => null };
   await assert.rejects(f.start('cursor'), error => error.code === 'PROVIDER_UNSUPPORTED');
+});
+
+test('nativeIdSource transitions', async t => {
+  const f = multi(t); const codexId = '01a0f661-908b-7193-8520-6ac6f3b44aeb'; const cursorId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const claude = await f.start();
+  assert.equal(claude.nativeIdSource, 'preassigned');
+  f.manager.ingest(claude.id, { event: 'SessionStart', nativeId: claude.nativeId });
+  assert.equal(f.store.getSession(claude.id).nativeIdSource, 'preassigned-observed');
+  f.procs[0].callbacks.exit({ exitCode: 0 });
+  const resumed = await f.start('claude', { resumeId: claude.id });
+  assert.equal(resumed.nativeIdSource, 'preassigned-observed', 'Resume copies the source of the prior ID');
+  const codex = await f.start('codex');
+  assert.equal(codex.nativeIdSource, null);
+  f.procs[2].callbacks.data(`To continue this session, run codex resume ${codexId}\n`);
+  assert.equal(f.store.getSession(codex.id).nativeIdSource, 'exit-banner');
+  f.procs[2].callbacks.data('To continue this session, run:\n  codex resume ');
+  assert.equal(f.store.getSession(codex.id).nativeIdSource, null, 'A cleared hint has no source');
+  f.procs[2].callbacks.data(`To continue this session, run codex resume ${codexId}\n`);
+  f.procs[2].callbacks.exit({ exitCode: 0 });
+  await f.manager.confirmNativeId(codex.id, codexId);
+  assert.equal(f.store.getSession(codex.id).nativeIdSource, 'user');
+  f.manager.cursor = { find: async () => ({ path: '/bin/agent', cursor: true, supports: { resume: true, createChat: true, mode: true } }), createChat: async () => cursorId };
+  const cursor = await f.start('cursor');
+  assert.equal(cursor.nativeIdSource, 'create-chat'); assert.equal(cursor.identityMismatch, false);
 });
