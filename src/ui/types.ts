@@ -62,6 +62,11 @@ export interface StaleNote {
   before: { startLine: number; lines: string[] } | null;   // fallback: the saved excerpt …
   after: { startLine: number; lines: string[] } | null;    // … and the current lines at the same place
   suggestedRange: { startLine: number; endLine: number } | null;  // where the cited lines are now, if they moved
+  // The hunks are a window around the note's lines (at most 3 hunks of 40 lines, 300 characters a line).
+  // truncated: part of the change was cut, so Still true must stay disabled until the full diff is shown.
+  truncated: boolean;
+  shownRange: { startLine: number; endLine: number } | null;  // the current file's lines on screen
+  contentHash: string | null;                      // the file as shown; reaffirmMemory's expectedHash
   reaffirm: { allowed: boolean; reason: null | 'wrong-branch' | 'separate-copy' | 'file-missing' };
   workspaceId: string | null;                      // the view to reaffirm in
 }

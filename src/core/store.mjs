@@ -306,14 +306,16 @@ export class JournalStore {
   }
   // Remembering a checked candidate, without a transaction of its own. via (internal,
   // set by the main process or core) labels a one-step path in the audit log.
-  approveMemory(memory, { via = null, reason = null } = {}) {
+  // retire: false (reaffirm) keeps the supersedes record without archiving what it replaced again.
+  approveMemory(memory, { via = null, reason = null, retire = true } = {}) {
     const { id } = memory;
     this.db.prepare(`UPDATE memories SET status='active' WHERE id=?`).run(id);
     this.db.prepare('UPDATE memories SET approved_at=?, approved_revision=? WHERE id=?').run(now(), memory.revision, id);
+    const retired = retire ? memory.supersedes?.id ?? null : null;
     // Approving a replacement retires the claim it supersedes.
-    if (memory.supersedes) this.db.prepare(`UPDATE memories SET status='archived', pinned=0 WHERE id=? AND status='active'`).run(memory.supersedes.id);
+    if (retired) this.db.prepare(`UPDATE memories SET status='archived', pinned=0 WHERE id=? AND status='active'`).run(retired);
     if (memory.category === 'brief' && memory.scope === 'branch') this.db.prepare(`UPDATE proposals SET body=json_set(body,'$.state','accepted','$.memoryId',?) WHERE project_id=? AND json_extract(body,'$.kind')='branch-status' AND json_extract(body,'$.branch')=? AND json_extract(body,'$.state')='open'`).run(id, memory.projectId, memory.branch);
-    this.audit('memory-active', { id, revision: memory.revision, reason, supersedes: memory.supersedes?.id ?? null, ...(via ? { via } : {}) });
+    this.audit('memory-active', { id, revision: memory.revision, reason, supersedes: retired, ...(via ? { via } : {}) });
   }
   // Where a note can be checked for approval: the checkout, or for a note on another
   // branch a ready separate copy (worktree) whose live branch is that branch. Folder
@@ -905,7 +907,9 @@ export class JournalStore {
   // "Still true": the user checked an out-of-date file note against the change. A new
   // revision with fresh evidence (the same statement, scope and qualifiers), remembered
   // at once with via 'reaffirm'. Earlier revisions are never edited; pinning is kept.
-  reaffirmMemory(id, { startLine, endLine, workspaceId = null } = {}) {
+  // expectedHash: the file's contentHash from staleNotesForSession, the content the user
+  // was shown; a file edited since then is refused rather than saved unseen.
+  reaffirmMemory(id, { startLine, endLine, workspaceId = null, expectedHash } = {}) {
     const memory = this.getMemory(id);
     if (memory.status !== 'active' || memory.source?.kind !== 'file') throw new Error('Only a remembered note based on a file can be marked still true');
     if (workspaceId !== null && typeof workspaceId !== 'string') throw new Error('Invalid workspace');
@@ -920,13 +924,15 @@ export class JournalStore {
       if (view.branch !== memory.branch) throw this.wrongBranch(memory.projectId, memory.branch, 'approve');
     }
     if (this.validation(view, memory) !== 'stale') throw new Error('This note\'s file is unchanged; there is nothing to check');
+    if (typeof expectedHash !== 'string' || !/^[0-9a-f]{64}$/.test(expectedHash)) throw new Error('Check the change before marking the note still true');
     const source = { kind: 'file', ...(memory.source.rootId ? { rootId: memory.source.rootId } : {}), path: memory.source.path,
       startLine: startLine ?? memory.source.startLine, endLine: endLine ?? memory.source.endLine };
     // The view is on the note's branch, so a branch note keeps it without a bound branch.
     const { item, expected } = this.prepareMemory(memory.projectId, { memoryId: id, statement: memory.statement, category: memory.category, scope: memory.scope,
       area: memory.area, environment: memory.environment, source, ...(memory.promotedFrom ? { promotedFrom: memory.promotedFrom } : {}) }, { view });
+    if (item.source.contentHash !== expectedHash) throw new Error('The file changed again; check it once more.');
     if (memory.supersedes) item.supersedes = memory.supersedes;
-    this.transaction(() => { this.writeMemory(item, expected); this.approveMemory(this.getMemory(id), { via: 'reaffirm' }); });
+    this.transaction(() => { this.writeMemory(item, expected); this.approveMemory(this.getMemory(id), { via: 'reaffirm', retire: false }); });
     return { ...this.getMemory(id), validation: 'current' };
   }
   dismissProposal(id) {

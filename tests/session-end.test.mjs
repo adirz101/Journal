@@ -4,6 +4,7 @@ import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } f
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { JournalStore } from '../src/core/store.mjs';
 import { summarizeChanges, TerminalManager } from '../src/core/terminal.mjs';
 import { parseHunks, selectHunks, shiftedRange, movedRange } from '../src/core/hunks.mjs';
@@ -12,6 +13,7 @@ import { removeLater } from './support/cleanup.mjs';
 // Phase 6 Group A: the end snapshot, sessionSummary, suggestions of a conversation,
 // one-step Remember (D1), the out-of-date catch and "Still true".
 
+const sha = file => createHash('sha256').update(readFileSync(file)).digest('hex');
 const lines = (prefix, n) => Array.from({ length: n }, (_, i) => `${prefix} ${i + 1}`).join('\n') + '\n';
 
 function fixture(t) {
@@ -293,9 +295,9 @@ test('hunks outside the note\'s lines are left out', t => {
   const diff = '@@ -3,3 +3,4 @@\n line 3\n line 4\n+inserted\n line 5\n@@ -9,2 +10,2 @@\n-line 9\n+line nine\n line 10\n';
   const hunks = parseHunks(diff);
   assert.deepEqual(hunks[0].lines.map(l => [l.kind, l.old, l.new]), [[' ', 3, 3], [' ', 4, 4], ['+', null, 5], [' ', 5, 6]]);
-  assert.equal(selectHunks(hunks, 5, 6).length, 1, 'an insertion just above the range counts');
-  assert.equal(selectHunks(hunks, 6, 7).length, 0);
-  assert.deepEqual(selectHunks(hunks, 9, 9)[0].lines.filter(l => l.kind === '-').map(l => l.old), [9]);
+  assert.equal(selectHunks(hunks, 5, 6).hunks.length, 1, 'an insertion just above the range counts');
+  assert.equal(selectHunks(hunks, 6, 7).hunks.length, 0);
+  assert.deepEqual(selectHunks(hunks, 9, 9).hunks[0].lines.filter(l => l.kind === '-').map(l => l.old), [9]);
   assert.deepEqual(shiftedRange(hunks, 6, 8, 20), { startLine: 7, endLine: 9 });
   assert.equal(shiftedRange(hunks, 2, 3, 20), null);
   assert.deepEqual(movedRange('b\nc', ['a', 'x', 'b', 'c'], 2), { found: 1, range: { startLine: 3, endLine: 4 } });
@@ -372,7 +374,7 @@ test('reaffirmMemory adds revision n+1 and remembers it', t => {
   f.store.setPinned(target.id, true);
   writeFileSync(join(f.repo, 'src', 'a.js'), lines('line', 12).replace('line 4\n', 'line four\n'));
   const before = f.store.getMemory(target.id); const auditBefore = f.store.listAudit(1000).length;
-  const result = f.store.reaffirmMemory(target.id, {});
+  const result = f.store.reaffirmMemory(target.id, { expectedHash: sha(join(f.repo, 'src', 'a.js')) });
   assert.equal(result.revision, before.revision + 1); assert.equal(result.status, 'active'); assert.equal(result.pinned, true);
   assert.notEqual(result.source.contentHash, before.source.contentHash); assert.equal(result.source.excerpt, 'line 3\nline four\nline 5');
   assert.equal(result.statement, before.statement); assert.equal(result.environment, 'with Docker running');
@@ -398,7 +400,7 @@ test('reaffirmMemory refuses a current note, another branch and the wrong copy',
   writeFileSync(join(ws.path, 'src', 'a.js'), 'changed in the worktree\nsecond\n');
   assert.throws(() => f.store.reaffirmMemory(branchNote.id, { workspaceId: null }), /belongs to branch feature\/x; check out that branch to remember it/);
   assert.throws(() => f.store.reaffirmMemory(branchNote.id, { workspaceId: 'root:x' }), /main checkout/);
-  assert.equal(f.store.reaffirmMemory(branchNote.id, { workspaceId: ws.id }).revision, 2);
+  assert.equal(f.store.reaffirmMemory(branchNote.id, { workspaceId: ws.id, expectedHash: sha(join(ws.path, 'src', 'a.js')) }).revision, 2);
   writeFileSync(join(f.repo, 'src', 'a.js'), 'changed in main\n');
   assert.throws(() => f.store.reaffirmMemory(current.id, { workspaceId: ws.id }), /Check this note from the main checkout/);
   assert.equal(f.store.getMemory(current.id).revision, 1);
@@ -407,9 +409,9 @@ test('reaffirmMemory refuses a current note, another branch and the wrong copy',
 test('reaffirmMemory takes a new line range', t => {
   const f = fixture(t); const target = f.note('src/a.js', 3, 5);
   writeFileSync(join(f.repo, 'src', 'a.js'), lines('header', 10) + lines('line', 40));
-  assert.throws(() => f.store.reaffirmMemory(target.id, { startLine: 11, endLine: 41 }), /Select 1–30 existing source lines/);
+  assert.throws(() => f.store.reaffirmMemory(target.id, { startLine: 11, endLine: 41, expectedHash: sha(join(f.repo, 'src', 'a.js')) }), /Select 1–30 existing source lines/);
   assert.equal(f.store.getMemory(target.id).revision, 1);
-  const moved = f.store.reaffirmMemory(target.id, { startLine: 13, endLine: 15 });
+  const moved = f.store.reaffirmMemory(target.id, { startLine: 13, endLine: 15, expectedHash: sha(join(f.repo, 'src', 'a.js')) });
   assert.equal(moved.source.startLine, 13); assert.equal(moved.source.excerpt, 'line 3\nline 4\nline 5');
 });
 
@@ -421,4 +423,85 @@ test('writeMemory refuses a note that changed after it was checked', t => {
   const before = f.counts();
   assert.throws(() => f.store.transaction(() => f.store.writeMemory(item, expected)), /changed while you were checking it/);
   assert.deepEqual(f.counts(), before);
+});
+
+// ----- Review fixes: windowing, reviewed content, deadlines -----
+
+test('selectHunks windows on the note\'s lines and says when it cut', () => {
+  // 100 lines inserted right above a note on old lines 5-6.
+  const added = Array.from({ length: 100 }, (_, i) => `+added ${i + 1}`).join('\n');
+  const diff = `@@ -2,3 +2,103 @@\n line 2\n line 3\n line 4\n${added}\n line 5\n line 6\n line 7\n`;
+  const { hunks, truncated } = selectHunks(parseHunks(diff), 5, 6);
+  assert.equal(truncated, true);
+  assert.equal(hunks.length, 1); assert.ok(hunks[0].lines.length <= 40);
+  const olds = hunks[0].lines.filter(line => line.kind === ' ').map(line => line.old);
+  assert.ok(olds.includes(5) && olds.includes(6), 'the note\'s own lines are shown');
+  assert.ok(hunks[0].lines.some(line => line.kind === '+' && line.text === 'added 100'), 'the insertion next to them is shown');
+  // A small hunk is shown whole.
+  const small = selectHunks(parseHunks('@@ -3,3 +3,3 @@\n line 3\n-line 4\n+line four\n line 5\n'), 4, 4);
+  assert.equal(small.truncated, false); assert.equal(small.hunks[0].lines.length, 4);
+  // More than three matching hunks, and an overlong line, are cut.
+  const many = Array.from({ length: 4 }, (_, i) => `@@ -${i * 10 + 1},1 +${i * 10 + 1},1 @@\n-old ${i}\n+new ${i}`).join('\n');
+  const four = selectHunks(parseHunks(many), 1, 40);
+  assert.equal(four.hunks.length, 3); assert.equal(four.truncated, true);
+  const long = selectHunks(parseHunks(`@@ -1,1 +1,1 @@\n-${'x'.repeat(400)}\n+y\n`), 1, 1);
+  assert.equal(long.truncated, true); assert.equal(long.hunks[0].lines[0].text.length, 300);
+});
+
+test('a big insertion above a note is flagged truncated in the catch', t => {
+  const f = fixture(t); const target = f.note('src/a.js', 5, 6);
+  const s = f.session('');
+  writeFileSync(join(f.repo, 'src', 'a.js'), lines('line', 12).replace('line 4\n', `line 4\n${lines('inserted', 100)}`)); f.end(s);
+  const [item] = f.store.staleNotesForSession(s.id).notes;
+  assert.equal(item.note.id, target.id); assert.equal(item.truncated, true);
+  assert.ok(item.hunks[0].lines.some(line => line.kind === ' ' && line.old === 5));
+  const small = fixture(t); small.note('src/a.js', 3, 3);
+  const s2 = small.session(''); writeFileSync(join(small.repo, 'src', 'a.js'), lines('line', 12).replace('line 3\n', 'line three\n')); small.end(s2);
+  assert.equal(small.store.staleNotesForSession(s2.id).notes[0].truncated, false);
+});
+
+test('hunks keep blank context lines and drop carriage returns', t => {
+  assert.deepEqual(parseHunks('@@ -1,2 +1,2 @@\n-old\r\n+new\r\n \r\n').flatMap(h => h.lines.map(l => l.text)), ['old', 'new', '']);
+  const f = fixture(t);
+  writeFileSync(join(f.repo, 'src', 'gap.js'), 'one\n\ntwo\nthree\n'); f.commit('gap');
+  f.git('config', 'diff.suppressBlankEmpty', 'true');
+  const target = f.note('src/gap.js', 3, 4);
+  const s = f.session(''); writeFileSync(join(f.repo, 'src', 'gap.js'), 'one\n\ntwo\nTHREE\n'); f.end(s);
+  const [item] = f.store.staleNotesForSession(s.id).notes;
+  assert.equal(item.note.id, target.id);
+  assert.deepEqual(item.hunks[0].lines.map(l => [l.kind, l.old, l.text]), [[' ', 1, 'one'], [' ', 2, ''], [' ', 3, 'two'], ['-', 4, 'three'], ['+', null, 'THREE']]);
+});
+
+test('Still true saves only the content that was shown', t => {
+  const f = fixture(t); const target = f.note('src/a.js', 3, 5);
+  const s = f.session('');
+  writeFileSync(join(f.repo, 'src', 'a.js'), lines('line', 12).replace('line 4\n', 'line four\n')); f.end(s);
+  const [item] = f.store.staleNotesForSession(s.id).notes;
+  assert.equal(item.contentHash, sha(join(f.repo, 'src', 'a.js')));
+  assert.deepEqual(item.shownRange, { startLine: 1, endLine: 7 }, 'new-side lines of the hunk on screen');
+  // The agent (or the user) edits the file again after the catch was shown.
+  writeFileSync(join(f.repo, 'src', 'a.js'), lines('line', 12).replace('line 4\n', 'line FOUR\n'));
+  const before = f.counts();
+  assert.throws(() => f.store.reaffirmMemory(target.id, { expectedHash: item.contentHash }), { message: 'The file changed again; check it once more.' });
+  assert.throws(() => f.store.reaffirmMemory(target.id, {}), /check the change/i, 'a hash is required');
+  assert.deepEqual(f.counts(), before); assert.equal(f.store.getMemory(target.id).revision, 1);
+  const again = f.store.staleNotesForSession(s.id).notes[0];
+  assert.equal(f.store.reaffirmMemory(target.id, { expectedHash: again.contentHash }).source.excerpt, 'line 3\nline FOUR\nline 5');
+});
+
+test('Still true on a replacement does not archive the note it replaced again', t => {
+  const f = fixture(t); const old = f.note('src/other.js', 1, 2, { statement: 'Other.js opens with the legacy retry header' });
+  const replacement = f.store.proposeMemory(f.project.id, { statement: 'Other.js opens with the new retry header', category: 'convention', scope: 'checkout', area: '',
+    source: { kind: 'file', path: 'src/a.js', startLine: 1, endLine: 2 }, supersedes: old.id });
+  f.store.setMemoryStatus(replacement.id, 'active');
+  assert.equal(f.store.getMemory(old.id).status, 'archived');
+  // The user brings the older note back later (restored outside this flow).
+  f.store.db.prepare(`UPDATE memories SET status='active' WHERE id=?`).run(old.id);
+  writeFileSync(join(f.repo, 'src', 'a.js'), lines('line', 12).replace('line 1\n', 'line one\n'));
+  const auditBefore = f.store.listAudit(1000).length;
+  const result = f.store.reaffirmMemory(replacement.id, { expectedHash: sha(join(f.repo, 'src', 'a.js')) });
+  assert.equal(result.revision, 2); assert.deepEqual(result.supersedes, { id: old.id, revision: old.revision }, 'the record of what it replaced is kept');
+  assert.equal(f.store.getMemory(old.id).status, 'active', 'reaffirming is not a second replacement');
+  const audit = f.store.listAudit(1000).slice(auditBefore).find(a => a.action === 'memory-active');
+  assert.equal(audit.body.supersedes, null);
 });
