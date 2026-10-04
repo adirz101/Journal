@@ -225,7 +225,10 @@ const actions = {
   workspaceRemovalBlockers: ({ id }) => store.workspaceRemovalBlockers(id),
   removeWorkspace: ({ id }) => store.removeWorkspace(id),
   forgetWorkspace: ({ id }) => store.forgetWorkspace(id),
-  memoryPage: ({ projectId, offset, limit, filter, search }) => store.listMemoryPage(projectId, { offset, limit, filter, search }),
+  memoryPage: ({ projectId, offset, limit, filter, search, category, otherBranch, ids }) => store.listMemoryPage(projectId, { offset, limit, filter, search, category, otherBranch, ids }),
+  memoryOrigins: ({ projectId, ids }) => store.memoryOrigins(projectId, ids),
+  deliveryCounts: ({ projectId, ids }) => store.deliveryCounts(projectId, ids),
+  memoryChecks: ({ projectId, offset, limit }) => store.memoryChecks(projectId, { offset, limit }),
   proposeMemory: ({ projectId, input }) => store.proposeMemory(projectId, input),
   // Forgetting (archiving) cannot be undone, so it asks first; Cancel returns null.
   setMemoryStatus: async ({ id, status }) => {

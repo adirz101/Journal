@@ -72,4 +72,7 @@ export const STORE_METHODS = [
   'importBrain',
   'purgeSession',
   'applyRetention',
+  'memoryOrigins',
+  'deliveryCounts',
+  'memoryChecks',
 ];

@@ -118,3 +118,31 @@ test('review fixes: export approved only, purge keeps shared resume history, res
   const good = join(f.root, 'good.sqlite'); await f.store.backup(good);
   assert.throws(() => restore(good, f.data, { alive: () => false }), /appears to be open/);
 });
+
+test('purge removes a session\'s deliveries; remove keeps them; deleting project data clears them', t => {
+  const f = fixture(t); const note = f.approve('Docker runs the integration suite.');
+  const deliver = id => {
+    const receipt = f.store.prepareContext(f.project.id, 'Docker');
+    f.store.saveSession({ id, projectId: f.project.id, provider: 'claude', status: 'exited', receiptId: receipt.id, createdAt: '2026-09-30T10:00:00.000Z' });
+    f.store.updateReceiptState(receipt.id, 'submitted', id); return receipt;
+  };
+  const count = () => f.store.deliveryCounts(f.project.id, [note.id])[note.id];
+  const purged = deliver('purged'); deliver('hidden'); deliver('kept');
+  assert.equal(count(), 3);
+  f.store.purgeSession('purged');
+  assert.equal(count(), 2);
+  assert.equal(f.store.db.prepare('SELECT count(*) AS n FROM deliveries WHERE session_id=? OR receipt_id=?').get('purged', purged.id).n, 0);
+  f.store.removeSession('hidden');
+  assert.equal(count(), 2);
+  const otherRepo = join(f.root, 'other'); execFileSync('git', ['init', '-q', '-b', 'main', otherRepo]);
+  const other = f.store.openProject(otherRepo);
+  const otherNote = f.store.proposeMemory(other.id, { statement: 'Docker is optional here.', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'x' } });
+  f.store.setMemoryStatus(otherNote.id, 'active');
+  const receipt = f.store.prepareContext(other.id, 'Docker');
+  f.store.saveSession({ id: 'other', projectId: other.id, provider: 'codex', status: 'exited', receiptId: receipt.id });
+  f.store.updateReceiptState(receipt.id, 'submitted', 'other');
+  assert.equal(f.store.storageInfo().tables.deliveries, 3);
+  f.store.removeProject(f.project.id, { deleteData: true });
+  const rows = f.store.db.prepare('SELECT project_id FROM deliveries').all().map(row => row.project_id);
+  assert.deepEqual(rows, [other.id]);
+});

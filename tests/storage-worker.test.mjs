@@ -21,6 +21,9 @@ test('worker-backed storage persists approved knowledge and marks unfinished del
   const receipt = await store.prepareContext(project.id, 'Docker tests'); const id = randomUUID();
   await store.saveSession({ id, projectId: project.id, provider: 'claude', status: 'running', receiptId: receipt.id });
   await store.updateReceiptState(receipt.id, 'submitted', id);
+  assert.equal((await store.memoryOrigins(project.id, [memory.id]))[memory.id].kind, 'manual');
+  assert.deepEqual(await store.deliveryCounts(project.id, [memory.id]), { [memory.id]: 1 });
+  assert.deepEqual((await store.memoryChecks(project.id, { offset: 0, limit: 50 })).stale, []);
   await store.close(); await store.close();
   await assert.rejects(store.listProjects(), /closed/);
   store = new StoreClient(path); await store.recoverSessions();
