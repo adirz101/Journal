@@ -209,9 +209,12 @@ export class TerminalManager extends EventEmitter {
     if (typeof data !== 'string' || Buffer.byteLength(data) > 64 * 1024) throw new Error('Terminal input is too large');
     const entry = this.owned(id);
     // Claude's prompt answer keys: a digit selects, Enter confirms, Esc or Ctrl+C dismisses (deny with feedback ends with Enter).
-    // Pasted text never counts.
+    // Pasted text never counts. The only open prompt settles at once; with several, the next tool event settles one.
     if (entry.pending.length && !data.startsWith('\x1b[200~') && (data.includes('\r') || data === '\x1b' || data === '\x03' || /^[1-9]$/.test(data))) entry.answered = true;
     entry.proc.write(data);
+    if (entry.answered && entry.pending.length === 1 && entry.session.status === 'waiting') {
+      entry.pending = []; entry.answered = false; this.observe(id, entry.session.nativeId, 'running', 'working');
+    }
   }
   // Types a file reference into the agent's input without submitting it, only
   // when Claude's hooks report it idle at its prompt (never while working or

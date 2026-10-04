@@ -275,11 +275,12 @@ test('a sibling tool starting keeps the approval unless the user answered the pr
   assert.equal(state(), 'waiting/permission');
 });
 
-test('deny with feedback: the typed answer lets the next tool clear the approval', async t => {
+test('deny with feedback: the typed answer clears the only open approval', async t => {
   const { send, state, write } = await hooked(t);
   send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'grep -r x .' });
   send('PermissionRequest', { tool: 'Bash' });
   write('3'); write('use rg instead\r');
+  assert.equal(state(), 'running/working');
   send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
   assert.equal(state(), 'running/working');
 });
@@ -293,29 +294,31 @@ test('arrow keys and ordinary typing do not count as answering the prompt', asyn
   assert.equal(state(), 'waiting/permission');
 });
 
-test('approving with a digit lets a sibling completion clear the approval', async t => {
+test('approving with a digit clears the only open approval; a sibling completion keeps it clear', async t => {
   const { send, state, write } = await hooked(t);
   send('PreToolUse', { tool: 'Read', toolUseId: 'r1' });
   send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'ls' });
   send('PermissionRequest', { tool: 'Bash' });
   write('1');
+  assert.equal(state(), 'running/working');
   send('PostToolUse', { tool: 'Read', toolUseId: 'r1' });
   assert.equal(state(), 'running/working');
 });
 
-test('a lone Esc answers (denies) the prompt; a new request resets the answer', async t => {
+test('a lone Esc answers (denies) a prompt; a new request resets an unsettled answer', async t => {
   const { send, state, write } = await hooked(t);
   send('PermissionRequest', { tool: 'Bash' });
-  write('\x1b');
   send('PermissionRequest', { tool: 'Edit' });
+  // Two prompts are open (Bash, Edit): the answer waits for a tool event, and a new request discards it.
+  write('\x1b');
+  send('PermissionRequest', { tool: 'Write' });
   send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
   assert.equal(state(), 'waiting/permission');
-  // Two prompts are open (Bash, Edit): each needs its own answer.
-  write('\x1b');
-  send('PreToolUse', { tool: 'Grep', toolUseId: 'g2' });
+  // Each prompt needs its own answer; the last one settles at once.
+  write('\x1b'); send('PreToolUse', { tool: 'Grep', toolUseId: 'g2' });
+  write('\x1b'); send('PreToolUse', { tool: 'Grep', toolUseId: 'g3' });
   assert.equal(state(), 'waiting/permission');
   write('\x1b');
-  send('PreToolUse', { tool: 'Grep', toolUseId: 'g3' });
   assert.equal(state(), 'running/working');
 });
 
@@ -360,6 +363,7 @@ test('which input counts as answering the prompt', async t => {
     const { send, state, write } = await hooked(t);
     send('PermissionRequest', { tool: 'Bash' });
     write(data);
+    assert.equal(state(), answers ? 'running/working' : 'waiting/permission', JSON.stringify(data));
     send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
     assert.equal(state(), answers ? 'running/working' : 'waiting/permission', JSON.stringify(data));
   }
@@ -381,7 +385,32 @@ test("Journal's Interrupt counts as answering the prompt, like a typed Ctrl+C", 
   send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
   assert.equal(state(), 'waiting/permission');
   f.manager.interrupt(session.id);
+  assert.equal(state(), 'running/working');
   send('PreToolUse', { tool: 'Grep', toolUseId: 'g2' });
+  assert.equal(state(), 'running/working');
+});
+
+test('answering the only open prompt shows Working at once, before any tool event', async t => {
+  for (const keys of [['1'], ['3', 'use rg instead\r'], ['\r'], ['\x1b'], ['\x03']]) {
+    const { send, state, write, f, session } = await hooked(t);
+    send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'sleep 600' });
+    send('PermissionRequest', { tool: 'Bash' });
+    for (const key of keys) write(key);
+    assert.equal(state(), 'running/working', JSON.stringify(keys));
+    const entry = f.manager.entries.get(session.id);
+    assert.deepEqual(entry.pending, []); assert.equal(entry.answered, false);
+  }
+});
+
+test('with two open prompts one answer waits for a tool event to settle one of them', async t => {
+  const { send, state, write } = await hooked(t);
+  send('PermissionRequest', { tool: 'Bash' });
+  send('PermissionRequest', { tool: 'Edit' });
+  write('1');
+  assert.equal(state(), 'waiting/permission');
+  send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
+  assert.equal(state(), 'waiting/permission');
+  write('1');
   assert.equal(state(), 'running/working');
 });
 
