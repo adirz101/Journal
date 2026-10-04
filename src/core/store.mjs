@@ -618,9 +618,10 @@ export class JournalStore {
     const proposal = this.getProposal(id);
     if (proposal.state !== 'open') throw new Error('This proposal was already handled');
     if (proposal.kind === 'branch-status') throw new Error('Use Propose branch update for status proposals');
+    if (proposal.scope === 'branch' && !proposal.branch) throw new Error('This suggestion was made without a branch checked out, so Journal cannot tell which branch it belongs to');
     if (proposal.evidence?.sessionId) this.getSession(proposal.evidence.sessionId);
     const memory = this.proposeMemory(proposal.projectId, { statement: proposal.statement, category: proposal.category, scope: proposal.scope, area: '', source: proposal.source },
-      proposal.scope === 'branch' && proposal.branch ? { branch: proposal.branch } : undefined);
+      proposal.scope === 'branch' ? { branch: proposal.branch } : undefined);
     this.db.prepare('UPDATE proposals SET body=? WHERE id=?').run(JSON.stringify({ ...proposal, state: 'accepted', memoryId: memory.id, handledAt: now() }), id);
     this.audit('proposal-accepted', { id, memoryId: memory.id, kind: proposal.kind });
     return memory;

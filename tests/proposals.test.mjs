@@ -145,3 +145,12 @@ test('a branch suggestion made on the checked-out branch is remembered on that b
   const memory = f.store.acceptProposal(created.id);
   assert.equal(memory.scope, 'branch'); assert.equal(memory.branch, 'main');
 });
+
+test('a branch suggestion made without a branch checked out is refused rather than bound to the current branch', t => {
+  const f = fixture(t);
+  const s = f.session('Rule: Feature flags on this branch default to off.', { survivors: [] });
+  const [created] = f.store.generateProposals(s.id);
+  f.store.db.prepare(`UPDATE proposals SET body=json_set(body,'$.scope','branch','$.branch',json('null')) WHERE id=?`).run(created.id);
+  assert.throws(() => f.store.acceptProposal(created.id), /without a branch checked out/);
+  assert.equal(f.store.getProposal(created.id).state, 'open', 'Nothing changed');
+});
