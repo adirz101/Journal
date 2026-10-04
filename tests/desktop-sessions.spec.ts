@@ -34,6 +34,10 @@ const command=input;input='';
 if(command==='daemon'){const c=spawn(process.execPath,['-e',${JSON.stringify(daemonCode)}],{detached:true,stdio:'ignore'});c.unref();console.log('DAEMON_STARTED')}
 else if(command==='unicode'){process.stdout.write('\\x1b[31mRED\\x1b[0m \\u6f22\\u5b57\\u30c6\\u30b9\\u30c8 \\u{1F600} \\u05e2\\u05d1\\u05e8\\u05d9\\u05ea\\r\\nCRLF_OK\\r\\n')}
 else if(command.startsWith('write ')){fs.writeFileSync(command.slice(6),'created by agent\\n');console.log('WROTE')}
+else if(command==='delay'){setTimeout(()=>console.log('DELAYED'),600)}
+else if(command.startsWith('perm ')){const a=process.argv;const hook=JSON.parse(fs.readFileSync(a[a.indexOf('--settings')+1],'utf8')).hooks.PermissionRequest[0].hooks[0].command;
+const c=spawn('/bin/sh',['-c',hook],{stdio:['pipe','ignore','ignore']});c.on('exit',()=>console.log('ASKED'));
+c.stdin.end(JSON.stringify({hook_event_name:'PermissionRequest',session_id:a[a.indexOf('--session-id')+1],cwd:process.cwd(),tool_name:'Bash',tool_use_id:'perm1',tool_input:{command:command.slice(5)}}))}
 else console.log('ECHO '+command);
 }});`;
   for (const provider of ['claude', 'codex']) { writeFileSync(resolve(bin, provider), fixture); chmodSync(resolve(bin, provider), 0o755); }
@@ -309,5 +313,118 @@ test('a branch switched outside Journal is picked up and live sessions say where
     await expect(page.locator('.branch-badge')).toContainText('feat/elsewhere');
     await expect(page.locator('.terminal-label')).toContainText('started on ⑂ main');
     await expect(page.getByText(/The checkout is now on feat\/elsewhere; this session started on main/)).toBeVisible();
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+// Phase 2: stable slots, honest states and next needs-you.
+const slotKeys = () => process.platform === 'darwin' ? ['meta'] as const : ['alt'] as const;
+const slotAria = (n: number) => process.platform === 'darwin' ? `Meta+${n}` : `Alt+${n}`;
+async function startSession(page: Page, task: string, provider: 'Claude' | 'Codex') {
+  await page.getByLabel('Initial task').fill(task);
+  await page.getByRole('button', { name: `Start ${provider}`, exact: true }).click();
+  await expect(page.locator('.terminal-surface')).toContainText(`TASK ${task}`);
+}
+
+test('slot shortcuts keep their session across a renderer reload and after another session stops', async () => {
+  const f = setup('slots'); const { app, page } = await open(f.env, f.project);
+  try {
+    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await startSession(page, 'SLOT_A', 'Claude'); await startSession(page, 'SLOT_B', 'Codex');
+    await pressKey(app, '1', [...slotKeys()]);
+    await expect(sessionButton(page, 'SLOT_A')).toHaveAttribute('aria-current', 'true');
+    await pressKey(app, '2', [...slotKeys()]);
+    await expect(sessionButton(page, 'SLOT_B')).toHaveAttribute('aria-current', 'true');
+    await page.reload();
+    await expect(page.getByText('2/4 active')).toBeVisible();
+    await sessionButton(page, 'SLOT_A').click();
+    await expect(page.locator('.terminal-surface')).toContainText('TASK SLOT_A');
+    await expect(async () => {
+      await pressKey(app, '2', [...slotKeys()]);
+      await expect(sessionButton(page, 'SLOT_B')).toHaveAttribute('aria-current', 'true', { timeout: 1000 });
+    }).toPass();
+    // Stopping slot 1 leaves slot 2 where it was; the next start takes the free slot 1.
+    await sessionButton(page, 'SLOT_A').click();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect(page.locator('.terminal-label')).toContainText('Stopped');
+    await expect(sessionButton(page, 'SLOT_A')).not.toHaveAttribute('aria-keyshortcuts');
+    await pressKey(app, '2', [...slotKeys()]);
+    await expect(sessionButton(page, 'SLOT_B')).toHaveAttribute('aria-current', 'true');
+    await expect(sessionButton(page, 'SLOT_B')).toHaveAttribute('aria-keyshortcuts', slotAria(2));
+    await startSession(page, 'SLOT_C', 'Claude');
+    await expect(sessionButton(page, 'SLOT_C')).toHaveAttribute('aria-keyshortcuts', slotAria(1));
+    await pressKey(app, '2', [...slotKeys()]);
+    await expect(sessionButton(page, 'SLOT_B')).toHaveAttribute('aria-current', 'true');
+    // The Active group lists sessions in slot order.
+    await expect(page.getByRole('group', { name: 'Active sessions' }).getByRole('button')).toHaveText([/SLOT_C/, /SLOT_B/]);
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('next needs-you jumps to a Claude session waiting for approval and shows what it asks', async () => {
+  const f = setup('needs-you'); const { app, page } = await open(f.env, f.project);
+  const next = process.platform === 'darwin' ? ['meta'] as const : ['control', 'shift'] as const;
+  try {
+    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await startSession(page, 'CALM_ONE', 'Claude'); await startSession(page, 'ASKING_TWO', 'Claude');
+    // The fixture runs Journal's real hook with a PermissionRequest payload.
+    await typeLine(page, 'perm TOKEN=abc123456 npm publish');
+    await expect(page.locator('.terminal-surface')).toContainText('ASKED');
+    await expect(page.locator('.terminal-label')).toContainText('Needs approval');
+    await sessionButton(page, 'CALM_ONE').click();
+    await expect(sessionButton(page, 'CALM_ONE')).toHaveAttribute('aria-current', 'true');
+    const asking = sessionButton(page, 'ASKING_TWO');
+    await expect(asking).toContainText('Needs approval');
+    await expect(asking).toContainText('TOKEN=[redacted] npm publish');
+    await expect(asking).not.toContainText('abc123456');
+    await expect(asking).toHaveAttribute('aria-label', /Needs approval, TOKEN=\[redacted\] npm publish.*needs attention/);
+    await pressKey(app, 'J', [...next]);
+    await expect(asking).toHaveAttribute('aria-current', 'true');
+    // The only session that needs you is already selected: nothing moves.
+    await pressKey(app, 'J', [...next]);
+    await page.waitForTimeout(300);
+    await expect(asking).toHaveAttribute('aria-current', 'true');
+    // Esc dismisses the only prompt: Claude is back at its input box.
+    await page.locator('.xterm-helper-textarea').press('Escape');
+    await expect(page.locator('.terminal-label')).toContainText('Your turn');
+    await expect(asking).not.toContainText('Needs approval');
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('Codex shows Running with output time and limited status', async () => {
+  const f = setup('codex-state'); const { app, page } = await open(f.env, f.project);
+  try {
+    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await startSession(page, 'CODEX_STATE', 'Codex');
+    const row = sessionButton(page, 'CODEX_STATE');
+    await expect(row).toContainText('Running');
+    // Output 600 ms after the key is not an echo, so it counts as agent output. Output
+    // right after a resize is a repaint; the layout may still settle just after start.
+    await expect(async () => {
+      await typeLine(page, 'delay');
+      await expect(row).toContainText(/output just now|quiet/, { timeout: 2000 });
+    }).toPass({ timeout: 20000 });
+    await expect(row).toHaveAttribute('aria-label', /Running, (output just now|quiet [^,]+), limited status/);
+    await expect(row.locator('.session-status')).toHaveAttribute('title', /Journal sees output, not the agent's state/);
+    await expect(row.locator('.status-dot')).not.toHaveClass(/waiting/);
+    await expect(page.locator('.terminal-label')).toContainText('Running');
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('a fifth start is refused with the SLOTS_FULL code through the preload bridge', async () => {
+  const f = setup('slots-full'); const { app, page } = await open(f.env, f.project);
+  try {
+    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    for (let i = 0; i < 4; i++) await startSession(page, `FULL_${i}`, i % 2 ? 'Codex' : 'Claude');
+    const fifth = async () => page.evaluate(async () => {
+      const journal = (window as any).journal; const boot = await journal.request('bootstrap');
+      const input = { projectId: boot.projects[0].id, provider: 'claude', task: '' };
+      let thrown: { code?: string; message: string } | null = null;
+      try { await journal.request('start', input); } catch (error: any) { thrown = { code: error.code, message: error.message }; }
+      return { settled: await journal.settle('start', input), thrown };
+    });
+    const { settled, thrown } = await fifth();
+    // The code crosses the bridge as data; a thrown Error keeps only its message.
+    expect(settled).toEqual({ ok: false, code: 'SLOTS_FULL', error: expect.stringContaining('Stop one before starting another') });
+    expect(thrown?.message).toContain('Stop one before starting another');
+    expect(f.launches()).toHaveLength(4);
   } finally { await closeApp(app); f.cleanup(); }
 });

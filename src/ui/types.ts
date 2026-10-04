@@ -48,7 +48,8 @@ export interface Bootstrap { projects: Project[]; agents: AgentInfo[]; platform:
 export interface StatusDraft { scope: 'checkout' | 'branch'; memoryId: string | null; previousRevision: number | null; previousStatement: string | null; statement: string; source: { kind: 'git'; base: string | null };
   basis: { label: string; base: string | null; head: string; commitCount?: number; changedFiles?: number; uncommitted?: number; carried?: string[]; structureChanges?: string[]; unchanged?: boolean; notes: string[] }; }
 declare global {
-  interface Window { journal?: { request: (action: string, input?: object) => Promise<unknown>; onEvent: (callback: (event: TerminalEvent) => void) => () => void }; }
+  interface Window { journal?: { request: (action: string, input?: object) => Promise<unknown>; settle: (action: string, input?: object) => Promise<Settled>;
+    onEvent: (callback: (event: TerminalEvent) => void) => () => void }; }
 }
 // Knowledge writes still in flight. A launch or context preview waits for
 // them, so what the agent receives always includes what the user just did
@@ -57,6 +58,8 @@ declare global {
 const KNOWLEDGE_WRITES = new Set(['proposeMemory', 'setMemoryStatus', 'setPinned', 'markIncorrect', 'proposePromotion', 'acceptProposal']);
 const READS_KNOWLEDGE = new Set(['start', 'prepareContext']);
 const pendingWrites = new Set<Promise<unknown>>();
+// What the preload bridge returns: thrown errors would lose their code crossing it.
+export type Settled = { ok: true; value: unknown } | { ok: false; error: string; code?: string };
 // A failed request rejects with an Error that may carry a code. Only the runtime's
 // ERROR_CODES (src/core/terminal.mjs) count; any other or missing code is no code.
 export const ERROR_CODES = ['SLOTS_FULL', 'SHUTTING_DOWN', 'PROVIDER_MISSING', 'PROVIDER_UNSUPPORTED', 'ID_UNCONFIRMED', 'CONVERSATION_OPEN', 'ORPHAN_RUNNING', 'START_FAILED', 'NOT_LIVE'] as const;
@@ -69,7 +72,10 @@ export async function api<T>(action: string, input: object = {}): Promise<T> {
   if (!window.journal) throw new Error('Open Journal as a desktop app with npm run dev');
   // Bounded: a stuck write never blocks launches for more than 10 s.
   if (READS_KNOWLEDGE.has(action) && pendingWrites.size) await Promise.race([Promise.allSettled([...pendingWrites]), new Promise(resolve => setTimeout(resolve, 10000))]);
-  const request = window.journal.request(action, input);
+  const request = window.journal.settle(action, input).then(result => {
+    if (!result.ok) throw Object.assign(new Error(result.error), result.code ? { code: result.code } : {});
+    return result.value;
+  });
   if (KNOWLEDGE_WRITES.has(action)) { pendingWrites.add(request); void request.finally(() => pendingWrites.delete(request)).catch(() => {}); }
   return await request as T;
 }
