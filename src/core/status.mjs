@@ -75,8 +75,8 @@ function fit(head, items, tail, more) {
 
 export function branchDraft(project, previous) {
   const { root } = project; const notes = [];
-  if (!project.branch) throw new Error('Branch updates require a named branch');
-  if (!project.head) throw new Error('Branch updates require at least one commit');
+  if (!project.branch) throw new Error('"Where this branch stands" needs a named branch');
+  if (!project.head) throw new Error('"Where this branch stands" needs at least one commit');
   const recorded = previous?.source?.kind === 'git' ? previous.source.head : previous?.source?.commit;
   let base = null; let label;
   if (recorded && isCommit(root, recorded) && isAncestor(root, recorded)) { base = recorded; label = `the last update (${short(recorded)})`; }
@@ -153,9 +153,9 @@ function readmePurpose(root) {
 
 export function overviewDraft(project, previous) {
   const { root } = project; const notes = [];
-  if (!project.head) throw new Error('A repo overview requires at least one commit');
+  if (!project.head) throw new Error('"About this project" needs at least one commit');
   const now = structure(root, 'HEAD');
-  if (!now) throw new Error('Journal could not read the file list of this repository; try again or write the overview by hand');
+  if (!now) throw new Error('Journal could not read the file list of this repository; try again or write it by hand');
   if (!now.counted) notes.push('This repository is too large to count files per directory; the structure line lists top-level entries only.');
   const recorded = previous?.source?.kind === 'git' ? previous.source.head : previous?.source?.commit;
   const base = recorded && isCommit(root, recorded) && isAncestor(root, recorded) ? recorded : null;

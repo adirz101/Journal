@@ -122,7 +122,7 @@ test('branch updates require a named branch and git evidence must belong to curr
   const f = fixture(t);
   assert.throws(() => f.store.proposeMemory(f.project.id, { statement: 'Status', category: 'brief', scope: 'branch', area: '', source: { kind: 'git', base: 'f'.repeat(40) } }), /commit/i);
   f.git('checkout', '--detach');
-  assert.throws(() => f.store.proposeStatusUpdate(f.project.id, 'branch'), /named branch/);
+  assert.throws(() => f.store.proposeStatusUpdate(f.project.id, 'branch'), { message: '"Where this branch stands" needs a named branch' });
 });
 
 test('uncommitted tracked edits keep their full paths in the draft', t => {

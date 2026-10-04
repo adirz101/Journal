@@ -183,3 +183,41 @@ test('native dialogs use the plain vocabulary', () => {
   assert.ok(calls >= 10 && found.some(([, text]) => text.startsWith('Your files will not be deleted')), 'the scan found the dialogs');
   assert.deepEqual(found.filter(([, text]) => OLD_TERMS.test(text)).map(([at, text]) => `${at}: ${text}`), []);
 });
+
+// Errors from core and the desktop main process can reach the app's error
+// banner, so they use the plain vocabulary too. Internal invariant errors
+// (programming errors or tampered input, never reached by normal use) are
+// listed with their reason: [file, text, why].
+const INTERNAL_ERRORS = [
+  ['core/store.mjs', 'Invalid disabled claims', 'malformed IPC input; the renderer sends note IDs it got from core'],
+  ['core/store.mjs', 'Unknown receipt', 'the renderer asks only for receipt IDs core listed'],
+  ['core/store.mjs', 'Receipt delivery is already recorded', 'runtime invariant: delivery is recorded once by the runtime'],
+  ['core/store.mjs', 'Unknown proposal', 'the renderer acts only on suggestion IDs core listed'],
+  ['core/store.mjs', 'Use Propose branch update for status proposals', 'the app shows Propose branch update, not Add for review, for these suggestions'],
+];
+function errorStrings(dir) {
+  return readdirSync(new URL(`../src/${dir}/`, import.meta.url)).filter(name => name.endsWith('.mjs')).flatMap(file => {
+    const source = ts.createSourceFile(file, readFileSync(new URL(`../src/${dir}/${file}`, import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    const found = [];
+    const collect = node => {
+      if (ts.isBinaryExpression(node) && /^(?:===|!==)$/.test(node.operatorToken.getText())) return; // a compared value is code
+      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) { if (node.text.trim()) found.push([`${dir}/${file}`, node.text.trim(), source.getLineAndCharacterOfPosition(node.getStart()).line + 1]); }
+      ts.forEachChild(node, collect);
+    };
+    const visit = node => {
+      if (ts.isNewExpression(node) && node.expression.getText() === 'Error' && node.arguments?.[0]) collect(node.arguments[0]);
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    return found;
+  });
+}
+
+test('errors from core and the desktop main process use the plain vocabulary', () => {
+  const errors = [...errorStrings('core'), ...errorStrings('desktop')];
+  assert.ok(errors.length > 100 && errors.some(([, text]) => text === 'A note needs a source'), 'the scan found the errors');
+  const old = errors.filter(([file, text]) => OLD_TERMS.test(text) && !INTERNAL_ERRORS.some(([f, t]) => f === file && t === text));
+  assert.deepEqual(old.map(([file, text, line]) => `${file}:${line}: ${text}`), []);
+  const missing = INTERNAL_ERRORS.filter(([f, t]) => !errors.some(([file, text]) => file === f && text === t));
+  assert.deepEqual(missing, [], 'remove allow-list entries whose error is gone');
+});

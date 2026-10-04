@@ -108,7 +108,7 @@ test('review fixes: export approved only, purge keeps shared resume history, res
   const receipt = f.store.prepareContext(f.project.id, '');
   const base = { projectId: f.project.id, provider: 'claude', nativeId: '44444444-4444-4444-8444-444444444444', status: 'stopped', receiptId: receipt.id, createdAt: '' };
   f.store.saveSession({ ...base, id: 'a' }); f.store.saveSession({ ...base, id: 'b', resumedFrom: 'a' });
-  assert.throws(() => f.store.purgeSession('b'), /native conversation/);
+  assert.throws(() => f.store.purgeSession('b'), /so you can still continue it/);
   const { DatabaseSync } = await import('node:sqlite');
   const other = join(f.root, 'other.sqlite'); const db = new DatabaseSync(other); db.exec('CREATE TABLE x(a)'); db.close();
   assert.throws(() => restore(other, f.data, { alive: () => false }), /not a Journal backup/);

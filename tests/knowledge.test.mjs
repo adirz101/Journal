@@ -68,7 +68,7 @@ test('project briefs retain source freshness, branch boundaries and explicit rev
   f.store.setMemoryStatus(revised.id, 'active'); assert.equal(f.store.prepareContext(f.project.id, '').items[0]?.revision, 2);
   assert.equal(f.store.getReceipt(original.id).items[0].statement, brief.statement);
   f.store.setMemoryStatus(revised.id, 'archived'); assert.equal(f.store.prepareContext(f.project.id, '').items.length, 0);
-  assert.throws(() => f.propose({ category: 'brief', area: 'src' }), /whole checkout/);
+  assert.throws(() => f.propose({ category: 'brief', area: 'src' }), { message: 'A project summary applies to the whole project; leave the area empty' });
 });
 test('project orientation is prioritized and bounded without hiding dropped briefs', t => {
   const f = fixture(t);

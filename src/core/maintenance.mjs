@@ -122,7 +122,7 @@ export function purgeSession(store, sessionId) {
   if (survivorScanPending(session)) throw new Error('Journal is still checking for leftover child processes; try again in a moment');
   // Resume compares against the latest delivery in the same native
   // conversation; deleting one of several rows would hide what was delivered.
-  if (session.nativeId && store.db.prepare(`SELECT 1 FROM sessions WHERE id<>? AND json_extract(body,'$.provider')=? AND json_extract(body,'$.nativeId')=?`).get(sessionId, session.provider, session.nativeId)) throw new Error('Other sessions continue this native conversation; purge cannot remove one of them without breaking resume history');
+  if (session.nativeId && store.db.prepare(`SELECT 1 FROM sessions WHERE id<>? AND json_extract(body,'$.provider')=? AND json_extract(body,'$.nativeId')=?`).get(sessionId, session.provider, session.nativeId)) throw new Error('Other sessions continue this native conversation. Remove this session without deleting its history, so you can still continue it.');
   store.transaction(() => {
     store.db.prepare('DELETE FROM events WHERE session_id=?').run(sessionId);
     store.db.prepare(`DELETE FROM receipts WHERE id=? OR json_extract(body,'$.sessionId')=?`).run(session.receiptId, sessionId);

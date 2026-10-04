@@ -391,7 +391,7 @@ const actions = {
   start: input => {
     // A runtime from another build may not understand newer launch options;
     // never let it silently run in the wrong workspace or mode.
-    if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.plan || input.provider === 'cursor' || input.disabled?.length || input.references?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, research or plan mode, Cursor, leave-out or file references.');
+    if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.plan || input.provider === 'cursor' || input.disabled?.length || input.references?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, read-only or plan mode, Cursor, leave-out or file references.');
     return runtime.call('start', input);
   },
   // ----- Cursor CLI: install and sign in run visibly, only after the user asks. -----

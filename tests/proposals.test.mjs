@@ -144,7 +144,7 @@ test('an explicit bound branch is validated: option-like names, unknown branches
   assert.throws(() => f.store.proposeMemory(f.project.id, input, { branch: '--upload-pack=x' }), /Invalid branch name/);
   assert.throws(() => f.store.proposeMemory(f.project.id, input, { branch: 'nope' }), /no longer exists/);
   f.git('branch', 'feature/x');
-  assert.throws(() => f.store.proposeMemory(f.project.id, { ...input, category: 'brief' }, { branch: 'feature/x' }), /brief/i);
+  assert.throws(() => f.store.proposeMemory(f.project.id, { ...input, category: 'brief' }, { branch: 'feature/x' }), { message: 'A project summary follows the checked-out branch' });
 });
 
 test('a branch suggestion made on the checked-out branch is remembered on that branch', t => {
@@ -208,5 +208,5 @@ test('branch names are matched by exact spelling and reported when invalid', t =
   const input = { statement: 'Feature flags default to off', category: 'constraint', scope: 'branch', area: '', source: { kind: 'user', note: 'fixture' } };
   assert.throws(() => f.store.proposeMemory(f.project.id, input, { branch: 'Feature/Flags' }), /no longer exists.*Dismiss it/);
   assert.throws(() => f.store.proposeMemory(f.project.id, input, { branch: 'bad..name' }), /Invalid branch name: bad\.\.name/);
-  assert.throws(() => f.store.proposeMemory(f.project.id, { ...input, source: { kind: 'user', rootId: 'x' } }, { branch: 'nope' }), /additional folders/);
+  assert.throws(() => f.store.proposeMemory(f.project.id, { ...input, source: { kind: 'user', rootId: 'x' } }, { branch: 'nope' }), /notes from additional folders/);
 });

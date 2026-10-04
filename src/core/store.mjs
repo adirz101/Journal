@@ -204,9 +204,9 @@ export class JournalStore {
     const scope = choice(input.scope, ['checkout', 'branch'], 'scope');
     const target = scope === 'branch' ? boundBranch ?? project.branch : null;
     if (scope === 'branch' && !target) throw new Error('Branch scope requires a named branch');
-    if (input.source?.rootId && scope === 'branch') throw new Error('Branch scope applies to the primary repository; use project scope for knowledge from additional folders');
+    if (input.source?.rootId && scope === 'branch') throw new Error('Notes on one branch must come from the primary repository; choose All branches for notes from additional folders');
     if (scope === 'branch' && boundBranch) {
-      if (category === 'brief') throw new Error('A project brief follows the checked-out branch');
+      if (category === 'brief') throw new Error('A project summary follows the checked-out branch');
       // Cheap checks first, then Git; the name is validated so it can never be read as an option.
       const invalid = () => new Error(`Invalid branch name: ${String(boundBranch).slice(0, 80)}`);
       if (typeof boundBranch !== 'string' || boundBranch.startsWith('-') || boundBranch.length > 200) throw invalid();
@@ -223,7 +223,7 @@ export class JournalStore {
     const supersedes = input.supersedes || carried ? this.getMemory(input.supersedes || carried) : null;
     if (supersedes && supersedes.projectId !== projectId) throw new Error('Superseded memory belongs to another project');
     if (supersedes && (supersedes.id === input.memoryId || (supersedes.status !== 'active' && !carried))) throw new Error('Only another remembered note can be replaced; revise a note to change it');
-    if (category === 'brief' && area) throw new Error('Project briefs apply to the whole checkout; leave the area empty');
+    if (category === 'brief' && area) throw new Error('A project summary applies to the whole project; leave the area empty');
     if (input.source?.kind === 'git' && PLACEHOLDER.test(statement)) throw new Error('Replace the bracketed placeholders before saving the update');
     const source = captureEvidence(project, input.source);
     let previous = null;
@@ -289,7 +289,7 @@ export class JournalStore {
   proposeStatusUpdate(projectId, scope) {
     const project = this.project(projectId);
     choice(scope, ['checkout', 'branch'], 'scope');
-    if (scope === 'branch' && !project.branch) throw new Error('Branch updates require a named branch');
+    if (scope === 'branch' && !project.branch) throw new Error('"Where this branch stands" needs a named branch');
     const row = this.db.prepare(`SELECT r.body,m.status FROM memories m JOIN revisions r ON r.id=m.current_revision
       WHERE m.project_id=? AND m.status IN ('active','candidate') AND json_extract(r.body,'$.category')='brief'
       AND json_extract(r.body,'$.scope')=? AND (? = 'checkout' OR json_extract(r.body,'$.branch')=?)
@@ -349,7 +349,7 @@ export class JournalStore {
   proposePromotion(id) {
     const memory = this.getMemory(id);
     if (memory.scope !== 'branch' || memory.status !== 'active') throw new Error('Only a remembered note on one branch can be proposed for all branches');
-    if (memory.category === 'brief') throw new Error('Branch updates describe one branch; write a repo overview instead');
+    if (memory.category === 'brief') throw new Error('"Where this branch stands" describes one branch; write "About this project" instead');
     const source = memory.source.kind === 'file' ? { kind: 'file', path: memory.source.path, startLine: memory.source.startLine, endLine: memory.source.endLine }
       : { kind: 'user', note: `${memory.source.note ?? 'Reviewed claim'} (promoted from branch ${memory.branch})`.slice(0, 2000) };
     return this.proposeMemory(memory.projectId, { statement: memory.statement, category: memory.category, scope: 'checkout', area: memory.area, environment: memory.environment, source,
