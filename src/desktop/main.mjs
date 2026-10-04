@@ -69,7 +69,9 @@ const recoveryFrom = hello => {
   return null;
 };
 let window; let modalOpen = false; let store; let runtime; let updater; let updatePolicy = null; let closing = false; let closed = false; let runtimeState = 'connecting'; let runtimeWarning = null;
-const devUrl = process.env.JOURNAL_DEV_URL;
+// The development server (npm run dev, and the profiling build in tests/desktop-performance.spec.ts).
+// A released build always loads its own dist/, whatever the environment says.
+const devUrl = app.isPackaged ? undefined : process.env.JOURNAL_DEV_URL;
 // Automated tests run without visible windows or a Dock icon.
 const headless = process.env.JOURNAL_HEADLESS === '1';
 // Phase 7: Getting to know your project is offered outside headless runs, and in them only with the test hook.

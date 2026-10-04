@@ -13,18 +13,45 @@ export async function tabTo(page: Page, target: Locator, { max = 60, back = fals
   throw new Error(`Not reached with ${back ? 'Shift+' : ''}Tab: ${target}`);
 }
 
-// The focused element shows a visible focus indicator (an outline, a ring or a changed border).
-export async function expectVisibleFocus(page: Page) {
-  const ring = await page.evaluate(() => {
+// What is wrong with the focused element's focus indicator, or null when it has a visible one.
+// The focused element (and a tab's label, which carries the ring for tabs) is read with focus and
+// again after blur(); an outline, a box-shadow ring or the border must change, and the new colour
+// must be opaque enough and reach 3:1 (WCAG 1.4.11) against the background it is drawn on.
+export function focusRingProblem(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
     const el = document.activeElement as HTMLElement | null;
     if (!el || el === document.body) return 'nothing focused';
     if (!el.matches(':focus-visible')) return null; // pointer focus: no ring required
-    const own = getComputedStyle(el); const label = el.querySelector('.panel-tab-label');
-    const styles = [own, label ? getComputedStyle(label) : null].filter(Boolean) as CSSStyleDeclaration[];
-    const shown = styles.some(s => (s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) > 0) || (s.boxShadow && s.boxShadow !== 'none'));
-    return shown ? null : `${el.tagName.toLowerCase()}${el.className ? `.${String(el.className).split(' ').join('.')}` : ''} "${(el.getAttribute('aria-label') ?? el.textContent ?? '').trim().slice(0, 40)}"`;
+    const parse = (c: string): number[] | null => { const m = c.match(/rgba?\(([^)]+)\)/); if (!m) return null; const p = m[1].split(/[,\s/]+/).filter(Boolean).map(Number); return [p[0], p[1], p[2], p[3] ?? 1]; };
+    const over = (top: number[], base: number[]) => [0, 1, 2].map(i => top[i] * top[3] + base[i] * (1 - top[3]));
+    const lum = (rgb: number[]) => { const [r, g, b] = rgb.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+    const ratio = (a: number[], b: number[]) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+    const background = (node: Element | null): number[] => {
+      const layers: number[][] = [];
+      for (let n = node; n; n = n.parentElement) { const c = parse(getComputedStyle(n).backgroundColor); if (c && c[3] > 0) { layers.push(c); if (c[3] >= 1) break; } }
+      let rgb = (parse(getComputedStyle(document.body).backgroundColor) ?? [0, 0, 0, 1]).slice(0, 3);
+      for (const layer of layers.reverse()) rgb = over(layer, rgb); return rgb;
+    };
+    const targets = [el, el.querySelector<HTMLElement>('.panel-tab-label')].filter(Boolean) as HTMLElement[];
+    const read = (t: HTMLElement) => { const s = getComputedStyle(t); return { outline: `${s.outlineStyle} ${s.outlineWidth} ${s.outlineColor} ${s.outlineOffset}`, outlineStyle: s.outlineStyle, outlineWidth: parseFloat(s.outlineWidth), outlineColor: s.outlineColor, offset: parseFloat(s.outlineOffset), shadow: s.boxShadow, border: `${s.borderTopColor} ${s.borderTopWidth}`, borderColor: s.borderTopColor, borderWidth: parseFloat(s.borderTopWidth) }; };
+    const focused = targets.map(read);
+    el.blur(); const blurred = targets.map(read); el.focus({ preventScroll: true });
+    const problems: string[] = [];
+    for (let i = 0; i < targets.length; i++) {
+      const [f, b, t] = [focused[i], blurred[i], targets[i]];
+      const behind = background(t.parentElement); const inside = background(t);
+      const visible = (colour: string, against: number[]) => { const c = parse(colour); return !!c && c[3] > 0.1 && ratio(over(c, against), against) >= 3; };
+      if (f.outline !== b.outline && f.outlineStyle !== 'none' && f.outlineWidth > 0 && visible(f.outlineColor, f.offset < 0 ? inside : behind)) return null;
+      if (f.shadow !== b.shadow && f.shadow !== 'none') { const c = f.shadow.match(/rgba?\([^)]+\)/g) ?? []; if (c.some(colour => visible(colour, behind))) return null; }
+      if (f.border !== b.border && f.borderWidth > 0 && visible(f.borderColor, behind)) return null;
+      problems.push(`${f.outline} | ${f.shadow} | ${f.border} (blurred: ${b.outline} | ${b.shadow} | ${b.border})`);
+    }
+    return `${el.tagName.toLowerCase()}${el.className ? `.${String(el.className).split(' ').join('.')}` : ''} "${(el.getAttribute('aria-label') ?? el.textContent ?? '').trim().slice(0, 40)}": ${problems.join('; ')}`;
   });
-  expect(ring, 'focused element has no visible focus indicator').toBeNull();
+}
+
+export async function expectVisibleFocus(page: Page) {
+  expect(await focusRingProblem(page), 'focused element has no visible focus indicator').toBeNull();
 }
 
 export type Audit = { unnamed: string[]; contrast: string[]; terminalLive: string[]; liveRegions: number };

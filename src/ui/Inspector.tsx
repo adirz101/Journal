@@ -27,7 +27,7 @@ export function Inspector({ pane, tab, onTab, badges, shortcuts, overlayOpen = f
     };
     // While the overlay is open, the same button closes it.
     const toggleName = overlayOpen ? shell.hideInspector : shell.showInspector;
-    return <aside className="knowledge-panel inspector-rail" id="knowledge-sidebar" aria-label={shell.inspector}>
+    return <aside className="knowledge-panel inspector-rail inspector-root" id="knowledge-sidebar" aria-label={shell.inspector}>
       {TABS.map(({ id }) => <button key={id} className="rail-tile" aria-label={railName(id)} title={railName(id)} aria-keyshortcuts={keys(id)?.aria} aria-pressed={overlayOpen ? tab === id : undefined} onClick={() => { onTab(id); onShow?.(id); }}>
         <Icon d={ICONS[id]} />{badge(id) > 0 && <span className="badge count-badge" aria-hidden="true">{badge(id)}</span>}</button>)}
       <span className="rail-spacer" />
@@ -40,7 +40,7 @@ export function Inspector({ pane, tab, onTab, badges, shortcuts, overlayOpen = f
     if (next < 0) return;
     event.preventDefault(); onTab(TABS[next].id); tabs.current[next]?.focus();
   };
-  return <aside className="knowledge-panel" id={inOverlay ? undefined : 'knowledge-sidebar'} aria-label={shell.inspector}>
+  return <aside className="knowledge-panel inspector-root" id={inOverlay ? undefined : 'knowledge-sidebar'} aria-label={shell.inspector}>
     <div className="panel-tabs" role="tablist" aria-label={shell.inspector}>
       {TABS.map(({ id, label }, index) => <button key={id} ref={node => { tabs.current[index] = node; }} role="tab" id={`inspector-tab-${id}`} aria-selected={tab === id} aria-controls="inspector-panel" tabIndex={tab === id ? 0 : -1}
         aria-keyshortcuts={keys(id)?.aria} title={keys(id) ? `${label} (${keys(id)!.label})` : label} onClick={() => onTab(id)} onKeyDown={event => move(event, index)}>

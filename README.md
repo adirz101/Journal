@@ -105,6 +105,9 @@ Data remains in the `journal-desktop` directory under Electron's application-dat
 - **Session.** A header with the agent, workspace, mode and state; a banner naming the command when Claude waits for your approval (you answer in the terminal); the native terminal; and a status bar with how many notes the agent got (**See what was sent**), the changes against the session's start and whether output is saved.
 - **Inspector.** Three tabs: **Session** (what the agent was told and what it did), **Files** (Changed, or the whole read-only tree with previews and references) and **Memory** (search, categories, Needs review, Check needed and other branches). Below 1440 px it folds to a rail and opens as an overlay.
 - **Wrap-up.** When a session ends: its summary, suggestions worth keeping (**Remember**, **Remember all**, Edit, Dismiss with Undo), an out-of-date catch when the session changed a file a note cites (the note and the changed lines side by side, with **Update note…**, **Still true** and **Forget…**), **Continue** to resume the same conversation, and hand-off to another agent. An error exit leads with the last output.
+- **Command palette.** ⌘K / Ctrl+Shift+P: one search over sessions (live ones by slot), quiet Codex and Cursor sessions to check, every action (a blocked one says why) and remembered notes; type `>` for actions only. Arrow keys move, Enter runs, Escape returns focus where it was. With no match it offers a new session with that task.
+- **Open any file.** ⌘P / Ctrl+Shift+O: searches the files Git lists in the Files tab's current folder (ignored and sensitive paths left out) and previews the chosen file there; from the composer's **Add reference…** it adds the file as a reference.
+- **When something fails.** A banner while the local runtime is disconnected, with **Reconnect now**; after a runtime crash, a recovery list of the sessions it ended, with **Continue**, **Confirm ID…** or **Review**; a card above **Start** when an agent is missing, unsupported, signed out or cannot start, with **Open terminal**, **Copy command** and **Check again**; and, with four sessions running, Start says to stop or finish one first.
 - **Settings.** Appearance, notifications (Claude approvals, with the command hidden by default), updates, and data and backups.
 
 ## Basic workflow
@@ -131,8 +134,8 @@ App shortcuts work while the terminal has focus: Journal claims them before the 
 | Show or hide the sidebar | ⌘\ | Ctrl+Shift+\ |
 | Add a note | ⇧⌘K | Ctrl+Shift+K |
 | Settings | ⌘, | Ctrl+, |
-| Command palette (being built) | ⌘K or ⇧⌘P | Ctrl+Shift+P |
-| Open any file (being built) | ⌘P | Ctrl+Shift+O |
+| Command palette | ⌘K or ⇧⌘P | Ctrl+Shift+P |
+| Open any file | ⌘P | Ctrl+Shift+O |
 | Start, in the task box | ⌘↵ | Ctrl+Enter |
 | Remember both, on Getting to know your project | ⌘↵ | Ctrl+Enter |
 | Wrap-up: Continue / Remember all | ⌘↵ / ⇧⌘↵ | Ctrl+Enter / Ctrl+Shift+Enter |

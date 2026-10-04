@@ -1,15 +1,16 @@
 // Takes the README screenshot (docs/assets/journal-preview.png) from fixture data, headless:
-// a throwaway repository under /tmp, fixture agent CLIs (the shared fixtureEnv: fixture CLIs and
+// a throwaway repository in the system temporary folder, fixture agent CLIs (the shared fixtureEnv: fixture CLIs and
 // a few linked system tools on PATH, an empty HOME), notes seeded through the store. No personal data, no
 // provider login. Usage: npm run build, then node scripts/readme-screenshot.mjs . docs/assets/journal-preview.png [dark|light]
 import { _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 // Fixture-only environment (no real PATH, HOME or provider variables): see tests/support/env.ts.
 import { fixtureEnv } from '../tests/support/env.ts';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 const repo = process.argv[2]; const out = process.argv[3]; const theme = process.argv[4] ?? 'dark';
-const root = mkdtempSync('/tmp/journal-demo-'); const project = resolve(root, 'ledger-service'); const bin = resolve(root, 'bin'); for (const d of [project, bin, resolve(project, 'src/refunds'), resolve(project, 'src/invoices')]) mkdirSync(d, { recursive: true });
+const root = mkdtempSync(join(tmpdir(), 'journal-demo-')); const project = resolve(root, 'ledger-service'); const bin = resolve(root, 'bin'); for (const d of [project, bin, resolve(project, 'src/refunds'), resolve(project, 'src/invoices')]) mkdirSync(d, { recursive: true });
 const git = (...a) => execFileSync('git', ['-C', project, '-c', 'user.name=Demo', '-c', 'user.email=demo@example.test', ...a], { stdio: 'pipe' });
 git('init', '-q', '-b', 'main');
 writeFileSync(resolve(project, 'README.md'), '# Ledger service\n\nLedger records invoices and refunds for small shops.\n');

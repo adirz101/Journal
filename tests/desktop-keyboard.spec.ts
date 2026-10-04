@@ -4,7 +4,7 @@ import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
 import { fixtureEnv } from './support/env';
-import { expectAccessible, expectVisibleFocus, tabTo } from './support/a11y';
+import { expectAccessible, expectVisibleFocus, focusRingProblem, tabTo } from './support/a11y';
 import { taskBox } from './support/ui';
 
 // Phase 9: the three usability tasks of board B15, walked with the keyboard only.
@@ -310,5 +310,116 @@ test('every dialog gives focus back; the inspector tabs, Memory and the status b
     await page.keyboard.press('Enter');
     await expect(sessionTab).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('.inspector-panel')).toContainText('Dialogs return focus to their opener');
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+// ----- Phase 9 review fixes -----
+const tabKey = (n: 1 | 2 | 3): [string, Modifier[]] => mac ? [String(n), ['meta', 'alt']] : [String(n), ['alt', 'shift']];
+const focusTerminalKey: [string, Modifier[]] = mac ? ['E', ['meta']] : ['E', ['control', 'shift']];
+async function seedFileNote(page: Page, statement: string) {
+  const projectId = (await request(page, 'bootstrap') as any).projects[0].id;
+  const note = await request(page, 'proposeMemory', { projectId, input: { statement, category: 'decision', scope: 'checkout', area: '', source: { kind: 'file', path: 'src/a.js', startLine: 1, endLine: 2 } } }) as any;
+  await request(page, 'setMemoryStatus', { id: note.id, status: 'active' });
+  return note.id as string;
+}
+// A session that changes src/a.js line 1 and exits: the wrap-up shows the out-of-date catch.
+async function reachCatch(app: ElectronApplication, page: Page, task: string, value: number) {
+  await startByKeyboard(app, page, task);
+  await typeInTerminal(app, page, `setline src/a.js 1 const graceMs = ${value};`, 'WROTE src/a.js');
+  await page.keyboard.type('exit-with 0'); await page.keyboard.press('Enter');
+  const card = page.locator('.stale-catch').first();
+  await expect(card).toBeVisible({ timeout: 15000 });
+  return card;
+}
+
+test('the focus check fails a shadow-only or transparent ring and passes the real one', async () => {
+  const f = setup('kbd-ring'); const { app, page } = await launch(f);
+  try {
+    await page.evaluate(() => {
+      const add = (label: string, style: string) => { const b = document.createElement('button'); b.textContent = label; b.setAttribute('style', style); document.querySelector('.welcome, main')!.prepend(b); };
+      add('Ring control', '');
+      add('Transparent outline', 'outline:2px solid transparent !important');
+      add('Card shadow only', 'outline:none !important;box-shadow:0 1px 3px rgba(0,0,0,.6)');
+    });
+    for (const [name, ok] of [['Card shadow only', false], ['Transparent outline', false], ['Ring control', true]] as const) {
+      await tabTo(page, page.getByRole('button', { name, exact: true }));
+      const problem = await focusRingProblem(page);
+      if (ok) expect(problem, name).toBeNull(); else expect(problem, name).not.toBeNull();
+    }
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('catch: Update and Forget leave focus on the resolved line, not the page', async () => {
+  const f = setup('kbd-catch-focus'); const { app, page } = await launch(f);
+  try {
+    await press(app, 'openProject'); await expect(taskBox(page)).toBeVisible();
+    // Two notes cite src/a.js, so the catch shows two cards: Update the first, Forget the second.
+    await seedFileNote(page, 'Stop waits 3 s before it kills the process');
+    await seedFileNote(page, 'Other code reads the grace period from a.js');
+    await reachCatch(app, page, 'Update the grace', 5000);
+    const cards = page.locator('.stale-catch');
+    await expect(cards).toHaveCount(2);
+    await tabTo(page, cards.first().getByRole('button', { name: 'Update note…', exact: true })); await page.keyboard.press('Enter');
+    const form = page.getByRole('dialog');
+    await expect(form).toBeVisible();
+    await tabTo(page, form.getByRole('button', { name: 'Save for review', exact: true })); await page.keyboard.press('Enter');
+    await expect(form).toHaveCount(0);
+    const updated = page.locator('.wrap-resolved').filter({ hasText: 'Note updated.' });
+    await expect(updated).toBeFocused(); await expectVisibleFocus(page);
+
+    // Forget… (the OS confirmation is stubbed to Forget).
+    await app.evaluate(({ dialog }) => { (dialog as any).showMessageBox = async () => ({ response: 0, checkboxChecked: false }); });
+    await expect(cards).toHaveCount(1);
+    await tabTo(page, cards.first().getByRole('button', { name: 'Forget…', exact: true })); await page.keyboard.press('Enter');
+    await expect(page.locator('.wrap-resolved').filter({ hasText: 'Note forgotten.' })).toBeFocused();
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('inspector keys: ⌥⌘1 keeps the terminal; ⌥⌘2 focuses Changed; a pending Files focus never steals the terminal', async () => {
+  const f = setup('kbd-files'); const { app, page } = await launch(f);
+  try {
+    await press(app, 'openProject'); await expect(taskBox(page)).toBeVisible();
+    await startByKeyboard(app, page, 'FILES_KEYS');
+    const xterm = page.locator('.terminal-surface .xterm-helper-textarea');
+    await typeInTerminal(app, page, 'echo-only', 'ECHO echo-only');
+
+    // ⌥⌘1 / Alt+Shift+1 shows Session and leaves focus in the terminal.
+    await pressKey(app, ...tabKey(1));
+    await expect(page.getByRole('tab', { name: /^Session/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(xterm).toBeFocused();
+
+    // A Files key whose tree has not loaded yet, then ⌘E: the late rows must not take focus.
+    await app.evaluate(() => {
+      const g = globalThis as any; g.__gate = new Promise(done => { g.__release = done; });
+      g.__journalRequestHook = async (method: string, run: () => unknown) => { if (method === 'fileRoots' || method === 'listDirectory') await g.__gate; return run(); };
+    });
+    await pressKey(app, ...tabKey(2));
+    await expect(page.getByRole('tab', { name: /^Files/ })).toHaveAttribute('aria-selected', 'true');
+    await pressKey(app, ...focusTerminalKey);
+    await expect(xterm).toBeFocused();
+    await app.evaluate(() => { (globalThis as any).__release(); (globalThis as any).__journalRequestHook = undefined; });
+    await expect(page.locator('.inspector-panel [role=treeitem]').first()).toBeVisible();
+    await page.waitForTimeout(300);
+    await expect(xterm).toBeFocused();
+
+    // Without ⌘E, the same late rows do take focus (the pending focus itself works).
+    await pressKey(app, ...tabKey(1));
+    await app.evaluate(() => {
+      const g = globalThis as any; g.__gate = new Promise(done => { g.__release = done; });
+      g.__journalRequestHook = async (method: string, run: () => unknown) => { if (method === 'fileRoots' || method === 'listDirectory') await g.__gate; return run(); };
+    });
+    await pressKey(app, ...tabKey(2));
+    await app.evaluate(() => { (globalThis as any).__release(); (globalThis as any).__journalRequestHook = undefined; });
+    await expect(page.locator('.inspector-panel [role=treeitem]').first()).toBeFocused();
+
+    // With Changed chosen (the view a session with changes opens on), the key focuses the view choice.
+    const view = page.getByRole('radiogroup', { name: 'Files view' });
+    await tabTo(page, view.getByRole('radio', { checked: true }), { back: true });
+    await page.keyboard.press('ArrowLeft');
+    const changed = view.getByRole('radio', { name: /^Changed/ });
+    await expect(changed).toBeChecked();
+    await pressKey(app, ...focusTerminalKey); await expect(xterm).toBeFocused();
+    await pressKey(app, ...tabKey(2));
+    await expect(changed).toBeFocused(); await expectVisibleFocus(page);
   } finally { await closeApp(app); f.cleanup(); }
 });

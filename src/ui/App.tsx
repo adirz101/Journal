@@ -195,13 +195,22 @@ export default function App() {
   // listed, tick every 5 s so "output just now" ends within 5 s of its 10 s threshold.
   const outputClock = Object.values(sessions).some(s => !s.removed && isLive(s) && s.provider !== 'claude');
   useEffect(() => { setNow(Date.now()); const timer = setInterval(() => setNow(Date.now()), outputClock ? 5000 : 15000); return () => clearInterval(timer); }, [outputClock]);
+  // The latest refresh's project wins: a slower, older refresh (a checkout poll of project A that
+  // answers after the user chose project B) neither shows nor remembers A.
+  const refreshTarget = useRef<string | null>(null);
   const refresh = useCallback(async (id?: string) => {
-    const projectId = id ?? projectRef.current?.id; if (!projectId) return;
-    const next = await api<ProjectState>('project', { projectId }); setState(next); merge(next.sessions);
+    // Without an id, the project last asked for (it may still be loading), else the one shown.
+    const projectId = id ?? refreshTarget.current ?? projectRef.current?.id; if (!projectId) return;
+    refreshTarget.current = projectId;
+    const next = await api<ProjectState>('project', { projectId });
+    if (refreshTarget.current !== projectId) return;
+    setState(next); merge(next.sessions);
     // The shown project is remembered as soon as it renders, so a reload (⌘R in development,
     // or the renderer coming back after a crash) reopens it even straight after opening it.
     try { localStorage.setItem('journal-project', next.project.id); } catch { /* optional */ }
-    const list = await api<WorkspaceList>('workspaces', { projectId }).catch(() => null); setWorkspaces(list);
+    const list = await api<WorkspaceList>('workspaces', { projectId }).catch(() => null);
+    if (refreshTarget.current !== projectId) return next;
+    setWorkspaces(list);
     setWorkspaceId(current => list?.workspaces.some(w => w.id === current && w.state === 'ready') || next.project.roots?.some(root => `root:${root.id}` === current) ? current : '');
     return next;
   }, [merge]);
@@ -491,7 +500,7 @@ export default function App() {
   }
   // === Region A: project menus ===
   // The switcher lists every project, then the current project's actions; right-click on it opens those actions alone.
-  const removedProject = (id: string) => { setProjects(items => items.filter(p => p.id !== id)); if (state?.project.id === id) { setState(null); setSelectedId(null); setReceipt(null); } void reloadProjects().catch(failed); };
+  const removedProject = (id: string) => { setProjects(items => items.filter(p => p.id !== id)); if (state?.project.id === id) { setState(null); setSelectedId(null); setReceipt(null); } if (refreshTarget.current === id) refreshTarget.current = null; void reloadProjects().catch(failed); };
   const projectItems = (target: Project) => [
     { id: 'open-project', label: 'Open project…' }, { id: 'manage', label: 'Manage project…' }, { id: 'rename', label: 'Rename…' }, { id: 'pin', label: target.pinned ? 'Unpin' : 'Pin' }, { id: 'addFolder', label: 'Add folder…' },
     { separator: true as const }, { id: 'reveal', label: `Reveal in ${revealLabel}` }, { id: 'copyPath', label: 'Copy path' },
