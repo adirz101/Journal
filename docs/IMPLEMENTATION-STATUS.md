@@ -134,9 +134,9 @@ Plan: [docs/superpowers/plans/2026-10-04-ux-redesign-phase-4.md](superpowers/pla
 
 | Check | Result |
 | --- | --- |
-| `npm test` | 406 passed |
-| `npm run check`, `npm run build` | Passed (the existing ~545 KiB chunk warning remains) |
-| `npm run test:desktop` | 41 passed, 1 skipped (headless, 4 October 2026, Phase 3 branch): real Electron, runtime and node-pty with fixture CLIs, covering the sidebar, Settings, the session header and status bar, the inspector, layout modes and small windows, notifications, updates, four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches, project management, right-click menus, the file explorer, keyboard shortcuts while the terminal has focus (slots, focus, new session, panel tabs) and the Cursor provider (install, sign-in, launch, resume) |
+| `npm test` | 455 passed (4 October 2026, Phase 3 branch with Phase 6 core merged) |
+| `npm run check`, `npm run build` | Passed (the large-chunk warning remains: the main chunk is now 716 kB) |
+| `npm run test:desktop` | 42 passed, 1 skipped (the Linux-only Ctrl+O check), twice in a row (headless, 4 October 2026, Phase 3 branch after the review fixes): real Electron, runtime and node-pty with fixture CLIs, covering the sidebar, Settings, the session header and status bar, the inspector, layout modes and small windows, notifications, updates, four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches, project management, right-click menus, the file explorer, keyboard shortcuts while the terminal has focus (slots, focus, new session, panel tabs) and the Cursor provider (install, sign-in, launch, resume) |
 | `npm run dist:dir` | Observed 4 October 2026 on an Apple M4 Pro (arm64), macOS 27.0.1, with `DEVELOPER_DIR` set to Xcode (needs Xcode 26 or later, see [RELEASING](RELEASING.md)): the unsigned app builds; `release:audit` passes (301 packed and 54 unpacked files, including the bundled JetBrains Mono font files); `smoke:packaged` passes |
 | GitHub Actions | Active since 4 October 2026 (the `workflow` scope was granted): fixture CI on macOS, Linux and experimental Windows; results per GitHub Actions |
 
