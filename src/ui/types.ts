@@ -94,7 +94,8 @@ export type TerminalEvent = { type: 'output'; sessionId: string; sequence: numbe
   | { type: 'update'; state: UpdateState } | { type: 'providers'; agents: AgentInfo[]; after?: { provider: Provider; kind: ProcessKind } } | { type: 'command'; id: CommandId }
   // Codex and Cursor output times, at most one per session every 5 s; main asks to show a session (notification click).
   | { type: 'activity'; sessionId: string; lastOutputAt: string } | { type: 'focus-session'; sessionId: string } | { type: 'process-output'; id: string; data: string; offset: number } | { type: 'process-exit'; id: string; provider: Provider; kind: ProcessKind; code: number | null };
-export interface OutputSnapshot { gap: boolean; chunks: { sequence: number; data: string }[]; lastSequence: number; }
+// colors: the runtime answers colour queries (OSC 10/11/12) itself; absent from an earlier build's runtime.
+export interface OutputSnapshot { gap: boolean; chunks: { sequence: number; data: string }[]; lastSequence: number; colors?: boolean }
 export interface Workspace { id: string | null; projectId?: string; kind: 'checkout' | 'managed' | 'imported'; path: string; branch: string | null; head?: string | null; base?: string; baseLabel?: string; state: 'intent' | 'ready' | 'failed' | 'missing' | 'removed'; error?: string | null; notices?: string[]; detached?: boolean; }
 export interface WorkspaceList { checkout: Workspace; workspaces: Workspace[]; importable: { path: string; branch: string | null; head: string | null; detached: boolean }[]; }
 export interface Proposal { id: string; kind: 'rule' | 'test-command' | 'branch-status'; category: string; statement: string; scope: string; branch?: string | null; state: string; createdAt: string; source: Source | null;

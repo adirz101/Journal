@@ -8,6 +8,7 @@ import { redact, text } from './validation.mjs';
 import { generateTitle } from './sessions.mjs';
 import { referenceEvent } from './references.mjs';
 import { realPath } from './paths.mjs';
+import { APPEARANCES, COLORFGBG, QueryResponder, themeReport } from './terminal-queries.mjs';
 
 export const MAX_SESSIONS = 4;
 export const IDLE_SETTLE_MS = 750;
@@ -96,6 +97,8 @@ export class TerminalManager extends EventEmitter {
     cursor = { find: () => findCursor(process.env), createChat: (path, cwd) => createChat(path, cwd, process.env) } }) {
     super(); this.cursor = cursor; this.store = store; this.spawn = spawn; this.makeSettings = makeSettings; this.runtimeId = runtimeId; this.platform = platform;
     this.identify = identify; this.table = table; this.verifiedSignal = verifiedSignal; this.alive = alive; this.stopGraceMs = stopGraceMs;
+    // Journal's light or dark appearance: main sends it with each start and on every switch.
+    this.appearance = 'dark';
     // Slots 1-4 are reserved synchronously at start so concurrent starts never share one.
     this.entries = new Map(); this.reservedSlots = new Set(); this.flushPending = false; this.disposed = false; this.settling = new Set();
     this.tracker = trackMs ? setInterval(() => { void this.trackDescendants().catch(() => {}); void this.recheckOrphans().catch(() => {}); }, trackMs) : null; this.tracker?.unref?.();
@@ -119,8 +122,9 @@ export class TerminalManager extends EventEmitter {
     this.reservedSlots.add(slot);
     try { return await this.launch({ ...request, slot }); } finally { this.reservedSlots.delete(slot); }
   }
-  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, plan = false, disabled = [], references = [], slot = null, cliVersion = null }) {
+  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, plan = false, disabled = [], references = [], slot = null, cliVersion = null, appearance }) {
     if (!PROVIDERS.includes(provider)) throw new Error('Unknown agent provider');
+    if (APPEARANCES.includes(appearance)) this.setAppearance(appearance);
     if (typeof research !== 'boolean' || typeof plan !== 'boolean') throw new Error('Invalid mode option');
     if (plan && provider === 'codex') throw new Error('Codex has no plan mode; use Read-only instead');
     if (research) plan = false;
@@ -179,12 +183,14 @@ export class TerminalManager extends EventEmitter {
       if (this.disposed) throw fail(ERROR_CODES.SHUTTING_DOWN, 'Journal is shutting down');
       const settingsFile = provider === 'claude' ? this.makeSettings(session, project) : null;
       const launch = buildAgentLaunch({ provider, nativeId: session.nativeId, resume: !!prior, prompt, settingsFile, research, plan, executable: cursor?.path });
-      const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', JOURNAL_SESSION_ID: session.id };
+      // COLORFGBG describes Journal's terminal, not the one Journal was started from: Claude Code
+      // (theme Auto) and Cursor fall back to it when the background query goes unanswered.
+      const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', COLORFGBG: COLORFGBG[this.appearance], JOURNAL_SESSION_ID: session.id };
       delete env.ELECTRON_RUN_AS_NODE;
       const proc = this.spawn(launch.executable, launch.argv, { cwd: session.cwd, env, name: 'xterm-256color', ...PTY_SIZE });
       entry = { session, proc, buffer: new OutputBuffer(), attached: false, sent: 0, acknowledged: 0, inflight: [], tail: '', exited: false,
         stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), tools: new Map(), pending: [], answered: false, lastPersist: 0,
-        lastInputAt: 0, lastResizeAt: 0, lastActivityEmit: 0, activityTimer: null, size: { cols: PTY_SIZE.cols, rows: PTY_SIZE.rows } };
+        lastInputAt: 0, lastResizeAt: 0, lastActivityEmit: 0, activityTimer: null, size: { cols: PTY_SIZE.cols, rows: PTY_SIZE.rows }, queries: new QueryResponder() };
       this.entries.set(session.id, entry);
       session.status = 'running'; session.pid = Number.isInteger(proc.pid) ? proc.pid : null;
       // Identity is read asynchronously, and again on first output once the CLI is running.
@@ -222,6 +228,9 @@ export class TerminalManager extends EventEmitter {
     const { session } = entry;
     if (!entry.sawOutput) { entry.sawOutput = true; void this.refreshIdentity(entry); }
     entry.buffer.append(data); entry.tail = (entry.tail + data).slice(-8192);
+    // Colour queries are answered here at once (src/core/terminal-queries.mjs). Not typed input: lastInputAt stays.
+    const reply = entry.queries.feed(data, { appearance: this.appearance, attached: entry.attached });
+    if (reply && !entry.exited) { try { entry.proc.write(reply); } catch { /* the PTY is closing */ } }
     const now = Date.now();
     // Echo of typed input and full-screen repaints after a resize are not agent output.
     if (now - Math.max(entry.lastInputAt, entry.lastResizeAt) >= ECHO_MS) this.noteOutput(entry, now);
@@ -538,7 +547,20 @@ export class TerminalManager extends EventEmitter {
     if (!entry) return { chunks: [], gap: true, lastSequence: 0 };
     const snapshot = entry.buffer.since(0);
     entry.attached = true; entry.sent = snapshot.lastSequence; entry.acknowledged = snapshot.lastSequence; entry.inflight = [];
-    return snapshot;
+    // colors: this runtime answers colour queries, so the window must not answer them too.
+    return { ...snapshot, colors: true };
+  }
+  // Journal switched between light and dark. Later colour answers and launches use it,
+  // and each live CLI that enabled theme reports (mode 2031) is told, so it can ask again.
+  setAppearance(appearance) {
+    if (!APPEARANCES.includes(appearance)) throw new Error('Invalid appearance');
+    if (appearance === this.appearance) return { reported: 0 };
+    this.appearance = appearance; let reported = 0;
+    for (const entry of this.liveEntries()) {
+      if (!entry.queries.themeReports) continue;
+      try { entry.proc.write(themeReport(appearance)); reported++; } catch { /* the PTY is closing */ }
+    }
+    return { reported };
   }
   detach(id) {
     for (const entry of this.entries.values()) if (!id || entry.session.id === id) entry.attached = false;

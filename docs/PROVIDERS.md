@@ -45,6 +45,17 @@ Hooks are added per launch through `--settings`; existing user and project hooks
 
   Without `curl` on `PATH` the Claude and Codex rows offer the install page instead. Claude Code and Codex installed outside `PATH` are not looked up in known locations (Cursor's are); the row says so after an install.
 
+## Terminal colours (light and dark)
+Each CLI draws its own interface colours; Journal never edits a provider's settings or theme. Journal's part is to describe its terminal correctly, and the runtime does it for every session, whether or not a window shows it:
+- **`COLORFGBG`** is set at launch to Journal's appearance: `0;15` for light and `15;0` for dark (foreground;background as ANSI indexes, rxvt's convention). It replaces any value inherited from the terminal Journal was started from.
+- **Colour queries** (OSC 10, 11 and 12: foreground, background, cursor) are answered by the runtime as soon as the CLI asks, with the colours of Journal's terminal theme. The window's terminal no longer answers them, so a query gets exactly one reply. DA1 (`CSI c`) is answered by the runtime only while no window shows the session; otherwise the window's terminal answers it in order with any other device query. A replayed buffer (a reload or reattach) never produces replies.
+- **Theme reports** (mode 2031): a CLI that enables it receives `CSI ? 997 ; 1 n` (dark) or `CSI ? 997 ; 2 n` (light) when Journal's appearance changes, and can ask for the background again.
+
+What each CLI does with this (read from the installed binaries on 5 October 2026: Claude Code 2.1.286, Codex 0.159.3, Cursor 2026.10.01):
+- **Claude Code**: the `theme` setting is unset by default, and unset means its fixed **dark** theme, which ignores the terminal. Only **Auto (match terminal)** (`/theme`, stored as `"theme": "auto"` in `~/.claude/settings.json`) follows it: Claude asks OSC 11 followed by a DA1 sentinel and waits for both without a timeout, then uses the answer (light when its luminance is above 0.5); without an answer it falls back to `COLORFGBG` (last field 0-6 or 8 is dark, otherwise light), then to dark. With Auto it enables mode 2031 and asks again on each theme report, so a switch in Journal reaches a running session. Journal's Settings say so next to Appearance. In light mode with the default theme, Claude Code's own blocks (for example the prompt echo and "Jump to bottom") stay dark; Journal cannot change that without changing Claude's settings, which it never does.
+- **Codex** asks OSC 10 and 11 at start for its own palette; `COLORFGBG` appears only in its diagnostics.
+- **Cursor** asks OSC 11 and gives up after 60 ms, then reads `COLORFGBG`. A reply later than that would arrive as typed input, which is why the runtime answers at once.
+
 ## Known gaps
 - Whether a model read or used a supplied claim is not observable for either provider.
 - Hidden reasoning and full model context are never shown.

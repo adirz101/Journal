@@ -34,7 +34,7 @@ export function TerminalPane({ sessionId, live, appearance, onError, onUnavailab
   liveRef.current = live; errorRef.current = onError;
   useEffect(() => {
     if (!host.current) return;
-    let disposed = false; let attached = false; let acceptInput = false; let last = 0; const queued: TerminalEvent[] = [];
+    let disposed = false; let attached = false; let acceptInput = false; let last = 0; let runtimeColors = false; const queued: TerminalEvent[] = [];
     // A late bundled font switches the family, so xterm re-measures and the terminal refits.
     const font = monoFontFamily(document.fonts, () => { if (disposed) return; terminal.options.fontFamily = MONO_FONT; resize(); });
     // Bounded scrollback per visible terminal; the runtime keeps 256 KiB per session.
@@ -48,6 +48,10 @@ export function TerminalPane({ sessionId, live, appearance, onError, onUnavailab
     terminal.open(host.current);
     terminal.parser.registerOscHandler(52, () => true); // Never accept terminal-originated clipboard writes.
     terminal.parser.registerOscHandler(8, () => true); // No automatic links to external applications.
+    // Colour queries (OSC 10/11/12 with a ?) are answered by the runtime at once, shown or not
+    // (src/core/terminal-queries.mjs); answering here too would type a second reply into the CLI.
+    // A runtime from an earlier build does not answer them, so xterm still does. Setting a colour is left to xterm.
+    for (const code of [10, 11, 12]) terminal.parser.registerOscHandler(code, data => runtimeColors && data.split(';').includes('?'));
     const failed = (error: unknown) => { if (!disposed) errorRef.current(String(error instanceof Error ? error.message : error)); };
     function handle(event: TerminalEvent) {
       if (disposed) return;
@@ -64,7 +68,7 @@ export function TerminalPane({ sessionId, live, appearance, onError, onUnavailab
     const attach = () => void api<OutputSnapshot>('attach', { id: sessionId }).then(snapshot => {
       if (disposed) return;
       if (unavailableRef.current && !snapshot.chunks.length && snapshot.gap && snapshot.lastSequence === 0) { unavailableRef.current(); return; }
-      last = snapshot.lastSequence;
+      last = snapshot.lastSequence; runtimeColors = snapshot.colors === true;
       const prefix = snapshot.gap ? '\x1b[33m[Earlier terminal output is unavailable; input has not been replayed]\x1b[0m\r\n' : '';
       // Historical device queries may make xterm emit replies. Keep PTY input
       // disabled until the snapshot has finished parsing, not just been queued.
