@@ -722,6 +722,7 @@ Each task lists **files**, **what to build** (signatures and behaviour), **tests
 **Phase 1 visual review notes (carry into Phase 3):**
 - Session rows currently show both a status dot and a provider mark. The mockup uses the mark as the row's leading glyph, with the state as a word.
 - The ContextPanel heading for an uncertain delivery still reads "What was sent". Use a neutral heading for that state when the Session tab is rebuilt.
+- Code editor focus: `.file-preview-editor .cm-editor.cm-focused` uses an inset box-shadow, which forced colors removes. Use `outline:2px solid var(--acc);outline-offset:-2px` like the other rows. Also apply the late-font switch to ProcessDialog's small terminal.
 - Uppercase eyebrow labels remain ("WHAT THE AGENT RECEIVES", "SENT BEFORE", category eyebrows). Board B12's voice rules use sentence case, so convert them when these panels are rebuilt.
 
 **Task 3.2: Session header and status bar (F10)**
