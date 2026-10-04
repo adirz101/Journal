@@ -22,6 +22,7 @@ import { Updater, updateMode } from './updater.mjs';
 import { checkOutcome, menuTemplate } from './menu.mjs';
 import { APP_USER_MODEL_ID, createNotifier, readPreferences, systemSurface, writePreferences } from './notify.mjs';
 import { matchShortcut, shortcutKeys, shouldDispatch } from './shortcuts.mjs';
+import { settledError } from './ipc-error.mjs';
 import electronUpdater from 'electron-updater';
 import { dataDirectory, unpackedPath, withGuiPath } from './environment.mjs';
 import { WINDOW_BACKGROUND } from './window-colors.mjs';
@@ -513,7 +514,7 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
     if (!Object.hasOwn(actions, action) || !input || typeof input !== 'object' || Array.isArray(input) || JSON.stringify(input).length > 100000) throw new Error('Invalid desktop request');
     if (ROOT_CHANGES.has(action)) rootCache.clear();
     try { return { ok: true, value: await actions[action](input) }; } finally { if (ROOT_CHANGES.has(action)) rootCache.clear(); }
-  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Operation failed', ...(error?.code ? { code: error.code } : {}) }; }
+  } catch (error) { return settledError(error); }
 });
 try { await runtime.connect(); runtimeState = 'connected'; await seedNotifier(); }
 catch (error) { runtimeState = 'disconnected'; console.error('Journal runtime unavailable:', error.message); void runtime.reconnect(); }

@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import { ERROR_CODES, IDENTITY_CHANGED } from '../src/core/terminal.mjs';
+import { settledError } from '../src/desktop/ipc-error.mjs';
 
 // Transpiles sessionState.ts with the two renderer modules it imports into one
 // temporary directory, so the test runs the renderer's own code.
@@ -175,4 +176,13 @@ test('the renderer branches only on the runtime error codes; any other code is n
   for (const other of ['ENOENT', 42, { code: 'SLOTS_FULL' }, undefined, null, 'slots_full']) assert.equal(types.errorCode(coded(other)), null, String(other));
   assert.equal(types.errorCode('SLOTS_FULL'), null);
   assert.equal(types.errorCode({ code: 'SLOTS_FULL' }), null);
+});
+
+test('a failed desktop request carries only a bounded string code', () => {
+  const coded = code => Object.assign(new Error('nope'), { code });
+  assert.deepEqual(settledError(coded('SLOTS_FULL')), { ok: false, error: 'nope', code: 'SLOTS_FULL' });
+  assert.deepEqual(settledError(coded('X'.repeat(100))), { ok: false, error: 'nope', code: 'X'.repeat(40) });
+  for (const code of [42, { nested: 'SLOTS_FULL' }, null, undefined, ['SLOTS_FULL']]) assert.deepEqual(settledError(coded(code)), { ok: false, error: 'nope' }, String(code));
+  assert.deepEqual(settledError('plain'), { ok: false, error: 'Operation failed' });
+  assert.deepEqual(settledError(null), { ok: false, error: 'Operation failed' });
 });
