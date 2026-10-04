@@ -61,7 +61,7 @@ jobs:
     name: package macOS (arm64)
     needs: verify
     runs-on: macos-latest # Apple Silicon
-    timeout-minutes: 40
+    timeout-minutes: 90 # notarization can take a while
     steps:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
