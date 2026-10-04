@@ -343,7 +343,12 @@ const actions = {
     return store.describeReference(text(projectId, 'project ID', 100), workspaceId ?? null, { rootKey, path, startLine, endLine });
   },
   setPinned: ({ id, pinned }) => store.setPinned(id, pinned),
-  proposals: ({ projectId }) => store.listProposals(projectId, 'open'),
+  proposals: ({ projectId, sessionId }) => store.listProposals(projectId, 'open', sessionId ? { sessionId } : {}),
+  // Phase 6: the session wrap-up. via is fixed here; the renderer cannot label its own audit entries.
+  sessionSummary: ({ id }) => store.sessionSummary(id),
+  staleNotes: ({ sessionId }) => store.staleNotesForSession(sessionId),
+  rememberProposals: ({ ids }) => store.rememberProposals(ids, { via: 'wrap-up' }),
+  reaffirmMemory: ({ id, startLine, endLine, workspaceId }) => store.reaffirmMemory(id, { startLine, endLine, workspaceId: workspaceId ?? null }),
   storageInfo: () => store.storageInfo(),
   backupData: async () => {
     const result = await dialog.showSaveDialog(window, { title: 'Back up Journal data', defaultPath: `journal-backup-${new Date().toISOString().slice(0, 10)}.sqlite` });

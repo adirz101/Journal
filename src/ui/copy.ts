@@ -98,6 +98,48 @@ export const shell = {
   recentSessions: 'Recent sessions',
 } as const;
 
+// Phase 6: the session wrap-up, the out-of-date catch and the exit-error view (boards 6, 14, States 5).
+// Durations arrive formatted ("18m", "<1m", "1h 5m"); src/ui/wrapUpModel.ts picks the key.
+export const wrapUp = {
+  exited: (code: number, duration: string) => `Exited ${code} after ${duration}`, stopped: (duration: string) => `Stopped after ${duration}`,
+  endedBy: (signal: string, duration: string) => `Ended by ${signal} after ${duration}`,
+  interrupted: 'Interrupted', couldNotStart: 'Couldn’t start', exitedWithError: 'Session exited with an error',
+  showTerminal: 'Show terminal', showSummary: 'Back to summary', continueShort: 'Continue',
+  changes: 'Changes', openDiff: 'Open diff', changesTip: 'Changes in this checkout since the session started, counted when it ended. Other sessions in the same checkout are included.',
+  changesNone: 'Open the Files tab to see changes', noChanges: 'none', alreadyChanged: (n: number) => `${n} already changed before the start`,
+  testsRun: 'Tests run', testsHidden: (provider: string) => `Not visible for ${provider}`, noTests: 'No test commands seen',
+  passed: (n: number) => `${n} passed`, failed: (n: number) => `${n} failed`,
+  continueCard: 'Continue this conversation', confirmFirst: 'Confirm the conversation ID first',
+  identity: {
+    observed: 'Same conversation · ID confirmed by Claude', preassigned: 'ID set by Journal at start; Claude didn’t report it back',
+    createChat: 'Chat created by Journal before the start', exitBanner: 'From Codex’s exit message · confirm before continuing',
+    user: 'Confirmed by you', mismatch: 'Claude reported a different conversation. Confirm the ID before continuing.', none: 'No conversation ID yet',
+  },
+  worthKeeping: 'Worth keeping from this session?', nothingKept: 'Nothing is kept unless you choose. Remembered notes reach future sessions where they apply.',
+  looking: 'Looking for suggestions…', noSuggestions: 'No suggestions from this session.',
+  explainer: 'These are suggestions. I picked them from what you said and what passed in this session. Remember the useful ones and the next agent starts with them; dismiss the rest.',
+  gotIt: 'Got it', remember: 'Remember', rememberAll: (n: number) => `Remember all ${n}`, edit: 'Edit…', dismiss: 'Dismiss', undo: 'Undo', finishDraft: 'Finish draft',
+  remembered: 'Remembered. It goes to new sessions where it applies.', openInMemory: 'Open in Memory',
+  dismissed: 'Dismissed. It won’t be suggested again.', waitingReview: 'Added to Memory under Needs review.',
+  fromTask: 'You stated this rule in the task', fromTests: 'Seen in this session’s test commands', suggestedEarlier: 'Suggested earlier in this conversation',
+  mayConflict: 'May conflict with a remembered note', reviewInMemory: 'Review in Memory',
+  branchUnreachable: (branch: string) => `Only on ⑂ ${branch}. Check out that branch to remember it`,
+  staleHead: (path: string, n: number) => `This session changed ${path}. ${n === 1 ? '1 note is' : `${n} notes are`} based on it.`,
+  staleBody: 'Until you check it, the note is left out of new sessions, so no agent gets an outdated note.',
+  fileChanged: 'file changed', whatChanged: (where: string) => `What changed in ${where}`, savedLines: 'Saved lines', now: 'Now',
+  renamedTo: (path: string) => `Renamed to ${path}`, linesMoved: 'The cited lines moved. Lines', removedLine: 'removed', addedLine: 'added',
+  updateNote: 'Update note…', stillTrue: 'Still true', stillTrueHelp: '“Still true” records that you checked it against this change.',
+  separateCopyOnly: 'Changed in this separate copy only. Check it from the main checkout after you merge.',
+  fileMissing: 'The file was moved or deleted. Update the note or forget it.',
+  resolvedStillTrue: 'Marked still true. Checked against this change; new sessions get it again.',
+  resolvedUpdated: 'Note updated. Your edited version goes to new sessions after you review it.',
+  resolvedForgotten: 'Note forgotten. No new session will get it. It stays in History.',
+  handoff: 'Continue with another agent. It gets the same project memory.', newSessionWithTask: 'New session with this task',
+  notSaved: 'Terminal output is kept in memory only while Journal’s runtime runs. It was not saved and is no longer available.',
+  lastOutput: 'Last thing in the terminal', copyOutput: 'Copy output', copied: 'Copied',
+  ended: (suggestions: number) => `Session ended. ${count(suggestions, 'suggestion')}.`,
+} as const;
+
 const CATEGORIES: Record<string, string> = { constraint: copy.rule, decision: 'Decision', convention: 'Convention', lesson: 'Lesson', issue: 'Known issue' };
 // A brief is "About this project" (checkout scope) or "Where this branch stands" (branch scope).
 export function category(name: string, scope?: string) {
