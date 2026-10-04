@@ -754,6 +754,7 @@ Each task lists **files**, **what to build** (signatures and behaviour), **tests
   - Exactly 1440 counts as wide.
   - Automatic collapse never overwrites stored preferences (`journal-panel-widths`, `journal-panel-collapsed`).
 - **Tests:** update `desktop-layout.spec.ts` (the separator is gone in rail mode; assert rail and overlay behaviour). New: at 1280×800 the terminal has ≥100 columns with the overlay closed.
+- **Small windows:** at 900×640 (with the sidebars widened as in `desktop.spec.ts`) the terminal currently shows only 3 rows; `desktop.spec.ts` holds that as a floor. The composer redesign must restore at least 10 rows at 900×640 and raise the floor in the test to match.
 
 ### Phase 4: Composer and live preview (F13, F14; D3, D4)
 

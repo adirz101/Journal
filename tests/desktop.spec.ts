@@ -86,12 +86,21 @@ process.stdin.on('data',data=>{
     // A small viewport with widened sidebars shows only the last few rows (three at
     // the 11 px type floor). Verify retained history by scrolling through it, a page
     // at a time, rather than requiring earlier output to remain on screen.
-    const surface = page.locator('.terminal-surface');
+    const surface = page.locator('.terminal-surface'); const rows = page.locator('.xterm-rows');
     const scrollTo = async (key: string, text: string) => {
-      for (let i = 0; i < 60 && !(await surface.textContent())?.includes(text); i++) await page.locator('.xterm-helper-textarea').press(key);
+      for (let i = 0; i < 60; i++) {
+        const before = await rows.textContent();
+        if (before?.includes(text)) break;
+        await page.locator('.xterm-helper-textarea').press(key);
+        // xterm paints on the next animation frame: wait for the rows to change before reading them again.
+        await expect.poll(() => rows.textContent()).not.toBe(before);
+      }
       await expect(surface).toContainText(text);
     };
     await expect(surface).toContainText('ECHO after-theme');
+    // Floor, not target: 900x640 shows 3 rows today. It must not shrink further; the composer
+    // redesign (plan Task 3.4) has to bring this back to at least 10.
+    await expect.poll(() => rows.locator(':scope > div').count()).toBeGreaterThanOrEqual(3);
     await scrollTo('Shift+PageUp', 'PTY_READY true');
     await scrollTo('Shift+PageDown', 'ECHO hello-terminal');
     await scrollTo('Shift+PageDown', 'ECHO after-theme');
