@@ -95,7 +95,10 @@ test('focus rings inside scroll and clipping containers are drawn where they can
   has('.panel-tabs button:focus-visible .panel-tab-label', 'outline', '2px solid var(--acc)');
   has('.panel-tabs .panel-collapse:focus-visible', 'outline-offset', '-2px');
   // Full-width rows in scrolling lists and the sticky search field draw the ring inside their border edge.
-  for (const selector of ['.session-select:focus-visible', '.archived-toggle:focus-visible', '.changed-row:focus-visible', '.tree-search:focus-visible']) has(selector, 'outline-offset', '-2px');
+  for (const selector of ['.session-select:focus-visible', '.archived-toggle:focus-visible', '.changed-row:focus-visible', '.tree-search:focus-visible', '.tree-row:focus-visible']) has(selector, 'outline-offset', '-2px');
+  // File tree rows use the shared 2 px outline, not a box-shadow ring that forced colors would drop.
+  has('.tree-row:focus-visible', 'outline', '2px solid var(--acc)');
+  assert.ok(!rulesFor('.tree-row:focus-visible').some(rule => declares(rule, 'box-shadow')), '.tree-row:focus-visible has no box-shadow');
   // The segmented control rounds its end buttons instead of clipping them.
   assert.ok(!rulesFor('.segmented').some(rule => declares(rule, 'overflow')), '.segmented does not clip');
   has('.segmented button:first-child', 'border-radius', '5px 0 0 5px');
