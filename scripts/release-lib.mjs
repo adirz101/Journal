@@ -26,6 +26,8 @@ export function expectedArtifacts(version) {
   };
 }
 export const RELEASE_EXTRAS = ['SHA256SUMS.txt', 'THIRD-PARTY-NOTICES.txt'];
+// Update metadata electron-updater reads from the release (sizes and SHA-512 of the installers).
+export const UPDATE_FILES = { mac: ['latest-mac.yml'], win: ['latest.yml'] };
 
 // Applies electron-builder's artifactName templates the way it does, so the
 // configuration and expectedArtifacts cannot drift apart unnoticed.
@@ -63,11 +65,20 @@ export const ALLOWED = [
 ];
 export const FORBIDDEN = [/(?:^|\/)\.env(?:\.|$)/i, /\.(?:sqlite|db|log|map|pem|key|p12|pfx|cer|keychain|provisionprofile)$/i, /(?:^|\/)\.(?:cache|git|journal-data)\//, /(?:^|\/)(?:tests?|fixtures|docs|scripts|benchmarks|test-results)\//, /^src\/ui\//];
 
-export function auditEntries(entries) {
+// Production packages from package-lock.json (for example "electron-updater" or
+// "electron-updater/node_modules/semver"); node-pty keeps its own stricter rule.
+export function productionPackages(lock) {
+  return Object.entries(lock.packages ?? {}).filter(([path, info]) => path.startsWith('node_modules/') && !info.dev && !info.devOptional)
+    .map(([path]) => path.slice('node_modules/'.length)).filter(name => name !== 'node-pty' && !name.startsWith('node-pty/') && name !== 'node-addon-api');
+}
+// electron-builder may hoist a nested copy (electron-updater/node_modules/semver
+// ships as node_modules/semver), so a production package is allowed at any level.
+const inPackage = (entry, packages) => packages.some(path => { const name = path.split('node_modules/').at(-1); return entry.startsWith(`node_modules/${path}/`) || new RegExp(`^node_modules/(?:[^/]+/node_modules/)*${name.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}/`).test(entry); });
+export function auditEntries(entries, packages = []) {
   const problems = [];
   for (const entry of entries) {
     if (FORBIDDEN.some(pattern => pattern.test(entry))) problems.push(`forbidden: ${entry}`);
-    else if (!ALLOWED.some(pattern => pattern.test(entry))) problems.push(`not on the allow-list: ${entry}`);
+    else if (!ALLOWED.some(pattern => pattern.test(entry)) && !inPackage(entry, packages)) problems.push(`not on the allow-list: ${entry}`);
   }
   return problems;
 }

@@ -18,6 +18,8 @@ import { formatReference, referenceEvent } from '../core/references.mjs';
 import { isSensitivePath } from '../core/evidence.mjs';
 import { launchTarget, resolveExecutable } from '../core/process.mjs';
 import { RootWatcher } from './watch.mjs';
+import { Updater, updateMode } from './updater.mjs';
+import electronUpdater from 'electron-updater';
 import { dataDirectory, unpackedPath, withGuiPath } from './environment.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -39,7 +41,7 @@ const userData = dataDirectory(process.env, app.getPath('appData'));
 mkdirSync(userData, { recursive: true, mode: 0o700 });
 app.setPath('userData', userData);
 if (!app.requestSingleInstanceLock()) app.quit();
-let window; let store; let runtime; let runtimeState = 'connecting'; let runtimeWarning = null;
+let window; let store; let runtime; let updater; let updatePolicy = null; let runtimeState = 'connecting'; let runtimeWarning = null;
 const devUrl = process.env.JOURNAL_DEV_URL;
 // Automated tests run without visible windows or a Dock icon.
 const headless = process.env.JOURNAL_HEADLESS === '1';
@@ -407,6 +409,27 @@ const actions = {
   terminateOrphan: ({ id }) => runtime.call('terminateOrphan', { id }),
   acknowledge: ({ id, sequence }) => { void runtime.call('acknowledge', { id, sequence }).catch(() => {}); },
   confirmNativeId: ({ id, nativeId }) => runtime.call('confirmNativeId', { id, nativeId }),
+  // ----- Updates -----
+  updateStatus: () => updater.state,
+  checkForUpdates: () => updater.check(),
+  setAutomaticUpdates: ({ enabled }) => { writeFileSync(updatePrefs, JSON.stringify({ automatic: enabled === true })); return updater.setAutomatic(enabled === true); },
+  openUpdateRelease: () => { void shell.openExternal(updater.releaseUrl()); },
+  // Installing restarts Journal: running agents are stopped or kept running first,
+  // as when quitting, and the quit that follows does not ask again.
+  installUpdate: async () => {
+    if (!updater.ready()) throw new Error('No downloaded update is ready to install');
+    let live = []; if (runtime.socket) { try { live = (await runtime.call('list')).filter(session => LIVE.includes(session.status)); } catch { /* runtime unavailable */ } }
+    let policy = process.env.JOURNAL_QUIT_POLICY === 'keep' ? 'keep' : 'stop';
+    if (live.length && !process.env.JOURNAL_QUIT_POLICY) {
+      const { response } = await dialog.showMessageBox(window, { type: 'question', buttons: ['Stop sessions and update', 'Keep them running and update', 'Cancel'], defaultId: 0, cancelId: 2,
+        message: `Install Journal ${updater.state.version} and restart?`,
+        detail: `${live.length} session${live.length === 1 ? ' is' : 's are'} still running. Stopping ends the native CLIs gracefully. Keeping them running lets the updated Journal reconnect to them.` });
+      if (response === 2) return { installing: false };
+      policy = response === 0 ? 'stop' : 'keep';
+    }
+    updatePolicy = policy; updater.install();
+    return { installing: true };
+  },
 };
 ipcMain.handle('journal:request', async (event, action, input = {}) => {
   try {
@@ -419,6 +442,12 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
 try { await runtime.connect(); runtimeState = 'connected'; }
 catch (error) { runtimeState = 'disconnected'; console.error('Journal runtime unavailable:', error.message); void runtime.reconnect(); }
 createWindow();
+// Updates: packaged builds only. The automatic-check preference lives in the data folder.
+const updatePrefs = join(userData, 'updates.json');
+const automaticUpdates = (() => { try { return JSON.parse(readFileSync(updatePrefs, 'utf8')).automatic !== false; } catch { return true; } })();
+const updates = updateMode({ packaged: app.isPackaged, platform: process.platform, env: process.env });
+updater = new Updater({ autoUpdater: updates === 'off' ? null : electronUpdater.autoUpdater, mode: updates, version: app.getVersion(), send, enabled: automaticUpdates });
+updater.start();
 // Release smoke checks of builds that cannot be driven by automation (the
 // Windows portable EXE relaunches itself): report basic health, then quit.
 // Packaged builds only; contains no project or user content.
@@ -444,13 +473,14 @@ app.on('before-quit', event => {
     if (runtime.socket) { try { live = (await runtime.call('list')).filter(session => LIVE.includes(session.status)); } catch { /* runtime unavailable */ } }
     // A half-finished Cursor install could leave a broken CLI behind: ask first.
     const running = processes.running();
-    if (running.length && !headless) {
+    if (running.length && !headless && !updatePolicy) {
       const { response } = await dialog.showMessageBox({ type: 'warning', buttons: ['Stop it and quit', 'Cancel'], defaultId: 1, cancelId: 1,
         message: running.includes('install') ? 'The Cursor CLI installation is still running.' : 'Cursor sign-in is still running.',
         detail: running.includes('install') ? 'Quitting now stops the installer and may leave an incomplete installation. You can run the installer again afterwards.' : 'Quitting now cancels the sign-in.' });
       if (response === 1) { closing = false; if (!window) createWindow(); return; }
     }
-    let policy = process.env.JOURNAL_QUIT_POLICY;
+    // An update install already asked what to do with running sessions.
+    let policy = updatePolicy ?? process.env.JOURNAL_QUIT_POLICY;
     if (live.length && policy !== 'stop' && policy !== 'keep') {
       const { response } = await dialog.showMessageBox({ type: 'question', buttons: ['Stop sessions and quit', 'Keep running in background', 'Cancel'], defaultId: 0, cancelId: 2,
         message: `${live.length} session${live.length === 1 ? ' is' : 's are'} still running.`,
@@ -458,7 +488,7 @@ app.on('before-quit', event => {
       if (response === 2) { closing = false; if (!window) createWindow(); return; }
       policy = response === 0 ? 'stop' : 'keep';
     }
-    processes.stopAll();
+    processes.stopAll(); updater?.stop();
     await runtime.close({ shutdown: policy !== 'keep' && !!runtime.socket, stopSessions: true });
     await store.close().catch(() => {});
     closed = true; app.quit();

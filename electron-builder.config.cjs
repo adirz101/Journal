@@ -54,7 +54,12 @@ module.exports = {
   npmRebuild: true,
   afterPack: './scripts/after-pack.cjs',
   icon: 'assets/branding/journal-app-icon.png',
-  publish: null,
+  // Where installed copies look for updates (written into the app as app-update.yml).
+  // Builds never publish themselves (--publish never): the release workflow uploads
+  // the update metadata (latest-mac.yml, latest.yml) with the installers.
+  publish: [{ provider: 'github', owner: 'adirz101', repo: 'Journal' }],
+  // One update feed for alphas and releases: latest*.yml, not alpha-*.yml.
+  detectUpdateChannel: false,
 
   mac: {
     category: 'public.app-category.developer-tools',

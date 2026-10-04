@@ -16,7 +16,7 @@ export interface TimelineEvent { id?: number; sessionId?: string; at: string; ki
 export type TerminalEvent = { type: 'output'; sessionId: string; sequence: number; data: string } | { type: 'gap'; sessionId: string } | { type: 'status'; session: Session } | { type: 'error'; message: string; sessionId?: string }
   | { type: 'timeline'; event: TimelineEvent } | { type: 'proposals'; projectId: string; count: number } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; recovered?: boolean }
   | { type: 'files'; key: string; folders: string[]; overflow: boolean; stopped?: boolean }
-  | { type: 'providers'; agents: AgentInfo[] } | { type: 'process-output'; id: string; data: string; offset: number } | { type: 'process-exit'; id: string; kind: string; code: number | null };
+  | { type: 'update'; state: UpdateState } | { type: 'providers'; agents: AgentInfo[] } | { type: 'process-output'; id: string; data: string; offset: number } | { type: 'process-exit'; id: string; kind: string; code: number | null };
 export interface OutputSnapshot { gap: boolean; chunks: { sequence: number; data: string }[]; lastSequence: number; }
 export interface Workspace { id: string | null; projectId?: string; kind: 'checkout' | 'managed' | 'imported'; path: string; branch: string | null; head?: string | null; base?: string; baseLabel?: string; state: 'intent' | 'ready' | 'failed' | 'missing' | 'removed'; error?: string | null; notices?: string[]; detached?: boolean; }
 export interface WorkspaceList { checkout: Workspace; workspaces: Workspace[]; importable: { path: string; branch: string | null; head: string | null; detached: boolean }[]; }
@@ -29,6 +29,7 @@ export interface StatusEntry { path: string; sensitive?: boolean; kind: GitKind;
 export interface FileStatus { available: boolean; reason?: string; entries: StatusEntry[]; folders: Record<string, GitKind>; truncated: boolean; branch?: string | null; }
 export interface FilePreviewData { path: string; kind: 'text' | 'binary' | 'sensitive' | 'too-large'; size?: number; contentHash?: string; text?: string; invalidUtf8?: boolean; highlight?: boolean; eol?: string; lineCount?: number; }
 export interface FileReference { projectId?: string; kind: 'file' | 'lines' | 'folder'; rootKey: string; rootLabel?: string; path: string; display?: string; startLine: number | null; endLine: number | null; contentHash?: string | null; rangeHash?: string | null; }
+export interface UpdateState { status: 'off' | 'idle' | 'checking' | 'none' | 'available' | 'downloading' | 'ready' | 'error'; mode: 'off' | 'auto' | 'notify'; current: string; version: string | null; percent: number | null; message: string | null; automatic: boolean; }
 export interface ProjectState { project: Project; sessions: Session[]; receipts: Receipt[]; }
 export interface ChangedFile { path: string; from: string | null; additions: number | null; deletions: number | null; binary: boolean; untracked: boolean; preexisting: boolean; sensitive: boolean; }
 export interface Changes { base: string; available: boolean; reason?: string; head?: string; branch?: string; headMoved?: boolean; commitsSince?: number; files: ChangedFile[]; truncated?: boolean; additions?: number; deletions?: number; preexistingCount?: number; }

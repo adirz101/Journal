@@ -143,6 +143,8 @@ jobs:
           path: |
             release/Journal-*-arm64.dmg
             release/Journal-*-arm64.zip
+            release/latest-mac.yml
+            release/*.blockmap
           if-no-files-found: error
           retention-days: 3 # hand-off to the release job only; downloads come from GitHub Releases
 
@@ -224,6 +226,8 @@ jobs:
           path: |
             release/Journal-Setup-*-x64.exe
             release/Journal-Portable-*-x64.exe
+            release/latest.yml
+            release/*.blockmap
           if-no-files-found: error
           retention-days: 3
 
@@ -250,7 +254,10 @@ jobs:
           version=$(node -p "require('./package.json').version")
           node scripts/release-check.mjs --tag "$TAG"
           cp THIRD_PARTY_NOTICES.md dist-assets/THIRD-PARTY-NOTICES.txt
-          node scripts/checksums.mjs dist-assets "Journal-$version-arm64.dmg" "Journal-$version-arm64.zip" "Journal-Setup-$version-x64.exe" "Journal-Portable-$version-x64.exe" THIRD-PARTY-NOTICES.txt
+          # Installed copies update from latest-mac.yml / latest.yml and the blockmaps.
+          test -f dist-assets/latest-mac.yml && test -f dist-assets/latest.yml
+          blockmaps=$(cd dist-assets && ls *.blockmap 2>/dev/null || true)
+          node scripts/checksums.mjs dist-assets "Journal-$version-arm64.dmg" "Journal-$version-arm64.zip" "Journal-Setup-$version-x64.exe" "Journal-Portable-$version-x64.exe" THIRD-PARTY-NOTICES.txt latest-mac.yml latest.yml $blockmaps
           (cd dist-assets && sha256sum -c SHA256SUMS.txt)
           ls -la dist-assets
       - name: Create draft release (never published automatically)
@@ -265,4 +272,4 @@ jobs:
             --title "Journal $version" --notes-file "$RUNNER_TEMP/notes.md" \
             "dist-assets/Journal-$version-arm64.dmg" "dist-assets/Journal-$version-arm64.zip" \
             "dist-assets/Journal-Setup-$version-x64.exe" "dist-assets/Journal-Portable-$version-x64.exe" \
-            dist-assets/SHA256SUMS.txt dist-assets/THIRD-PARTY-NOTICES.txt
+            dist-assets/SHA256SUMS.txt dist-assets/THIRD-PARTY-NOTICES.txt dist-assets/latest-mac.yml dist-assets/latest.yml dist-assets/*.blockmap
