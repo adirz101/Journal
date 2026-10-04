@@ -330,11 +330,13 @@ test('slot shortcuts keep their session across a renderer reload and after anoth
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
     await startSession(page, 'SLOT_A', 'Claude'); await startSession(page, 'SLOT_B', 'Codex');
-    // Slot keys are ignored while a start or switch is still finishing; retry until it settles.
-    const select = async (key: string, task: string) => expect(async () => {
+    // Slot keys are ignored while a start or switch is still finishing (aria-busy);
+    // once that settles, the first press selects.
+    const select = async (key: string, task: string) => {
+      await expect(page.locator('main.workspace')).not.toHaveAttribute('aria-busy', 'true');
       await pressKey(app, key, [...slotKeys()]);
-      await expect(sessionButton(page, task)).toHaveAttribute('aria-current', 'true', { timeout: 1000 });
-    }).toPass();
+      await expect(sessionButton(page, task)).toHaveAttribute('aria-current', 'true');
+    };
     await select('1', 'SLOT_A'); await select('2', 'SLOT_B');
     await page.reload();
     await expect(page.getByText('2/4 active')).toBeVisible();
@@ -373,10 +375,10 @@ test('next needs-you jumps to a Claude session waiting for approval and shows wh
     await expect(asking).toContainText('TOKEN=[redacted] npm publish');
     await expect(asking).not.toContainText('abc123456');
     await expect(asking).toHaveAttribute('aria-label', /Needs approval, TOKEN=\[redacted\] npm publish.*needs attention/);
-    await expect(async () => {
-      await pressKey(app, 'J', [...next]);
-      await expect(asking).toHaveAttribute('aria-current', 'true', { timeout: 1000 });
-    }).toPass();
+    // Once the switch to CALM_ONE settles, the first press selects.
+    await expect(page.locator('main.workspace')).not.toHaveAttribute('aria-busy', 'true');
+    await pressKey(app, 'J', [...next]);
+    await expect(asking).toHaveAttribute('aria-current', 'true');
     // The only session that needs you is already selected: nothing moves.
     await pressKey(app, 'J', [...next]);
     await page.waitForTimeout(300);
