@@ -2,6 +2,7 @@ import { test, expect, _electron as electron, type ElectronApplication } from '@
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { projectContextMenu, sessionStatus } from './support/ui';
 
 test.skip(process.platform === 'win32', 'POSIX fixture CLIs');
 
@@ -32,7 +33,7 @@ console.log('PTY_READY '+JSON.stringify(process.argv.slice(2,4)));process.stdin.
     await app.evaluate(({ dialog, shell }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); (shell as any).showItemInFolder = (p: string) => { (globalThis as any).__revealed = p; }; }, project);
     const page = await app.firstWindow();
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    const projectButton = page.locator('.project-link').first();
+    const projectButton = projectContextMenu(page);
     // Project menu: rename, pin, copy path, reveal, add folder.
     await menu(app, 'rename'); await projectButton.click({ button: 'right' });
     expect(await lastMenu(app)).toEqual(['open', 'rename', 'pin', 'manage', 'addFolder', 'reveal', 'copyPath', 'remove']);
@@ -71,7 +72,7 @@ console.log('PTY_READY '+JSON.stringify(process.argv.slice(2,4)));process.stdin.
     await menu(app, 'unarchive'); await renamed.click({ button: 'right' });
     await expect(renamed.locator('.archived-badge')).toHaveCount(0);
     await menu(app, 'stop'); await renamed.click({ button: 'right' });
-    await expect(page.locator('.terminal-label')).toContainText('Stopped');
+    await expect(sessionStatus(page)).toContainText('Stopped');
     await menu(app, null); await renamed.click({ button: 'right' });
     expect(await lastMenu(app)).toContain('resume'); expect(await lastMenu(app)).not.toContain('stop');
     await menu(app, 'resume'); await renamed.click({ button: 'right' });
@@ -79,7 +80,7 @@ console.log('PTY_READY '+JSON.stringify(process.argv.slice(2,4)));process.stdin.
     await expect.poll(() => launches().length).toBe(2);
     expect(launches()[1].argv.slice(0, 2)).toEqual(['--resume', nativeId]);
     await expect(page.getByRole('button', { name: /^Claude Code: Resume · Notes draft/ })).toBeVisible();
-    await page.getByRole('button', { name: 'Stop', exact: true }).click(); await expect(page.locator('.terminal-label')).toContainText('Stopped');
+    await page.getByRole('button', { name: 'Stop', exact: true }).click(); await expect(sessionStatus(page)).toContainText('Stopped');
     // Cancel changes nothing; "Stop and remove" stops the agent first, then removes it.
     await page.getByLabel('Initial task').fill('Throwaway run');
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();

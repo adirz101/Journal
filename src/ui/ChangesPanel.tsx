@@ -17,7 +17,7 @@ export function ChangesPanel({ session, fileEvents = 0 }: { session: Session; fi
     try { setDiff(await api('sessionFileDiff', { id: session.id, path })); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
   return <div className="panel-content changes-content">
-    <div className="section-heading"><div><span className="eyebrow">SINCE THIS SESSION STARTED</span><h2>Changes</h2></div><button onClick={() => void refresh()} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button></div>
+    <div className="section-heading"><div><span className="eyebrow">Since this session started</span><h2>Changes</h2></div><button onClick={() => void refresh()} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button></div>
     <p className="muted panel-intro">Working tree compared with the commit checked out when the session started ({(changes?.base ?? session.head ?? '').slice(0, 7) || 'none'}). Other sessions and editors in this checkout can contribute changes too.</p>
     {error && <p className="form-error" role="alert">{error}</p>}
     {changes && !changes.available && <p className="hint">{changes.reason}</p>}

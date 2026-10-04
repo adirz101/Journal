@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { inspectorTab, sessionActions, sessionStatus, setTheme, switchProject } from './support/ui';
 
 test('reviewed file knowledge reaches a real PTY and survives renderer and app restart', async () => {
   test.skip(process.platform === 'win32', 'Windows native desktop smoke requires a separate real-machine fixture');
@@ -72,8 +73,7 @@ process.stdin.on('data',data=>{
     // Appearance and panel resizing must retain the live terminal, native session and receipt.
     const terminalElement = await page.locator('.xterm').elementHandle();
     const beforeTheme = await page.evaluate(async () => (await (window as any).journal.request('bootstrap')).live.map((x: any) => x.id));
-    await page.getByRole('button', { name: 'Switch to light mode', exact: true }).focus();
-    await page.keyboard.press('Enter');
+    await setTheme(page, 'light');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     await expect.poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe('light');
     await expect(page.locator('.brand-icon')).toHaveAttribute('src', /\/journal-mark-(?!white-)[^.]+\.png$/);
@@ -120,11 +120,11 @@ process.stdin.on('data',data=>{
     await page.getByRole('button', { name: /^Interrupt/ }).click();
     await expect(page.locator('.terminal-surface')).toContainText('INTERRUPTED');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('Stopped');
+    await expect(sessionStatus(page)).toContainText('Stopped');
     await page.getByRole('button', { name: 'Continue', exact: true }).first().click();
     await expect(page.locator('.terminal-surface')).toContainText('--resume');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('Stopped');
+    await expect(sessionStatus(page)).toContainText('Stopped');
     // Reviewed knowledge is provider-neutral; Codex needs an explicitly confirmed UUID.
     await page.getByLabel('Initial task').fill('Docker tests');
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
@@ -136,11 +136,11 @@ process.stdin.on('data',data=>{
     await expect(page.getByLabel('Native session ID')).toBeVisible();
     await page.getByLabel('Native session ID').fill('bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb');
     await page.getByRole('button', { name: 'Confirm conversation ID' }).click();
-    await page.locator('.terminal-actions').getByRole('button', { name: 'Continue', exact: true }).click();
+    await sessionActions(page).getByRole('button', { name: 'Continue', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb');
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('Stopped');
+    await expect(sessionStatus(page)).toContainText('Stopped');
     // Selecting a confirmed older session must not prefill a new conversation's ID.
     await page.getByRole('button', { name: /^Codex:/ }).first().click();
     await page.getByLabel('Initial task').fill('Docker tests NEW_CODEX_SESSION_MARKER');
@@ -156,21 +156,21 @@ process.stdin.on('data',data=>{
     expect(error).toContain('Unknown desktop action');
     await app.close();
     app = await electron.launch({ args: ['.'], env }); page = await app.firstWindow();
-    await page.getByRole('button', { name: /^fixture project/ }).click();
+    await switchProject(app, page, 'fixture project');
     await expect(page.getByText('Fixture tests require Docker', { exact: true })).toBeVisible();
-    await page.getByRole('tab', { name: 'Context', exact: true }).click();
+    await inspectorTab(page, 'Context');
     await expect(page.getByTestId('context-packet')).toContainText('Fixture tests require Docker');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     mkdirSync(resolve('.cache/screenshots'), { recursive: true });
     await page.screenshot({ path: resolve('.cache/screenshots/journal-light.png') });
-    await page.getByRole('tab', { name: /^Memory/ }).click();
+    await inspectorTab(page, 'Memory');
     await page.screenshot({ path: resolve('.cache/screenshots/journal-light-knowledge.png') });
     await page.getByRole('button', { name: 'Add a note' }).first().click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.screenshot({ path: resolve('.cache/screenshots/journal-light-dialog.png') });
     await page.keyboard.press('Escape');
-    await page.getByRole('tab', { name: 'Context', exact: true }).click();
-    await page.getByRole('button', { name: 'Switch to dark mode', exact: true }).click();
+    await inspectorTab(page, 'Context');
+    await setTheme(page, 'dark');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     await expect(page.locator('.brand-icon')).toHaveAttribute('src', /journal-mark-white-/);
     await page.screenshot({ path: resolve('.cache/screenshots/journal-desktop.png') });

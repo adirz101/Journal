@@ -10,7 +10,7 @@
 - `session.slot`, `pending`, `lastOutputAt` and the `activity` event;
 - `sessionState.ts` (`stateFor`, `needsYou`, `slotOrder`, `slotTarget`, `nextNeedsYou`, `outputDetail`, `resumable`);
 - the `focus-session` event and error `code`s;
-- `copy.tip.limitedStatus`;
+- `tip.limitedStatus` (a separate export of `copy.ts`, not `copy.tip`);
 - `userData/preferences.json` with `PREFERENCE_DEFAULTS` and the two menu checkboxes.
 
 Step A0 checks every name against the merged code and fixes this plan if anything drifted.
@@ -61,7 +61,7 @@ One commit: "Phase 3 seams: copy, contracts, test helpers". **It changes no beha
 ### 1.1 Types (`src/ui/types.ts`)
 
 ```ts
-export interface Proposal { /* … */ evidence?: { sessionId?: string | null } | null; }  // core already returns it (store.mjs:640)
+export interface Proposal { /* … */ evidence?: { sessionId?: string | null } | null; }  // core already returns it (proposals.mjs; store.mjs generateProposals)
 export interface Session  { /* … */ cliVersion?: string | null; }   // B fills it in at launch
 export type InspectorTab = 'session' | 'files' | 'memory';
 export type Pane = 'full' | 'rail';
@@ -70,7 +70,7 @@ export interface Preferences { notifications: boolean; notificationCommand: bool
 
 ### 1.2 App-level proposals (`src/ui/useProposals.ts`, new)
 
-`useProposals(projectId: string | null, version: number): Proposal[]` fetches `proposals` for the current project. Two things trigger a refetch: a change of `version`, which App bumps on the `proposals` event as it does `knowledgeVersion`, and a project switch. A stale reply (from the previous project) is dropped.
+`useProposals(projectId: string | null, version: number, onError): Proposal[]` fetches `proposals` for the current project. Two things trigger a refetch: a change of `version` (App passes `knowledgeVersion`, which it already bumps on the `proposals` event and after accept/dismiss through `onChanged`), and a project switch. A stale reply (from the previous project) is dropped, and another project's list is never returned while its own is loading.
 
 App passes the result to both the Sidebar and the Memory tab. `KnowledgePanel` gains an optional `proposals` prop; when it is set, the panel stops fetching on its own. One fetch serves the whole window.
 
@@ -142,11 +142,11 @@ Move the selectors that Phase 3 changes behind helpers, with **today's** impleme
 | `manageProject(app, page, name)` | `Manage <name>` button | A | switcher menu → `manage` |
 | `setTheme(page, theme)` | `Switch to <theme> mode` button | A | Settings → radio `Dark`/`Light` → Done |
 | `openSettings(page, section?)` | `Data and backups` button | A | footer `Settings` button (or the `settings` command) |
-| `slotsUsed(page)` | text `n/4 active` | A | text `n of 4` |
+| `slotsUsed(page, n)` | text `n/4 active` | A | text `n of 4` |
 | `newSession(page)` | no-op if no session is selected, else `New session` click | B | always `New session`, unless the New session view is already shown |
 | `sessionStatus(page)` | `.terminal-label` | B | `.session-header .session-meta` |
 | `sessionActions(page)` | `.terminal-actions` | B | `.session-actions` |
-| `inspectorTab(page, name)` | tab by today's name (`Context`, `Changes`, `Activity`, `Files`, `Memory`) | B, then C | new tab names (`Context`/`Activity` → `Session`; `Changes` → `Files` plus the `Changed (n)` radio). C adds "open the overlay first in rail mode". |
+| `inspectorTab(page, name)` (async: selects the tab and returns it) | tab by today's name (`Context`, `Changes`, `Activity`, `Files`, `Memory`) | B, then C | new tab names (`Context`/`Activity` → `Session`; `Changes` → `Files` plus the `Changed (n)` radio). C adds "open the overlay first in rail mode". |
 | `filesView(page, view)` | no-op | B | radio `Changed (n)` / `All files` |
 | `statusBar(page)` | `.terminal-footer` | B | `.status-bar` |
 | `inspectorToggle(page, 'hide' \| 'show')` | `Hide side panel` / `Show side panel` | C | `Hide inspector` / `Show inspector` |
@@ -276,7 +276,7 @@ export function SettingsDialog(props: { appearance: Appearance; onAppearance(a: 
 - The footer has `Done`.
 
 **Main (`main.mjs`, `preload.cjs`):**
-- `preferences: () => readPreferences()`, and `setPreference: ({ key, value })`, which accepts only `PREFERENCE_DEFAULTS` keys with boolean values (anything else throws `Unknown preference`) and writes through Phase 2's `writePreferences`. Both go on the allow-list.
+- `preferences: () => preferences` (main's in-memory copy, which the notifier also reads), and `setPreference: ({ key, value })`, which accepts only `PREFERENCE_DEFAULTS` keys with boolean values and writes through Phase 2's `writePreferences` (it already throws `Invalid preference` for anything else) and updates that copy. main.mjs already has a positional `setPreference(key, value)` helper for the menu; replace it. Both actions go on the preload allow-list.
 
 **Menu (`menu.mjs`):**
 - Remove the Phase 2 checkboxes (`notify-approval` and `notify-command`) and their `preferences`/`setPreference` parameters. Settings replaces them.
@@ -310,7 +310,7 @@ Use the physical code, because `letter()` never matches punctuation. `CommandId`
 
 **New `tests/desktop-sidebar.spec.ts`** (hidden windows, fixture CLIs):
 - `Active shows slots in order with the meter`: with two fixture sessions, the text reads `2 of 4`, two meter segments are on, and each row has its `⌘n`/`Alt+n` `<kbd>` and no `.status-dot`.
-- `an ended session lands in Recent under Today, with its suggestion count`: start Claude with the task `rule: Release tags must be signed` (`ruleProposals` reads rule lines from the task; confirm when it runs), then Stop. The `Today` group holds the row, line 2 matches `/Stopped · 1 suggestion/`, and the `Project memory` badge shows 1.
+- `an ended session lands in Recent under Today, with its suggestion count`: start Claude with the task `rule: Release tags must be signed` (`ruleProposals` reads rule lines from the task; the runtime generates suggestions about 1.5 s after the session ends, see A0 findings), then Stop. The `Today` group holds the row, line 2 matches `/Stopped · 1 suggestion/`, and the `Project memory` badge shows 1.
 - `a waiting Claude row is tinted and names the command`: drive a `PermissionRequest` hook line with a command, as in Phase 2's B4 spec. The row has class `attention`, and its line 2 contains the command.
 - `Settings opens with the shortcut while the terminal has focus`:
   - Focus `.xterm-helper-textarea` and `pressKey(app, ',', ['meta'])` (`control` on win32/linux).
@@ -460,8 +460,8 @@ export function Inspector(props: {
 
 ### B6. `cliVersion` at launch
 
-- In `main.mjs`, the `start` handler adds `cliVersion` from the main process's own provider detection (the data behind `bootstrap.agents`) to the runtime call. The renderer never sends it; the handler ignores any renderer value.
-- In `terminal.mjs` `start`, store `session.cliVersion = typeof v === 'string' ? v.slice(0, 64) : null`. Resume stores the version detected at that launch. It persists in the `sessions.body` JSON (no migration).
+- In `main.mjs`, the `start` handler adds `cliVersion` from the main process's own provider detection (the module-level `agents`: `detectAgents()` at startup, Cursor refreshed by `refreshCursor`) to `runtime.call('start', …)`. The runtime is a separate process; a runtime from an older build ignores the field, so the session simply lacks `cliVersion`. The renderer never sends it; the handler ignores any renderer value.
+- In `terminal.mjs`, add `cliVersion` to the parameters `launch` destructures (`start` only adds the slot) and store `session.cliVersion = typeof v === 'string' ? v.slice(0, 64) : null`. Resume stores the version detected at that launch. It persists in the `sessions.body` JSON (no migration).
 - **`tests/terminal.test.mjs`:** `start stores cliVersion and persists it`; `non-string cliVersion becomes null`; `resume records the version at resume time`.
 
 ### B7. Tests
@@ -691,3 +691,19 @@ After C merges, run the whole suite on `claude/ux-redesign`: `npm test`, `npm ru
 9. **Settings shortcut placement:** the macOS app menu and the Windows/Linux File menu, routed by `shortcuts.mjs` (`code: 'Comma'`). Section 4.3 only says "a Settings… item".
 10. **Phase 2 menu checkboxes** (Phase 2, C2) are removed in Phase 3 once Settings owns the notification preferences.
 11. **Pins (Phase 2 correction 9) restated:** Active is ordered by slot; pins order Recent day groups and Archived.
+
+## A0 findings (checked against the merged Phase 2 code, 4 October 2026)
+
+The plan text above was corrected where it named a wrong API. What A0 found:
+
+1. **Phase 2 contracts match.** `Session.slot`, `pending` (`PendingApproval`), `lastOutputAt`, the `activity` and `focus-session` events, `settle()` in the preload and `ERROR_CODES`/`errorCode()` (`types.ts`, mirrored from `terminal.mjs`) exist as named. `sessionState.ts` exports `stateFor(session, now, connected)`, `needsYou`, `resumable`, `slotOrder`, `slotTarget`, `nextNeedsYou(sessions, currentId)`, `outputDetail(lastOutputAt, now)`, `OUTPUT_FRESH_MS`, `Tone` and `SessionState { word, tone, detail, limited }`. State words live in `copy.state`.
+2. **`tip.limitedStatus`**, not `copy.tip.limitedStatus`: `tip` is its own export.
+3. **Preferences.** main.mjs keeps an in-memory `preferences` (read at startup, passed to the notifier as `preferences: () => preferences`) and a positional `setPreference(key, value)` that shows an error box and rebuilds the menu. `writePreferences` throws `Invalid preference`. The checkboxes (`notify-approval`, `notify-command`; labels "Notify When Claude Needs Approval", "Show Commands in Notifications") sit in the macOS app menu and in the **Window** menu on Windows/Linux (`menuTemplate` builds a custom `windowMenu` for them); Group A removes both. `preferences`/`setPreference` are not on the preload allow-list yet.
+4. **CLI version source.** main.mjs's module-level `agents` (`detectAgents()`; Cursor updated by `refreshCursor`). The `start` handler forwards to the runtime process; `TerminalManager.start` adds the slot and calls `launch`, which destructures its parameters, so `cliVersion` must be added there.
+5. **When rule-line suggestions appear.** `src/runtime/runtime.mjs` calls `store.generateProposals(sessionId)` 1.5 s after a session first reaches a non-live status, and sends `{ type: 'proposals', projectId, count }` only when something was created. Rule lines come from `receipt.query` (the task), need at least four words and must not be generic advice. Each proposal's `evidence.sessionId` names its session.
+6. **App-level proposals.** `useProposals` takes `onError` and reuses `knowledgeVersion`; `KnowledgePanel` takes an optional `proposals` prop and then stops fetching. A desktop check in `desktop-brief.spec.ts` covers the event path and the refetch after Dismiss.
+7. **Copy.** `shell.neverApproves` uses "approves", an old-term match in `tests/copy.test.mjs`; it is allow-listed there (tool approval in the CLI, not note review). `diffFiles` and `atLaunch` are fragments that start lowercase by design.
+8. **Eyebrow test** is stricter than 1.4: an eyebrow may not contain any all-caps word (so single words such as `COMMANDS`, `PROJECT`, `FOLDERS` also failed); `aria-label`s and components' `title` props (the reference lists' region names) fail on a run of two all-caps words. Abbreviations such as `KB`, `ID`, `PID`, `CLI` and `HEAD` may stand alone. The sidebar's `.nav-caption` text and the brand's `PROJECT MEMORY`/`LOCAL` are not eyebrows and remain for Group A.
+9. **Helpers (1.5).** `slotsUsed(page, n)` takes the count; `inspectorTab` selects and returns the tab; `setTheme` is a no-op when the theme is already set. `newSession`, `filesView` and `ensureWide` are no-ops and not yet called: Group B inserts `newSession` before starts (B7), Group C calls `ensureWide`. Selectors left in place for their owners: `desktop-context-menus.spec.ts` `.project-link` count after removal and `.pin-mark`; `desktop-projects.spec.ts` `.project-link[aria-current]`; `desktop-explorer.spec.ts` the Files tab `aria-selected` after the keyboard path; `desktop-layout.spec.ts` the Memory tab hover; `desktop-sessions.spec.ts` `.panel-tabs` selected tab; `desktop.spec.ts` `.terminal-heading .provider-mark`. `switchProject` also replaced the `/^<project>/` button clicks in `desktop.spec.ts`, `-brief`, `-status` and `-lifecycle`.
+10. **Known test hazard (not A0's to fix).** `desktop-sessions.spec.ts` "next needs-you jumps to a Claude session waiting for approval…" can post a real OS notification, because only `desktop-notify.spec.ts` installs the notification hooks. A fix is in progress elsewhere; until it merges, run the desktop suite with `--grep-invert "next needs-you"`.
+

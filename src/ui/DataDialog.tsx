@@ -13,7 +13,7 @@ export function DataDialog({ project, update, onClose, onChanged }: { project: P
   useEffect(() => { void api<StorageInfo>('storageInfo').then(setInfo).catch(e => setError(e.message)); }, []);
   const act = async (action: () => Promise<string | null>) => { setBusy(true); setError(''); setMessage(''); try { const text = await action(); if (text) setMessage(text); onChanged(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
   return <dialog ref={dialog} onCancel={onClose} aria-labelledby="data-title" className="knowledge-dialog">
-    <div className="dialog-heading"><div><span className="eyebrow">LOCAL DATA</span><h2 id="data-title">Data and backups</h2></div><button type="button" onClick={onClose} aria-label="Close data" className="icon-button">×</button></div>
+    <div className="dialog-heading"><div><span className="eyebrow">Local data</span><h2 id="data-title">Data and backups</h2></div><button type="button" onClick={onClose} aria-label="Close data" className="icon-button">×</button></div>
     <p className="muted">Everything stays on this device. Terminal output is never stored; timelines of sessions that ended more than 90 days ago are trimmed automatically. Project memory is never pruned.</p>
     {info && <dl className="receipt-facts"><dt>Database</dt><dd>{mb(info.database)} + {mb(info.wal)} write-ahead log</dd>
       <dt>Records</dt><dd>{info.tables.memories} notes · {info.tables.sessions} sessions · {info.tables.events} timeline events · {info.tables.receipts} records of what was sent</dd>

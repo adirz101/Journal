@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { inspectorTab, switchProject } from './support/ui';
 
 test('a Git-drafted branch update is saved only after review and approved before delivery', async () => {
   mkdirSync(resolve('.cache/tmp'), { recursive: true });
@@ -39,22 +40,22 @@ test('a Git-drafted branch update is saved only after review and approved before
     await expect(page.getByTestId('context-packet')).not.toContainText('REFUND_MODEL_DONE');
     expect(await receiptCount()).toBe(receiptsBefore);
 
-    await page.getByRole('tab', { name: /^Memory/ }).click();
+    await inspectorTab(page, 'Memory');
     await page.getByRole('button', { name: 'Propose branch update' }).click();
     const draft = await statement.inputValue();
     await statement.fill(draft.replace(/Current work: .*/, 'Current work: REFUND_ROUTE_IN_PROGRESS').replace(/Next: .*/, 'Next: validate partial refunds'));
     await page.getByRole('button', { name: 'Save for review' }).click();
     await page.getByRole('button', { name: 'Preview context' }).click();
     await expect(page.getByTestId('context-packet')).not.toContainText('REFUND_ROUTE_IN_PROGRESS');
-    await page.getByRole('tab', { name: /^Memory/ }).click();
+    await inspectorTab(page, 'Memory');
     await page.getByRole('button', { name: 'Remember', exact: true }).click();
     await page.getByRole('button', { name: 'Preview context' }).click();
     await expect(page.getByTestId('context-packet')).toContainText('REFUND_ROUTE_IN_PROGRESS');
     await expect(page.getByTestId('context-packet')).toContainText('Git history');
 
     commit('route.txt', 'REFUND_ROUTE_DONE');
-    await page.getByRole('button', { name: /^status project/ }).click();
-    await page.getByRole('tab', { name: /^Memory/ }).click();
+    await switchProject(app, page, 'status project');
+    await inspectorTab(page, 'Memory');
     await expect(page.getByText(/Updated 0 day\(s\) ago · 1 commit since/)).toBeVisible();
     await page.getByRole('button', { name: 'Propose update', exact: true }).click();
     await expect(statement).toHaveValue(/REFUND_ROUTE_DONE/);

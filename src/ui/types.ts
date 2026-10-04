@@ -1,6 +1,11 @@
 export type Provider = 'claude' | 'codex' | 'cursor';
 // Commands the main process sends for app shortcuts (src/desktop/shortcuts.mjs).
 export type CommandId = 'new-session' | 'open-project' | 'add-note' | 'focus-terminal' | 'toggle-inspector' | 'slot-1' | 'slot-2' | 'slot-3' | 'slot-4' | 'next-needs-you' | 'tab-session' | 'tab-files' | 'tab-memory';
+// Phase 3 shell: the inspector's three tabs, and whether a sidebar or inspector renders in full or as a rail.
+export type InspectorTab = 'session' | 'files' | 'memory';
+export type Pane = 'full' | 'rail';
+// userData/preferences.json (src/desktop/notify.mjs PREFERENCE_DEFAULTS).
+export interface Preferences { notifications: boolean; notificationCommand: boolean; }
 export const PROVIDER_NAMES: Record<Provider, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
 export interface ProjectRoot { id: string; path: string; name: string; kind: 'git' | 'folder'; nested: boolean; gitRoot: string | null; branch: string | null; exists?: boolean; currentBranch?: string | null; knowledge?: number; }
 export interface Project { id: string; name: string; root: string; branch: string | null; head: string | null; displayName?: string | null; folderName?: string; pinned?: boolean; roots?: ProjectRoot[]; }
@@ -32,6 +37,8 @@ export interface Session { id: string; projectId: string; provider: Provider; na
   // Runtime protocol 4 (src/core/terminal.mjs). slot: 1-4 while live in this runtime, kept until it ends.
   // lastOutputAt: last PTY output, excluding echo and resize repaints. pending: what an open Claude prompt asks.
   slot?: 1 | 2 | 3 | 4 | null; lastOutputAt?: string | null; pending?: PendingApproval | null;
+  // The CLI version main detected when this session launched (Phase 3 B); missing for older sessions.
+  cliVersion?: string | null;
   nativeIdSource?: 'preassigned' | 'preassigned-observed' | 'create-chat' | 'exit-banner' | 'user' | null; identityMismatch?: boolean; }
 // Command, path and tool are redacted or workspace-relative by the runtime; inferred: taken from the in-flight tool.
 export interface PendingApproval { tool: string | null; command: string | null; path: string | null; at: string; inferred?: boolean; }
@@ -45,7 +52,9 @@ export type TerminalEvent = { type: 'output'; sessionId: string; sequence: numbe
 export interface OutputSnapshot { gap: boolean; chunks: { sequence: number; data: string }[]; lastSequence: number; }
 export interface Workspace { id: string | null; projectId?: string; kind: 'checkout' | 'managed' | 'imported'; path: string; branch: string | null; head?: string | null; base?: string; baseLabel?: string; state: 'intent' | 'ready' | 'failed' | 'missing' | 'removed'; error?: string | null; notices?: string[]; detached?: boolean; }
 export interface WorkspaceList { checkout: Workspace; workspaces: Workspace[]; importable: { path: string; branch: string | null; head: string | null; detached: boolean }[]; }
-export interface Proposal { id: string; kind: 'rule' | 'test-command' | 'branch-status'; category: string; statement: string; scope: string; branch?: string | null; state: string; createdAt: string; source: Source | null; }
+export interface Proposal { id: string; kind: 'rule' | 'test-command' | 'branch-status'; category: string; statement: string; scope: string; branch?: string | null; state: string; createdAt: string; source: Source | null;
+  // The session it came from (src/core/proposals.mjs); branch-status and test-command evidence carry more fields.
+  evidence?: { sessionId?: string | null } | null; }
 export interface FileRoot { key: string; family: 'primary' | 'folder'; kind: string; label: string; path: string; branch: string | null; git: boolean; exists?: boolean; }
 export interface FileEntry { name: string; path: string; type: 'directory' | 'file' | 'symlink' | 'other'; sensitive: boolean; }
 export interface DirectoryListing { path: string; entries: FileEntry[]; total: number; truncated: boolean; }

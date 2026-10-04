@@ -9,7 +9,7 @@ export function RenameDialog({ title, label, value, fallback, note, onSave, onCl
   const save = async (next: string | null) => { setBusy(true); setError(''); try { await onSave(next); onClose(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
   return <dialog ref={dialog} onCancel={onClose} aria-labelledby="rename-title" className="knowledge-dialog rename-dialog">
     <form onSubmit={event => { event.preventDefault(); void save(name.trim() || null); }}>
-      <div className="dialog-heading"><div><span className="eyebrow">RENAME</span><h2 id="rename-title">{title}</h2></div><button type="button" onClick={onClose} aria-label="Close rename" className="icon-button">×</button></div>
+      <div className="dialog-heading"><div><span className="eyebrow">Rename</span><h2 id="rename-title">{title}</h2></div><button type="button" onClick={onClose} aria-label="Close rename" className="icon-button">×</button></div>
       <label>{label}<input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder={fallback} maxLength={120} /></label>
       <p className="muted small-print">{note}</p>
       {error && <p className="form-error" role="alert">{error}</p>}

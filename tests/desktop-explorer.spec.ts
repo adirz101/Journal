@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, symlinkSync, 
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
+import { inspectorTab, inspectorToggle, openAnotherProject, projectContextMenu, sessionStatus, switchProject } from './support/ui';
 
 // Real Electron, runtime and node-pty with fixture CLIs. Native menus are
 // driven through the headless menu hook (see desktop-context-menus.spec.ts).
@@ -55,7 +56,7 @@ test('the explorer browses, decorates, previews and references files without edi
     const choose = (path: string) => app.evaluate((_e, p) => { (globalThis as any).__nextFolder = p; }, path);
     const page = await app.firstWindow();
     await choose(next); await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    await page.getByRole('tab', { name: 'Files' }).click();
+    await inspectorTab(page, 'Files');
 
     // Tree: the primary root is open; .git is never listed; links, sensitive files and ignored folders are marked.
     await expect(row(page, /^explorer project \(checkout\)/)).toBeVisible();
@@ -136,21 +137,21 @@ test('the explorer browses, decorates, previews and references files without edi
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY');
     expect(f.launches()[0].argv.at(-1)).toContain('src/a.ts lines 2-3');
     await expect(page.getByRole('list', { name: 'Files referenced for the next task' })).toHaveCount(0);
-    await expect(page.getByRole('region', { name: /REFERENCED FOR THIS TASK/ })).toContainText('src/a.ts:2-3');
+    await expect(page.getByRole('region', { name: /Referenced for this task/ })).toContainText('src/a.ts:2-3');
 
     // A running session: the fixture reports no readiness, so the reference is copied, never typed.
-    await page.getByRole('tab', { name: 'Files' }).click();
+    await inspectorTab(page, 'Files');
     await menu(app, 'refSession'); await row(page, /^README\.md/).click({ button: 'right' });
     await expect(page.locator('.explorer-note')).toContainText('Copied @README.md');
     await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe('@README.md');
     await expect(page.locator('.terminal-surface')).not.toContainText('IN:');
-    await page.getByRole('tab', { name: 'Context' }).click();
-    await expect(page.getByRole('region', { name: 'REFERENCED DURING THIS SESSION' })).toContainText('README.md');
-    await page.getByRole('button', { name: 'Stop', exact: true }).click(); await expect(page.locator('.terminal-label')).toContainText('Stopped');
+    await inspectorTab(page, 'Context');
+    await expect(page.getByRole('region', { name: 'Referenced during this session' })).toContainText('README.md');
+    await page.getByRole('button', { name: 'Stop', exact: true }).click(); await expect(sessionStatus(page)).toContainText('Stopped');
 
     // Additional folders appear as their own roots.
-    await page.getByRole('tab', { name: 'Files' }).click();
-    await choose(f.extra); await menu(app, 'addFolder'); await page.locator('.project-link').first().click({ button: 'right' });
+    await inspectorTab(page, 'Files');
+    await choose(f.extra); await menu(app, 'addFolder'); await projectContextMenu(page).click({ button: 'right' });
     await expect(row(page, /^extra/)).toBeVisible();
     await row(page, /^extra/).click(); await expect(row(page, /^notes\.md/)).toBeVisible();
 
@@ -158,7 +159,7 @@ test('the explorer browses, decorates, previews and references files without edi
     // Ctrl+Shift+B and Alt+Shift+2 elsewhere.
     const mac = process.platform === 'darwin';
     await pressKey(app, mac ? 'I' : 'B', mac ? ['meta'] : ['control', 'shift']);
-    await expect(page.getByRole('button', { name: 'Show side panel' })).toBeVisible();
+    await expect(inspectorToggle(page, 'show')).toBeVisible();
     await pressKey(app, '2', mac ? ['meta', 'alt'] : ['alt', 'shift']);
     await expect(page.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true');
 
@@ -166,12 +167,12 @@ test('the explorer browses, decorates, previews and references files without edi
     await menu(app, 'refNext'); await row(page, /^README\.md/).click({ button: 'right' });
     await expect(page.getByRole('list', { name: 'Files referenced for the next task' })).toContainText('README.md');
     await row(page, /^README\.md/).click(); await expect(page.locator('.preview-path')).toHaveText('README.md');
-    await choose(f.other); await page.locator('.open-project').click();
+    await choose(f.other); await openAnotherProject(app, page);
     await expect(page.locator('.file-preview')).toHaveCount(0);
     await expect(page.getByRole('list', { name: 'Files referenced for the next task' })).toHaveCount(0);
     await expect(row(page, /^OTHER_SECRET_FILE\.md/)).toBeVisible();
     await expect(page.getByRole('treeitem', { name: /^README\.md/ })).toHaveCount(0);
-    await page.locator('.project-link', { hasText: 'explorer project' }).click();
+    await switchProject(app, page, 'explorer project');
     await expect(row(page, /^README\.md/)).toBeVisible();
     await expect(page.getByRole('treeitem', { name: /^OTHER_SECRET_FILE/ })).toHaveCount(0);
 

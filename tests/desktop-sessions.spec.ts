@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync,
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
+import { inspectorTab, sessionStatus, slotsUsed } from './support/ui';
 
 // Real Electron, real runtime process and node-pty, controlled fixture CLIs.
 test.skip(process.platform === 'win32', 'POSIX fixture CLIs; native Windows is verified separately');
@@ -82,7 +83,7 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     }
     await expect(page.getByRole('button', { name: 'Start Claude', exact: true })).toBeDisabled();
     await expect(page.getByText('4 sessions are running')).toBeVisible();
-    await expect(page.getByText('4/4 active')).toBeVisible();
+    await expect(slotsUsed(page, 4)).toBeVisible();
     await sessionButton(page, 'TASK_1').click();
     await expect(page.locator('.terminal-surface')).toContainText('TASK TASK_1');
     await typeLine(page, 'unicode');
@@ -125,14 +126,14 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
       await expect(sessionButton(page, 'TASK_1')).toHaveAttribute('aria-current', 'true', { timeout: 1000 });
     }).toPass();
     await page.reload();
-    await expect(page.getByText('4/4 active')).toBeVisible();
+    await expect(slotsUsed(page, 4)).toBeVisible();
     await sessionButton(page, 'TASK_1').click();
     await expect(page.locator('.terminal-surface')).toContainText('ECHO only-in-one');
     await typeLine(page, 'after-reload');
     await expect(page.locator('.terminal-surface')).toContainText('ECHO after-reload');
     expect(f.launches()).toHaveLength(4);
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('Stopped');
+    await expect(sessionStatus(page)).toContainText('Stopped');
     await expect(page.getByRole('button', { name: 'Start Claude', exact: true })).toBeEnabled();
   } finally { await closeApp(app); f.cleanup(); }
 });
@@ -227,9 +228,9 @@ test('a runtime crash is reported, recovered as interrupted, and never resends t
     await expect.poll(() => { try { return f.runtimeInfo().runtimeId !== before.runtimeId; } catch { return false; } }, { timeout: 20000 }).toBe(true);
     await expect(page.getByText('Runtime connected')).toBeVisible({ timeout: 20000 });
     // The fixture dies with its PTY, so it must be interrupted, not orphaned.
-    await expect(page.locator('.terminal-label')).toContainText('Interrupted');
+    await expect(sessionStatus(page)).toContainText('Interrupted');
     expect(f.launches()).toHaveLength(1);
-    await page.getByRole('tab', { name: 'Activity' }).click();
+    await inspectorTab(page, 'Activity');
     await expect(page.getByText(/Recovered after the runtime stopped/)).toBeVisible();
   } finally { await closeApp(app); f.cleanup(); }
 });
@@ -248,7 +249,7 @@ test('keep-running quit is rediscovered; stopping reports and cleans detached le
     await expect(page.locator('.terminal-surface')).toContainText('TASK KEEP_RUNNING');
     await typeLine(page, 'write agent-output.txt');
     await expect(page.locator('.terminal-surface')).toContainText('WROTE');
-    await page.getByRole('tab', { name: 'Changes' }).click();
+    await inspectorTab(page, 'Changes');
     await expect(page.getByRole('button', { name: /agent-output\.txt/ })).toBeVisible();
     await page.getByRole('button', { name: /agent-output\.txt/ }).click();
     await expect(page.getByLabel('Diff for agent-output.txt')).toContainText('+created by agent');
@@ -258,7 +259,7 @@ test('keep-running quit is rediscovered; stopping reports and cleans detached le
     const daemon = JSON.parse(readFileSync(f.daemonRecord, 'utf8')).pid;
     // Descendants are sampled every 5 s and immediately before stop.
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('Stopped');
+    await expect(sessionStatus(page)).toContainText('Stopped');
     expect(alive(daemon)).toBe(true);
     await page.getByRole('button', { name: /End 1 leftover process/ }).click();
     await expect.poll(() => alive(daemon)).toBe(false);
@@ -286,13 +287,13 @@ test('a managed worktree is created from the dialog, hosts a research session an
     await expect(page.locator('.terminal-surface')).toContainText('TASK WORKTREE_TASK');
     await expect(page.locator('.terminal-surface')).toContainText('ARGS ["--sandbox","read-only"]');
     await expect(page.locator('.terminal-surface')).toContainText(/CWD .*worktrees/);
-    await expect(page.locator('.terminal-label')).toContainText('worktree · read-only');
+    await expect(sessionStatus(page)).toContainText('worktree · read-only');
     await page.getByRole('button', { name: 'Workspaces…' }).click();
     await page.getByRole('button', { name: 'Remove worktree' }).click();
     await expect(page.getByText(/still running in it/)).toBeVisible();
     await page.getByRole('button', { name: 'Done' }).click();
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('Stopped');
+    await expect(sessionStatus(page)).toContainText('Stopped');
     await page.getByRole('button', { name: 'Workspaces…' }).click();
     await page.getByRole('button', { name: 'Remove worktree' }).click();
     await expect(page.getByRole('list', { name: 'Workspaces' })).not.toContainText('journal/isolated');
@@ -311,7 +312,7 @@ test('a branch switched outside Journal is picked up and live sessions say where
     execFileSync('git', ['-C', f.project, 'switch', '-q', '-c', 'feat/elsewhere']);
     await expect(page.getByLabel('Workspace')).toContainText('Current checkout · feat/elsewhere', { timeout: 8000 });
     await expect(page.locator('.branch-badge')).toContainText('feat/elsewhere');
-    await expect(page.locator('.terminal-label')).toContainText('started on ⑂ main');
+    await expect(sessionStatus(page)).toContainText('started on ⑂ main');
     await expect(page.getByText(/The checkout is now on feat\/elsewhere; this session started on main/)).toBeVisible();
   } finally { await closeApp(app); f.cleanup(); }
 });
@@ -337,14 +338,14 @@ test('slot shortcuts keep their session across a renderer reload and after anoth
     }).toPass();
     await select('1', 'SLOT_A'); await select('2', 'SLOT_B');
     await page.reload();
-    await expect(page.getByText('2/4 active')).toBeVisible();
+    await expect(slotsUsed(page, 2)).toBeVisible();
     await sessionButton(page, 'SLOT_A').click();
     await expect(page.locator('.terminal-surface')).toContainText('TASK SLOT_A');
     await select('2', 'SLOT_B');
     // Stopping slot 1 leaves slot 2 where it was; the next start takes the free slot 1.
     await sessionButton(page, 'SLOT_A').click();
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('Stopped');
+    await expect(sessionStatus(page)).toContainText('Stopped');
     await expect(sessionButton(page, 'SLOT_A')).not.toHaveAttribute('aria-keyshortcuts');
     await select('2', 'SLOT_B');
     await expect(sessionButton(page, 'SLOT_B')).toHaveAttribute('aria-keyshortcuts', slotAria(2));
@@ -365,7 +366,7 @@ test('next needs-you jumps to a Claude session waiting for approval and shows wh
     // The fixture runs Journal's real hook with a PermissionRequest payload.
     await typeLine(page, 'perm TOKEN=abc123456 npm publish');
     await expect(page.locator('.terminal-surface')).toContainText('ASKED');
-    await expect(page.locator('.terminal-label')).toContainText('Needs approval');
+    await expect(sessionStatus(page)).toContainText('Needs approval');
     await sessionButton(page, 'CALM_ONE').click();
     await expect(sessionButton(page, 'CALM_ONE')).toHaveAttribute('aria-current', 'true');
     const asking = sessionButton(page, 'ASKING_TWO');
@@ -383,7 +384,7 @@ test('next needs-you jumps to a Claude session waiting for approval and shows wh
     await expect(asking).toHaveAttribute('aria-current', 'true');
     // Esc dismisses the only prompt: Claude is back at its input box.
     await page.locator('.xterm-helper-textarea').press('Escape');
-    await expect(page.locator('.terminal-label')).toContainText('Your turn');
+    await expect(sessionStatus(page)).toContainText('Your turn');
     await expect(asking).not.toContainText('Needs approval');
     // A notification click: main sends focus-session, which selects the session like a click.
     const calmId = await page.evaluate(async () => (await (window as any).journal.request('sessions')).live.find((s: any) => s.title === 'CALM_ONE').id);
@@ -409,7 +410,7 @@ test('Codex shows Running with output time and limited status', async () => {
     await expect(row).toHaveAttribute('aria-label', /Running, (output just now|quiet [^,]+), limited status/);
     await expect(row.locator('.session-status')).toHaveAttribute('title', /Journal sees output, not the agent's state/);
     await expect(row.locator('.status-dot')).not.toHaveClass(/waiting/);
-    await expect(page.locator('.terminal-label')).toContainText('Running');
+    await expect(sessionStatus(page)).toContainText('Running');
   } finally { await closeApp(app); f.cleanup(); }
 });
 

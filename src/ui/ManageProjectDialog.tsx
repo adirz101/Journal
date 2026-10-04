@@ -15,7 +15,7 @@ export function ManageProjectDialog({ projectId, onClose, onChanged, onRemoved }
   const act = async (action: () => Promise<unknown>, reload = true) => { setBusy(true); setError(''); try { await action(); if (reload) { await load(); onChanged(); } } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
   const project = details?.project;
   return <dialog ref={dialog} onCancel={onClose} aria-labelledby="manage-title" className="knowledge-dialog manage-dialog">
-    <div className="dialog-heading"><div><span className="eyebrow">PROJECT</span><h2 id="manage-title">Manage {project?.name ?? 'project'}</h2></div><button type="button" onClick={onClose} aria-label="Close project settings" className="icon-button">×</button></div>
+    <div className="dialog-heading"><div><span className="eyebrow">Project</span><h2 id="manage-title">Manage {project?.name ?? 'project'}</h2></div><button type="button" onClick={onClose} aria-label="Close project settings" className="icon-button">×</button></div>
     {details?.missing && <p className="hint" role="status">The primary folder {project?.root} is missing or no longer the same repository. You can still remove the project from Journal; reopen the folder from its new location to keep using it.</p>}
     {project && <>
       <form className="manage-name" onSubmit={event => { event.preventDefault(); void act(() => api('renameProject', { id: projectId, name: name.trim() || null })); }}>
@@ -24,7 +24,7 @@ export function ManageProjectDialog({ projectId, onClose, onChanged, onRemoved }
         <p className="muted small-print">Only Journal's label changes. The folder on disk keeps its name.</p>
       </form>
       <label className="inline-check manage-pin"><input type="checkbox" checked={!!project.pinned} disabled={busy || details.missing} onChange={e => void act(() => api('setProjectPinned', { id: projectId, pinned: e.target.checked }))} /> Pin to the top of the project list</label>
-      <section aria-label="Folders" className="manage-section"><span className="eyebrow">FOLDERS</span>
+      <section aria-label="Folders" className="manage-section"><span className="eyebrow">Folders</span>
         <ul className="workspace-list" aria-label="Project folders">
           <li><strong>Primary repository</strong><span className="badge">⑂ {project.branch ?? 'detached'}</span><code>{project.root}</code><span className="muted small-print">Sessions run here by default. Journal never modifies files here.</span>
             <span className="workspace-actions"><button disabled={busy} onClick={() => void act(() => api('revealProject', { id: projectId }))}>Reveal</button><button disabled={busy} onClick={() => void act(() => api('copyProjectPath', { id: projectId }))}>Copy Path</button></span></li>

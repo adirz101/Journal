@@ -3,6 +3,7 @@ import { TerminalPane } from './TerminalPane';
 import { KnowledgeForm } from './KnowledgeForm';
 import { KnowledgePanel } from './KnowledgePanel';
 import { ResizableWorkspace } from './ResizableWorkspace';
+import { useProposals } from './useProposals';
 import { SessionList } from './SessionList';
 import { needsYou, nextNeedsYou, resumable, slotOrder, slotTarget, stateFor } from './sessionState';
 import { ChangesPanel } from './ChangesPanel';
@@ -71,6 +72,8 @@ export default function App() {
   projectRef.current = state?.project ?? null;
   const connected = runtime.state === 'connected';
   const failed = useCallback((error: unknown) => setError(error instanceof Error ? error.message : String(error)), []);
+  // Open suggestions, fetched once for the window: the `proposals` event and memory changes bump knowledgeVersion.
+  const proposals = useProposals(state?.project.id ?? null, knowledgeVersion, failed);
   // Older snapshots (for example a slow store read) never replace newer runtime state,
   // and a snapshot read before a removal never brings the removed session back.
   const merge = useCallback((items: Session[]) => setSessions(current => {
@@ -170,6 +173,7 @@ export default function App() {
     });
   }
   function newSession() { userChose.current = true; setSelectedId(null); setPanel(current => current === 'changes' || current === 'activity' ? 'memory' : current); requestAnimationFrame(() => taskRef.current?.focus()); }
+  // === Region: command handler (Phase 3: A adds settings, B the tab commands, C the layout toggles) ===
   // App shortcuts arrive as commands from the main process (src/desktop/shortcuts.mjs),
   // so they also work while the terminal has focus. The ref keeps the handler current.
   const command = useRef<(id: CommandId) => void>(() => {});
@@ -194,6 +198,7 @@ export default function App() {
     else if (id === 'tab-files') { setCollapsed(false); setPanel('files'); setExplorerFocus(n => n + 1); }
     else if (id === 'tab-memory') { setCollapsed(false); setPanel('memory'); }
   };
+  // === End region: command handler ===
   // A notification click (main sends focus-session) selects its session like a click, busy or not.
   const focusSession = useRef<(id: string) => void>(() => {});
   focusSession.current = id => { const target = sessions[id]; if (target) void selectSession(target); };
@@ -265,6 +270,7 @@ export default function App() {
     if (choice === 'open') await selectSession(target);
     else if (choice && choice in sessionActions) await sessionActions[choice as keyof typeof sessionActions](target);
   }
+  // === Region A: project menus (Phase 3: the switcher menu goes here) ===
   // Project actions shared by the right-click menu and Manage Project.
   const removedProject = (id: string) => { setProjects(items => items.filter(p => p.id !== id)); if (state?.project.id === id) { setState(null); setSelectedId(null); setReceipt(null); } void reloadProjects().catch(failed); };
   async function projectMenu(target: Project, position?: { x: number; y: number }) {
@@ -283,6 +289,7 @@ export default function App() {
     else if (choice === 'copyPath') await run(async () => { await api('copyProjectPath', { id: target.id }); });
     else if (choice === 'remove') await run(async () => { if (await api('removeProject', { id: target.id })) removedProject(target.id); });
   }
+  // === End region A: project menus ===
   async function proposeUpdate(scope: 'checkout' | 'branch') {
     if (!state) return;
     await run(async () => { setForm({ draft: await api<StatusDraft>('proposeStatusUpdate', { projectId: state.project.id, scope }) }); });
@@ -304,7 +311,9 @@ export default function App() {
   const projectBranchChanged = session && state && !session.workspaceId && session.projectId === state.project.id && isLive(session) && session.branch !== undefined && session.branch !== state.project.branch;
 
   const inspectorKeys = bootstrap?.shortcuts['toggle-inspector']?.label;
+  // === Region C: the ResizableWorkspace wrapper (layout modes) ===
   return <ResizableWorkspace hasKnowledge={!!state} collapsed={collapsed} wide={previewing && panel === 'files'}>
+    {/* === Region A: sidebar === */}
     <aside className="sidebar" id="project-sidebar">
       <div className="brand"><img className="brand-icon" src={journalMark} alt="" width={32} height={32} /><div>Journal<small>PROJECT MEMORY</small></div><span className="local-tag">LOCAL</span></div>
       <button className="open-project" onClick={() => void openProject()} disabled={busy} aria-keyshortcuts={bootstrap?.shortcuts['open-project']?.aria}><span aria-hidden="true">＋</span> Open project {bootstrap?.shortcuts['open-project'] && <kbd aria-hidden="true">{bootstrap.shortcuts['open-project'].label}</kbd>}</button>
@@ -313,13 +322,15 @@ export default function App() {
       <SessionList sessions={ordered} projects={projects} selectedId={selectedId} currentProjectId={state?.project.id ?? null} connected={connected} now={now} onSelect={next => void selectSession(next)} onMenu={(next, position) => void sessionMenu(next, position)} onNew={newSession} newShortcut={bootstrap?.shortcuts['new-session']} shortcuts={bootstrap?.shortcuts} canStart={!!state && canStart} />
       <div className="sidebar-footer">{!state && <UpdateNotice state={update} onError={failed} />}<button className="theme-toggle" aria-label={`Switch to ${appearance === 'dark' ? 'light' : 'dark'} mode`} onClick={() => setAppearance(value => value === 'dark' ? 'light' : 'dark')}><span aria-hidden="true">{appearance === 'dark' ? '☀' : '◐'}</span> {appearance === 'dark' ? 'Light mode' : 'Dark mode'}</button><button className="theme-toggle" onClick={() => setDataDialog(true)}><span aria-hidden="true">⛁</span> Data and backups</button><span className={`status-dot ${connected ? 'running' : 'waiting'}`} /> {connected ? 'Runtime connected' : runtime.state === 'connecting' ? 'Starting runtime…' : 'Runtime disconnected'}<small>No terminal transcripts saved</small></div>
     </aside>
+    {/* === End region A: sidebar === */}
 
+    {/* === Region B: main column (session view) === */}
     <main className="workspace">
-      <header className="workspace-heading"><div><span className="eyebrow">WORKSPACE</span><h1>{state?.project.name ?? 'Welcome to Journal'}</h1></div>{state && <span className="branch-badge">⑂ {state.project.branch ?? 'detached HEAD'} <span>{state.project.head?.slice(0, 7)}</span></span>}</header>
+      <header className="workspace-heading"><div><span className="eyebrow">Workspace</span><h1>{state?.project.name ?? 'Welcome to Journal'}</h1></div>{state && <span className="branch-badge">⑂ {state.project.branch ?? 'detached HEAD'} <span>{state.project.head?.slice(0, 7)}</span></span>}</header>
       {runtime.state === 'disconnected' && <div className="error-banner" role="status"><span>The Journal runtime is not connected. Reconnecting… Running sessions are shown as disconnected until their state is known; nothing is resent.</span></div>}
       {runtime.warning && <div className="error-banner" role="status"><span>{runtime.warning}</span></div>}
       {error && <div className="error-banner" role="alert"><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
-      {!state ? <section className="welcome"><img className="welcome-wordmark" src={journalWordmark} alt="Journal" width={280} height={84} /><span className="eyebrow">A CONTINUOUS THREAD</span><h2>Your project, remembered.</h2><p>Work with Claude Code and Codex in their native terminals.<br />Carry the decisions and lessons into the next session.</p><button className="primary" onClick={() => void openProject()} disabled={busy} aria-keyshortcuts={bootstrap?.shortcuts['open-project']?.aria}>Open project</button><div className="welcome-steps"><span>01 <strong>Open a checkout</strong></span><span>02 <strong>Work in a terminal</strong></span><span>03 <strong>Keep what matters</strong></span></div></section>
+      {!state ? <section className="welcome"><img className="welcome-wordmark" src={journalWordmark} alt="Journal" width={280} height={84} /><span className="eyebrow">A continuous thread</span><h2>Your project, remembered.</h2><p>Work with Claude Code and Codex in their native terminals.<br />Carry the decisions and lessons into the next session.</p><button className="primary" onClick={() => void openProject()} disabled={busy} aria-keyshortcuts={bootstrap?.shortcuts['open-project']?.aria}>Open project</button><div className="welcome-steps"><span>01 <strong>Open a checkout</strong></span><span>02 <strong>Work in a terminal</strong></span><span>03 <strong>Keep what matters</strong></span></div></section>
         : <>
           <section className="launch-bar" aria-label="Start an agent terminal"><label htmlFor="initial-task">Initial task <span className="optional">optional · picks relevant notes</span></label><textarea ref={taskRef} id="initial-task" value={task} onChange={e => setTask(e.target.value)} maxLength={4000} rows={2} placeholder="What are you working on? Mention a module or path to include notes about it." />
             {references.length > 0 && <ul className="reference-chips" aria-label="Files referenced for the next task">{references.map((ref, index) => <li key={`${ref.rootKey}:${ref.path}:${ref.startLine}`}>
@@ -357,7 +368,9 @@ export default function App() {
           </section>
         </>}
     </main>
+    {/* === End region B: main column === */}
 
+    {/* === Region B: inspector === */}
     {state && collapsed && <aside className="knowledge-panel panel-rail" id="knowledge-sidebar" aria-label="Side panel (collapsed)">
       <button className="rail-button" aria-label="Show side panel" title={`Show side panel${inspectorKeys ? ` (${inspectorKeys})` : ''}`} onClick={() => setCollapsed(false)}>‹</button>
       {(['files', 'memory', 'context', 'changes', 'activity'] as Panel[]).map(name => <button key={name} className="rail-button rail-tab" disabled={!session && (name === 'changes' || name === 'activity')} onClick={() => { setPanel(name); setCollapsed(false); }} aria-label={`Open ${name}`} title={name[0].toUpperCase() + name.slice(1)}>{name[0].toUpperCase()}</button>)}
@@ -377,13 +390,14 @@ export default function App() {
           setReferences(current => current.some(r => r.rootKey === described.rootKey && r.path === described.path && r.startLine === described.startLine && r.endLine === described.endLine) ? current : [...current, described].slice(-20));
         }}
         onSaveEvidence={source => setEvidenceSource({ kind: 'file', path: source.path, startLine: source.startLine, endLine: source.endLine, ...(source.rootKey.startsWith('root:') ? { rootId: source.rootKey.slice(5) } : {}) })} />}
-      {panel === 'memory' && <KnowledgePanel project={state.project} version={knowledgeVersion} busy={busy} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />}
+      {panel === 'memory' && <KnowledgePanel project={state.project} version={knowledgeVersion} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />}
       {panel === 'changes' && session && <ChangesPanel session={session} fileEvents={liveEvents.filter(e => e.sessionId === session.id && e.kind === 'file').length} />}
       {panel === 'activity' && session && <ActivityPanel session={session} live={liveEvents} />}
       {(panel === 'context' || (!session && (panel === 'changes' || panel === 'activity'))) && <ContextPanel receipt={receipt} session={session} bootstrap={bootstrap} history={state.receipts} disabled={disabled} live={liveEvents}
         onToggle={id => { const next = disabled.includes(id) ? disabled.filter(x => x !== id) : [...disabled, id]; setDisabled(next); if (receipt?.state === 'prepared') void api<Receipt>('prepareContext', { projectId: state.project.id, task: receipt.query, workspaceId: workspaceId || null, disabled: next, references: referenceInputs }).then(setReceipt).catch(failed); }}
         onSelectReceipt={setReceipt} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />}
     </aside>}
+    {/* === End region B: inspector === */}
     {manageId && <ManageProjectDialog projectId={manageId} onClose={() => setManageId(null)} onChanged={() => { void reloadProjects().catch(failed); if (state?.project.id === manageId) void refresh().catch(failed); }}
       onRemoved={() => { const removed = manageId; setManageId(null); removedProject(removed); }} />}
     {renameTarget?.kind === 'project' && <RenameDialog title={`Rename ${renameTarget.project.name}`} label="Display name" value={renameTarget.project.displayName} fallback={renameTarget.project.folderName ?? renameTarget.project.name}
@@ -398,4 +412,5 @@ export default function App() {
     {state && evidenceSource && <KnowledgeForm project={state.project} initialSource={evidenceSource} onClose={() => setEvidenceSource(null)} onSaved={() => { setEvidenceSource(null); setPanel('memory'); setKnowledgeVersion(v => v + 1); }} />}
     {state && form && <KnowledgeForm project={state.project} memory={form.memory} supersedes={form.supersedes} initialCategory={form.initialCategory} draft={form.draft} onClose={() => setForm(null)} onSaved={() => { setForm(null); setPanel('memory'); setKnowledgeVersion(v => v + 1); }} />}
   </ResizableWorkspace>;
+  // === End region C ===
 }
