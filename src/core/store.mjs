@@ -16,7 +16,7 @@ import { addWorktree, creationNotices, listGitWorktrees, plannedPath, registered
 import { redact } from './validation.mjs';
 import { fingerprintSync, treePath } from './files.mjs';
 import { MAX_REFERENCES, pathFromCwd, referencesBlock } from './references.mjs';
-import { deliveryCounts, memoryChecks, memoryOrigins, noteIds, sessionProposals, sessionSummary, staleNotesForSession } from './insights.mjs';
+import { deliveryCounts, memoryChecks, memoryOrigins, noteIds, sessionProposals, sessionSummary, staleNoteDiff, staleNotesForSession } from './insights.mjs';
 
 const LIVE = "('starting','running','waiting','stopping')";
 const EVENT_LIMIT = 2000;
@@ -864,6 +864,7 @@ export class JournalStore {
   // ----- Phase 6: the session wrap-up -----
   sessionSummary(id) { return sessionSummary(this, id); }
   staleNotesForSession(sessionId, options) { return staleNotesForSession(this, sessionId, options); }
+  staleNoteDiff(projectId, memoryId, sessionId, options) { return staleNoteDiff(this, projectId, memoryId, sessionId, options); }
   // acceptProposal's checks, before anything is written.
   openProposal(id) {
     const proposal = this.getProposal(id);

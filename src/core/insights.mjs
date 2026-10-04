@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { PROVIDERS } from './agents.mjs';
-import { evidenceRoot, readEvidenceFile } from './evidence.mjs';
-import { noteChange } from './hunks.mjs';
+import { evidenceRoot, isSensitivePath, readEvidenceFile } from './evidence.mjs';
+import { committedMatches, noteChange, wholeDiff } from './hunks.mjs';
 
 // Read-only answers about notes: where each came from, how many conversations
 // it was sent to, and which current notes need a check. Origins and counts use
@@ -173,20 +173,16 @@ function shownRange({ hunks, after }) {
   return after?.lines.length ? { startLine: after.startLine, endLine: after.startLine + after.lines.length - 1 } : null;
 }
 
-// Remembered notes on files the session changed that are now out of date, with
-// what changed under their cited lines. At most 20 notes, one Git diff each, and at
-// most about 10 s in all: past the deadline it stops early with truncated: true.
-export function staleNotesForSession(store, sessionId, { deadlineMs = STALE_DEADLINE_MS } = {}) {
-  const deadline = Date.now() + deadlineMs;
-  const session = store.getSession(sessionId);
-  const unavailable = { available: false, notes: [], truncated: false };
-  const changed = changedPaths(store, session); if (!changed) return unavailable;
+// The view a session's notes are read in, and the paths it changed (relative to the
+// note roots), with a rename's old path mapped to the new one. null: not available.
+function sessionScope(store, session) {
+  const changed = changedPaths(store, session); if (!changed) return null;
   const workspaceId = session.workspaceId ?? null; const folderId = typeof workspaceId === 'string' && workspaceId.startsWith('root:') ? workspaceId.slice(5) : null;
-  let view; try { view = store.view(session.projectId, folderId ? null : workspaceId); } catch { return unavailable; }
+  let view; try { view = store.view(session.projectId, folderId ? null : workspaceId); } catch { return null; }
   // A folder session's paths are relative to its Git root; notes cite paths relative to the folder.
   let prefix = '';
   if (folderId) {
-    const root = (view.roots ?? []).find(entry => entry.id === folderId); if (!root) return unavailable;
+    const root = (view.roots ?? []).find(entry => entry.id === folderId); if (!root) return null;
     const rel = root.kind === 'git' ? relative(root.gitRoot ?? root.path, root.path).split(sep).join('/') : '';
     prefix = rel ? `${rel}/` : '';
   }
@@ -197,6 +193,18 @@ export function staleNotesForSession(store, sessionId, { deadlineMs = STALE_DEAD
     if (!byPath.has(path)) byPath.set(path, { renamedTo: null });
     const from = local(entry.from); if (from) byPath.set(from, { renamedTo: path });
   }
+  return { view, workspaceId, folderId, inWorktree: !!workspaceId && !folderId, byPath };
+}
+
+// Remembered notes on files the session changed that are now out of date, with
+// what changed under their cited lines. At most 20 notes, one Git diff each, and at
+// most about 10 s in all: past the deadline it stops early with truncated: true.
+export function staleNotesForSession(store, sessionId, { deadlineMs = STALE_DEADLINE_MS } = {}) {
+  const deadline = Date.now() + deadlineMs;
+  const session = store.getSession(sessionId);
+  const unavailable = { available: false, notes: [], truncated: false };
+  const scope = sessionScope(store, session); if (!scope) return unavailable;
+  const { view, workspaceId, folderId, inWorktree, byPath } = scope;
   if (!byPath.size) return { available: true, notes: [], truncated: false };
   const rows = store.db.prepare(`SELECT r.body, m.status, m.pinned FROM memories m JOIN revisions r ON r.id=m.current_revision
     WHERE m.project_id=? AND m.status='active' AND json_extract(r.body,'$.source.kind')='file'
@@ -205,7 +213,6 @@ export function staleNotesForSession(store, sessionId, { deadlineMs = STALE_DEAD
     AND (json_extract(r.body,'$.scope')='checkout' OR json_extract(r.body,'$.branch') IS ?)
     ORDER BY r.rowid DESC LIMIT 500`).all(session.projectId, JSON.stringify([...byPath.keys()]), folderId ?? '', view.branch ?? null);
   const cache = new Map(); const notes = []; let truncated = false;
-  const inWorktree = !!workspaceId && !folderId;
   for (const row of rows) {
     if (Date.now() > deadline) { truncated = true; break; }
     const note = { ...JSON.parse(row.body), status: row.status, pinned: !!row.pinned };
@@ -224,4 +231,40 @@ export function staleNotesForSession(store, sessionId, { deadlineMs = STALE_DEAD
       reaffirm, workspaceId: note.scope === 'branch' && inWorktree ? workspaceId : null });
   }
   return { available: true, notes, truncated };
+}
+
+// The whole change under one note of a session's catch, from the note's own base (the
+// commit its content was saved from) to the file now: the diff whose hunks the catch
+// shows, untruncated. contentHash is the file as diffed; "Still true" may send it only
+// when it equals the catch item's. Bounded like the catch: one file the session changed,
+// at most 200 KB of diff, Git calls of at most 8 s and about 10 s in all.
+// Unavailable (with a reason) when the file is hidden for its name, missing, not saved
+// from a commit Git still has, too large, changed while it was read, or anything fails.
+export function staleNoteDiff(store, projectId, memoryId, sessionId, { deadlineMs = STALE_DEADLINE_MS } = {}) {
+  const deadline = Date.now() + deadlineMs;
+  const no = reason => ({ available: false, reason, text: null, contentHash: null });
+  try {
+    const session = store.getSession(sessionId);
+    if (session.projectId !== projectId) return no('not-in-session');
+    const row = store.db.prepare(`SELECT r.body FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.id=? AND m.project_id=? AND m.status='active'`).get(memoryId, projectId);
+    if (!row) return no('not-in-session');
+    const note = JSON.parse(row.body); const source = note.source ?? {};
+    if (source.kind !== 'file' || typeof source.path !== 'string') return no('not-in-session');
+    if (isSensitivePath(source.path)) return no('hidden');
+    const scope = sessionScope(store, session);
+    if (!scope || (source.rootId ?? null) !== (scope.folderId ?? null) || !scope.byPath.has(source.path)
+      || (note.scope === 'branch' && note.branch !== (scope.view.branch ?? null))) return no('not-in-session');
+    const root = evidenceRoot(scope.view, source.rootId ?? null);
+    if (!root || !existsSync(join(root.path, ...source.path.split('/')))) return no('file-missing');
+    if (!root.git || !committedMatches(root.path, source.commit, source.path, source.contentHash)) return no('no-base');
+    if (Date.now() > deadline) return no('failed');
+    const before = readEvidenceFile(root.path, source.path, { tracked: root.git }).contentHash;
+    const diff = wholeDiff(root.path, source.commit, source.path);
+    if (diff.text === null) return no(diff.reason);
+    // The file must not change between the hash and the diff; otherwise the text and the hash disagree.
+    const after = readEvidenceFile(root.path, source.path, { tracked: root.git }).contentHash;
+    if (before !== after) return no('changed');
+    if (Date.now() > deadline) return no('failed');
+    return { available: true, reason: null, path: source.path, base: source.commit, text: diff.text, contentHash: after };
+  } catch { return no('failed'); }
 }

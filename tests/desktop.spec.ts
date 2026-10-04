@@ -136,10 +136,11 @@ process.stdin.on('data',data=>{
     await expect(page.locator('.session-header .provider-mark.codex[aria-hidden="true"] svg')).toBeVisible();
     await expect(page.getByRole('button', { name: /^Codex:/ }).first().locator('.provider-mark.codex[aria-hidden="true"] svg')).toBeVisible();
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.getByLabel('Native session ID')).toBeVisible();
-    await page.getByLabel('Native session ID').fill('bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb');
+    // Phase 6: an ended session opens on its wrap-up, whose Continue card holds the confirm row.
+    await expect(page.getByLabel('Conversation ID')).toBeVisible();
+    await page.getByLabel('Conversation ID').fill('bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb');
     await page.getByRole('button', { name: 'Confirm conversation ID' }).click();
-    await sessionActions(page).getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.locator('.wrap-up').getByRole('button', { name: 'Continue', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb');
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
@@ -149,7 +150,7 @@ process.stdin.on('data',data=>{
     await startSession(page, 'codex', { task: 'Docker tests NEW_CODEX_SESSION_MARKER' });
     await expect(page.locator('.terminal-surface')).toContainText('NEW_CODEX_SESSION_MARKER');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.getByLabel('Native session ID')).toHaveValue('');
+    await expect(page.getByLabel('Conversation ID')).toHaveValue('');
     // Security boundary rejects arbitrary IPC actions and filesystem operations.
     const error = await page.evaluate(async () => {
       try { await (window as any).journal.request('readFile', { path: '/etc/passwd' }); return 'allowed'; }
