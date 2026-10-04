@@ -27,8 +27,8 @@ function fixture(t, { commit = true } = {}) {
   const flag = () => store.storedProject(project.id).orientation?.state ?? null;
   // The cards as the renderer sends them: filled statements plus each draft's base and head.
   const parts = (drafts, fields = { currentWork: 'Refund export', next: 'Wire the CSV button' }) => ({
-    overview: drafts.overview && { statement: fillDraft(drafts.overview.statement, fields), base: drafts.overview.source.base, head: drafts.overview.basis.head },
-    branch: drafts.branch && { statement: fillDraft(drafts.branch.statement, fields), base: drafts.branch.source.base, head: drafts.branch.basis.head },
+    overview: drafts.overview && { statement: fillDraft(drafts.overview.statement, fields), base: drafts.overview.source.base, head: drafts.overview.basis.head, branch: drafts.branchName },
+    branch: drafts.branch && { statement: fillDraft(drafts.branch.statement, fields), base: drafts.branch.source.base, head: drafts.branch.basis.head, branch: drafts.branchName },
   });
   return { root, repo, git, commitAll, store, project, audits, flag, parts };
 }
@@ -44,7 +44,8 @@ test('a fresh repo needs orientation once', t => {
   assert.equal(drafts.projectId, f.project.id); assert.equal(drafts.head, f.git('rev-parse', 'HEAD'));
   assert.equal(drafts.overview.scope, 'checkout'); assert.match(drafts.overview.statement, /^Purpose: Ledger records invoices/);
   assert.deepEqual(drafts.overview.basis.facts, { readme: 'README.md', folders: 1, commits: 1, counted: true });
-  assert.equal(drafts.branch.scope, 'branch'); assert.equal(drafts.branchSkipped, null);
+  assert.equal(drafts.branch.scope, 'branch'); assert.equal(drafts.branchSkipped, null); assert.equal(drafts.overviewSkipped, null);
+  assert.equal(drafts.branchName, 'main');
   assert.equal(f.flag(), 'shown', 'marked when the drafts are produced, even if the user walks away');
   assert.equal(f.store.needsOrientation(f.project.id), false);
   assert.equal(f.store.firstRunDrafts(f.project.id), null);
@@ -117,7 +118,7 @@ test('rememberDraft is all-or-nothing', t => {
   assert.equal(f.store.listMemories(f.project.id).length, 0); assert.equal(f.audits('memory-active').length, 0); assert.equal(f.audits('orientation-remembered').length, 0);
   assert.equal(f.flag(), 'shown'); assert.equal(f.store.hasActiveNotes(), false);
   // A placeholder never reaches storage.
-  const raw = { overview: { statement: drafts.overview.statement.replace(/^Purpose:.*$/m, 'Purpose: [describe it]'), base: null, head: drafts.head }, branch: null };
+  const raw = { overview: { statement: drafts.overview.statement.replace(/^Purpose:.*$/m, 'Purpose: [describe it]'), base: null, head: drafts.head, branch: drafts.branchName }, branch: null };
   assert.throws(() => f.store.rememberDraft(f.project.id, raw, { via: 'first-run' }), /placeholders/);
 });
 
@@ -136,6 +137,31 @@ test('rememberDraft refuses a moved HEAD and a brief added meanwhile', t => {
   assert.deepEqual(notes.map(note => note.scope), ['branch']);
 });
 
+test('rememberDraft refuses a switch to another branch at the same HEAD', t => {
+  const f = fixture(t);
+  const drafts = f.store.firstRunDrafts(f.project.id);
+  f.git('checkout', '-q', '-b', 'other');
+  assert.equal(f.store.project(f.project.id).head, drafts.head, 'same commit');
+  assert.throws(() => f.store.rememberDraft(f.project.id, f.parts(drafts), { via: 'first-run' }), /The project changed since these drafts were made\. Open Project memory to draft them again\./);
+  assert.throws(() => f.store.rememberDraft(f.project.id, { ...f.parts(drafts), branch: null }, { via: 'first-run' }), /The project changed/, 'the overview card alone too');
+  assert.equal(f.store.listMemories(f.project.id).length, 0, 'nothing was remembered');
+  f.git('checkout', '-q', 'main');
+  assert.equal(f.store.rememberDraft(f.project.id, f.parts(drafts), { via: 'first-run' }).length, 2, 'back on the drafted branch it works');
+});
+
+test('a draft that fails reads as failed, not as a reason it never had', t => {
+  const f = fixture(t);
+  const original = f.store.proposeStatusUpdate.bind(f.store);
+  f.store.proposeStatusUpdate = (id, scope) => { if (scope === 'branch') throw new Error('git broke'); return original(id, scope); };
+  const drafts = f.store.firstRunDrafts(f.project.id);
+  assert.ok(drafts.overview); assert.equal(drafts.branch, null); assert.equal(drafts.branchSkipped, 'failed'); assert.equal(drafts.overviewSkipped, null);
+  const other = fixture(t);
+  const second = other.store.proposeStatusUpdate.bind(other.store);
+  other.store.proposeStatusUpdate = (id, scope) => { if (scope === 'checkout') throw new Error('git broke'); return second(id, scope); };
+  const only = other.store.firstRunDrafts(other.project.id);
+  assert.equal(only.overview, null); assert.equal(only.overviewSkipped, 'failed'); assert.ok(only.branch); assert.equal(only.branchSkipped, null);
+});
+
 test('rememberDraft refuses any via but first-run, and malformed parts', t => {
   const f = fixture(t);
   const drafts = f.store.firstRunDrafts(f.project.id); const input = f.parts(drafts);
@@ -143,6 +169,7 @@ test('rememberDraft refuses any via but first-run, and malformed parts', t => {
   assert.throws(() => f.store.rememberDraft(f.project.id, { overview: null, branch: null }, { via: 'first-run' }), /Choose a draft/);
   assert.throws(() => f.store.rememberDraft(f.project.id, { overview: { statement: 'x' }, branch: null }, { via: 'first-run' }), /Invalid draft/);
   assert.throws(() => f.store.rememberDraft(f.project.id, { overview: 'text', branch: null }, { via: 'first-run' }), /Invalid draft/);
+  assert.throws(() => f.store.rememberDraft(f.project.id, { overview: { statement: input.overview.statement, base: input.overview.base, head: drafts.head }, branch: null }, { via: 'first-run' }), /Invalid draft/, 'the branch the drafts were made on is required');
   assert.equal(f.store.listMemories(f.project.id).length, 0);
 });
 

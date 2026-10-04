@@ -132,8 +132,8 @@ test('first-run actions: dropped paths, the headless gate and remembering both d
     const fill = (statement: string) => statement.split('\n').filter(line => !/\[describe/.test(line)).join('\n');
     // The window cannot choose its audit label.
     const notes = await request<any[]>(page, 'rememberDraft', { projectId: project.id, via: 'wrap-up',
-      overview: { statement: fill(drafts.overview.statement), base: drafts.overview.source.base, head: drafts.head },
-      branch: { statement: fill(drafts.branch.statement), base: drafts.branch.source.base, head: drafts.head } });
+      overview: { statement: fill(drafts.overview.statement), base: drafts.overview.source.base, head: drafts.head, branch: drafts.branchName },
+      branch: { statement: fill(drafts.branch.statement), base: drafts.branch.source.base, head: drafts.head, branch: drafts.branchName } });
     expect(notes.map(note => note.status)).toEqual(['active', 'active']);
     const db = new DatabaseSync(resolve(f.root, 'data', 'journal.sqlite'), { readOnly: true });
     try {

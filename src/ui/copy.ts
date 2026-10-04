@@ -169,7 +169,10 @@ export const firstRun = {
   noBranch: {
     detached: 'This checkout isn’t on a branch, so I drafted only “About this project”.',
     unborn: 'This repository has no commits yet. Make a first commit and I’ll draft these notes.',
-    'no-commits': 'This branch has no commits of its own yet, so I drafted only “About this project”.',
+    failed: 'I couldn’t read this branch’s history from Git, so I drafted only “About this project”.',
+  },
+  noProject: {
+    failed: 'I couldn’t read this project’s files from Git, so I drafted only “Where this branch stands”.',
   },
   firstNote: 'First note remembered. Every new session in Journal will know it.',
   draftBranch: 'Draft “Where this branch stands”', draftProject: 'Draft “About this project”',

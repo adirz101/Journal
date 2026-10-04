@@ -930,16 +930,19 @@ export class JournalStore {
     const project = this.project(projectId);
     // An unborn HEAD is not marked: there is nothing to draft until the first commit.
     if (!project.head) return null;
-    let overview = null; let branch = null; let branchSkipped = null;
-    try { overview = this.proposeStatusUpdate(projectId, 'checkout'); } catch { overview = null; }
+    // With a commit and a named branch neither draft is expected to throw, so a throw is a
+    // real failure (Git could not be read): the card is null with the neutral reason 'failed'.
+    let overview = null; let branch = null; let branchSkipped = null; let overviewSkipped = null;
+    try { overview = this.proposeStatusUpdate(projectId, 'checkout'); } catch { overviewSkipped = 'failed'; }
     if (!project.branch) branchSkipped = 'detached';
-    else { try { branch = this.proposeStatusUpdate(projectId, 'branch'); } catch { branchSkipped = 'no-commits'; } }
+    else { try { branch = this.proposeStatusUpdate(projectId, 'branch'); } catch { branchSkipped = 'failed'; } }
     if (!overview && !branch) return null;
     this.setOrientation(projectId, 'shown');
-    return { projectId, head: project.head, overview, branch, branchSkipped };
+    // branchName: the branch the drafts were made on; rememberDraft refuses another one.
+    return { projectId, head: project.head, branchName: project.branch ?? null, overview, branch, branchSkipped, overviewSkipped };
   }
   // One action for both first-run cards (D1: the whole statements were on screen). Each part
-  // is null or { statement, base, head }. Every check, Git query and evidence read happens in
+  // is null or { statement, base, head, branch } (head and branch: the drafts' head and branchName). Every check, Git query and evidence read happens in
   // prepareMemory before one transaction writes, remembers and audits them all; any throw
   // leaves nothing behind. `via` is set by the main process.
   rememberDraft(projectId, { overview = null, branch = null } = {}, { via } = {}) {
@@ -947,10 +950,11 @@ export class JournalStore {
     const parts = [['checkout', overview], ['branch', branch]].filter(([, part]) => part !== null && part !== undefined);
     if (!parts.length) throw new Error('Choose a draft to remember');
     for (const [, part] of parts) {
-      if (typeof part !== 'object' || Array.isArray(part) || typeof part.statement !== 'string' || typeof part.head !== 'string' || !(part.base === null || typeof part.base === 'string')) throw new Error('Invalid draft');
+      if (typeof part !== 'object' || Array.isArray(part) || typeof part.statement !== 'string' || typeof part.head !== 'string' || !(part.base === null || typeof part.base === 'string') || !(part.branch === null || typeof part.branch === 'string')) throw new Error('Invalid draft');
     }
     const project = this.project(projectId);
-    if (parts.some(([, part]) => part.head !== project.head)) throw new Error('The project changed since these drafts were made. Open Project memory to draft them again.');
+    // A switch to another branch at the same commit changes what the branch card describes.
+    if (parts.some(([, part]) => part.head !== project.head || part.branch !== (project.branch ?? null))) throw new Error('The project changed since these drafts were made. Open Project memory to draft them again.');
     const meanwhile = () => new Error('A project summary was added meanwhile; review it in Project memory');
     const target = scope => scope === 'branch' ? project.branch : null;
     const prepared = parts.map(([scope, part]) => {
