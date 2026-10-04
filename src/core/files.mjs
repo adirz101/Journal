@@ -151,10 +151,13 @@ export function fingerprintSync(root, path, startLine = null, endLine = null) {
   return { kind: 'lines', contentHash, rangeHash: rangeHash(text, startLine, endLine) };
 }
 
-const git = (gitRoot, args, maxBuffer = MAX_DIFF_BYTES * 4) => new Promise((resolve, reject) => {
+// run() settles with both the error and whatever was written; git() keeps output
+// it got even when Git then failed (diffs), listFiles() decides for itself.
+const run = (gitRoot, args, maxBuffer) => new Promise(resolve => {
   execFile('git', ['-C', gitRoot, ...args], { encoding: 'utf8', timeout: 8000, maxBuffer, windowsHide: true, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1' } },
-    (error, stdout) => error && !stdout ? reject(error) : resolve(stdout));
+    (error, stdout) => resolve({ error, stdout: stdout ?? '' }));
 });
+const git = (gitRoot, args, maxBuffer = MAX_DIFF_BYTES * 4) => run(gitRoot, args, maxBuffer).then(({ error, stdout }) => { if (error && !stdout) throw error; return stdout; });
 
 // The working-tree diff of one file against HEAD (what the explorer's
 // decorations describe). Untracked files are shown as wholly added.
@@ -182,4 +185,176 @@ export async function headDiff(root, gitRoot, prefix, path) {
     }
   }
   return { path, hidden: false, truncated: text.length > MAX_DIFF_BYTES, text: text.slice(0, MAX_DIFF_BYTES) };
+}
+
+// Open-file search (Phase 8). The listing comes from git ls-files only (tracked
+// and untracked, never ignored); there is no directory walk, and no file is read.
+// Sensitive paths are dropped here and again by previewFile when a hit is opened.
+export const MAX_LISTED_FILES = 200_000;
+const MAX_LISTING_BYTES = 64 * 1024 * 1024;
+const MAX_QUERY = 200; const MAX_TOKENS = 8; const MAX_RANKED_PATH = 1024;
+
+export async function listFiles(root) {
+  if (!root?.git || !root.gitRoot) return { available: false, reason: 'not-git' };
+  const prefix = root.prefix ?? '';
+  const { error, stdout } = await run(root.gitRoot, ['ls-files', '-z', '--cached', '--others', '--exclude-standard', ...(prefix ? ['--', prefix] : [])], MAX_LISTING_BYTES);
+  // A listing cut short by the size or time limit is used up to its last complete
+  // entry and reported as truncated. Any other failure is reported without Git's
+  // message, which may name paths outside this root.
+  const partial = !!error && !!stdout && (error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || error.killed === true);
+  if (error && !partial) return { available: false, reason: 'failed' };
+  return parseListing(stdout, prefix, { partial });
+}
+
+// ls-files -z output to root-relative paths, in order: the prefix stripped,
+// duplicates dropped (a path can be both cached and modified), sensitive paths
+// dropped by both their repository- and root-relative forms, and names the
+// explorer cannot address (control characters, backslashes, over 1024
+// characters) skipped. Stops at MAX_LISTED_FILES. partial: the output was cut
+// off, so its last entry may be incomplete.
+export function parseListing(output, prefix = '', { partial = false } = {}) {
+  const entries = output.split('\0'); entries.pop(); // empty after the final NUL, or a cut-off entry
+  const seen = new Set(); const paths = []; let truncated = partial;
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue;
+    const path = entry.slice(prefix.length);
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    if (isSensitivePath(entry) || isSensitivePath(path)) continue;
+    try { treePath(path); } catch { continue; }
+    if (paths.length === MAX_LISTED_FILES) { truncated = true; break; }
+    paths.push(path);
+  }
+  return { available: true, paths, truncated };
+}
+
+// Lower-cased copies of listings, kept while main keeps the listing itself.
+const lowered = new WeakMap();
+const lower = path => { const value = path.toLowerCase(); return value.length === path.length ? value : Array.from(path, c => { const l = c.toLowerCase(); return l.length === c.length ? l : c; }).join(''); };
+// A segment starts at the start, after / - _ . or a space, or at a camelCase boundary.
+const isSeparator = c => c === 47 || c === 45 || c === 95 || c === 46 || c === 32;
+const segmentStart = (path, i) => {
+  if (i === 0) return true;
+  const before = path.charCodeAt(i - 1); const at = path.charCodeAt(i);
+  return isSeparator(before) || (at >= 65 && at <= 90 && ((before >= 97 && before <= 122) || (before >= 48 && before <= 57)));
+};
+
+// Positions of one candidate placement, reused across paths (tokens are at most 200 characters).
+const candidate = new Int32Array(MAX_QUERY); const chosen = new Int32Array(MAX_QUERY);
+function scorePlacement(path, base, positions, length) {
+  let score = 0;
+  for (let k = 0; k < length; k++) {
+    const i = positions[k]; score += 1;
+    if (segmentStart(path, i)) score += k === 0 ? 10 : 6;
+    if (i >= base) score += 2;
+    if (k > 0) { const gap = i - positions[k - 1] - 1; score += gap === 0 ? 5 : -Math.min(gap, 12); }
+  }
+  if (positions[0] >= base && positions[length - 1] - positions[0] === length - 1) score += 12; // contiguous in the basename
+  return score;
+}
+
+// The best score of one token in a path, or null when it is not a subsequence;
+// the winning positions are left in chosen. Candidates: each contiguous
+// occurrence (at most 16), else a greedy subsequence from each of the first 16
+// occurrences of its first character, tightened back from its end.
+let best = null; let bestStart = -1;
+function keep(score, length) {
+  if (best === null || score > best || (score === best && candidate[0] < bestStart)) { best = score; bestStart = candidate[0]; for (let k = 0; k < length; k++) chosen[k] = candidate[k]; }
+}
+function placeToken(path, low, base, token) {
+  const length = token.length; best = null; bestStart = -1;
+  for (let at = low.indexOf(token), n = 0; at >= 0 && n < 16; at = low.indexOf(token, at + 1), n++) {
+    for (let k = 0; k < length; k++) candidate[k] = at + k;
+    keep(scorePlacement(path, base, candidate, length), length);
+  }
+  if (best !== null) return best;
+  // Subsequences start at the first occurrence of the first character or at a segment start.
+  const first = token[0];
+  for (let start = low.indexOf(first), n = 0; start >= 0 && n < 8; start = low.indexOf(first, start + 1)) {
+    if (n && !segmentStart(path, start)) continue;
+    n++; candidate[0] = start; let i = start;
+    for (let k = 1; k < length; k++) { i = low.indexOf(token[k], i + 1); if (i < 0) return best; candidate[k] = i; }
+    for (let k = length - 2; k >= 0; k--) candidate[k] = low.lastIndexOf(token[k], candidate[k + 1] - 1);
+    keep(scorePlacement(path, base, candidate, length), length);
+  }
+  return best;
+}
+
+// The total score of a path for all tokens, or null; with positions, the matched indexes are collected.
+const isSubsequence = (low, token) => {
+  if (low.indexOf(token) >= 0) return true;
+  for (let k = 0, i = -1; k < token.length; k++) { i = low.indexOf(token[k], i + 1); if (i < 0) return false; }
+  return true;
+};
+function scorePath(path, low, tokens, positions = null) {
+  // Most paths fail some token: check them all cheaply before scoring any.
+  for (const token of tokens) if (!isSubsequence(low, token)) return null;
+  const base = path.lastIndexOf('/') + 1; let score = 0;
+  for (const token of tokens) {
+    const place = placeToken(path, low, base, token); if (place === null) return null;
+    score += place; if (positions) for (let k = 0; k < token.length; k++) positions.push(chosen[k]);
+  }
+  return score - path.length / 16; // shorter paths first
+}
+
+const merge = positions => {
+  const spans = [];
+  for (const i of [...new Set(positions)].sort((a, b) => a - b)) { const last = spans.at(-1); if (last && last[1] === i) last[1] = i + 1; else spans.push([i, i + 1]); }
+  return spans;
+};
+const pathOrder = new Intl.Collator('en', { numeric: true });
+const better = (a, b) => b.score - a.score || pathOrder.compare(a.path, b.path) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+
+// A ranking in progress: tokens, the best hits so far and the match count.
+// Lower-cased paths are kept per listing (a WeakMap on main's cached array) and
+// filled as they are first needed.
+function rankState(paths, query, limit) {
+  const tokens = String(query ?? '').slice(0, MAX_QUERY).toLowerCase().split(/\s+/).filter(Boolean).slice(0, MAX_TOKENS);
+  if (!tokens.length || !Array.isArray(paths)) return null;
+  let lows = lowered.get(paths); if (!lows) { lows = new Array(paths.length); lowered.set(paths, lows); }
+  return { tokens, lows, limit: Math.max(1, Math.min(100, Math.trunc(limit) || 50)), top: [], total: 0 };
+}
+function rankRange(state, paths, from, to) {
+  const { tokens, lows, limit, top } = state;
+  for (let p = from; p < to; p++) {
+    const path = paths[p]; if (typeof path !== 'string' || path.length > MAX_RANKED_PATH) continue;
+    const low = lows[p] ?? (lows[p] = lower(path));
+    const score = scorePath(path, low, tokens); if (score === null) continue;
+    state.total++;
+    if (top.length === limit && score < top[limit - 1].score) continue;
+    const hit = { path, low, score };
+    if (top.length === limit && better(hit, top[limit - 1]) >= 0) continue;
+    let lo = 0; let hi = top.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (better(hit, top[mid]) < 0) hi = mid; else lo = mid + 1; }
+    top.splice(lo, 0, hit); if (top.length > limit) top.pop();
+  }
+}
+// Positions are collected again for the hits shown only.
+const rankResult = state => ({ total: state.total,
+  hits: state.top.map(({ path, low, score }) => { const positions = []; scorePath(path, low, state.tokens, positions); return { path, score: Math.round(score * 100) / 100, spans: merge(positions) }; }) });
+
+// Pure and deterministic: every whitespace-separated token must match as a
+// subsequence (case-insensitive), in any order. Higher scores first (basename,
+// segment-start and contiguous matches; shorter paths), then path order.
+// spans are [start, end) ranges of matched characters in path, merged.
+export function rankFiles(paths, query, limit = 50) {
+  const state = rankState(paths, query, limit); if (!state) return { hits: [], total: 0 };
+  rankRange(state, paths, 0, paths.length);
+  return rankResult(state);
+}
+
+// searchFiles runs in the main process, which also routes every key press: it
+// ranks in slices and yields between them, so a broad query over a large
+// listing never blocks input for more than a few milliseconds at a time.
+const RANK_SLICE = 20_000;
+export async function searchFiles(root, query, { limit = 50, list = listFiles } = {}) {
+  const listing = await list(root);
+  if (!listing.available) return { available: false, reason: listing.reason === 'not-git' ? 'not-git' : 'failed', hits: [], total: 0, truncated: false };
+  const { paths } = listing; const state = rankState(paths, query, limit);
+  if (!state) return { available: true, hits: [], total: 0, truncated: !!listing.truncated };
+  for (let from = 0; from < paths.length; from += RANK_SLICE) {
+    if (from) await new Promise(resolve => setImmediate(resolve));
+    rankRange(state, paths, from, Math.min(paths.length, from + RANK_SLICE));
+  }
+  return { available: true, ...rankResult(state), truncated: !!listing.truncated };
 }
