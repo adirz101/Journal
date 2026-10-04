@@ -189,7 +189,7 @@ let agents = initialAgents(process.platform, process.env);
 // log it as a launch), so help reads and probes run only when a spec asks for them.
 const probesAllowed = () => !headless || globalThis.__journalAuthProbes === true;
 const checks = new Map();
-const refreshProvider = async (provider, { fresh = false } = {}) => {
+const refreshProvider = async (provider, { fresh = false, after = null } = {}) => {
   // After an install or sign-in a running (older) check is waited for and a new
   // one started, so the result reflects the change.
   if (checks.has(provider) && !fresh) return checks.get(provider);
@@ -207,7 +207,8 @@ const refreshProvider = async (provider, { fresh = false } = {}) => {
       if (probes) row = { ...row, auth: await probeAuth(row, process.env) };
     }
     agents = agents.map(agent => agent.provider === provider ? row : agent);
-    send({ type: 'providers', agents });
+    // after names the install or sign-in that ended, so the renderer can say what changed.
+    send({ type: 'providers', agents, ...(after ? { after: { provider, kind: after } } : {}) });
     return row;
   })();
   checks.set(provider, check); void check.finally(() => { if (checks.get(provider) === check) checks.delete(provider); }).catch(() => {});
@@ -220,7 +221,7 @@ const refreshProviders = () => Promise.all(PROVIDERS.map(provider => refreshProv
 void refreshProviders();
 const currentRow = provider => checks.get(provider) ?? agents.find(agent => agent.provider === provider);
 // After an install or sign-in ends, main checks that provider again itself.
-const processes = new ProcessRunner(event => { send(event); if (event.type === 'process-exit') void refreshProvider(event.provider, { fresh: true }).catch(() => {}); },
+const processes = new ProcessRunner(event => { send(event); if (event.type === 'process-exit') void refreshProvider(event.provider, { fresh: true, after: event.kind }).catch(() => {}); },
   async (file, args, options) => (await import('node-pty')).spawn(file, args, options));
 const runnable = env => { const next = { ...env }; delete next.ELECTRON_RUN_AS_NODE; return next; };
 const actions = {
@@ -234,8 +235,14 @@ const actions = {
     if (typeof open !== 'boolean') throw new Error('Invalid dialog state');
     modalOpen = open;
   },
-  bootstrap: async () => ({ projects: await store.listProjects(), agents, platform: process.platform, shortcuts: shortcutKeys(process.platform), runtime: { state: runtimeState, warning: runtimeWarning },
-    live: runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [], active: await store.activeSessions(), hasNotes: await store.hasActiveNotes() }),
+  // agents is read after the last await, so a providers event sent while bootstrap waited
+  // is already in it (the renderer also keeps such events and applies the newest).
+  bootstrap: async () => {
+    const projects = await store.listProjects(); const runtimeInfo = { state: runtimeState, warning: runtimeWarning };
+    const live = runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [];
+    const active = await store.activeSessions(); const hasNotes = await store.hasActiveNotes();
+    return { projects, agents, platform: process.platform, shortcuts: shortcutKeys(process.platform), runtime: runtimeInfo, live, active, hasNotes };
+  },
   openProject: async () => {
     const result = await dialog.showOpenDialog(window, { title: 'Open a Git project', properties: ['openDirectory'] });
     return result.canceled ? null : store.openProject(result.filePaths[0]);
