@@ -32,11 +32,12 @@ export function EndedTerminal({ session, appearance, onError, handleRef, preview
 // hidden: Show terminal is on. The wrap-up stays mounted (staged choices keep their Undo)
 // but takes no keys and holds no terminal preview.
 export function WrapUp({ session, project, workspaces, receipt, events, agents, appearance, mac, busy, canStart, connected, justEnded, hidden = false, knowledgeVersion = 0,
-  onShowTerminal, onContinue, onConfirmId, onCopyId, onOpenDiff, onOpenMemory, onEdit, onFinishDraft, onHandoff, onChanged, onError }: {
+  onShowTerminal, onContinue, onConfirmId, onCopyId, onOpenDiff, onOpenMemory, onEdit, onFinishDraft, onHandoff, onChanged, onRemembered, onError }: {
   session: Session; project: Project; workspaces: Workspace[]; receipt: Receipt | null; events: TimelineEvent[]; agents: AgentInfo[];
   appearance: Appearance; mac: boolean; busy: boolean; canStart: boolean; connected: boolean; justEnded: boolean; hidden?: boolean; knowledgeVersion?: number;
   onShowTerminal(): void; onContinue(): void; onConfirmId(nativeId: string): Promise<void>; onCopyId(): void; onOpenDiff(): void; onOpenMemory(): void;
   onEdit(memory: Memory, done: () => void): void; onFinishDraft(): void; onHandoff(prefill: HandoffPrefill): void; onChanged(): void; onError(error: unknown): void;
+  onRemembered?(): void;   // Phase 7: after a successful Remember (App claims the once-per-install first-note moment)
 }) {
   const data = useWrapUp(session, onError, knowledgeVersion);
   const { summary } = data;
@@ -98,7 +99,7 @@ export function WrapUp({ session, project, workspaces, receipt, events, agents, 
   async function remember(ids: string[]) {
     if (working) return;
     setWorking(true); setRememberError(''); markSeen();
-    try { await api('rememberProposals', { ids }); setOutcomes(current => ({ ...current, ...Object.fromEntries(ids.map(id => [id, 'remembered' as const])) })); announce(wrapUp.remembered); onChanged(); }
+    try { await api('rememberProposals', { ids }); setOutcomes(current => ({ ...current, ...Object.fromEntries(ids.map(id => [id, 'remembered' as const])) })); announce(wrapUp.remembered); onChanged(); onRemembered?.(); }
     catch (failure) { setRememberError(message(failure)); }
     finally { setWorking(false); }
   }

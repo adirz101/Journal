@@ -1,7 +1,10 @@
 import { useCallback, useMemo, useRef, type FormEvent, type KeyboardEvent, type RefObject } from 'react';
 import { TaskField } from './TaskField';
 import { ContextPreview, PreviewNote } from './ContextPreview';
-import { CursorStatus } from './ProviderStatus';
+import { ProviderStatus } from './ProviderStatus';
+import type { ProviderBusy, ProviderHandlers } from './AgentRow';
+import { actionLabel, actionName } from './firstRunModel';
+import { useKeepFocus } from './useKeepFocus';
 import { ProviderMark } from './ProviderMark';
 import { useContextPreview } from './useContextPreview';
 import { AGENT_ORDER, MAX_LIVE, agentCard, agentTitle, modeBlock, MODES, modeSupport, previewView, startBlock, type PreviewItem } from './composerModel';
@@ -19,11 +22,32 @@ export interface ComposerProps {
   onStart(): void;                       // App's start(provider) with modeFlags(mode)
   onInspect(receipt: Receipt): void;     // set the receipt, show the inspector's Session tab
   onChecked?(receipt: Receipt): void;    // every applied full check (the inspector follows a preview it shows)
-  // Provider rows (Phase 7, every provider): install, the install page, sign in and check again.
-  // note: Cursor's result after its install or sign-in (shown in Cursor's status row).
-  providers: { checking: boolean; note: string; onInstall(p: Provider): void; onInstallPage(p: Provider): void; onLogin(p: Provider): void; onCheck(p: Provider): void };
+  // Install, the install page, sign in and check again for every provider (Phase 7's handlers,
+  // shared with Welcome). busy: an action or check in flight per provider; notes: what the last
+  // install or sign-in changed, per provider (shown under the cards).
+  providers: ProviderHandlers & { busy: ProviderBusy; notes: Partial<Record<Provider, string>> };
+  mark: string;                          // the mascot for the empty "Relevant to your task" box (board 12, placement 3)
+  justRemembered: ReadonlySet<string>;   // notes remembered on the first-run screen in this app run
   startError: { code?: string; message: string } | null;
   knowledgeVersion: number;
+}
+
+// One agent card (a radio) and its one next action, named as on the Welcome rows
+// (actionLabel, actionName). When an update removes the focused action, focus moves to the radio.
+function AgentChoice({ provider: p, agent: info, chosen: on, current, busy, handlers, onProvider }: {
+  provider: Provider; agent: Bootstrap['agents'][number] | undefined; chosen: boolean; current: Provider; busy: boolean; handlers: ProviderHandlers; onProvider(p: Provider): void;
+}) {
+  const status = agentCard(info, p);
+  const ref = useKeepFocus<HTMLDivElement>(root => root.querySelector<HTMLElement>('[role=radio]'));
+  const run = { install: handlers.onInstall, 'install-page': handlers.onInstallPage, login: handlers.onLogin };
+  return <div className="agent-card" ref={ref}>
+    <div role="radio" id={`agent-radio-${p}`} aria-checked={on} tabIndex={on ? 0 : -1} className="agent-option" aria-label={PROVIDER_NAMES[p]} aria-describedby={`agent-sub-${p}`} title={agentTitle(info)}
+      onClick={() => onProvider(p)} onKeyDown={event => { if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); onProvider(p); } else roving(event, AGENT_ORDER, current, onProvider); }}>
+      <ProviderMark provider={p} size={24} /><span className="agent-name">{PROVIDER_NAMES[p]}</span><span className={`agent-sub tone-${status.tone}`} id={`agent-sub-${p}`}>{status.sub}</span>
+    </div>
+    {status.action && <button type="button" className="agent-action link" disabled={busy} aria-label={actionName(status.action, PROVIDER_NAMES[p])} aria-describedby={`agent-sub-${p}`}
+      onClick={() => run[status.action!](p)}>{actionLabel(status.action)}</button>}
+  </div>;
 }
 
 const MODE_LABEL: Record<Mode, string> = { build: composer.build, plan: composer.plan, 'read-only': composer.readOnly };
@@ -102,20 +126,13 @@ export function Composer(props: ComposerProps) {
       <div className="composer-field">
         <span className="field-label" id="agent-label">{composer.agent}</span>
         <div className="agent-cards" role="radiogroup" aria-labelledby="agent-label">
-          {AGENT_ORDER.map(p => {
-            const info = bootstrap?.agents.find(a => a.provider === p); const status = agentCard(info); const on = p === provider;
-            return <div className="agent-card" key={p}>
-              <div role="radio" aria-checked={on} tabIndex={on ? 0 : -1} className="agent-option" aria-label={PROVIDER_NAMES[p]} aria-describedby={`agent-sub-${p}`} title={agentTitle(info)}
-                onClick={() => props.onProvider(p)} onKeyDown={event => { if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); props.onProvider(p); } else roving(event, AGENT_ORDER, provider, props.onProvider); }}>
-                <ProviderMark provider={p} size={24} /><span className="agent-name">{PROVIDER_NAMES[p]}</span><span className={`agent-sub tone-${status.tone}`} id={`agent-sub-${p}`}>{status.sub}</span>
-              </div>
-              {status.action && <button type="button" className="agent-action link" disabled={props.providers.checking} aria-describedby={`agent-sub-${p}`}
-                onClick={() => (status.action === 'install' ? props.providers.onInstall : status.action === 'page' ? props.providers.onInstallPage : props.providers.onLogin)(p)}>
-                {status.action === 'install' ? composer.install : status.action === 'page' ? composer.installPage : composer.signIn}<span className="visually-hidden"> {PROVIDER_NAMES[p]}</span></button>}
-            </div>;
-          })}
+          {AGENT_ORDER.map(p => <AgentChoice key={p} provider={p} agent={bootstrap?.agents.find(a => a.provider === p)} chosen={p === provider} current={provider}
+            busy={!!props.providers.busy[p]} handlers={props.providers} onProvider={props.onProvider} />)}
         </div>
-        {provider === 'cursor' && <CursorStatus agent={agent} checking={props.providers.checking} note={props.providers.note} onInstall={() => props.providers.onInstall('cursor')} onLogin={() => props.providers.onLogin('cursor')} onCheck={() => props.providers.onCheck('cursor')} />}
+        {/* Every agent's details region stays mounted (its note is a live region); the chosen agent's details show. */}
+        {AGENT_ORDER.map(p => <ProviderStatus key={p} provider={p} agent={bootstrap?.agents.find(a => a.provider === p)} open={p === provider}
+          busy={!!props.providers.busy[p]} rechecking={props.providers.busy[p] === 'check'} note={props.providers.notes[p] ?? ''} onCheck={props.providers.onCheck}
+          fallback={() => document.getElementById(`agent-radio-${p}`)} />)}
       </div>
 
       <div className="composer-field">
@@ -150,7 +167,7 @@ export function Composer(props: ComposerProps) {
       </div>
       <p className="field-help native-stays">{composer.nativeStays}</p>
     </form>
-    <ContextPreview view={view} error={preview.error} taskNotes={taskNotes.current.count} project={project} mac={mac} hasTask={task.trim().length > 0}
+    <ContextPreview view={view} error={preview.error} taskNotes={taskNotes.current.count} project={project} mac={mac} hasTask={task.trim().length > 0} mark={props.mark} justRemembered={props.justRemembered}
       onLeaveOut={leaveOut} onRestore={restore} onInspect={inspect} />
   </div>;
 }

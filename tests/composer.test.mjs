@@ -10,10 +10,10 @@ import ts from 'typescript';
 async function load(t) {
   mkdirSync(resolve('.cache/tmp'), { recursive: true });
   const dir = mkdtempSync(resolve('.cache/tmp', 'composer-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
-  for (const name of ['types', 'copy', 'composerModel']) {
+  for (const name of ['types', 'copy', 'firstRunModel', 'composerModel']) {
     const source = readFileSync(new URL(`../src/ui/${name}.ts`, import.meta.url), 'utf8');
     const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
-    writeFileSync(join(dir, `${name}.mjs`), outputText.replace(/from '\.\/(types|copy)'/g, "from './$1.mjs'"));
+    writeFileSync(join(dir, `${name}.mjs`), outputText.replace(/from '\.\/(types|copy|firstRunModel)'/g, "from './$1.mjs'"));
   }
   return import(pathToFileURL(join(dir, 'composerModel.mjs')).href);
 }
@@ -55,38 +55,44 @@ test('switching agents never changes the mode', async t => {
 });
 
 test('agentCard says Signed in or Sign in needed only when the status check says so', async t => {
+  // The card is Phase 7's agentRow (tests/first-run-model.test.mjs checks that they agree for
+  // every state); these cases pin what a card shows.
   const { agentCard } = await load(t);
-  // No answer from a status check (none ran, or none exists): neither claim.
+  const card = (agent, provider) => { const { sub, tone, action, quiet } = agentCard(agent, provider); return { sub, tone, action, quiet }; };
+  // No answer from a status check (none ran, or none exists): neither claim, and never green.
   for (const agent of [claude, codex, { ...claude, auth: undefined }, { ...codex, auth: 'unchecked' }]) {
-    const card = agentCard(agent);
-    assert.doesNotMatch(card.sub, /Signed in|Sign in needed|unknown/i, agent.provider);
-    assert.equal(card.tone, 'ok');
+    const view = agentCard(agent);
+    assert.doesNotMatch(view.sub, /Signed in|Sign in needed|unknown/i, agent.provider);
+    assert.equal(view.tone, 'muted');
   }
   assert.equal(agentCard(claude).sub, 'Installed · 2.1.286');
   assert.equal(agentCard({ ...claude, version: null }).sub, 'Installed');
   // The probe answered: the same rules for every provider.
   const login = { supports: { login: true, authStatus: true } };
-  assert.equal(agentCard({ ...claude, ...login, auth: 'signed-in' }).sub, 'Installed · 2.1.286 · Signed in');
-  assert.equal(agentCard({ ...codex, ...login, auth: 'signed-in' }).sub, 'Installed · 0.159.3 · Signed in');
-  assert.equal(agentCard(cursor({ auth: 'signed-in' })).sub, 'Installed · 2026.10.01 · Signed in');
-  assert.deepEqual(agentCard({ ...codex, ...login, auth: 'signed-out' }), { sub: 'Sign in needed', tone: 'warn', action: 'login' });
-  assert.deepEqual(agentCard({ ...claude, auth: 'signed-out', supports: { login: false } }), { sub: 'Sign in needed', tone: 'warn' });
-  // A check that could not conclude says so, and offers sign-in where the CLI documents it.
-  assert.deepEqual(agentCard({ ...claude, ...login, auth: 'unknown' }), { sub: 'Installed · 2.1.286 · Sign-in unknown', tone: 'ok', action: 'login' });
-  assert.deepEqual(agentCard(cursor({ state: 'login-required' })), { sub: 'Sign in needed', tone: 'warn', action: 'login' });
-  assert.deepEqual(agentCard(cursor({ auth: 'signed-out', supports: {} })), { sub: 'Sign in needed', tone: 'warn' });
+  assert.deepEqual(card({ ...claude, ...login, auth: 'signed-in' }), { sub: 'Signed in · 2.1.286', tone: 'ok', action: null, quiet: false });
+  assert.equal(agentCard({ ...codex, ...login, auth: 'signed-in' }).sub, 'Signed in · 0.159.3');
+  assert.equal(agentCard(cursor({ auth: 'signed-in' })).sub, 'Signed in · 2026.10.01');
+  assert.deepEqual(card({ ...codex, ...login, auth: 'signed-out' }), { sub: 'Sign in needed · 0.159.3', tone: 'warn', action: 'login', quiet: false });
+  assert.deepEqual(card({ ...claude, auth: 'signed-out', supports: { login: false } }), { sub: 'Sign in needed · 2.1.286', tone: 'warn', action: null, quiet: false });
+  // A check that could not conclude says so without a warning, and offers a quiet sign-in where the CLI documents it.
+  assert.deepEqual(card({ ...claude, ...login, auth: 'unknown' }), { sub: 'Sign-in unknown · 2.1.286', tone: 'muted', action: 'login', quiet: true });
+  assert.deepEqual(card({ ...claude, ...login, auth: 'unchecked' }), { sub: 'Installed · 2.1.286', tone: 'muted', action: 'login', quiet: true });
+  // Cursor signs in through its own CLI whenever the CLI is found.
+  assert.deepEqual(card(cursor({ state: 'login-required' })), { sub: 'Sign in needed · 2026.10.01', tone: 'warn', action: 'login', quiet: false });
+  assert.deepEqual(card(cursor({ auth: 'signed-out', supports: {} })), { sub: 'Sign in needed · 2026.10.01', tone: 'warn', action: 'login', quiet: false });
   // Install runs the official command where this platform has one, else the card offers the install page.
   const commands = (install, installPage = 'https://example.test/install') => ({ commands: { login: null, install, installPage } });
-  assert.deepEqual(agentCard({ provider: 'cursor', available: false, version: null, state: 'missing', ...commands('curl https://cursor.com/install -fsS | bash') }), { sub: 'Not installed', tone: 'muted', action: 'install' });
-  assert.deepEqual(agentCard({ provider: 'claude', available: false, version: null, state: 'missing', ...commands('curl -fsSL https://claude.ai/install.sh | bash') }), { sub: 'Not installed', tone: 'muted', action: 'install' });
-  assert.deepEqual(agentCard({ provider: 'codex', available: false, version: null, state: 'missing', ...commands(null) }), { sub: 'Not installed', tone: 'muted', action: 'page' });
-  assert.deepEqual(agentCard({ provider: 'codex', available: false, version: null }), { sub: 'Not installed', tone: 'muted' });
-  assert.equal(agentCard(cursor({ state: 'unsupported' })).sub, 'Unsupported version');
+  assert.deepEqual(card({ provider: 'cursor', available: false, version: null, state: 'missing', ...commands('curl https://cursor.com/install -fsS | bash') }), { sub: 'Not installed', tone: 'muted', action: 'install', quiet: false });
+  assert.deepEqual(card({ provider: 'claude', available: false, version: null, state: 'missing', ...commands('curl -fsSL https://claude.ai/install.sh | bash') }), { sub: 'Not installed', tone: 'muted', action: 'install', quiet: false });
+  assert.deepEqual(card({ provider: 'codex', available: false, version: null, state: 'missing', ...commands(null) }), { sub: 'Not installed', tone: 'muted', action: 'install-page', quiet: false });
+  assert.deepEqual(card({ provider: 'codex', available: false, version: null }), { sub: 'Not installed', tone: 'muted', action: null, quiet: false });
+  assert.equal(agentCard(cursor({ state: 'unsupported' })).sub, 'Unsupported version · 2026.10.01');
   assert.equal(agentCard(cursor({ state: 'not-cursor', available: false })).sub, 'Not the Cursor CLI');
+  assert.equal(agentCard(cursor({ state: 'not-cursor', available: false })).action, 'install');
   assert.equal(agentCard(cursor({ state: 'unlaunchable', available: false })).sub, 'Can’t launch');
   // Detection still running: checking, for every provider.
-  assert.deepEqual(agentCard(undefined), { sub: 'Checking…', tone: 'muted' });
-  for (const provider of ['claude', 'codex', 'cursor']) assert.deepEqual(agentCard({ provider, available: false, version: null, state: 'checking', auth: 'unchecked' }), { sub: 'Checking…', tone: 'muted' });
+  assert.deepEqual(card(undefined, 'codex'), { sub: 'Checking…', tone: 'muted', action: null, quiet: false });
+  for (const provider of ['claude', 'codex', 'cursor']) assert.deepEqual(card({ provider, available: false, version: null, state: 'checking', auth: 'unchecked' }), { sub: 'Checking…', tone: 'muted', action: null, quiet: false });
 });
 
 test('startBlock reports runtime, slots, missing agent and mode in order', async t => {
@@ -100,7 +106,7 @@ test('startBlock reports runtime, slots, missing agent and mode in order', async
   // With an install command or page, the reason names the card's button.
   const commands = { login: null, install: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh', installPage: 'https://example.test' };
   assert.equal(startBlock({ ...all, busy: false, connected: true, liveCount: 3, agent: { ...missing, state: 'missing', commands } }), 'Codex isn’t installed on this computer. Choose Install… on its card.');
-  assert.equal(startBlock({ ...all, busy: false, connected: true, liveCount: 3, agent: { ...missing, state: 'missing', commands: { ...commands, install: null } } }), 'Codex isn’t installed on this computer. Choose Install page… on its card.');
+  assert.equal(startBlock({ ...all, busy: false, connected: true, liveCount: 3, agent: { ...missing, state: 'missing', commands: { ...commands, install: null } } }), 'Codex isn’t installed on this computer. Choose Open install page on its card.');
   assert.equal(startBlock({ ...all, busy: false, connected: true, liveCount: 3, agent: codex }), 'Codex has no plan mode. Choose Build or Read-only.');
   assert.equal(startBlock({ ...all, busy: false, connected: true, liveCount: 3, agent: codex, mode: 'build' }), null);
   // An installed agent that needs the user first says what, not "isn't installed".

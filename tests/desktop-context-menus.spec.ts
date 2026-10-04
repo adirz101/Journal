@@ -32,7 +32,7 @@ console.log('PTY_READY '+JSON.stringify(process.argv.slice(2,4)));process.stdin.
   try {
     await app.evaluate(({ dialog, shell }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); (shell as any).showItemInFolder = (p: string) => { (globalThis as any).__revealed = p; }; }, project);
     const page = await app.firstWindow();
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     // The switcher has no project menu until the project has opened.
     await expect(currentProject(page)).toHaveText('menu project');
     const projectButton = projectContextMenu(page);

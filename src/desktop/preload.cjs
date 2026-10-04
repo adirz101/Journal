@@ -5,6 +5,7 @@ for (const action of ['sessionSummary', 'staleNotes', 'rememberProposals', 'reaf
 allowed.add('staleNoteDiff');
 for (const action of ['openProjectPath', 'firstRunDrafts', 'rememberDraft', 'skipOrientation']) allowed.add(action);
 allowed.add('openInstallPage');
+allowed.add('markOrientationShown');
 // Phase 8: open-file search, crash recovery and Reconnect now.
 allowed.add('searchFiles');
 allowed.add('acknowledgeRecovery');

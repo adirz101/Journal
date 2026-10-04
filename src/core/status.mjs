@@ -192,7 +192,8 @@ export function overviewDraft(project, previous, { run = git } = {}) {
 }
 
 // The labelled lines a first-run card turns into fields. Each maps to a field name.
-const FIELDS = [['Current work', 'currentWork'], ['Next', 'next'], ['Constraints', 'constraints']];
+// Purpose is a field only when the README had no purpose line (its placeholder).
+const FIELDS = [['Purpose', 'purpose'], ['Current work', 'currentWork'], ['Next', 'next'], ['Constraints', 'constraints']];
 const MAX_FIELD = 500;
 // A draft with the operator's fields filled in (pure; no Git). For each labelled line
 // whose value is still a placeholder, a non-empty field replaces the placeholder and

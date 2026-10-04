@@ -37,7 +37,7 @@ async function open(f: ReturnType<typeof setup>) {
   const app = await electron.launch({ args: ['.'], env: f.env });
   await app.evaluate(({ dialog }, p) => { (dialog as any).showOpenDialog = async () => ({ canceled: false, filePaths: [p] }); }, f.project);
   const page = await app.firstWindow();
-  await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
   await expect(taskBox(page)).toBeVisible();
   return { app, page };
 }
@@ -289,12 +289,12 @@ test('agent cards are honest', async () => {
   const f = setup(); const { app, page } = await open(f);
   try {
     const cards = page.getByRole('radiogroup', { name: 'Agent' });
-    await expect(cards.getByRole('radio', { name: 'Claude Code', exact: true })).toContainText('Installed · fixture 1.0');
-    await expect(cards.getByRole('radio', { name: 'Codex', exact: true })).toContainText('Installed · fixture 1.0');
+    await expect(cards.getByRole('radio', { name: 'Claude Code', exact: true })).toContainText('Installed · 1.0');
+    await expect(cards.getByRole('radio', { name: 'Codex', exact: true })).toContainText('Installed · 1.0');
     await expect(cards).not.toContainText('Signed in');
     const cursor = cards.getByRole('radio', { name: 'Cursor', exact: true });
     await expect(cursor).toContainText('Not installed');
-    await expect(cards.getByRole('button', { name: 'Install… Cursor', exact: true })).toBeVisible();
+    await expect(cards.getByRole('button', { name: 'Install Cursor…', exact: true })).toBeVisible();
     // Unavailable agents stay selectable, and Start says why it waits.
     await chooseAgent(page, 'cursor');
     await expect(startButton(page)).toBeDisabled();
@@ -453,7 +453,7 @@ test('the composer lays out sanely with a wide stored inspector and sidebar (reg
     // The user's layout: a 340 px sidebar and a 525 px inspector, stored by earlier drags.
     await page.evaluate(() => localStorage.setItem('journal-panel-widths', JSON.stringify({ project: 340, knowledge: 525 })));
     await page.reload();
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await expect(taskBox(page)).toBeVisible();
     await expect(page.locator('.knowledge-panel')).toBeVisible();
     const g = await expectSaneComposer(page, '1440 with stored widths');
@@ -465,7 +465,7 @@ test('the composer lays out sanely with a wide stored inspector and sidebar (reg
     // The defaults at 1440, 1024 and 900×640.
     await page.evaluate(() => localStorage.removeItem('journal-panel-widths'));
     await page.reload(); await expect(page.locator('.new-session-view, .welcome, main').first()).toBeVisible();
-    if (!await taskBox(page).count()) await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    if (!await taskBox(page).count()) await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await expect(taskBox(page)).toBeVisible();
     await expectSaneComposer(page, '1440 default');
     await sizeWindow(app, page, 1024, 768);
