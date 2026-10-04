@@ -11,6 +11,14 @@ export const copy = {
   continue: 'Continue', stop: 'Stop', readOnly: 'Read-only', plan: 'Plan', separateCopy: 'Separate copy (worktree)',
   everySession: 'Every session knows', relevant: 'Relevant to your task', notIncluded: 'Not included', leaveOut: 'Leave out for this task', leftOut: 'left out by you', checkNeeded: 'Check needed', rule: 'Rule',
   sourceNote: 'Why (your words)', allBranches: 'All branches', onlyOn: (branch: string | null | undefined) => `Only on ${branch ?? 'this branch'}`,
+  slotsFull: (max: number) => `${max} sessions are running. Stop one to start another.`,
+  // Session states (design board B8; src/ui/sessionState.ts picks one).
+  state: {
+    disconnected: 'Disconnected', unknown: 'state unknown', needsApproval: 'Needs approval', yourTurn: 'Your turn', working: 'Working',
+    running: 'Running', starting: 'Starting', stopping: 'Stopping', exited: (code: number) => `Exited ${code}`, failed: 'Failed to start',
+    stopped: 'Stopped', interrupted: 'Interrupted', orphaned: 'Still running outside Journal',
+    noOutput: 'no output yet', outputNow: 'output just now', quiet: (span: string) => `quiet ${span}`, limited: 'limited status',
+  },
 } as const;
 
 // Tooltips keep the precise term.
@@ -22,6 +30,7 @@ export const tip = {
   plan: 'Claude plan mode or Cursor Plan mode',
   memoryTab: 'Reviewed project knowledge that agents receive',
   separateCopy: 'A separate Git worktree on its own branch',
+  limitedStatus: "Journal sees output, not the agent's state. Check the terminal for prompts.",
 } as const;
 
 export const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
