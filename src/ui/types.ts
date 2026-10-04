@@ -49,7 +49,7 @@ export interface ChangeStats { available: boolean; additions: number; deletions:
 // sessionSummary (src/core/insights.mjs): stored data only, no Git.
 export interface SessionSummary {
   status: SessionStatus; exitCode: number | null; signal: string | null; durationMs: number | null;
-  changes: ChangeStats | null;                     // the end snapshot (D11); null when none was taken
+  changes: ChangeStats | null;                     // the end snapshot (D11); null when none was taken; available: false without a start baseline
   tests: { passed: number; failed: number; unknown: number; commands: string[] } | null;   // null for Codex and Cursor
   identity: { nativeId: string | null; confirmed: boolean; source: Session['nativeIdSource']; mismatch: boolean };
   suggestions: number;                             // open suggestions of this session and its resume chain
@@ -70,6 +70,7 @@ export interface StaleNote {
   reaffirm: { allowed: boolean; reason: null | 'wrong-branch' | 'separate-copy' | 'file-missing' };
   workspaceId: string | null;                      // the view to reaffirm in
 }
+// truncated: more than 20 notes, or the 10 s deadline was reached before all were checked.
 export interface StaleCatch { available: boolean; notes: StaleNote[]; truncated: boolean }
 // Command, path and tool are redacted or workspace-relative by the runtime; inferred: taken from the in-flight tool.
 export interface PendingApproval { tool: string | null; command: string | null; path: string | null; at: string; inferred?: boolean; }

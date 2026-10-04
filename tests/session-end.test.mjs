@@ -558,3 +558,32 @@ test('rememberProposals checks conflicts again inside the lock and within the ba
   assert.throws(() => g.store.rememberProposals(pair, { via: 'wrap-up' }), /may contradict another suggestion; remember only one of them/);
   assert.deepEqual(g.counts(), before);
 });
+
+test('the catch stops at its deadline when Git is slow', { skip: process.platform === 'win32' && 'a shell-script git stand-in' }, t => {
+  const f = fixture(t);
+  writeFileSync(join(f.repo, 'src', 'big.js'), lines('row', 10)); f.commit('big');
+  for (let i = 1; i <= 5; i++) f.note('src/big.js', i, i, { statement: `Row ${i} of big.js is the ${i}th retry setting` });
+  const s = f.session(''); writeFileSync(join(f.repo, 'src', 'big.js'), lines('changed', 10)); f.end(s);
+  assert.equal(f.store.staleNotesForSession(s.id).notes.length, 5, 'all five with a fast Git');
+  // A Git that takes 200 ms per call.
+  const bin = join(f.root, 'slow-bin'); mkdirSync(bin);
+  const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\nsleep 0.2\nexec "${real}" "$@"\n`, { mode: 0o755 });
+  const path = process.env.PATH; process.env.PATH = `${bin}:${path}`; t.after(() => { process.env.PATH = path; });
+  const started = Date.now();
+  const caught = f.store.staleNotesForSession(s.id, { deadlineMs: 300 });
+  assert.equal(caught.available, true); assert.equal(caught.truncated, true);
+  assert.ok(caught.notes.length < 5, `stopped early (${caught.notes.length} notes)`);
+  assert.ok(Date.now() - started < 3000);
+});
+
+test('sessionSummary reports changes unavailable without a baseline', t => {
+  const f = fixture(t);
+  const s = f.session('', { baseline: null });
+  writeFileSync(join(f.repo, 'a.txt'), 'changed\n'); const ended = f.end(s);
+  assert.equal(ended.changeStats.available, true, 'the runtime still counted against HEAD');
+  const { changes } = f.store.sessionSummary(s.id);
+  assert.equal(changes.available, false); assert.equal(changes.files, 0); assert.deepEqual(changes.paths, []);
+  assert.match(changes.reason, /start/);
+  assert.equal(f.store.sessionSummary(f.session('', { baseline: undefined }).id).changes.available, false, 'also with no snapshot');
+});

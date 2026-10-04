@@ -863,7 +863,7 @@ export class JournalStore {
   }
   // ----- Phase 6: the session wrap-up -----
   sessionSummary(id) { return sessionSummary(this, id); }
-  staleNotesForSession(sessionId) { return staleNotesForSession(this, sessionId); }
+  staleNotesForSession(sessionId, options) { return staleNotesForSession(this, sessionId, options); }
   // acceptProposal's checks, before anything is written.
   openProposal(id) {
     const proposal = this.getProposal(id);
