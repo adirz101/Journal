@@ -28,8 +28,15 @@ test('a Git-drafted branch update is saved only after review and approved before
     await page.getByRole('button', { name: 'Save for review' }).click();
     await expect(page.getByRole('alert')).toContainText('placeholders');
     await page.getByRole('button', { name: 'Close knowledge form' }).click();
+    // BUG-1: a preview is not stored as a receipt.
+    const receiptCount = () => page.evaluate(async () => {
+      const boot = await (window as any).journal.request('bootstrap');
+      return (await (window as any).journal.request('project', { projectId: boot.projects[0].id })).receipts.length;
+    });
+    const receiptsBefore = await receiptCount();
     await page.getByRole('button', { name: 'Preview context' }).click();
     await expect(page.getByTestId('context-packet')).not.toContainText('REFUND_MODEL_DONE');
+    expect(await receiptCount()).toBe(receiptsBefore);
 
     await page.getByRole('tab', { name: /^Knowledge/ }).click();
     await page.getByRole('button', { name: 'Propose branch update' }).click();
