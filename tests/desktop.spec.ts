@@ -54,6 +54,8 @@ process.stdin.on('data',data=>{
     // The provider mark sits next to the name; the session row's accessible name is unchanged.
     await expect(page.locator('.terminal-heading .provider-mark.claude svg')).toBeVisible();
     await expect(page.getByRole('button', { name: /^Claude Code: Review Docker tests\./ })).toBeVisible();
+    // Each session row carries its own aria-hidden mark.
+    await expect(page.getByRole('button', { name: /^Claude Code: Review Docker tests\./ }).locator('.provider-mark.claude[aria-hidden="true"] svg')).toBeVisible();
     // JetBrains Mono ships inside the app (CSP font-src 'self') and the terminal uses it.
     expect(await page.evaluate(() => [...document.fonts].some(face => face.family.replace(/"/g, '') === 'JetBrains Mono' && face.status === 'loaded'))).toBe(true);
     await expect(page.locator('.xterm-rows')).toHaveCSS('font-family', /^"JetBrains Mono"/);
@@ -127,6 +129,9 @@ process.stdin.on('data',data=>{
     await page.getByLabel('Initial task').fill('Docker tests');
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
+    // Codex shows the OpenAI mark in its heading and in its session row, hidden from assistive technology.
+    await expect(page.locator('.terminal-heading .provider-mark.codex[aria-hidden="true"] svg')).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Codex:/ }).first().locator('.provider-mark.codex[aria-hidden="true"] svg')).toBeVisible();
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.getByLabel('Native session ID')).toBeVisible();
     await page.getByLabel('Native session ID').fill('bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb');

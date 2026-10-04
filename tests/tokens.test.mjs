@@ -101,14 +101,17 @@ for (const [name, t] of Object.entries(themes)) {
     assert.deepEqual(low, []);
   });
 
-  // WCAG 1.4.11: a provider mark is a non-text graphic next to the provider's name. The glyph (--tx, or
-  // --claude on its tint) is at least 3:1 against its tile, wherever the tile sits (including selected rows).
+  // WCAG 1.4.11: a provider mark is a non-text graphic next to the provider's name. The neutral tile
+  // is the opaque --hover, so --tx on it is one fixed ratio; the Claude tile is the translucent
+  // --claude-soft, which composites over whatever surface the mark sits on (including selected rows),
+  // so --claude is checked per surface. Both are at least 3:1.
   test(`${name} theme: provider marks are at least 3:1 on their tile on every surface they sit on`, () => {
     const base = rgba(t.bg).slice(0, 3); const solid = token => mix(t[token], base);
+    assert.equal(rgba(t.hover)[3], 1, 'The neutral mark tile (--hover) is opaque');
     const low = [];
     for (const surface of [...SURFACES, 'sel-hover']) {
       const tile = solid(surface);
-      const ratio = contrast(solid('tx'), mix(t.hover, tile)); if (ratio < 3) low.push(`tx on the mark tile over ${surface}: ${ratio.toFixed(2)}`);
+      const ratio = contrast(solid('tx'), solid('hover')); if (ratio < 3) low.push(`tx on the mark tile: ${ratio.toFixed(2)}`);
       const claude = contrast(solid('claude'), mix(t['claude-soft'], tile)); if (claude < 3) low.push(`claude on its tile over ${surface}: ${claude.toFixed(2)}`);
     }
     assert.deepEqual(low, []);

@@ -2021,4 +2021,4 @@ License: CC0-1.0
 Source: https://github.com/simple-icons/simple-icons
 Used in: src/ui/ProviderMark.tsx
 
-The Claude, OpenAI and Cursor marks are SVG paths from Simple Icons, dedicated to the public domain under CC0 1.0 Universal. The marks are trademarks of Anthropic, OpenAI and Anysphere; Journal shows them only to identify the command-line agent a session runs.
+The Claude and Cursor marks are SVG paths from simple-icons 16.34.0 (icons/claude.svg, icons/cursor.svg). The OpenAI mark (used for Codex) is the path from simple-icons 15.22.0 (icons/openai.svg), the last release that included it. Simple Icons dedicates these files to the public domain under CC0 1.0 Universal. The marks are trademarks of Anthropic, OpenAI and Anysphere; Journal shows them only to identify the command-line agent a session runs. Journal is not affiliated with or endorsed by Anthropic, OpenAI or Anysphere.

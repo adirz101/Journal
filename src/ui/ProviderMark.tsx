@@ -1,7 +1,8 @@
 import type { Provider } from './types';
 
-// Provider marks: SVG paths from Simple Icons (https://simpleicons.org, CC0 1.0).
-// Codex uses the OpenAI mark. The marks are trademarks of Anthropic, OpenAI and
+// Provider marks: SVG paths from Simple Icons (https://simpleicons.org, CC0 1.0):
+// claude and cursor from simple-icons 16.34.0, openai from 15.22.0 (the last release
+// that had it). Codex uses the OpenAI mark. The marks are trademarks of Anthropic, OpenAI and
 // Anysphere; Journal shows them only to identify the CLI a session runs, always
 // next to the provider's name (visible text or the row's accessible name), so the
 // mark itself is hidden from assistive technology.
