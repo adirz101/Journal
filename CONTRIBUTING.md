@@ -20,6 +20,16 @@ npm run dev
 
 If `node-pty` was rebuilt for system Node, restore Electron compatibility with `npm run rebuild`.
 
+### A sandbox warning on macOS
+
+`npm run dev` on macOS 27 may print one line such as:
+
+```
+sandbox_extension_issue_file failed for …/.cache/electron-runtime/<version>/Journal.app/Contents/Frameworks/Electron Helper.app/Contents/Resources: 1 (Operation not permitted)
+```
+
+It is harmless. macOS's own sandbox library prints it when a system framework asks it to grant access to a folder that the development Electron bundle does not have (Electron's npm build ships helpers without a `Contents/Resources` folder and with an ad-hoc, linker-only signature). Journal's code asks for no such grant: a bare Electron app that opens one hidden sandboxed window prints it too, and the unmodified `node_modules/electron` binary prints a sibling line (`sandbox_extension_issue_file_to_process failed for …/Electron.app`) on every start. It may appear only on some starts. Nothing fails: the renderer, the runtime and the tests run normally. Journal does not filter it, because hiding it would mean rewriting Electron's standard error stream. `codesign --verify --deep --strict` reports "code has no resources but signature indicates they must be present" for the stock Electron bundle as well, so that message is not caused by Journal's copy either.
+
 ## Checks
 
 Run these before opening a pull request:

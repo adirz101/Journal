@@ -97,6 +97,8 @@ export const shell = {
   runtimeConnected: 'Runtime connected · local only', runtimeStarting: 'Starting runtime…', runtimeDisconnected: 'Runtime disconnected',
   switchProject: (name: string) => `Switch project. Current: ${name}`, noProject: 'No project open',
   appearance: 'Appearance', dark: 'Dark', light: 'Light', notifications: 'Notifications',
+  // Claude Code's default theme is a fixed dark one; only its Auto theme follows the terminal (docs/PROVIDERS.md).
+  appearanceAgents: 'Claude Code keeps its own theme, dark unless you change it. To follow this setting, run /theme in Claude Code and choose Auto (match terminal).',
   notifyApproval: 'Notify me when Claude needs approval', notifyCommand: 'Show the command in notifications',
   notifyCommandHint: 'Notifications can appear on the lock screen.', dataAndBackups: 'Data and backups', updates: 'Updates',
   // The switcher menu lists at most 28 projects; Open project… on a known folder reopens it.

@@ -13,7 +13,7 @@ import { redact } from '../core/validation.mjs';
 import { Observers } from './observers.mjs';
 import { buildId, frame, lineReader, nonce, proof, proofMatches, PROTOCOL, socketPath } from './protocol.mjs';
 
-const METHODS = new Set(['list', 'start', 'attach', 'detach', 'acknowledge', 'write', 'resize', 'interrupt', 'stop', 'terminateSurvivors', 'terminateOrphan', 'confirmNativeId', 'paste', 'release', 'shutdown', 'ping', 'acknowledgeRecovery']);
+const METHODS = new Set(['list', 'start', 'attach', 'detach', 'acknowledge', 'write', 'resize', 'interrupt', 'stop', 'terminateSurvivors', 'terminateOrphan', 'confirmNativeId', 'paste', 'release', 'shutdown', 'ping', 'acknowledgeRecovery', 'setAppearance']);
 
 export function canConnect(path, timeoutMs = 500) {
   return new Promise(resolvePromise => {
@@ -66,7 +66,9 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
   let manager = null;
   const observers = new Observers({ dataDir, hookScript, execPath, platform, ingest: (id, event) => manager.ingest(id, event),
     lost: id => manager.record(id, 'error', { message: 'Activity observation stopped: the hook event file reached its size limit.' }) });
-  manager = new TerminalManager({ store, spawn, runtimeId, platform, makeSettings: (session, project) => observers.settings(session, project),
+  // Set by main when it launches the runtime; otherwise this checkout's version.
+  const appVersion = process.env.JOURNAL_APP_VERSION || (() => { try { return JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version; } catch { return null; } })();
+  manager = new TerminalManager({ store, spawn, runtimeId, platform, appVersion, makeSettings: (session, project) => observers.settings(session, project),
     ...(identify ? { identify } : {}), ...(table ? { table } : {}), ...(stopGraceMs ? { stopGraceMs } : {}), resolveProvider });
   const recovered = await manager.recover();
   // Trace retention (timelines of long-ended sessions); knowledge is never pruned.
@@ -109,6 +111,7 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
     write: ({ id, data }) => manager.write(id, data),
     paste: ({ id, text, reference }) => manager.paste(id, text, reference),
     resize: ({ id, cols, rows }) => manager.resize(id, cols, rows),
+    setAppearance: ({ appearance } = {}) => manager.setAppearance(appearance),
     interrupt: ({ id }) => manager.interrupt(id),
     stop: ({ id }) => manager.stop(id),
     terminateSurvivors: ({ id }) => manager.terminateSurvivors(id),

@@ -895,7 +895,8 @@ test('an attached exited buffer outlives older detached ones', async t => {
   }
   assert.match(f.manager.attach(ids[0]).chunks.map(c => c.data).join(''), /output 0/, 'the viewed buffer is kept');
   assert.deepEqual(f.manager.attach(ids[1]), { chunks: [], gap: true, lastSequence: 0 }, 'the oldest detached one goes instead');
-  f.manager.detach(ids[0]);
+  // Attached twice (once more to read it above): attaches are counted, so both panes detach.
+  f.manager.detach(ids[0]); f.manager.detach(ids[0]);
   const tenth = await f.start(); f.procs[9].callbacks.exit({ exitCode: 0 }); await f.manager.entry(tenth.id)?.changeSnapshot;
   assert.deepEqual(f.manager.attach(ids[0]), { chunks: [], gap: true, lastSequence: 0 }, 'once detached it is trimmed on a later exit');
 });

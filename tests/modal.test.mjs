@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
-import { modalCounter, trackModalDialog } from '../src/ui/modal.ts';
+import { modalCounter, TERMINAL_REPORT, trackModalDialog } from '../src/ui/modal.ts';
 import { keyLetter } from '../src/ui/keys.ts';
 import { matchShortcut } from '../src/desktop/shortcuts.mjs';
 
@@ -77,7 +77,15 @@ test('terminal input is held from a palette command until its dialog closes (rev
   assert.equal(modalDialogActive(now + 999), true); assert.equal(modalDialogActive(now + 1000), false);
 });
 
-test('TerminalPane drops input while a modal dialog is open or opening', () => {
+test('TerminalPane drops input while a modal dialog is open or opening, except terminal reports', () => {
   const pane = sources.find(([name]) => name === 'TerminalPane.tsx')[1];
-  assert.match(pane, /terminal\.onData\(data => \{ if \(acceptInput && liveRef\.current && !modalDialogActive\(\)\)/);
+  assert.match(pane, /terminal\.onData\(data => \{ if \(acceptInput && liveRef\.current && \(!modalDialogActive\(\) \|\| TERMINAL_REPORT\.test\(data\)\)\)/);
+});
+
+test('terminal reports pass while a dialog is open; typed keys do not', () => {
+  for (const report of ['\x1b[?1;2c', '\x1b[>0;276;0c', '\x1b[12;40R', '\x1b[?2026;2$y', '\x1b[?0u', '\x1b]11;rgb:fafa/fafa/fbfb\x1b\\',
+    '\x1b]10;rgb:1414/1717/1c1c\x07', '\x1bP>|xterm.js(6.0.0)\x1b\\', '\x1b]11;rgb:0b0b/0d0d/1010\x1b\\\x1b[?1;2c'])
+    assert.ok(TERMINAL_REPORT.test(report), JSON.stringify(report));
+  for (const key of ['a', 'hello', '\r', '\x03', '\x1b', '\x1b[A', '\x1b[1;5C', '\x1bOP', '\x1b[15~', '\x1b[200~text\x1b[201~', '\x1b[?1;2cx'])
+    assert.ok(!TERMINAL_REPORT.test(key), JSON.stringify(key));
 });

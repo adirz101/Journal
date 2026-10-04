@@ -34,3 +34,10 @@ export function trackModalDialog(element: ModalElement | null, modals: ModalCoun
   element?.addEventListener('close', release);
   return () => { element?.removeEventListener('close', release); release(); };
 }
+
+// One or more replies the terminal sends on its own to a CLI's queries: DA1/DA2 (CSI ? … c,
+// CSI > … c), cursor position (CSI row;col R), DECRQM (CSI ? … $ y), kitty keyboard flags (CSI ? … u),
+// OSC and DCS reports. They pass while a dialog is open: they are not keys, and a CLI waiting for
+// one would otherwise hang. (Shift+F3 also reads CSI 1;2 R; only a key typed in the instant before a
+// dialog takes focus could reach the terminal, so that overlap is accepted.)
+export const TERMINAL_REPORT = /^(?:\x1b\[[?>][\d;]*c|\x1b\[\d+;\d+R|\x1b\[\??[\d;]*\$y|\x1b\[\?\d*u|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1bP[^\x1b]*\x1b\\)+$/;
