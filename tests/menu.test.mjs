@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkOutcome, menuTemplate, PROJECT_URL } from '../src/desktop/menu.mjs';
+import { accelerator, checkOutcome, menuTemplate, PROJECT_URL } from '../src/desktop/menu.mjs';
+import { shortcutKeys } from '../src/desktop/shortcuts.mjs';
 
 const find = (items, id) => items.flatMap(item => [item, ...(item.submenu ?? [])]).find(item => item.id === id);
 
@@ -75,4 +76,29 @@ test('no notification checkboxes remain in the menu', () => {
   }
   // The Window menu is the standard one again.
   assert.equal(menuTemplate({ name: 'Journal', checkForUpdates() {}, openUrl() {}, platform: 'win32' })[3].submenu, undefined);
+});
+
+test('Command Palette… and Open File… sit in View on every platform, with the router\'s keys', () => {
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    for (const packaged of [false, true]) {
+      const sent = [];
+      const template = menuTemplate({ name: 'Journal', checkForUpdates() {}, openUrl() {}, command: id => sent.push(id), platform, packaged });
+      const view = template.find(item => item.role === 'viewMenu' || item.label === 'View');
+      for (const [id, label] of [['command-palette', 'Command Palette…'], ['open-file', 'Open File…']]) {
+        const item = find(template, id);
+        assert.ok(view.submenu.includes(item), `${platform} ${packaged}: ${id} is in View`);
+        assert.equal(item.label, label);
+        assert.equal(item.accelerator, accelerator(shortcutKeys(platform)[id].aria), `${platform} ${id}`);
+        assert.equal(item.registerAccelerator, false, `${platform}: the shortcut router owns the key`);
+        item.click();
+      }
+      assert.deepEqual(sent, ['command-palette', 'open-file'], `${platform}: a click sends the same command as the key`);
+      // Development builds keep the standard View items after them.
+      if (!packaged) assert.deepEqual(view.submenu.filter(item => item.role).map(item => item.role), ['reload', 'forceReload', 'toggleDevTools', 'resetZoom', 'zoomIn', 'zoomOut', 'togglefullscreen'], platform);
+    }
+  }
+  assert.equal(accelerator(shortcutKeys('darwin')['command-palette'].aria), 'Cmd+K');
+  assert.equal(accelerator(shortcutKeys('darwin')['open-file'].aria), 'Cmd+P');
+  assert.equal(accelerator(shortcutKeys('win32')['command-palette'].aria), 'Ctrl+Shift+P');
+  assert.equal(accelerator(shortcutKeys('linux')['open-file'].aria), 'Ctrl+Shift+O');
 });

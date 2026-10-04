@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import ts from 'typescript';
 import * as copyModule from '../src/ui/copy.ts';
-import { composer, copy, excludedReason, firstRun, memoryState, providers, selectionReason, shell, tip, warningText, wrapUp } from '../src/ui/copy.ts';
+import { composer, copy, excludedReason, firstRun, memoryState, palette, providers, selectionReason, shell, states, tip, warningText, wrapUp } from '../src/ui/copy.ts';
 
 // Plain-language vocabulary (design board B8). The technical term may stay in a
 // tooltip (the title attribute of an element) but not in visible text or names.
@@ -339,7 +339,8 @@ test('the wrap-up vocabulary avoids the old terms', () => {
 // Every string copy.ts exports, as [key, text]: nested objects and arrays are walked, and
 // functions are called with sample arguments (a name, a count, or the facts of a draft).
 const SAMPLE_ARGS = { facts: [{ readme: 'README.md', folders: 8, commits: 93, counted: true }], emptyTerminalBody: ['⌘N'], cursorInstalled: ['2026.10.01', true],
-  commitsSince: [2, 'main'], recentCommits: [3, 'abc1234'], cantStart: ['/usr/bin/agent', 'it is a script'], leaveOutTip: [true], matchesTerms: [['windows', 'menu']] };
+  commitsSince: [2, 'main'], recentCommits: [3, 'abc1234'], cantStart: ['/usr/bin/agent', 'it is a script'], leaveOutTip: [true], matchesTerms: [['windows', 'menu']],
+  crashBody: [{ total: 2, sessions: [{}] }], filesTruncated: [1234, 'timeout'], cantStartTitle: ['Codex', 'signed-out'] };
 function copyStrings() {
   const out = [];
   const walk = (key, value) => {
@@ -400,4 +401,15 @@ test('the first-run vocabulary avoids the old terms', () => {
   assert.equal(firstRun.facts({ readme: null, folders: 1, commits: 1, counted: false }), 'Drafted from Git: 1 top-level entry, 1 commit · no AI call · nothing left this computer');
   assert.equal(firstRun.emptyTerminalBody('Ctrl+N'), 'Start an agent with Ctrl+N. Your logins, settings and approvals stay with the CLI.');
   assert.equal(providers.installName('Claude Code'), 'Install Claude Code…');
+});
+
+test('Phase 8: a truncated file search names its reason, and the crash count covers every recovered session', () => {
+  assert.equal(palette.filesTruncated(200000), 'Only the first 200,000 files are searched.');
+  assert.equal(palette.filesTruncated(1234, 'size'), 'Only the first 1,234 files are searched.');
+  assert.equal(palette.filesTruncated(1234, 'timeout'), 'Git took too long to list every file. Only the first 1,234 files are searched.');
+  assert.doesNotMatch(palette.filesTruncated(1234, 'timeout'), /200,000/, 'a timeout is not reported as the file limit');
+  const sessions = Array.from({ length: 100 }, (_, i) => ({ id: String(i) }));
+  assert.equal(states.crashBody({ total: 140, sessions }), '140 sessions were interrupted. Nothing was resent to the agents.');
+  assert.equal(states.crashBody({ sessions: sessions.slice(0, 1) }), '1 session was interrupted. Nothing was resent to the agents.');
+  for (const text of [palette.filesTruncated(5, 'timeout'), states.crashBody({ total: 2, sessions })]) assert.doesNotMatch(text, OLD_TERMS);
 });

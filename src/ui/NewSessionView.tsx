@@ -11,11 +11,13 @@ import { composer } from './copy';
 // project has no session yet, so the empty terminal art shows under the composer; null hides it.
 export const NewSessionView = memo(function NewSessionView({ emptyTerminal, ...props }: ComposerProps & { emptyTerminal: string | null }) {
   const { project } = props;
+  // One line that truncates; the title keeps the full path and branch.
+  const checkout = composer.checkoutLine(project.name, project.branch ?? 'detached HEAD', project.head?.slice(0, 7) ?? 'unborn');
   return <div className="new-session-view">
     <div className="new-session-inner">
       <header className="new-session-header">
         <h1>{composer.newSession}</h1>
-        <p>{composer.checkoutLine(project.name, project.branch ?? 'detached HEAD', project.head?.slice(0, 7) ?? 'unborn')}</p>
+        <p title={checkout}>{checkout}</p>
       </header>
       <Composer {...props} />
       {emptyTerminal !== null && <EmptyTerminal mark={props.mark} keys={emptyTerminal || null} />}

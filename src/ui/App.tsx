@@ -16,6 +16,7 @@ import { UpdateNotice, useUpdateState } from './UpdateNotice';
 import { SettingsDialog } from './SettingsDialog';
 import { ManageProjectDialog } from './ManageProjectDialog';
 import { RenameDialog } from './RenameDialog';
+import { CommandPalette } from './CommandPalette';
 import { Inspector } from './Inspector';
 import { SessionTab } from './SessionTab';
 import { FilesTab } from './FilesTab';
@@ -104,6 +105,8 @@ export default function App() {
   const [dragging, setDragging] = useState(false); const [dropError, setDropError] = useState('');
   // === End Phase 7: first run state ===
   const [workspaceDialog, setWorkspaceDialog] = useState(false); const [disabled, setDisabled] = useState<string[]>([]); const [settingsOpen, setSettingsOpen] = useState(false); const [manageId, setManageId] = useState<string | null>(null);
+  // Phase 8: the command palette (null when closed).
+  const [palette, setPalette] = useState<{ mode: 'all' | 'files' } | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ kind: 'project'; project: Project } | { kind: 'session'; session: Session } | null>(null);
   // Right panel: collapsible, wider while previewing a file; references chosen for the next task.
   const update = useUpdateState();
@@ -309,6 +312,7 @@ export default function App() {
     if (id === 'new-session') { if (state) newSession(); return; }
     if (id === 'open-project') { if (!busy) void openProject(); return; }
     if (id === 'settings') { setSettingsOpen(true); return; }
+    if (id === 'command-palette' || id === 'open-file') { setPalette({ mode: id === 'open-file' ? 'files' : 'all' }); return; }
     if (id === 'toggle-sidebar') { layout.toggleSidebar(); return; }
     if (!projectRef.current) return;
     if (id === 'add-note') setForm({});
@@ -613,6 +617,7 @@ export default function App() {
       note="Only Journal's label changes. The native Claude, Codex or Cursor session ID and continuing the same conversation are unaffected." onClose={() => setRenameTarget(null)}
       onSave={async name => { merge([await api<Session>('renameSession', { id: renameTarget.session.id, name })]); }} />}
     {processView && <ProcessDialog id={processView.id} title={processView.title} command={processView.command} appearance={appearance} onClose={() => setProcessView(null)} onExit={() => {}} />}
+    {palette && <CommandPalette mode={palette.mode} onClose={() => setPalette(null)} />}
     {settingsOpen && <SettingsDialog appearance={appearance} onAppearance={setAppearance} update={update} project={state?.project ?? null} onClose={() => setSettingsOpen(false)} onDataChanged={() => { setKnowledgeVersion(v => v + 1); void refresh().catch(() => {}); }} />}
     {state && workspaceDialog && <WorkspaceDialog project={state.project} onClose={() => setWorkspaceDialog(false)} onChanged={() => void refresh().catch(failed)} />}
     {state && evidenceSource && <KnowledgeForm project={state.project} initialSource={evidenceSource} onClose={() => setEvidenceSource(null)} onSaved={() => { setEvidenceSource(null); setPanel('memory'); setKnowledgeVersion(v => v + 1); }} />}

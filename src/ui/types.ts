@@ -1,6 +1,6 @@
 export type Provider = 'claude' | 'codex' | 'cursor';
 // Commands the main process sends for app shortcuts (src/desktop/shortcuts.mjs).
-export type CommandId = 'new-session' | 'open-project' | 'add-note' | 'focus-terminal' | 'toggle-inspector' | 'slot-1' | 'slot-2' | 'slot-3' | 'slot-4' | 'next-needs-you' | 'tab-session' | 'tab-files' | 'tab-memory' | 'settings' | 'toggle-sidebar';
+export type CommandId = 'new-session' | 'open-project' | 'add-note' | 'focus-terminal' | 'toggle-inspector' | 'slot-1' | 'slot-2' | 'slot-3' | 'slot-4' | 'next-needs-you' | 'tab-session' | 'tab-files' | 'tab-memory' | 'settings' | 'toggle-sidebar' | 'command-palette' | 'open-file';
 // Phase 3 shell: the inspector's three tabs, and whether a sidebar or inspector renders in full or as a rail.
 export type InspectorTab = 'session' | 'files' | 'memory';
 export type Pane = 'full' | 'rail';
@@ -89,7 +89,7 @@ export interface StaleCatch { available: boolean; notes: StaleNote[]; truncated:
 export interface PendingApproval { tool: string | null; command: string | null; path: string | null; at: string; inferred?: boolean; }
 export interface TimelineEvent { id?: number; sessionId?: string; at: string; kind: string; body: Record<string, unknown>; }
 export type TerminalEvent = { type: 'output'; sessionId: string; sequence: number; data: string } | { type: 'gap'; sessionId: string } | { type: 'status'; session: Session } | { type: 'error'; message: string; sessionId?: string; code?: typeof IDENTITY_CHANGED }
-  | { type: 'timeline'; event: TimelineEvent } | { type: 'proposals'; projectId: string; count: number; sessionId?: string; failed?: boolean } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; recovered?: boolean }
+  | { type: 'timeline'; event: TimelineEvent } | { type: 'proposals'; projectId: string; count: number; sessionId?: string; failed?: boolean } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; recovered?: boolean; recovery?: Recovery | null }
   | { type: 'files'; key: string; folders: string[]; overflow: boolean; stopped?: boolean }
   | { type: 'update'; state: UpdateState } | { type: 'providers'; agents: AgentInfo[]; after?: { provider: Provider; kind: ProcessKind } } | { type: 'command'; id: CommandId }
   // Codex and Cursor output times, at most one per session every 5 s; main asks to show a session (notification click).
@@ -132,7 +132,20 @@ export interface FirstRunDrafts { projectId: string; head: string; branchName: s
   branchSkipped: 'detached' | 'unborn' | 'failed' | null; overviewSkipped: 'failed' | null }
 export interface Bootstrap { projects: Project[]; agents: AgentInfo[]; platform: string; shortcuts: Partial<Record<CommandId, { label: string; aria: string }>>; runtime: { state: 'connected' | 'disconnected' | 'connecting'; warning: string | null }; live: Session[]; active: Session[];
   // Phase 7: any remembered note in any project (the first-note moment never plays for an upgrading install).
-  hasNotes: boolean; }
+  hasNotes: boolean;
+  // Phase 8: sessions the runtime recovered from a crashed predecessor, until acknowledged (null when none).
+  recovery: Recovery | null; }
+// Phase 8: open-file search (searchFiles). spans: matched character ranges in path, [start, end) and merged.
+export interface FileHit { path: string; score: number; spans: [number, number][] }
+// available false: not a Git folder (file search uses git ls-files), or Git failed (its message is never shown).
+// truncated: the listing stopped early, so some files are not searched. truncatedBy says why (Git took
+// longer than 8 s, its output passed 64 MiB, or the 200,000-file limit) and listed how many files are searched.
+export interface FileSearch { available: boolean; reason?: 'not-git' | 'failed'; hits: FileHit[]; total: number; truncated: boolean;
+  truncatedBy?: 'timeout' | 'size' | 'limit'; listed?: number }
+// Phase 8: recovery in the runtime hello. status is the state at recovery time; the session row may have moved on since.
+export interface RecoveredSession { id: string; status: 'interrupted' | 'orphaned'; identityVerified: boolean | null }
+// sessions: at most 100 rows; total: every recovered session (a runtime from before total was added omits it).
+export interface Recovery { at: string; runtimeId: string; total?: number; sessions: RecoveredSession[] }
 export interface StatusDraft { scope: 'checkout' | 'branch'; memoryId: string | null; previousRevision: number | null; previousStatement: string | null; statement: string; source: { kind: 'git'; base: string | null };
   basis: { label: string; base: string | null; head: string; commitCount?: number; changedFiles?: number; uncommitted?: number; carried?: string[]; structureChanges?: string[]; unchanged?: boolean; notes: string[]; facts?: DraftFacts }; }
 declare global {
