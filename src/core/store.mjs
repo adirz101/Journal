@@ -612,11 +612,13 @@ export class JournalStore {
   // 'unchecked' rather than 'current'.
   storedValidation(project, memory) {
     if (memory.source?.rootId && !(project.roots ?? []).some(root => root.id === memory.source.rootId)) return 'folder-removed';
+    // A guard: selectCandidates already filters branch scope in SQL, so a
+    // candidate on another branch never reaches this check.
     if (memory.scope === 'branch' && project.branch !== memory.branch) return 'wrong-branch';
     return 'unchecked';
   }
-  // selection.terms: the task terms FTS (porter stemming, no prefixes) matches
-  // in each selected note, one statement per term. Briefs never depend on task words.
+  // selection.terms: the searched terms (task text and referenced paths) FTS
+  // (porter stemming, no prefixes) matches in each selected note, one statement per term. Briefs never depend on task words.
   matchedTerms(items, terms) {
     const byRevision = new Map(items.map(item => [item.revisionId, []]));
     const ids = JSON.stringify(items.filter(item => item.category !== 'brief').map(item => item.revisionId));
