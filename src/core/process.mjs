@@ -128,6 +128,7 @@ export const childEnv = env => { const next = { ...env, NO_OPEN_BROWSER: '1' }; 
 // the whole process tree is ended (POSIX: the process group; Windows: taskkill /T),
 // since a launcher's child may outlive its parent. Never a shell; stdin is ignored by default.
 // output 'both' resolves { stdout, stderr } (a status line may be printed on stderr).
+const KILL_DEADLINE = 2500;
 export function runFile(path, args, env = process.env, { platform = process.platform, cwd, timeout = 8000, stdin = 'ignore', output = 'stdout', maxBuffer = 256 * 1024 } = {}) {
   return new Promise((resolve, reject) => {
     let target;
@@ -136,8 +137,12 @@ export function runFile(path, args, env = process.env, { platform = process.plat
     let child;
     try { child = spawn(target.file, target.args, { cwd, env: childEnv(env), windowsHide: true, detached: platform !== 'win32', stdio: [stdin === 'ignore' ? 'ignore' : 'pipe', 'pipe', 'pipe'] }); }
     catch (error) { reject(error); return; }
-    let stdout = ''; let stderr = ''; let size = 0; let done = false; let timedOut = false; let overflow = false;
+    let stdout = ''; let stderr = ''; let size = 0; let done = false; let timedOut = false; let overflow = false; let deadline = null;
     const end = () => {
+      // 'close' waits for stdout and stderr to end. A grandchild that left the group
+      // (setsid or detached) can hold them open forever, so after the kill the run
+      // settles by a hard deadline, dropping the pipes, whether or not 'close' came.
+      deadline ??= setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); finish(null); }, KILL_DEADLINE);
       if (!child.pid) return;
       if (platform === 'win32') { execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {}); return; }
       try { process.kill(-child.pid, 'SIGTERM'); } catch { try { child.kill('SIGTERM'); } catch { /* gone */ } }
@@ -152,7 +157,7 @@ export function runFile(path, args, env = process.env, { platform = process.plat
     child.stdout.on('data', collect('out')); child.stderr.on('data', collect('err'));
     const timer = setTimeout(() => { timedOut = true; end(); }, timeout);
     const finish = (error, code, signal) => {
-      if (done) return; done = true; clearTimeout(timer);
+      if (done) return; done = true; clearTimeout(timer); clearTimeout(deadline);
       if (error) { reject(Object.assign(error, { stdout, stderr })); return; }
       if (timedOut) { reject(Object.assign(new Error('Timed out'), { timedOut: true, killed: true, stdout, stderr })); return; }
       if (overflow) { reject(Object.assign(new Error('Output exceeded the limit'), { killed: true, stdout, stderr })); return; }

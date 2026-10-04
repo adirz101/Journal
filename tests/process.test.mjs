@@ -110,3 +110,39 @@ if(a[0]==='hang'){const {spawn}=require('node:child_process');const c=spawn(proc
   for (let i = 0; i < 40 && isAlive(child); i++) await wait(100);
   assert.equal(isAlive(child), false, 'the grandchild in the group was ended too');
 });
+
+test('runFile settles by a hard deadline when an escaped grandchild holds its output open', { skip: !posix }, async t => {
+  const { runFile } = await import('../src/core/process.mjs');
+  const { readFileSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'journal-runfile-escape-')); const pidFile = join(dir, 'grandchild');
+  // The grandchild starts its own session (detached), so the group kill misses it, and it inherits stdout and stderr.
+  const cli = join(dir, 'cli');
+  writeFileSync(cli, `#!${process.execPath}
+const {spawn}=require('node:child_process');
+const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:['ignore','inherit','inherit']});c.unref();
+require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));console.log('started');setInterval(()=>{},1000);
+`);
+  chmodSync(cli, 0o755);
+  // Both escaped grandchildren are killed here, before the folder holding their PIDs is removed.
+  t.after(() => {
+    for (const file of [pidFile, join(dir, 'loud-grandchild')]) { try { const pid = Number(readFileSync(file, 'utf8')); if (pid) process.kill(pid, 'SIGKILL'); } catch { /* not started or already gone */ } }
+    removeLater(dir);
+  });
+  const started = Date.now();
+  await assert.rejects(runFile(cli, [], process.env, { timeout: 300 }), error => error.timedOut === true && error.killed === true && error.stdout === 'started\n');
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 5000, `settled after ${elapsed} ms`);
+  assert.equal(isAlive(Number(readFileSync(pidFile, 'utf8'))), true, 'the grandchild escaped the group, so only the deadline could settle the run');
+
+  // The overflow path uses the same deadline.
+  const loud = join(dir, 'loud');
+  writeFileSync(loud, `#!${process.execPath}
+const {spawn}=require('node:child_process');
+const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:['ignore','inherit','inherit']});c.unref();
+require('node:fs').writeFileSync(${JSON.stringify(join(dir, 'loud-grandchild'))},String(c.pid));process.stdout.write('x'.repeat(4096));setInterval(()=>{},1000);
+`);
+  chmodSync(loud, 0o755);
+  const loudStarted = Date.now();
+  await assert.rejects(runFile(loud, [], process.env, { timeout: 60000, maxBuffer: 1024 }), error => error.killed === true && error.timedOut === undefined);
+  assert.ok(Date.now() - loudStarted < 5000);
+});
