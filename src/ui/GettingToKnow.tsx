@@ -73,9 +73,9 @@ function DraftCard({ scope, draft, branch, fields, statement, onField, onEdit }:
   const lines = draftLines(draft.statement);
   const hasWorkFields = lines.some(line => line.kind === 'field' && line.key !== 'constraints');
   return <section className="draft-card" aria-labelledby={`${id}-title`}>
-    <div className="draft-tags"><span id={`${id}-title`} className="draft-title">{title}</span><span>{scope === 'checkout' ? copy.allBranches : copy.onlyOn(branch)}</span><span className="chip draft-badge">{meta.badge}</span><span className="draft-source">{meta.source}</span></div>
+    <div className="draft-tags"><span id={`${id}-title`} className="draft-title">{title}</span><span>{scope === 'checkout' ? copy.allBranches : copy.onlyOn(branch)}</span><span className="chip draft-badge">{meta.badge}</span><span className={`draft-source${scope === 'checkout' ? ' mono' : ''}`}>{meta.source}</span></div>
     <div className="draft-lines">{lines.map((line, index) => line.kind === 'field'
-      ? <label key={index} className="draft-field"><span className="draft-label">{FIELD_LABEL[line.key]}{line.key === 'constraints' && <span className="optional"> · {firstRun.optional}</span>}</span>
+      ? <label key={index} className="draft-field"><span className="draft-label">{FIELD_LABEL[line.key]}{line.key === 'constraints' && <span className="optional">{firstRun.optional}</span>}</span>
         <input value={fields[line.key] ?? ''} maxLength={500} onChange={event => onField(line.key, event.target.value)} /></label>
       : line.label ? <div key={index} className="draft-row"><span className="draft-label">{line.label}</span><span dir="auto">{line.value}</span></div>
       : <div key={index} className="draft-verbatim" dir="auto">{line.value}</div>)}</div>

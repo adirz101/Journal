@@ -118,7 +118,9 @@ export default function App() {
   projectRef.current = state?.project ?? null;
   const connected = runtime.state === 'connected';
   // Wide, medium or narrow window: which side panes dock, fold to rails or open as overlays.
-  const layout = useShellLayout(!!state);
+  // Phase 7: Getting to know your project takes the main column without the inspector (board 2).
+  const showFirstRun = !!state && !session && firstRunDrafts?.projectId === state.project.id;
+  const layout = useShellLayout(!!state && !showFirstRun);
   const failed = useCallback((error: unknown) => setError(error instanceof Error ? error.message : String(error)), []);
   // Open suggestions, fetched once for the window: the `proposals` event and memory changes bump knowledgeVersion.
   const proposals = useProposals(state?.project.id ?? null, knowledgeVersion, failed);
@@ -457,7 +459,6 @@ export default function App() {
     if (!current) return current; const next = { ...current, [scope === 'checkout' ? 'overview' : 'branch']: null };
     return next.overview || next.branch ? next : null;
   });
-  const showFirstRun = !!state && !session && firstRunDrafts?.projectId === state.project.id;
   // === End Phase 7: Getting to know your project ===
   const projectBranchChanged = session && state && !session.workspaceId && session.projectId === state.project.id && isLive(session) && session.branch !== undefined && session.branch !== state.project.branch;
   // One timeline fetch and one changes source per session, shared by the header, status bar and inspector.
@@ -493,7 +494,7 @@ export default function App() {
   </Inspector>;
   // === End region B: inspector ===
   // === Region C: the ResizableWorkspace wrapper (layout modes) ===
-  return <ResizableWorkspace layout={layout} wide={previewing && panel === 'files'} inspector={state ? inspector : null}
+  return <ResizableWorkspace layout={layout} wide={previewing && panel === 'files'} inspector={state && !showFirstRun ? inspector : null}
     sidebar={(pane, overlay) => <Sidebar pane={pane} inOverlay={overlay} projects={projects} project={state?.project ?? null} sessions={ordered} proposals={proposals} selectedId={selectedId} connected={connected}
       runtimeState={runtime.state === 'connected' || runtime.state === 'disconnected' ? runtime.state : 'connecting'} now={now} canCompose={!!state}
       shortcuts={bootstrap?.shortcuts} appearance={appearance} update={state && session ? null : update}
