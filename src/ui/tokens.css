@@ -10,7 +10,9 @@
    --accsoft-hover 1.1:1 against --accsoft on those surfaces, with --tx on it at 4.5:1.
    --line-field, the border of inputs, text areas and selects, is at least 3:1 on every
    surface they sit on (WCAG 1.4.11); --line2 is only for dividers and panel borders.
-   Translucent tints and lines are their base color with alpha.
+   Translucent tints and lines are their base color with alpha; the light theme's opaque
+   tints and lines (--ambsoft, --grnsoft, --redsoft, --claude-soft, --accline, --ambline,
+   --redline) are exempt.
    Amber means "needs you" and nothing else. */
 :root{
   color-scheme:dark;

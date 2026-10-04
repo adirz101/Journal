@@ -82,6 +82,10 @@ test('borderless tab and link buttons hover by color, not with the generic backg
   for (const selector of family) assert.ok(rulesFor(`${selector}:not(:disabled):hover`).some(rule => declares(rule, 'background', 'transparent') && declares(rule, 'color', 'var(--tx)') && rule.at.some(at => /pointer:fine/.test(at))), selector);
 });
 
+test('accent badges share one fill', () => {
+  for (const selector of ['.branch-badge', '.local-tag']) assert.ok(rulesFor(selector).some(rule => rule.at.length === 0 && declares(rule, 'background', 'var(--accsoft)')), selector);
+});
+
 test('accent containers keep an accent border', () => {
   for (const selector of ['.memory-actions .approve', '.branch-badge', '.local-tag', '.receipt-meta>span', '.draft-basis', '.explorer-note', '.update-notice', '.reference-chips li', '.proposal-inbox']) {
     const at = styles.indexOf(`${selector}{`); assert.ok(at >= 0, selector);
