@@ -4,7 +4,7 @@ Research-stage snapshot, 1 October 2026. This document records the planning conc
 
 ## Recommendation: MODIFY, then a conditional GO
 
-The idea warrants investigation, but a workspace that runs Codex and Claude is no longer sufficient differentiation. Superset, Conductor, dev-3.0, Emdash and T3 Code already cover much of that experience. Persistent memory also exists in provider products and tools such as Engram and claude-mem. The research examined documentation and architecture/adapter files from open repositories, as well as marketing pages. [Sources and checks](RESEARCH.md).
+The idea warrants investigation, but a workspace that runs Codex and Claude is no longer sufficient differentiation. Several existing agent workspaces already cover much of that experience. Persistent memory also exists in provider products and in dedicated memory tools. The research examined documentation and architecture/adapter files from open repositories, as well as marketing pages. [Sources and checks](RESEARCH.md).
 
 The potential opportunity is **project knowledge that can be trusted and inspected**: sources and evidence for every claim, scope appropriate to the branch and checkout, freshness checks against current code, and an exact record of what each agent received and why. This combination has not yet been shown to outperform an existing workspace paired with an external memory tool.
 
@@ -33,7 +33,7 @@ The proposed research-stage stack was **Tauri 2, Rust, React/TypeScript/Vite and
 
 No IDE, task board, complete Git system, large plugin framework, cloud or agent-quality ranking. No view claiming to expose internal reasoning or the model's complete context. SQLite encryption is not guaranteed in the MVP; provider data and history are outside Journal's control.
 
-**The product was renamed Journal at the user's request.** The previous name, Blackbox, was replaced; the original research identified a naming collision with BLACKBOX AI in coding agents. No availability or trademark check has been performed for Journal. [Existing product under the previous name](https://www.blackbox.ai/agents).
+**The product was renamed Journal at the user's request.** The previous codename, Blackbox, was replaced. No availability or trademark check has been performed for Journal.
 
 ## Full documents
 

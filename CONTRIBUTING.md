@@ -95,4 +95,4 @@ Use a short imperative summary line (for example, "Add exact-ID resume for Codex
 
 ## License
 
-By contributing, you agree that your contributions are licensed under the [Apache License 2.0](LICENSE).
+Journal is source-available under the [Elastic License 2.0](LICENSE). By contributing, you agree that your contributions are licensed under the same Elastic License 2.0 terms and that you have the right to submit them.

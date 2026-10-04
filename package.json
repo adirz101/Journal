@@ -3,7 +3,7 @@
   "productName": "Journal",
   "version": "0.2.0-alpha.3",
   "private": true,
-  "license": "Apache-2.0",
+  "license": "Elastic-2.0",
   "type": "module",
   "description": "Terminal workspace with reviewed project knowledge for Claude Code and Codex",
   "main": "src/desktop/main.mjs",
