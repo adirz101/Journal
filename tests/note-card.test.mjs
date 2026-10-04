@@ -133,3 +133,9 @@ test('a newer check marks a current note out of date, but not a delivered snapsh
   assert.equal(stateClass(note({ validation: 'wrong-branch' })), 'other');
   assert.equal(stateClass(note({ status: 'candidate' })), 'candidate');
 });
+
+test('the Session tab shows a delivered snapshot as a receipt and a preview as a preview', async t => {
+  const { receiptVariant } = await load(t);
+  assert.equal(receiptVariant('prepared'), 'preview');
+  for (const state of ['submitted', 'uncertain', 'failed']) assert.equal(receiptVariant(state), 'receipt');
+});

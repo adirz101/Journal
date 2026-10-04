@@ -8,6 +8,9 @@ import { copy } from './copy';
 // hover card (Phase 4); preview: a note in a context preview.
 export type NoteCardVariant = 'memory' | 'receipt' | 'hover' | 'preview';
 
+// The Session tab: a delivered snapshot, or a preview's notes, which are checked again at the start.
+export const receiptVariant = (state: string | undefined): NoteCardVariant => state === 'prepared' ? 'preview' : 'receipt';
+
 const t = copy.trust;
 const DAY = 86_400_000;
 const DATE = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
