@@ -143,18 +143,20 @@ export function describeStructure({ dirs, files }) {
   return `${listed.join(', ') || 'no directories'}${top.length ? `; key files: ${top.join(', ')}` : ''}`;
 }
 
+// The README file name (null when there is none) and its first prose line (null when none is usable).
 function readmePurpose(root) {
-  const name = quiet(() => git(root, ['ls-tree', '--name-only', 'HEAD']).split('\n').find(file => /^README(?:\.md|\.txt)?$/i.test(file)), null);
-  if (!name) return null;
+  const name = quiet(() => git(root, ['ls-tree', '--name-only', 'HEAD']).split('\n').find(file => /^README(?:\.md|\.txt)?$/i.test(file)), null) ?? null;
+  if (!name) return { name: null, line: null };
   const text = quiet(() => git(root, ['show', `HEAD:${name}`]), '');
   const line = text.split(/\r?\n/).map(value => value.trim()).find(value => value && !/^(?:#|!|\[|<|```|>|\||-{3,}|={3,})/.test(value));
-  return line && safe(line) ? (line.length > 300 ? `${line.slice(0, 299)}…` : line) : null;
+  return { name, line: line && safe(line) ? (line.length > 300 ? `${line.slice(0, 299)}…` : line) : null };
 }
 
-export function overviewDraft(project, previous) {
+// run (tests): the Git runner for the structure listing, to exercise the large-repository fallback.
+export function overviewDraft(project, previous, { run = git } = {}) {
   const { root } = project; const notes = [];
   if (!project.head) throw new Error('"About this project" needs at least one commit');
-  const now = structure(root, 'HEAD');
+  const now = structure(root, 'HEAD', run);
   if (!now) throw new Error('Journal could not read the file list of this repository; try again or write it by hand');
   if (!now.counted) notes.push('This repository is too large to count files per directory; the structure line lists top-level entries only.');
   const recorded = previous?.source?.kind === 'git' ? previous.source.head : previous?.source?.commit;
@@ -168,11 +170,14 @@ export function overviewDraft(project, previous) {
     for (const path of changed) if (!path.includes('/') && MANIFESTS.test(path)) structureChanges.push(`Changed ${path}`);
   } else if (previous) notes.push('The previous overview has no commit in this history; review the whole overview.');
   const structureLine = `Structure: ${describeStructure(now)}`;
+  const readme = readmePurpose(root);
+  // What the draft was made from, for the first-run card ("Drafted from Git: README, 8 top-level folders, 93 commits").
+  const facts = { readme: readme.name, folders: now.dirs.size, commits: Number(quiet(() => git(root, ['rev-list', '--count', 'HEAD']), '0')) || 0, counted: now.counted };
   let statement;
   if (previous) {
     statement = /^Structure:.*$/m.test(previous.statement) ? previous.statement.replace(/^Structure:.*$/m, structureLine) : `${previous.statement}\n${structureLine}`;
   } else {
-    const purpose = readmePurpose(root);
+    const purpose = readme.line;
     if (!purpose) notes.push('No README purpose line was found.');
     statement = [`Purpose: ${purpose ?? '[describe what this repo delivers and for whom]'}`, structureLine,
       'Constraints: [describe decisions the next session must preserve]'].join('\n');
@@ -182,6 +187,39 @@ export function overviewDraft(project, previous) {
   return {
     statement: statement.slice(0, MAX_STATEMENT),
     source: { kind: 'git', base },
-    basis: { label: base ? `the last overview (${short(base)})` : 'the current checkout', base, head: project.head, structureChanges, unchanged, notes },
+    basis: { label: base ? `the last overview (${short(base)})` : 'the current checkout', base, head: project.head, structureChanges, unchanged, notes, facts },
   };
+}
+
+// The labelled lines a first-run card turns into fields. Each maps to a field name.
+const FIELDS = [['Current work', 'currentWork'], ['Next', 'next'], ['Constraints', 'constraints']];
+const MAX_FIELD = 500;
+// A draft with the operator's fields filled in (pure; no Git). For each labelled line
+// whose value is still a placeholder, a non-empty field replaces the placeholder and
+// an empty one removes the line. Lines whose value is not a placeholder (carried from
+// an earlier update, or written by the user) are never changed. A placeholder never
+// reaches storage: the result must have none left.
+export function fillDraft(statement, fields = {}) {
+  if (typeof statement !== 'string') throw new Error('Invalid statement');
+  const values = {};
+  for (const [, key] of FIELDS) {
+    const raw = fields?.[key] ?? '';
+    if (typeof raw !== 'string') throw new Error(`Invalid ${key}`);
+    const value = raw.trim();
+    if (/[\r\n]/.test(value)) throw new Error('Each field is one line');
+    if (value.length > MAX_FIELD) throw new Error(`Each field is at most ${MAX_FIELD} characters`);
+    if (value) refuseCredentials(value);
+    values[key] = value;
+  }
+  const lines = [];
+  for (const line of statement.split('\n')) {
+    const field = FIELDS.find(([label]) => line.startsWith(`${label}:`));
+    const value = field ? line.slice(field[0].length + 1) : '';
+    if (!field || !PLACEHOLDER.test(value)) { lines.push(line); continue; }
+    const filled = values[field[1]];
+    if (filled) lines.push(`${field[0]}: ${filled}`);
+  }
+  const result = lines.join('\n');
+  if (PLACEHOLDER.test(result)) throw new Error('Replace the bracketed placeholders before saving the update');
+  return result;
 }
