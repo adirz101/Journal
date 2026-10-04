@@ -34,6 +34,10 @@ const command=input;input='';
 if(command==='daemon'){const c=spawn(process.execPath,['-e',${JSON.stringify(daemonCode)}],{detached:true,stdio:'ignore'});c.unref();console.log('DAEMON_STARTED')}
 else if(command==='unicode'){process.stdout.write('\\x1b[31mRED\\x1b[0m \\u6f22\\u5b57\\u30c6\\u30b9\\u30c8 \\u{1F600} \\u05e2\\u05d1\\u05e8\\u05d9\\u05ea\\r\\nCRLF_OK\\r\\n')}
 else if(command.startsWith('write ')){fs.writeFileSync(command.slice(6),'created by agent\\n');console.log('WROTE')}
+else if(command==='delay'){setTimeout(()=>console.log('DELAYED'),600)}
+else if(command.startsWith('perm ')){const a=process.argv;const hook=JSON.parse(fs.readFileSync(a[a.indexOf('--settings')+1],'utf8')).hooks.PermissionRequest[0].hooks[0].command;
+const c=spawn('/bin/sh',['-c',hook],{stdio:['pipe','ignore','ignore']});c.on('exit',()=>console.log('ASKED'));
+c.stdin.end(JSON.stringify({hook_event_name:'PermissionRequest',session_id:a[a.indexOf('--session-id')+1],cwd:process.cwd(),tool_name:'Bash',tool_use_id:'perm1',tool_input:{command:command.slice(5)}}))}
 else console.log('ECHO '+command);
 }});`;
   for (const provider of ['claude', 'codex']) { writeFileSync(resolve(bin, provider), fixture); chmodSync(resolve(bin, provider), 0o755); }
@@ -95,9 +99,10 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     const mac = process.platform === 'darwin'; const slot = [mac ? 'meta' : 'alt'] as const;
     await expect(sessionButton(page, 'TASK_2')).toHaveAttribute('aria-current', 'true');
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused();
-    await pressKey(app, '4', [...slot]); // Active sessions are newest first: slot 4 is TASK_0.
+    await pressKey(app, '1', [...slot]); // Stable slots in start order: slot 1 is TASK_0.
     await expect(sessionButton(page, 'TASK_0')).toHaveAttribute('aria-current', 'true');
     await expect(page.locator('.terminal-surface')).toContainText('TASK TASK_0');
+    await expect(sessionButton(page, 'TASK_3')).toHaveAttribute('aria-keyshortcuts', mac ? 'Meta+4' : 'Alt+4');
     // Keys that are not app shortcuts still reach the CLI.
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused();
     await pressKey(app, 'C', ['control']);
@@ -108,15 +113,15 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     await pressKey(app, 'K', mac ? ['meta', 'shift'] : ['control', 'shift']);
     await expect(page.getByRole('dialog')).toBeVisible();
     await expect(async () => {
-      await pressKey(app, '1', [...slot]);
-      expect(await page.evaluate(() => (window as any).__keys)).toContain('1');
+      await pressKey(app, '2', [...slot]);
+      expect(await page.evaluate(() => (window as any).__keys)).toContain('2');
     }).toPass();
     await expect(sessionButton(page, 'TASK_0')).toHaveAttribute('aria-current', 'true');
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     // Closing the dialog gives the shortcuts back.
     await expect(async () => {
-      await pressKey(app, '3', [...slot]);
+      await pressKey(app, '2', [...slot]);
       await expect(sessionButton(page, 'TASK_1')).toHaveAttribute('aria-current', 'true', { timeout: 1000 });
     }).toPass();
     await page.reload();
@@ -127,7 +132,7 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     await expect(page.locator('.terminal-surface')).toContainText('ECHO after-reload');
     expect(f.launches()).toHaveLength(4);
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await expect(page.locator('.terminal-label')).toContainText('Stopped');
     await expect(page.getByRole('button', { name: 'Start Claude', exact: true })).toBeEnabled();
   } finally { await closeApp(app); f.cleanup(); }
 });
@@ -222,7 +227,7 @@ test('a runtime crash is reported, recovered as interrupted, and never resends t
     await expect.poll(() => { try { return f.runtimeInfo().runtimeId !== before.runtimeId; } catch { return false; } }, { timeout: 20000 }).toBe(true);
     await expect(page.getByText('Runtime connected')).toBeVisible({ timeout: 20000 });
     // The fixture dies with its PTY, so it must be interrupted, not orphaned.
-    await expect(page.locator('.terminal-label')).toContainText('interrupted');
+    await expect(page.locator('.terminal-label')).toContainText('Interrupted');
     expect(f.launches()).toHaveLength(1);
     await page.getByRole('tab', { name: 'Activity' }).click();
     await expect(page.getByText(/Recovered after the runtime stopped/)).toBeVisible();
@@ -253,7 +258,7 @@ test('keep-running quit is rediscovered; stopping reports and cleans detached le
     const daemon = JSON.parse(readFileSync(f.daemonRecord, 'utf8')).pid;
     // Descendants are sampled every 5 s and immediately before stop.
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await expect(page.locator('.terminal-label')).toContainText('Stopped');
     expect(alive(daemon)).toBe(true);
     await page.getByRole('button', { name: /End 1 leftover process/ }).click();
     await expect.poll(() => alive(daemon)).toBe(false);
@@ -287,7 +292,7 @@ test('a managed worktree is created from the dialog, hosts a research session an
     await expect(page.getByText(/still running in it/)).toBeVisible();
     await page.getByRole('button', { name: 'Done' }).click();
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await expect(page.locator('.terminal-label')).toContainText('Stopped');
     await page.getByRole('button', { name: 'Workspaces…' }).click();
     await page.getByRole('button', { name: 'Remove worktree' }).click();
     await expect(page.getByRole('list', { name: 'Workspaces' })).not.toContainText('journal/isolated');
@@ -308,5 +313,122 @@ test('a branch switched outside Journal is picked up and live sessions say where
     await expect(page.locator('.branch-badge')).toContainText('feat/elsewhere');
     await expect(page.locator('.terminal-label')).toContainText('started on ⑂ main');
     await expect(page.getByText(/The checkout is now on feat\/elsewhere; this session started on main/)).toBeVisible();
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+// Phase 2: stable slots, honest states and next needs-you.
+const slotKeys = () => process.platform === 'darwin' ? ['meta'] as const : ['alt'] as const;
+const slotAria = (n: number) => process.platform === 'darwin' ? `Meta+${n}` : `Alt+${n}`;
+async function startSession(page: Page, task: string, provider: 'Claude' | 'Codex') {
+  await page.getByLabel('Initial task').fill(task);
+  await page.getByRole('button', { name: `Start ${provider}`, exact: true }).click();
+  await expect(page.locator('.terminal-surface')).toContainText(`TASK ${task}`);
+}
+
+test('slot shortcuts keep their session across a renderer reload and after another session stops', async () => {
+  const f = setup('slots'); const { app, page } = await open(f.env, f.project);
+  try {
+    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await startSession(page, 'SLOT_A', 'Claude'); await startSession(page, 'SLOT_B', 'Codex');
+    // Slot keys are ignored while a start or switch is still finishing; retry until it settles.
+    const select = async (key: string, task: string) => expect(async () => {
+      await pressKey(app, key, [...slotKeys()]);
+      await expect(sessionButton(page, task)).toHaveAttribute('aria-current', 'true', { timeout: 1000 });
+    }).toPass();
+    await select('1', 'SLOT_A'); await select('2', 'SLOT_B');
+    await page.reload();
+    await expect(page.getByText('2/4 active')).toBeVisible();
+    await sessionButton(page, 'SLOT_A').click();
+    await expect(page.locator('.terminal-surface')).toContainText('TASK SLOT_A');
+    await select('2', 'SLOT_B');
+    // Stopping slot 1 leaves slot 2 where it was; the next start takes the free slot 1.
+    await sessionButton(page, 'SLOT_A').click();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect(page.locator('.terminal-label')).toContainText('Stopped');
+    await expect(sessionButton(page, 'SLOT_A')).not.toHaveAttribute('aria-keyshortcuts');
+    await select('2', 'SLOT_B');
+    await expect(sessionButton(page, 'SLOT_B')).toHaveAttribute('aria-keyshortcuts', slotAria(2));
+    await startSession(page, 'SLOT_C', 'Claude');
+    await expect(sessionButton(page, 'SLOT_C')).toHaveAttribute('aria-keyshortcuts', slotAria(1));
+    await select('2', 'SLOT_B'); await select('1', 'SLOT_C');
+    // The Active group lists sessions in slot order.
+    await expect(page.getByRole('group', { name: 'Active sessions' }).getByRole('button')).toHaveText([/SLOT_C/, /SLOT_B/]);
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('next needs-you jumps to a Claude session waiting for approval and shows what it asks', async () => {
+  const f = setup('needs-you'); const { app, page } = await open(f.env, f.project);
+  const next = process.platform === 'darwin' ? ['meta'] as const : ['control', 'shift'] as const;
+  try {
+    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await startSession(page, 'CALM_ONE', 'Claude'); await startSession(page, 'ASKING_TWO', 'Claude');
+    // The fixture runs Journal's real hook with a PermissionRequest payload.
+    await typeLine(page, 'perm TOKEN=abc123456 npm publish');
+    await expect(page.locator('.terminal-surface')).toContainText('ASKED');
+    await expect(page.locator('.terminal-label')).toContainText('Needs approval');
+    await sessionButton(page, 'CALM_ONE').click();
+    await expect(sessionButton(page, 'CALM_ONE')).toHaveAttribute('aria-current', 'true');
+    const asking = sessionButton(page, 'ASKING_TWO');
+    await expect(asking).toContainText('Needs approval');
+    await expect(asking).toContainText('TOKEN=[redacted] npm publish');
+    await expect(asking).not.toContainText('abc123456');
+    await expect(asking).toHaveAttribute('aria-label', /Needs approval, TOKEN=\[redacted\] npm publish.*needs attention/);
+    await expect(async () => {
+      await pressKey(app, 'J', [...next]);
+      await expect(asking).toHaveAttribute('aria-current', 'true', { timeout: 1000 });
+    }).toPass();
+    // The only session that needs you is already selected: nothing moves.
+    await pressKey(app, 'J', [...next]);
+    await page.waitForTimeout(300);
+    await expect(asking).toHaveAttribute('aria-current', 'true');
+    // Esc dismisses the only prompt: Claude is back at its input box.
+    await page.locator('.xterm-helper-textarea').press('Escape');
+    await expect(page.locator('.terminal-label')).toContainText('Your turn');
+    await expect(asking).not.toContainText('Needs approval');
+    // A notification click: main sends focus-session, which selects the session like a click.
+    const calmId = await page.evaluate(async () => (await (window as any).journal.request('sessions')).live.find((s: any) => s.title === 'CALM_ONE').id);
+    await app.evaluate(({ BrowserWindow }, sessionId) => { BrowserWindow.getAllWindows()[0].webContents.send('journal:event', { type: 'focus-session', sessionId }); }, calmId);
+    await expect(sessionButton(page, 'CALM_ONE')).toHaveAttribute('aria-current', 'true');
+    await expect(page.locator('.terminal-surface')).toContainText('TASK CALM_ONE');
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('Codex shows Running with output time and limited status', async () => {
+  const f = setup('codex-state'); const { app, page } = await open(f.env, f.project);
+  try {
+    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await startSession(page, 'CODEX_STATE', 'Codex');
+    const row = sessionButton(page, 'CODEX_STATE');
+    await expect(row).toContainText('Running');
+    // Output 600 ms after the key is not an echo, so it counts as agent output. Output
+    // right after a resize is a repaint; the layout may still settle just after start.
+    await expect(async () => {
+      await typeLine(page, 'delay');
+      await expect(row).toContainText(/output just now|quiet/, { timeout: 2000 });
+    }).toPass({ timeout: 20000 });
+    await expect(row).toHaveAttribute('aria-label', /Running, (output just now|quiet [^,]+), limited status/);
+    await expect(row.locator('.session-status')).toHaveAttribute('title', /Journal sees output, not the agent's state/);
+    await expect(row.locator('.status-dot')).not.toHaveClass(/waiting/);
+    await expect(page.locator('.terminal-label')).toContainText('Running');
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('a fifth start is refused with the SLOTS_FULL code through the preload bridge', async () => {
+  const f = setup('slots-full'); const { app, page } = await open(f.env, f.project);
+  try {
+    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    for (let i = 0; i < 4; i++) await startSession(page, `FULL_${i}`, i % 2 ? 'Codex' : 'Claude');
+    const fifth = async () => page.evaluate(async () => {
+      const journal = (window as any).journal; const boot = await journal.request('bootstrap');
+      const input = { projectId: boot.projects[0].id, provider: 'claude', task: '' };
+      let thrown: { code?: string; message: string } | null = null;
+      try { await journal.request('start', input); } catch (error: any) { thrown = { code: error.code, message: error.message }; }
+      return { settled: await journal.settle('start', input), thrown };
+    });
+    const { settled, thrown } = await fifth();
+    // The code crosses the bridge as data; a thrown Error keeps only its message.
+    expect(settled).toEqual({ ok: false, code: 'SLOTS_FULL', error: expect.stringContaining('Stop one before starting another') });
+    expect(thrown?.message).toContain('Stop one before starting another');
+    expect(f.launches()).toHaveLength(4);
   } finally { await closeApp(app); f.cleanup(); }
 });

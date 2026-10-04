@@ -3,7 +3,8 @@ import { TerminalPane } from './TerminalPane';
 import { KnowledgeForm } from './KnowledgeForm';
 import { KnowledgePanel } from './KnowledgePanel';
 import { ResizableWorkspace } from './ResizableWorkspace';
-import { SessionList, activeOrder, needsAttention, resumable, stateLabel } from './SessionList';
+import { SessionList } from './SessionList';
+import { needsYou, nextNeedsYou, resumable, slotOrder, slotTarget, stateFor } from './sessionState';
 import { ChangesPanel } from './ChangesPanel';
 import { ActivityPanel } from './ActivityPanel';
 import { WorkspaceDialog } from './WorkspaceDialog';
@@ -23,10 +24,11 @@ import journalWordmark from '../../assets/branding/journal-wordmark.png';
 import { storedAppearance, type Appearance } from './theme';
 import { copy, tip } from './copy';
 import { keyLetter } from './keys';
-import { api, isLive, PROVIDER_NAMES, type Bootstrap, type CommandId, type FileReference, type Memory, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
+import { api, errorCode, isLive, PROVIDER_NAMES, type Bootstrap, type CommandId, type FileReference, type Memory, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
 
 const MAX_SESSIONS = 4;
 type Panel = 'files' | 'memory' | 'context' | 'changes' | 'activity';
+const latest = (a: string | null | undefined, b: string | null | undefined) => !a ? b : !b ? a : a > b ? a : b;
 const storedCollapsed = () => { try { return localStorage.getItem('journal-panel-collapsed') === '1'; } catch { return false; } };
 
 export default function App() {
@@ -73,12 +75,23 @@ export default function App() {
   // and a snapshot read before a removal never brings the removed session back.
   const merge = useCallback((items: Session[]) => setSessions(current => {
     const next = { ...current };
-    for (const item of items) { if (item.removed || removedIds.current.has(item.id)) continue; const known = next[item.id]; if (!known || (item.version ?? 0) >= (known.version ?? 0)) next[item.id] = { ...known, ...item }; }
+    for (const item of items) {
+      if (item.removed || removedIds.current.has(item.id)) continue; const known = next[item.id];
+      // Output time only moves forward: an activity event can be newer than a stored snapshot of the same version.
+      if (!known || (item.version ?? 0) >= (known.version ?? 0)) next[item.id] = { ...known, ...item, lastOutputAt: latest(known?.lastOutputAt, item.lastOutputAt) };
+    }
     return next;
   }), []);
+  // Activity events (Codex, Cursor) patch the output time without a version: status events stay the authority.
+  const noteActivity = useCallback((sessionId: string, lastOutputAt: string) => setSessions(current => {
+    const known = current[sessionId]; const next = latest(known?.lastOutputAt, lastOutputAt);
+    return !known || next === known.lastOutputAt ? current : { ...current, [sessionId]: { ...known, lastOutputAt: next } };
+  }), []);
   useEffect(() => { void api('setAppearance', { appearance }).catch(failed); }, [appearance, failed]);
-  // Relative times only; no animation.
-  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 15000); return () => clearInterval(timer); }, []);
+  // Relative times only; no animation. While a live Codex or Cursor session is
+  // listed, tick every 5 s so "output just now" ends within 5 s of its 10 s threshold.
+  const outputClock = Object.values(sessions).some(s => !s.removed && isLive(s) && s.provider !== 'claude');
+  useEffect(() => { setNow(Date.now()); const timer = setInterval(() => setNow(Date.now()), outputClock ? 5000 : 15000); return () => clearInterval(timer); }, [outputClock]);
   const refresh = useCallback(async (id?: string) => {
     const projectId = id ?? projectRef.current?.id; if (!projectId) return;
     const next = await api<ProjectState>('project', { projectId }); setState(next); merge(next.sessions);
@@ -110,7 +123,7 @@ export default function App() {
     void api<Bootstrap>('bootstrap').then(async data => {
       setBootstrap(data); setProjects(data.projects); setRuntime(data.runtime); merge([...data.active, ...data.live]);
       const remembered = (() => { try { return localStorage.getItem('journal-project'); } catch { return null; } })();
-      const firstLive = activeOrder([...data.active, ...data.live]).find(isLive);
+      const firstLive = slotOrder([...data.active, ...data.live]).find(isLive);
       const selected = data.projects.find(p => p.id === (firstLive?.projectId ?? remembered));
       if (selected && !userChose.current) {
         const next = await refresh(selected.id); if (userChose.current) return;
@@ -129,16 +142,17 @@ export default function App() {
       if (event.type === 'timeline') { setLiveEvents(current => [...current.slice(-1999), event.event]); return; }
       if (event.type === 'proposals') { setKnowledgeVersion(v => v + 1); return; }
       if (event.type === 'providers') { setBootstrap(current => current ? { ...current, agents: event.agents } : current); return; }
+      if (event.type === 'activity') { noteActivity(event.sessionId, event.lastOutputAt); return; }
       if (event.type !== 'status') return;
       // Main strips user-owned fields (names, pins, archive, removal) from runtime sessions.
       merge([event.session]);
     });
-  }, [refresh, reloadSessions, merge, failed]);
+  }, [refresh, reloadSessions, merge, noteActivity, failed]);
   async function run(action: () => Promise<void>) { setBusy(true); setError(''); try { await action(); } catch (error) { failed(error); } finally { setBusy(false); } }
   async function chooseProject(project: Project) {
     userChose.current = true;
     await run(async () => { const next = await refresh(project.id); try { localStorage.setItem('journal-project', project.id); } catch { /* optional */ }
-      const live = activeOrder(Object.values(sessions)).find(s => isLive(s) && s.projectId === project.id);
+      const live = slotOrder(Object.values(sessions)).find(s => isLive(s) && s.projectId === project.id);
       setSelectedId(live?.id ?? null); setReceipt(next?.receipts[0] ?? null); setTask(''); });
   }
   async function openProject() {
@@ -164,11 +178,11 @@ export default function App() {
     // about the dialog (setModalOpen); this covers a key pressed before that.
     if (document.querySelector('dialog[open]')) return;
     // Commands do only what the matching buttons allow at the moment.
-    // Slots follow activeOrder (pinned first, then newest) until Phase 2 gives
-    // sessions stable slots. Slot shortcuts are ignored while busy (clicks are
-    // not) so two switches never overlap.
+    // Slot shortcuts follow the runtime's stable slots. They and next-needs-you
+    // are ignored while busy (clicks are not) so two switches never overlap.
     const slot = /^slot-([1-4])$/.exec(id);
-    if (slot) { const target = activeOrder(ordered)[Number(slot[1]) - 1]; if (!busy && target && target.id !== selectedId) void selectSession(target); return; }
+    if (slot) { const target = slotTarget(ordered, Number(slot[1])); if (!busy && target && target.id !== selectedId) void selectSession(target); return; }
+    if (id === 'next-needs-you') { const target = nextNeedsYou(ordered, selectedId); if (!busy && target) void selectSession(target); return; }
     if (id === 'new-session') { if (state && canStart) newSession(); return; }
     if (id === 'open-project') { if (!busy) void openProject(); return; }
     if (!projectRef.current) return;
@@ -180,7 +194,13 @@ export default function App() {
     else if (id === 'tab-files') { setCollapsed(false); setPanel('files'); setExplorerFocus(n => n + 1); }
     else if (id === 'tab-memory') { setCollapsed(false); setPanel('memory'); }
   };
-  useEffect(() => window.journal?.onEvent(event => { if (event.type === 'command') command.current(event.id); }), []);
+  // A notification click (main sends focus-session) selects its session like a click, busy or not.
+  const focusSession = useRef<(id: string) => void>(() => {});
+  focusSession.current = id => { const target = sessions[id]; if (target) void selectSession(target); };
+  useEffect(() => window.journal?.onEvent(event => {
+    if (event.type === 'command') command.current(event.id);
+    else if (event.type === 'focus-session') focusSession.current(event.sessionId);
+  }), []);
   // Windows and Linux: Ctrl+O is not routed, because the CLI owns it while the
   // terminal has focus (xterm stops the event there). Elsewhere it opens a project.
   useEffect(() => {
@@ -199,7 +219,12 @@ export default function App() {
       try {
         const result = await api<{ session: Session; receipt: Receipt }>('start', { projectId, provider, task: submitted, resumeId: resumeFrom?.id, ...(resumeFrom ? {} : { workspaceId: workspaceId || null, research, plan: plan && !research, disabled, references: referenceInputs }) });
         merge([result.session]); setSelectedId(result.session.id); setReceipt(result.receipt); setDisabled([]); if (!resumeFrom) setReferences([]); setPanel('context'); await refresh(projectId);
-      } catch (error) { if (submitted) setTask(current => current || submitted); throw error; }
+      } catch (error) {
+        if (submitted) setTask(current => current || submitted);
+        // Another window or a stale count: all four slots are taken. Catch up and say so plainly.
+        if (errorCode(error) === 'SLOTS_FULL') { void reloadSessions().catch(() => {}); throw new Error(copy.slotsFull(MAX_SESSIONS)); }
+        throw error;
+      }
     });
   }
   const sessionAction = (action: string, extra: object = {}) => session && run(async () => { await api(action, { id: session.id, ...extra }); });
@@ -275,7 +300,7 @@ export default function App() {
   }
   async function installCursor() { if (checkingProvider) return; setProviderNote(''); setCheckingProvider(true); try { const result = await api<{ id: string; command: string } | null>('installCursor'); if (result) setProcessView({ id: result.id, command: result.command, title: 'Install Cursor CLI', kind: 'install' }); } catch (error) { failed(error); } finally { setCheckingProvider(false); } }
   async function loginCursor() { if (checkingProvider) return; setProviderNote(''); setCheckingProvider(true); try { const result = await api<{ id: string }>('cursorLogin'); setProcessView({ id: result.id, command: 'agent login', title: 'Sign in to Cursor', kind: 'login' }); } catch (error) { failed(error); } finally { setCheckingProvider(false); } }
-  const label = session ? stateLabel(session, connected) : '';
+  const label = session ? stateFor(session, now, connected).word : '';
   const projectBranchChanged = session && state && !session.workspaceId && session.projectId === state.project.id && isLive(session) && session.branch !== undefined && session.branch !== state.project.branch;
 
   const inspectorKeys = bootstrap?.shortcuts['toggle-inspector']?.label;
@@ -284,8 +309,8 @@ export default function App() {
       <div className="brand"><img className="brand-icon" src={journalMark} alt="" width={32} height={32} /><div>Journal<small>PROJECT MEMORY</small></div><span className="local-tag">LOCAL</span></div>
       <button className="open-project" onClick={() => void openProject()} disabled={busy} aria-keyshortcuts={bootstrap?.shortcuts['open-project']?.aria}><span aria-hidden="true">＋</span> Open project {bootstrap?.shortcuts['open-project'] && <kbd aria-hidden="true">{bootstrap.shortcuts['open-project'].label}</kbd>}</button>
       <div className="nav-caption">PROJECTS <span>{projects.length}</span></div>
-      <nav aria-label="Projects">{projects.map(project => <div key={project.id} className="project-row"><button className={`project-link ${state?.project.id === project.id ? 'selected' : ''}`} aria-current={state?.project.id === project.id ? 'true' : undefined} onClick={() => void chooseProject(project)} onContextMenu={event => { event.preventDefault(); void projectMenu(project, menuPosition(event)); }} title={project.root}><svg className="folder-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 11h18" /></svg><span className="project-name">{project.name}</span>{project.pinned && <span className="pin-mark"><span aria-hidden="true">⚲</span><span className="visually-hidden">pinned</span></span>}{ordered.some(s => s.projectId === project.id && needsAttention(s)) && <span className="attention" aria-label="needs attention">●</span>}</button><button className="project-manage" aria-label={`Manage ${project.name}`} onClick={() => setManageId(project.id)}>⋯</button></div>)}</nav>
-      <SessionList sessions={ordered} projects={projects} selectedId={selectedId} currentProjectId={state?.project.id ?? null} connected={connected} now={now} onSelect={next => void selectSession(next)} onMenu={(next, position) => void sessionMenu(next, position)} onNew={newSession} newShortcut={bootstrap?.shortcuts['new-session']} canStart={!!state && canStart} />
+      <nav aria-label="Projects">{projects.map(project => <div key={project.id} className="project-row"><button className={`project-link ${state?.project.id === project.id ? 'selected' : ''}`} aria-current={state?.project.id === project.id ? 'true' : undefined} onClick={() => void chooseProject(project)} onContextMenu={event => { event.preventDefault(); void projectMenu(project, menuPosition(event)); }} title={project.root}><svg className="folder-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 11h18" /></svg><span className="project-name">{project.name}</span>{project.pinned && <span className="pin-mark"><span aria-hidden="true">⚲</span><span className="visually-hidden">pinned</span></span>}{ordered.some(s => s.projectId === project.id && needsYou(s)) && <span className="attention" aria-label="needs attention">●</span>}</button><button className="project-manage" aria-label={`Manage ${project.name}`} onClick={() => setManageId(project.id)}>⋯</button></div>)}</nav>
+      <SessionList sessions={ordered} projects={projects} selectedId={selectedId} currentProjectId={state?.project.id ?? null} connected={connected} now={now} onSelect={next => void selectSession(next)} onMenu={(next, position) => void sessionMenu(next, position)} onNew={newSession} newShortcut={bootstrap?.shortcuts['new-session']} shortcuts={bootstrap?.shortcuts} canStart={!!state && canStart} />
       <div className="sidebar-footer">{!state && <UpdateNotice state={update} onError={failed} />}<button className="theme-toggle" aria-label={`Switch to ${appearance === 'dark' ? 'light' : 'dark'} mode`} onClick={() => setAppearance(value => value === 'dark' ? 'light' : 'dark')}><span aria-hidden="true">{appearance === 'dark' ? '☀' : '◐'}</span> {appearance === 'dark' ? 'Light mode' : 'Dark mode'}</button><button className="theme-toggle" onClick={() => setDataDialog(true)}><span aria-hidden="true">⛁</span> Data and backups</button><span className={`status-dot ${connected ? 'running' : 'waiting'}`} /> {connected ? 'Runtime connected' : runtime.state === 'connecting' ? 'Starting runtime…' : 'Runtime disconnected'}<small>No terminal transcripts saved</small></div>
     </aside>
 
@@ -301,7 +326,7 @@ export default function App() {
               <span title={`${ref.rootLabel ?? ''} · ${ref.path}${ref.contentHash ? ` · sha256 ${ref.contentHash.slice(0, 12)}` : ''}`}>{ref.kind === 'folder' ? '▸ ' : ''}{ref.display ?? ref.path}{ref.startLine ? `:${ref.startLine}${ref.endLine !== ref.startLine ? `-${ref.endLine}` : ''}` : ''}</span>
               <button aria-label={`Remove ${ref.path} from the next task`} onClick={() => setReferences(current => current.filter((_, i) => i !== index))}>×</button></li>)}
               <li className="muted">Paths and lines only; the agent reads the files itself.</li></ul>}
-            <div className="launch-actions"><div><button className="primary" disabled={busy || !canStart || !available('claude')} onClick={() => void start('claude')}>Start Claude</button><button disabled={busy || !canStart || !available('codex') || (plan && !research)} title={plan && !research ? 'Codex has no plan mode' : undefined} onClick={() => void start('codex')}>Start Codex</button><button disabled={busy || !canStart || !available('cursor') || ((research || plan) && !cursorAgent?.supports?.mode)} onClick={() => void start('cursor')}>Start Cursor</button>{liveCount >= MAX_SESSIONS && <span className="hint inline">{MAX_SESSIONS} sessions are running. Stop one to start another.</span>}</div><button className="text-button" disabled={busy} onClick={() => void run(async () => { setReceipt(await api<Receipt>('prepareContext', { projectId: state.project.id, task, workspaceId: workspaceId || null, disabled, references: referenceInputs })); setCollapsed(false); setPanel('context'); })}>Preview context ↗</button></div>
+            <div className="launch-actions"><div><button className="primary" disabled={busy || !canStart || !available('claude')} onClick={() => void start('claude')}>Start Claude</button><button disabled={busy || !canStart || !available('codex') || (plan && !research)} title={plan && !research ? 'Codex has no plan mode' : undefined} onClick={() => void start('codex')}>Start Codex</button><button disabled={busy || !canStart || !available('cursor') || ((research || plan) && !cursorAgent?.supports?.mode)} onClick={() => void start('cursor')}>Start Cursor</button>{liveCount >= MAX_SESSIONS && <span className="hint inline">{copy.slotsFull(MAX_SESSIONS)}</span>}</div><button className="text-button" disabled={busy} onClick={() => void run(async () => { setReceipt(await api<Receipt>('prepareContext', { projectId: state.project.id, task, workspaceId: workspaceId || null, disabled, references: referenceInputs })); setCollapsed(false); setPanel('context'); })}>Preview context ↗</button></div>
             <div className="launch-options"><label className="inline-label">Workspace<select value={workspaceId} onChange={e => setWorkspaceId(e.target.value)} aria-label="Workspace">
               <option value="">Current checkout · {state.project.branch ?? 'detached HEAD'}</option>
               {workspaces?.workspaces.filter(w => w.state === 'ready').map(w => <option key={w.id} value={w.id!}>{w.kind === 'managed' ? copy.separateCopy : 'Existing worktree'} · {w.branch ?? 'detached'}</option>)}

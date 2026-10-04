@@ -56,12 +56,15 @@ export function TerminalPane({ sessionId, live, appearance, onError }: { session
     const input = terminal.onData(data => { if (acceptInput && liveRef.current) void api('write', { id: sessionId, data }).catch(failed); });
     const focus = (event: Event) => { if ((event as CustomEvent).detail === sessionId) terminal.focus(); };
     window.addEventListener('journal:focus-terminal', focus);
-    let resizeFrame = 0;
+    // Only a changed size is sent: the runtime treats output right after a resize
+    // as a repaint, not agent output, so layout changes that keep the size must not count.
+    let resizeFrame = 0; let sent = '';
     const resize = () => {
       cancelAnimationFrame(resizeFrame);
       resizeFrame = requestAnimationFrame(() => {
         if (disposed) return; fit.fit();
-        if (liveRef.current && terminal.cols > 1 && terminal.rows > 1) void api('resize', { id: sessionId, cols: terminal.cols, rows: terminal.rows }).catch(failed);
+        const size = `${terminal.cols}x${terminal.rows}`;
+        if (liveRef.current && terminal.cols > 1 && terminal.rows > 1 && size !== sent) { sent = size; void api('resize', { id: sessionId, cols: terminal.cols, rows: terminal.rows }).catch(failed); }
       });
     };
     const observer = new ResizeObserver(resize); observer.observe(host.current); resize();

@@ -120,11 +120,11 @@ process.stdin.on('data',data=>{
     await page.getByRole('button', { name: /^Interrupt/ }).click();
     await expect(page.locator('.terminal-surface')).toContainText('INTERRUPTED');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await expect(page.locator('.terminal-label')).toContainText('Stopped');
     await page.getByRole('button', { name: 'Continue', exact: true }).first().click();
     await expect(page.locator('.terminal-surface')).toContainText('--resume');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await expect(page.locator('.terminal-label')).toContainText('Stopped');
     // Reviewed knowledge is provider-neutral; Codex needs an explicitly confirmed UUID.
     await page.getByLabel('Initial task').fill('Docker tests');
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
@@ -140,7 +140,7 @@ process.stdin.on('data',data=>{
     await expect(page.locator('.terminal-surface')).toContainText('bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb');
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await expect(page.locator('.terminal-label')).toContainText('Stopped');
     // Selecting a confirmed older session must not prefill a new conversation's ID.
     await page.getByRole('button', { name: /^Codex:/ }).first().click();
     await page.getByLabel('Initial task').fill('Docker tests NEW_CODEX_SESSION_MARKER');

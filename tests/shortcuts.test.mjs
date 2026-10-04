@@ -12,17 +12,17 @@ const key = (spec, extra = {}) => {
 
 const ROUTED = {
   darwin: [['Meta+N', 'new-session'], ['Meta+O', 'open-project'], ['Meta+Shift+K', 'add-note'], ['Meta+E', 'focus-terminal'], ['Meta+I', 'toggle-inspector'],
-    ['Meta+1', 'slot-1'], ['Meta+4', 'slot-4'], ['Meta+Alt+1', 'tab-session'], ['Meta+Alt+2', 'tab-files'], ['Meta+Alt+3', 'tab-memory']],
+    ['Meta+1', 'slot-1'], ['Meta+4', 'slot-4'], ['Meta+J', 'next-needs-you'], ['Meta+Alt+1', 'tab-session'], ['Meta+Alt+2', 'tab-files'], ['Meta+Alt+3', 'tab-memory']],
   win32: [['Control+Shift+N', 'new-session'], ['Control+Shift+K', 'add-note'], ['Control+Shift+E', 'focus-terminal'], ['Control+Shift+B', 'toggle-inspector'],
-    ['Alt+1', 'slot-1'], ['Alt+4', 'slot-4'], ['Alt+Shift+1', 'tab-session'], ['Alt+Shift+2', 'tab-files'], ['Alt+Shift+3', 'tab-memory']],
+    ['Alt+1', 'slot-1'], ['Alt+4', 'slot-4'], ['Control+Shift+J', 'next-needs-you'], ['Alt+Shift+1', 'tab-session'], ['Alt+Shift+2', 'tab-files'], ['Alt+Shift+3', 'tab-memory']],
 };
 ROUTED.linux = ROUTED.win32;
 
 // Keys the terminal and its CLI own: never intercepted.
 const TERMINAL = {
-  darwin: ['Control+C', 'Control+D', 'Control+Z', 'Control+L', 'Control+R', 'Control+O', 'Control+A', 'Control+E', 'Control+K', 'Control+U', 'Control+W', 'Control+1', 'Alt+1', 'Alt+B', 'Meta+C', 'Meta+V', 'Meta+Q', 'Meta+W', 'Meta+R', 'Meta+5', 'Meta+K', 'Meta+P', 'Meta+Enter'],
+  darwin: ['Control+C', 'Control+D', 'Control+Z', 'Control+L', 'Control+R', 'Control+O', 'Control+A', 'Control+E', 'Control+K', 'Control+U', 'Control+W', 'Control+1', 'Alt+1', 'Alt+B', 'Meta+C', 'Meta+V', 'Meta+Q', 'Meta+W', 'Meta+R', 'Meta+5', 'Meta+K', 'Meta+P', 'Meta+Enter', 'Meta+Shift+J', 'Control+J'],
   win32: ['Control+C', 'Control+D', 'Control+Z', 'Control+L', 'Control+R', 'Control+O', 'Control+N', 'Control+P', 'Control+K', 'Control+W', 'Control+E', 'Control+B', 'Control+A', 'Control+U',
-    'Control+1', 'Control+Enter', 'Alt+B', 'Alt+F', 'Alt+5', 'Control+Alt+2', 'Control+Shift+C', 'Control+Shift+V', 'Control+Shift+P', 'Control+Shift+T', 'Control+Shift+W', 'Control+Shift+F', 'Control+Shift+X', 'Control+Shift+Z', 'Control+Shift+A', 'Meta+1', 'Meta+N'],
+    'Control+1', 'Control+Enter', 'Control+J', 'Alt+J', 'Alt+B', 'Alt+F', 'Alt+5', 'Control+Alt+2', 'Control+Shift+C', 'Control+Shift+V', 'Control+Shift+P', 'Control+Shift+T', 'Control+Shift+W', 'Control+Shift+F', 'Control+Shift+X', 'Control+Shift+Z', 'Control+Shift+A', 'Meta+1', 'Meta+N'],
 };
 TERMINAL.linux = TERMINAL.win32;
 
