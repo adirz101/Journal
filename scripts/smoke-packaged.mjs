@@ -6,9 +6,9 @@
 // a terminal session through the packaged runtime and node-pty, the file
 // explorer, the local database, and that a restart keeps the project.
 import { _electron as electron } from '@playwright/test';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const executable = process.argv[2];
@@ -32,8 +32,24 @@ for (const name of ['claude', 'codex']) {
     writeFileSync(join(bin, `${name}.cmd`), `@ECHO off\r\nnode "%~dp0\\${name}.js" %*\r\n`);
   } else { writeFileSync(join(bin, name), `#!${process.execPath}\n${script}`); chmodSync(join(bin, name), 0o755); }
 }
-const env = { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: data, JOURNAL_HEADLESS: '1', JOURNAL_QUIT_POLICY: 'stop' };
-delete env.ELECTRON_RUN_AS_NODE;
+// Never reach a real provider CLI or login: PATH holds only the fixtures, node and the system
+// folders (not the user's PATH, where real claude, codex or Cursor agent installs live), and HOME
+// is an empty folder (Cursor is also looked up under ~/.local/bin).
+const home = join(root, 'home'); mkdirSync(home);
+let systemPath;
+if (windows) {
+  const system = process.env.SystemRoot ?? 'C:\\Windows';
+  systemPath = [dirname(process.execPath), join(system, 'System32'), system, join(system, 'System32', 'WindowsPowerShell', 'v1.0')];
+} else {
+  const tools = join(root, 'tools'); mkdirSync(tools); symlinkSync(process.execPath, join(tools, 'node'));
+  systemPath = [tools, '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+}
+for (const dir of systemPath.slice(windows ? 0 : 1)) for (const name of ['claude', 'codex', 'agent', 'cursor-agent']) for (const ext of windows ? ['.exe', '.cmd', '.bat'] : ['']) {
+  if (existsSync(join(dir, name + ext))) throw new Error(`A real ${name} is reachable in ${dir}; the smoke test only runs with fixtures`);
+}
+const env = { ...process.env, PATH: [bin, ...systemPath].join(delimiter), HOME: home, USERPROFILE: home, JOURNAL_DATA_DIR: data, JOURNAL_HEADLESS: '1', JOURNAL_QUIT_POLICY: 'stop' };
+for (const name of ['ELECTRON_RUN_AS_NODE', 'LOCALAPPDATA', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR']) delete env[name];
+if (windows) env.LOCALAPPDATA = join(home, 'AppData', 'Local');
 
 const step = async (label, action) => { process.stdout.write(`- ${label}… `); await action(); console.log('ok'); };
 // The same selectors as tests/support/ui.ts (currentProject, sessionStatus): the Phase 3 shell.
@@ -60,8 +76,8 @@ async function run(first) {
     await page.waitForLoadState('domcontentloaded');
     if (first) {
       await step(`launch ${info.name} ${info.version} (packaged)`, async () => {});
-      await step('open a project', async () => { await page.getByRole('button', { name: 'Open project', exact: true }).first().click(); await expectText(currentProject(page), 'smoke project'); });
-      await step('provider detection (Claude, Codex, Cursor rows)', async () => { const cards = page.getByRole('radiogroup', { name: 'Agent' }); await expectText(cards.getByRole('radio', { name: 'Claude Code', exact: true }), 'Installed · fixture 1.0'); await expectText(cards.getByRole('radio', { name: 'Codex', exact: true }), 'Installed · fixture 1.0'); await expectText(cards.getByRole('radio', { name: 'Cursor', exact: true }), /Installed|Not installed|Sign in needed|Not the Cursor CLI|Unsupported version|Can’t launch/); });
+      await step('open a project', async () => { await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click(); await expectText(currentProject(page), 'smoke project'); });
+      await step('provider detection (Claude, Codex, Cursor rows)', async () => { const cards = page.getByRole('radiogroup', { name: 'Agent' }); await expectText(cards.getByRole('radio', { name: 'Claude Code', exact: true }), /Installed · (fixture )?1\.0/); await expectText(cards.getByRole('radio', { name: 'Codex', exact: true }), /Installed · (fixture )?1\.0/); await expectText(cards.getByRole('radio', { name: 'Cursor', exact: true }), /Installed|Not installed|Sign in needed|Not the Cursor CLI|Unsupported version|Can’t launch/); });
       await step('terminal session through the runtime and node-pty', async () => {
         await page.getByRole('radio', { name: 'Claude Code', exact: true }).click();
         await page.getByLabel('Task', { exact: true }).fill('SMOKE_TASK');
