@@ -86,6 +86,20 @@ test('accent badges share one fill', () => {
   for (const selector of ['.branch-badge', '.local-tag']) assert.ok(rulesFor(selector).some(rule => rule.at.length === 0 && declares(rule, 'background', 'var(--accsoft)')), selector);
 });
 
+test('focus rings inside scroll and clipping containers are drawn where they cannot be clipped', () => {
+  const has = (selector, property, value) => assert.ok(rulesFor(selector).some(rule => declares(rule, property, value)), `${selector} ${property}:${value}`);
+  // Panel tabs fill a 60 px scroll strip: the ring goes on the label, like the hover patch.
+  has('.panel-tabs button:focus-visible', 'outline', 'none');
+  has('.panel-tabs button:focus-visible .panel-tab-label', 'outline', '2px solid var(--acc)');
+  has('.panel-tabs .panel-collapse:focus-visible', 'outline-offset', '-2px');
+  // Full-width rows in scrolling lists and the sticky search field draw the ring inside their border edge.
+  for (const selector of ['.session-select:focus-visible', '.archived-toggle:focus-visible', '.changed-row:focus-visible', '.tree-search:focus-visible']) has(selector, 'outline-offset', '-2px');
+  // The segmented control rounds its end buttons instead of clipping them.
+  assert.ok(!rulesFor('.segmented').some(rule => declares(rule, 'overflow')), '.segmented does not clip');
+  has('.segmented button:first-child', 'border-radius', '5px 0 0 5px');
+  has('.segmented button:last-child', 'border-radius', '0 5px 5px 0');
+});
+
 test('accent containers keep an accent border', () => {
   for (const selector of ['.memory-actions .approve', '.branch-badge', '.local-tag', '.receipt-meta>span', '.draft-basis', '.explorer-note', '.update-notice', '.reference-chips li', '.proposal-inbox']) {
     const at = styles.indexOf(`${selector}{`); assert.ok(at >= 0, selector);

@@ -30,6 +30,21 @@ test('both sidebars resize by pointer and keyboard, persist, and leave room for 
       return Math.min(count.left - label.right, button.left - count.right, box.right - button.right) >= 0 && count.left - label.right >= 6;
     });
     expect(await captionGaps()).toBe(true);
+    // Focus rings stay inside every clipping ancestor (scroll containers clip a ring drawn outside the control).
+    const ringClear = (locator: ReturnType<typeof page.locator>) => locator.evaluate(element => {
+      (element as HTMLElement).focus({ focusVisible: true } as FocusOptions);
+      const painter = [element, ...element.querySelectorAll('*')].find(node => getComputedStyle(node).outlineStyle !== 'none');
+      if (!painter) return 'no focus ring';
+      const style = getComputedStyle(painter); const grow = parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset); const ring = painter.getBoundingClientRect();
+      for (let clip = painter.parentElement; clip; clip = clip.parentElement) {
+        const clipStyle = getComputedStyle(clip); if (clipStyle.overflowX === 'visible' && clipStyle.overflowY === 'visible') continue;
+        const box = clip.getBoundingClientRect(); const left = box.left + parseFloat(clipStyle.borderLeftWidth); const top = box.top + parseFloat(clipStyle.borderTopWidth);
+        if (ring.left - grow < left - 0.5 || ring.top - grow < top - 0.5 || ring.right + grow > left + clip.clientWidth + 0.5 || ring.bottom + grow > top + clip.clientHeight + 0.5) return `clipped by .${clip.className}`;
+      }
+      return 'clear';
+    });
+    for (const tab of await page.getByRole('tab').all()) if (await tab.isEnabled()) expect(await ringClear(tab)).toBe('clear');
+    expect(await ringClear(page.getByRole('button', { name: 'Hide side panel' }))).toBe('clear');
     const drag = async (handle: typeof left, distance: number) => {
       const box = await handle.boundingBox(); expect(box).not.toBeNull();
       const x = box!.x + box!.width / 2; const y = box!.y + 180;
