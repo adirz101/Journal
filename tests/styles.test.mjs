@@ -179,3 +179,14 @@ test('Phase 5 notes: only compact cards keep one line; pressed chips stay visibl
   assert.ok(forced.some(rule => declares(rule, 'border-color', 'Highlight') && declares(rule, 'outline', '1px solid Highlight')), 'pressed chip in forced colors');
   assert.ok(rulesFor('.category-chips button[aria-pressed=true]:focus-visible').some(rule => rule.at.some(at => /forced-colors/.test(at)) && declares(rule, 'outline', '3px solid Highlight')), 'focus stays distinct from pressed');
 });
+
+test('Phase 4 composer: selection, focus and the underline mirror survive forced colors', () => {
+  const forced = selector => rulesFor(selector).filter(rule => rule.at.some(at => /forced-colors:\s*active/.test(at)));
+  for (const selector of ['.agent-option[aria-checked=true]', '.mode-switch button[aria-checked=true]']) {
+    assert.ok(forced(selector).some(rule => declares(rule, 'outline', '2px solid Highlight')), `${selector} selected in forced colors`);
+    assert.ok(forced(`${selector}:focus-visible`).some(rule => declares(rule, 'outline', '3px solid Highlight')), `${selector} focus stays distinct from selected`);
+  }
+  assert.ok(forced('.task-field textarea.task-input:focus-visible').some(rule => declares(rule, 'outline', '2px solid Highlight')), 'task box focus');
+  assert.ok(forced('.task-mirror').some(rule => declares(rule, 'forced-color-adjust', 'none') && declares(rule, 'color', 'transparent')), 'mirror text stays transparent');
+  assert.ok(forced('.task-mirror mark').some(rule => declares(rule, 'text-decoration-color', 'Highlight')), 'underline in a system color');
+});

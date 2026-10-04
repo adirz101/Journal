@@ -256,6 +256,17 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .context-preview .note-meta>span+span{display:none}
 .preview-list .note-meta,.task-card-list .note-meta{padding-right:108px}.preview-list .note-meta>span,.task-card-list .note-meta>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .preview-list .note-card>.memory-actions,.task-card-list .note-card>.memory-actions{position:absolute;top:4px;right:4px;margin:0}.task-card-list>li:first-child .note-card>.memory-actions{top:-5px}
+/* Forced colors (Windows contrast themes): fills and box-shadow rings are dropped, so selection
+   and focus use Highlight outlines. The mirror keeps its text transparent (the textarea draws the
+   text) and its underline visible in a system color. */
+@media(forced-colors:active){
+  .agent-option[aria-checked=true],.mode-switch button[aria-checked=true]{outline:2px solid Highlight;outline-offset:-2px}
+  .agent-option[aria-checked=true]:focus-visible,.mode-switch button[aria-checked=true]:focus-visible{outline:3px solid Highlight;outline-offset:2px}
+  .task-field textarea.task-input:focus-visible{outline:2px solid Highlight;outline-offset:0}
+  .task-mirror{forced-color-adjust:none;color:transparent;background:Canvas}
+  .task-mirror mark{color:transparent;text-decoration-color:Highlight}
+  .preview-list>li:focus-visible{outline:2px solid Highlight}
+}
 @media(hover:hover) and (pointer:fine){
   .agent-option:hover{border-color:var(--tx3)}.agent-option[aria-checked=true]:hover{border-color:var(--acc);background:var(--accsoft-hover)}
   .mode-switch button:not([aria-checked=true]):not([aria-disabled=true]):not(:disabled):hover{background:transparent;color:var(--tx)}
