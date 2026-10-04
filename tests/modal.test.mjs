@@ -11,7 +11,7 @@ const sources = readdirSync(ui, { recursive: true }).filter(name => /\.tsx?$/.te
 test('every dialog component opens through useModalDialog, so main knows a dialog is open', () => {
   const dialogs = sources.filter(([name, text]) => name.endsWith('.tsx') && text.includes('<dialog'));
   assert.ok(dialogs.length >= 6, 'dialog components found');
-  for (const [name, text] of dialogs) assert.match(text, /useModalDialog\(/, name);
+  for (const [name, text] of dialogs) assert.equal(text.match(/useModalDialog\(/g)?.length ?? 0, text.match(/<dialog/g).length, `${name}: one useModalDialog( per <dialog`);
   // Only the hook opens a modal dialog.
   for (const [name, text] of sources) if (name !== 'useModalDialog.ts') assert.doesNotMatch(text, /showModal\(/, name);
 });

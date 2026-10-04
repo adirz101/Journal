@@ -165,7 +165,8 @@ export default function App() {
     if (document.querySelector('dialog[open]')) return;
     // Commands do only what the matching buttons allow at the moment.
     // Slots follow activeOrder (pinned first, then newest) until Phase 2 gives
-    // sessions stable slots.
+    // sessions stable slots. Slot shortcuts are ignored while busy (clicks are
+    // not) so two switches never overlap.
     const slot = /^slot-([1-4])$/.exec(id);
     if (slot) { const target = activeOrder(ordered)[Number(slot[1]) - 1]; if (!busy && target && target.id !== selectedId) void selectSession(target); return; }
     if (id === 'new-session') { if (state && canStart) newSession(); return; }
