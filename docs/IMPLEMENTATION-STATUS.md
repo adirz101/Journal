@@ -96,6 +96,15 @@ Plan: [docs/superpowers/plans/2026-10-04-ux-redesign-phase-1.md](superpowers/pla
 
 Still open: the Windows items in [WINDOWS](WINDOWS.md) (shortcut pass, Alt menu-bar focus, ConPTY keys) need a real Windows machine; the Linux Ctrl+O desktop check runs for the first time in CI; the box-drawing check against real Claude Code and Codex sessions has not been done (fixtures only); the terminal shows three rows at 900x640 with widened sidebars until Phase 3 moves the composer.
 
+## UX redesign - Phase 4 (composer)
+
+Plan: [docs/superpowers/plans/2026-10-04-ux-redesign-phase-4.md](superpowers/plans/2026-10-04-ux-redesign-phase-4.md). Core (Group A) so far; the composer UI (Group B) follows.
+
+- Spec amendments D3 and D4 are applied in Phase 4 (delegated by the user); master Phase 9 now applies only D1 and D2. D3: hashes are never cached across previews; the typing preview (`previewSelection`) reads SQLite only (no Git, no evidence reads, no writes) and shows notes as not yet checked, a full validating preview runs after about one second of idle and stores nothing, and a launch validates again. D4: the spec names the 24-term limit of `queryTerms`.
+- `previewSelection` selects through the same stages as `prepareContext` (shared `selectCandidates` and `assemblePacket`), from stored records and the renderer's branch hint. Tests pin today's packets as a literal snapshot, show that it works with Git removed from `PATH`, that SQLite's change counter does not move, and that it selects what `prepareContext` selects when every source is current. It is about three times faster on a 600-note fixture (about 7 ms against 22 ms, local macOS).
+- Receipts record the searched terms, and each selected note records the task terms FTS matched (`selection.terms`, porter stemming, no prefixes; briefs none). Packets, `selection.reason` and older receipts are unchanged.
+- `queryTermSpans` (renderer-safe `retrieval.mjs`) gives the UTF-16 ranges of every searched term in the task text, for underlines.
+
 ## Observed validation (local macOS)
 
 | Check | Result |
