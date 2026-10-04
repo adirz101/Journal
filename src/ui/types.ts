@@ -39,12 +39,38 @@ export interface Session { id: string; projectId: string; provider: Provider; na
   slot?: 1 | 2 | 3 | 4 | null; lastOutputAt?: string | null; pending?: PendingApproval | null;
   // The CLI version main detected when this session launched (Phase 3 B); missing for older sessions.
   cliVersion?: string | null;
-  nativeIdSource?: 'preassigned' | 'preassigned-observed' | 'create-chat' | 'exit-banner' | 'user' | null; identityMismatch?: boolean; }
+  nativeIdSource?: 'preassigned' | 'preassigned-observed' | 'create-chat' | 'exit-banner' | 'user' | null; identityMismatch?: boolean;
+  // Phase 6: the end snapshot (taken once by the runtime when the session exits) and how it ended.
+  changeStats?: ChangeStats | null; signal?: string | null; }
+// Changes in the session's checkout since it started, counted once when it ended (D11). paths: files the
+// session changed (not those already changed at its start), at most 200; from: a rename's old path.
+export interface ChangeStats { available: boolean; additions: number; deletions: number; files: number; preexisting: number;
+  paths: { path: string; from: string | null }[]; truncated: boolean; at: string; reason?: string }
+// sessionSummary (src/core/insights.mjs): stored data only, no Git.
+export interface SessionSummary {
+  status: SessionStatus; exitCode: number | null; signal: string | null; durationMs: number | null;
+  changes: ChangeStats | null;                     // the end snapshot (D11); null when none was taken
+  tests: { passed: number; failed: number; unknown: number; commands: string[] } | null;   // null for Codex and Cursor
+  identity: { nativeId: string | null; confirmed: boolean; source: Session['nativeIdSource']; mismatch: boolean };
+  suggestions: number;                             // open suggestions of this session and its resume chain
+}
+export interface DiffLine { kind: ' ' | '-' | '+'; old: number | null; new: number | null; text: string }
+// A remembered note on a file the session changed, now out of date (staleNotes).
+export interface StaleNote {
+  note: Memory; path: string; renamedTo: string | null;
+  hunks: { lines: DiffLine[] }[] | null;           // note coordinates on the old side
+  before: { startLine: number; lines: string[] } | null;   // fallback: the saved excerpt …
+  after: { startLine: number; lines: string[] } | null;    // … and the current lines at the same place
+  suggestedRange: { startLine: number; endLine: number } | null;  // where the cited lines are now, if they moved
+  reaffirm: { allowed: boolean; reason: null | 'wrong-branch' | 'separate-copy' | 'file-missing' };
+  workspaceId: string | null;                      // the view to reaffirm in
+}
+export interface StaleCatch { available: boolean; notes: StaleNote[]; truncated: boolean }
 // Command, path and tool are redacted or workspace-relative by the runtime; inferred: taken from the in-flight tool.
 export interface PendingApproval { tool: string | null; command: string | null; path: string | null; at: string; inferred?: boolean; }
 export interface TimelineEvent { id?: number; sessionId?: string; at: string; kind: string; body: Record<string, unknown>; }
 export type TerminalEvent = { type: 'output'; sessionId: string; sequence: number; data: string } | { type: 'gap'; sessionId: string } | { type: 'status'; session: Session } | { type: 'error'; message: string; sessionId?: string; code?: typeof IDENTITY_CHANGED }
-  | { type: 'timeline'; event: TimelineEvent } | { type: 'proposals'; projectId: string; count: number } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; recovered?: boolean }
+  | { type: 'timeline'; event: TimelineEvent } | { type: 'proposals'; projectId: string; count: number; sessionId?: string } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; recovered?: boolean }
   | { type: 'files'; key: string; folders: string[]; overflow: boolean; stopped?: boolean }
   | { type: 'update'; state: UpdateState } | { type: 'providers'; agents: AgentInfo[] } | { type: 'command'; id: CommandId }
   // Codex and Cursor output times, at most one per session every 5 s; main asks to show a session (notification click).
@@ -54,7 +80,9 @@ export interface Workspace { id: string | null; projectId?: string; kind: 'check
 export interface WorkspaceList { checkout: Workspace; workspaces: Workspace[]; importable: { path: string; branch: string | null; head: string | null; detached: boolean }[]; }
 export interface Proposal { id: string; kind: 'rule' | 'test-command' | 'branch-status'; category: string; statement: string; scope: string; branch?: string | null; state: string; createdAt: string; source: Source | null;
   // The session it came from (src/core/proposals.mjs); branch-status and test-command evidence carry more fields.
-  evidence?: { sessionId?: string | null } | null; }
+  evidence?: { sessionId?: string | null } | null;
+  // Phase 6: possible conflicts with remembered notes; earlier: suggested by an earlier session of the same conversation.
+  conflicts?: Conflict[]; earlier?: boolean; }
 export interface FileRoot { key: string; family: 'primary' | 'folder'; kind: string; label: string; path: string; branch: string | null; git: boolean; exists?: boolean; }
 export interface FileEntry { name: string; path: string; type: 'directory' | 'file' | 'symlink' | 'other'; sensitive: boolean; }
 export interface DirectoryListing { path: string; entries: FileEntry[]; total: number; truncated: boolean; }
@@ -79,7 +107,7 @@ declare global {
 // them, so what the agent receives always includes what the user just did
 // (the runtime reads the database from another process).
 // Only writes that change what a packet contains, and none that wait on a dialog.
-const KNOWLEDGE_WRITES = new Set(['proposeMemory', 'setMemoryStatus', 'setPinned', 'markIncorrect', 'proposePromotion', 'acceptProposal']);
+const KNOWLEDGE_WRITES = new Set(['proposeMemory', 'setMemoryStatus', 'setPinned', 'markIncorrect', 'proposePromotion', 'acceptProposal', 'rememberProposals', 'reaffirmMemory']);
 const READS_KNOWLEDGE = new Set(['start', 'prepareContext', 'previewSelection']);
 const pendingWrites = new Set<Promise<unknown>>();
 // What the preload bridge returns: thrown errors would lose their code crossing it.

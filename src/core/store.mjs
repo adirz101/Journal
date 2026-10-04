@@ -794,7 +794,8 @@ export class JournalStore {
     }
     return created;
   }
-  listProposals(projectId, state = 'open') {
+  listProposals(projectId, state = 'open', { sessionId } = {}) {
+    void sessionId; // Phase 6 A0 stub: the session filter arrives in Group A.
     this.project(projectId); choice(state, ['open', 'accepted', 'dismissed'], 'proposal state');
     return this.db.prepare(`SELECT body FROM proposals WHERE project_id=? AND json_extract(body,'$.state')=? ORDER BY rowid DESC LIMIT 100`).all(projectId, state).map(parse);
   }
@@ -815,6 +816,20 @@ export class JournalStore {
     this.audit('proposal-accepted', { id, memoryId: memory.id, kind: proposal.kind });
     return memory;
   }
+  // ----- Phase 6 A0 stubs (replaced in Group A) -----
+  sessionSummary(id) {
+    const session = this.getSession(id);
+    const durationMs = session.endedAt && session.createdAt ? Date.parse(session.endedAt) - Date.parse(session.createdAt) : null;
+    return { status: session.status, exitCode: session.exitCode ?? null, signal: session.signal ?? null, durationMs: Number.isFinite(durationMs) ? durationMs : null,
+      changes: session.changeStats ?? null, tests: null,
+      identity: { nativeId: session.nativeId ?? null, confirmed: !!session.nativeIdConfirmed, source: session.nativeIdSource ?? null, mismatch: !!session.identityMismatch }, suggestions: 0 };
+  }
+  staleNotesForSession(sessionId) { this.getSession(sessionId); return { available: true, notes: [], truncated: false }; }
+  rememberProposals(ids, { via } = {}) {
+    void via; if (!Array.isArray(ids) || ids.length < 1 || ids.length > 5) throw new Error('Choose 1 to 5 suggestions');
+    return ids.map(id => this.setMemoryStatus(this.acceptProposal(id).id, 'active'));
+  }
+  reaffirmMemory() { throw new Error('Not available yet'); }
   dismissProposal(id) {
     const proposal = this.getProposal(id);
     this.db.prepare('UPDATE proposals SET body=? WHERE id=?').run(JSON.stringify({ ...proposal, state: 'dismissed', handledAt: now() }), id);

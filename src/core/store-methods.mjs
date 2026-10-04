@@ -76,4 +76,8 @@ export const STORE_METHODS = [
   'memoryOrigins',
   'deliveryCounts',
   'memoryChecks',
+  'sessionSummary',
+  'staleNotesForSession',
+  'rememberProposals',
+  'reaffirmMemory',
 ];
