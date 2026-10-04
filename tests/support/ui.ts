@@ -120,3 +120,15 @@ export async function ensureWide(app: ElectronApplication, page?: Page) {
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1600, 900));
   if (page) await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeGreaterThanOrEqual(1440);
 }
+
+// ----- Phase 7: first run -----
+
+// Leaves "Getting to know your project" with Skip for now (stored: never shown again for
+// that project). A no-op unless the screen is present, so specs that enable
+// __journalFirstRun for other reasons can call it after opening a project.
+export async function skipFirstRun(page: Page) {
+  const skip = page.locator('.get-to-know').getByRole('button', { name: 'Skip for now', exact: true });
+  if (!await skip.count()) return;
+  await skip.click();
+  await expect(page.locator('.get-to-know')).toHaveCount(0);
+}
