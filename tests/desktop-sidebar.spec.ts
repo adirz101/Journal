@@ -123,11 +123,11 @@ test('Settings opens with the shortcut while the terminal has focus', async () =
     const approval = settings.getByRole('checkbox', { name: 'Notify me when Claude needs approval' });
     await approval.uncheck();
     await expect(settings.getByRole('checkbox', { name: 'Show the command in notifications' })).toBeDisabled();
-    // Esc closes the dialog, and the next key reaches the terminal.
+    // Esc closes the dialog, focus returns to the terminal, and the next key reaches it.
     await page.keyboard.press('Escape');
     await expect(settings).toHaveCount(0);
-    await page.locator('.xterm-helper-textarea').focus();
-    await page.locator('.xterm-helper-textarea').press('Escape');
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused();
+    await page.keyboard.press('Escape');
     await expect(page.locator('.terminal-surface')).toContainText('ESC');
     // The preference persists across a reload.
     await page.reload();
