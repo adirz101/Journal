@@ -8,13 +8,28 @@ const kilobytes = (bytes: number) => `${(bytes / 1024).toFixed(1)} KB`;
 
 // Stored and live timeline events of one session, each once, oldest first.
 // Live events carry no id; one that was also stored is recognised by its time, kind and body.
-export function mergeEvents(stored: TimelineEvent[], live: TimelineEvent[], sessionId: string): TimelineEvent[] {
-  const key = (event: TimelineEvent) => `${event.at}\u0000${event.kind}\u0000${JSON.stringify(event.body)}`;
-  const ids = new Set<number>(); const keys = new Set<string>(); const merged: TimelineEvent[] = [];
-  for (const event of [...stored, ...live]) {
+const eventKey = (event: TimelineEvent) => `${event.at}\u0000${event.kind}\u0000${JSON.stringify(event.body)}`;
+export interface EventIndex { ids: Set<number>; keys: Set<string>; events: TimelineEvent[] }
+
+// The stored events of one session, each once, with their ids and keys: built
+// once per fetch, so a live event never re-serializes the whole stored history.
+export function indexEvents(stored: TimelineEvent[], sessionId: string): EventIndex {
+  const index: EventIndex = { ids: new Set(), keys: new Set(), events: [] };
+  for (const event of stored) {
     if (event.sessionId !== undefined && event.sessionId !== sessionId) continue;
-    if (event.id !== undefined && ids.has(event.id)) continue;
-    const k = key(event); if (keys.has(k)) continue;
+    if (event.id !== undefined && index.ids.has(event.id)) continue;
+    const k = eventKey(event); if (index.keys.has(k)) continue;
+    if (event.id !== undefined) index.ids.add(event.id); index.keys.add(k); index.events.push(event);
+  }
+  return index;
+}
+
+export function mergeEvents(stored: TimelineEvent[], live: TimelineEvent[], sessionId: string, index: EventIndex = indexEvents(stored, sessionId)): TimelineEvent[] {
+  const ids = new Set<number>(); const keys = new Set<string>(); const merged = [...index.events];
+  for (const event of live) {
+    if (event.sessionId !== undefined && event.sessionId !== sessionId) continue;
+    if (event.id !== undefined && (index.ids.has(event.id) || ids.has(event.id))) continue;
+    const k = eventKey(event); if (index.keys.has(k) || keys.has(k)) continue;
     if (event.id !== undefined) ids.add(event.id); keys.add(k); merged.push(event);
   }
   return merged.sort((a, b) => a.at.localeCompare(b.at));

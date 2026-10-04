@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, isLive, type Changes, type Session, type TimelineEvent } from './types';
-import { mergeEvents } from './sessionView';
+import { indexEvents, mergeEvents, type EventIndex } from './sessionView';
 
 const NONE: TimelineEvent[] = [];
 
@@ -9,15 +9,15 @@ const NONE: TimelineEvent[] = [];
 // (the session's status, the runtime connection) fetches again: a restarted
 // runtime records its recovery before this window is listening.
 export function useSessionEvents(sessionId: string | null, live: TimelineEvent[], revision = '') {
-  const [stored, setStored] = useState<{ id: string; events: TimelineEvent[] } | null>(null); const [error, setError] = useState('');
+  const [stored, setStored] = useState<{ id: string; index: EventIndex } | null>(null); const [error, setError] = useState('');
   useEffect(() => {
     setError(''); if (!sessionId) return;
     let cancelled = false;
-    void api<TimelineEvent[]>('sessionEvents', { id: sessionId }).then(events => { if (!cancelled) setStored({ id: sessionId, events }); }).catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); });
+    void api<TimelineEvent[]>('sessionEvents', { id: sessionId }).then(events => { if (!cancelled) setStored({ id: sessionId, index: indexEvents(events, sessionId) }); }).catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); });
     return () => { cancelled = true; };
   }, [sessionId, revision]);
-  const own = stored?.id === sessionId ? stored.events : NONE;
-  const events = useMemo(() => sessionId ? mergeEvents(own, live.filter(e => e.sessionId === sessionId), sessionId) : [], [own, live, sessionId]);
+  const own = stored?.id === sessionId ? stored.index : null;
+  const events = useMemo(() => sessionId ? mergeEvents(NONE, live.filter(e => e.sessionId === sessionId), sessionId, own ?? undefined) : [], [own, live, sessionId]);
   return { events, error };
 }
 

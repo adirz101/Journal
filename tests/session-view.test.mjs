@@ -48,6 +48,17 @@ test('mergeEvents keeps each event once, for this session, oldest first', async 
   assert.deepEqual(mergeEvents([], [], 's'), []);
 });
 
+test('an index built once per fetch merges the same as the stored list', async t => {
+  const { indexEvents, mergeEvents } = await load(t);
+  const stored = [{ id: 1, sessionId: 's', at: '2026-10-04T10:00:01Z', kind: 'start', body: {} }, { id: 2, sessionId: 's', at: '2026-10-04T10:00:03Z', kind: 'file', body: { path: 'a' } }, { id: 2, sessionId: 's', at: '2026-10-04T10:00:03Z', kind: 'file', body: { path: 'a' } }];
+  const index = indexEvents(stored, 's');
+  assert.equal(index.events.length, 2); assert.equal(index.keys.size, 2);
+  const live = [{ sessionId: 's', at: '2026-10-04T10:00:03Z', kind: 'file', body: { path: 'a' } }, { sessionId: 's', at: '2026-10-04T10:00:04Z', kind: 'turn-end', body: {} }, { sessionId: 's', at: '2026-10-04T10:00:04Z', kind: 'turn-end', body: {} }];
+  assert.deepEqual(mergeEvents([], live, 's', index), mergeEvents(stored, live, 's'));
+  assert.deepEqual(mergeEvents([], live, 's', index).map(e => e.kind), ['start', 'file', 'turn-end']);
+  assert.equal(index.events.length, 2, 'merging never changes the cached index');
+});
+
 test('diffSummary counts what the session changed', async t => {
   const { diffSummary } = await load(t);
   assert.equal(diffSummary(null), null);
