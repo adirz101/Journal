@@ -1,6 +1,6 @@
 # Releasing Journal
 
-Status, 4 October 2026: packaging and the release pipeline are implemented and active (`.github/workflows/release.yml`; pull requests that change packaging also run it, without releasing). Builds are unsigned (macOS ad-hoc). No release has been published.
+Status, 4 October 2026: packaging and the release pipeline are implemented and active (`.github/workflows/release.yml`; pull requests that change packaging also run it, without releasing). macOS release builds are signed with the Developer ID of Adir Zak (team N859VCGPS7) and notarized; Windows builds are unsigned.
 
 ## Version: one source
 - `version` in `package.json` (for example `0.2.0-alpha`) is the only version. Electron reports it as the app version (`CFBundleShortVersionString` on macOS, file and product version on Windows), artifact names come from it, and the release tag must be exactly `v<version>`.
@@ -44,8 +44,10 @@ Windows packages are built on a Windows machine or runner with `npm run dist:win
 3. Tag and push: `git tag v<version> && git push origin v<version>`.
 4. The `Release` workflow verifies, packages, smoke-tests and creates a **draft** release with the six assets. Review the notes (from `.github/release-notes-template.md`), download and check the assets, then publish by hand. Workflow artifacts are kept for three days only; GitHub Releases is the download location.
 
-## Signing and notarization (pending)
-No certificates are configured, so builds are unsigned. Nothing is faked: unsigned macOS builds are ad-hoc signed (required to run on Apple Silicon; Gatekeeper still warns), and Windows builds carry no signature (SmartScreen may warn). The pipeline signs automatically once these repository secrets exist:
+## Signing and notarization
+macOS signing and notarization are configured (4 October 2026): the release workflow signs tag builds with the Developer ID Application certificate and the hardened runtime, notarizes and staples them, and checks the result with `spctl` and `stapler validate`. Pull-request builds never receive the certificate: they are ad-hoc signed. Keep all macOS secrets configured together: a signed but not notarized build fails the workflow's Gatekeeper check (`spctl`). `APPLE_API_KEY_P8` holds the raw `.p8` text of a Team API key (it has an issuer ID); `MAC_CSC_LINK` is a base64 `.p12` that includes the private key. Windows builds remain unsigned (SmartScreen may warn) until a code-signing certificate is added; this never blocks a release.
+
+Local signed builds (optional): `CSC_NAME="Adir Zak (N859VCGPS7)" npm run dist:mac` signs with the keychain identity (macOS asks once to allow `codesign` to use the key). Adding `APPLE_KEYCHAIN_PROFILE=journal-notary` also notarizes, after `xcrun notarytool store-credentials journal-notary --key <AuthKey.p8> --key-id <id> --issuer <issuer>`.
 
 | Secret | Purpose |
 | --- | --- |
@@ -57,4 +59,4 @@ No certificates are configured, so builds are unsigned. Nothing is faked: unsign
 | `WIN_CSC_LINK` | Authenticode code-signing certificate as a base64-encoded `.pfx` (optional) |
 | `WIN_CSC_KEY_PASSWORD` | Its password |
 
-Configure the macOS certificate together with the three App Store Connect secrets: a signed but not notarized app fails the workflow's Gatekeeper check (`spctl`). With the macOS certificate, the app is signed with the hardened runtime and `assets/entitlements.mac.plist` (JIT, unsigned executable memory for V8, and library validation off for node-pty); with the API key it is also notarized and stapled, and the workflow checks `spctl` and `stapler validate`. Windows signing is not required for alpha releases and never blocks them. Auto-update is not implemented.
+With the macOS certificate, the app is signed with the hardened runtime and `assets/entitlements.mac.plist` (JIT, unsigned executable memory for V8, and library validation off for node-pty); with the API key it is also notarized and stapled, and the workflow checks `spctl` and `stapler validate`. Windows signing is not required for alpha releases and never blocks them. Auto-update is not implemented.
