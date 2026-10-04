@@ -808,9 +808,9 @@ Use unit/contract/property tests for policy and fixtures; real process/Git/PTY i
 
 Memory evaluation corpus includes useful failures, generic noise, invented facts, explicit policies, contradictory policies versus implementation, malicious claims, sensitive content and outdated paths. Label relevance and admissibility independently. Report precision, wrong-scope rate, stale injection rate, correction burden and recall misses; no single quality score. Proposed gate: zero known critical wrong-scope/secret leaks in the release corpus; high precision favored over recall. Finite tests cannot prove universal secrecy or truth.
 
-## 33. Open-source, naming and future paid boundary
+## 33. Licensing, naming and future paid boundary
 
-The user selected **Apache-2.0** for Journal's original code; see [LICENSE](../LICENSE) and [NOTICE](../NOTICE). The original research compared the [Apache license text](https://www.apache.org/licenses/LICENSE-2.0) and [MIT text](https://opensource.org/license/mit). Third-party dependencies retain their own licenses.
+Journal's original code is source-available under the **Elastic License 2.0** (ELv2) since 4 October 2026; see [LICENSE](../LICENSE) and [NOTICE](../NOTICE). It was first released under Apache-2.0, selected after the original research compared the [Apache license text](https://www.apache.org/licenses/LICENSE-2.0) and [MIT text](https://opensource.org/license/mit). The user moved to ELv2 to keep Journal free to use, inspect, modify and self-host while reserving hosted or managed services. Third-party dependencies retain their own licenses.
 
 Contributor model: small reviewed PRs; DCO sign-off rather than broad copyright assignment initially; architecture/behavior proposals before new dependencies; platform maintainer ownership; sanitized fixtures mandatory; SECURITY disclosure channel, code of conduct, contribution guide, support/version matrix and changelog. Publish adapters' capabilities/fixtures before a plugin SDK. Audit dependency/bundled binary licenses and notices; AGPL tools such as Claude Squad/claude-mem are not permissive code donors. Studying architecture does not require copying their implementation.
 
@@ -845,7 +845,7 @@ Probability/impact are qualitative planning judgments for the first year, not me
 | Crash duplicates task/actions or loses work | Medium | Critical | Delivery-unknown state, no auto resend, preserved trees, leases and intent reconciliation |
 | Worktree cleanup deletes ignored/unmerged work | Medium | Critical | No automatic forced cleanup; imported ownership checks; preview and explicit removal |
 | Heavy history/watchers/SQLite growth | High | High | Retention, batch writes, size limits, watcher rescan, lazy UI and disk-full behavior |
-| Open-source platform maintenance exceeds capacity | High | High | Two agents and two native platforms; no plugin framework/cloud; maintainer ownership |
+| Public-repository platform maintenance exceeds capacity | High | High | Two agents and two native platforms; no plugin framework/cloud; maintainer ownership |
 | Journal name availability | Unassessed | Unassessed | User-selected name; availability/clearance not assessed |
 | Small pilot falsely suggests agent improvement | Medium–high | Medium | Matched conditions, raw outcomes, confidence limits; no model leaderboard |
 
@@ -853,7 +853,7 @@ Probability/impact are qualitative planning judgments for the first year, not me
 
 | Major idea | Decision | Reason |
 |---|---|---|
-| Local-first free open-source core | GO | Clear ownership/privacy/access value |
+| Local-first, free, source-available core | GO | Clear ownership/privacy/access value |
 | Universal multi-agent desktop as primary differentiator | MODIFY | Commodity execution shell; keep it small and subordinate to Brain |
 | Codex + Claude in first public release | Conditional GO | Essential cross-provider proof, subject to supported Claude route |
 | Reuse subscriptions universally without keys | MODIFY | Codex local route documented; Claude third-party policy gate unresolved |

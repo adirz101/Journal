@@ -173,7 +173,7 @@ Acceptance: export/import round trip preserves qualification without automatical
 
 Dependencies: full workflow and security/platform evidence. Estimate: 2–3 weeks plus external signing/pilot lead times.
 
-The product is now named Journal and its original code uses the [Apache License 2.0](../LICENSE). Add contribution/security/support docs and dependency notices; produce signed/notarized Mac release and signed Windows installer when ready; ensure packaged bridge/runtime versions launch without developer tools. Intel Mac preview only after native smoke. No cloud/telemetry/update agent in the MVP by default.
+The product is now named Journal and its original code is source-available under the [Elastic License 2.0](../LICENSE) (first released under Apache-2.0). Add contribution/security/support docs and dependency notices; produce signed/notarized Mac release and signed Windows installer when ready; ensure packaged bridge/runtime versions launch without developer tools. Intel Mac preview only after native smoke. No cloud/telemetry/update agent in the MVP by default.
 
 Run a 5–10 developer pilot on recurring tasks with matched baselines, measure usefulness/review burden and resource use. Publish honest provider capability/version matrix and release limitations. Fix integration/privacy failures before expanding features.
 
@@ -206,7 +206,7 @@ The founder requested 34 planning outputs. Their locations are explicit:
 | 26 UX | Design §§20, 29–30 |
 | 27 repository structure | Design §31 |
 | 28 tests | Design §32; milestone acceptance criteria |
-| 29–30 open source and future paid boundary | Design §33 |
+| 29–30 licensing and future paid boundary | Design §33 |
 | 31 risks | Design §34 |
 | 32 phased roadmap | This plan |
 | 33 technical spikes | Phase 0 S0–S4 |
