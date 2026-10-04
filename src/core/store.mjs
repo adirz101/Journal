@@ -16,6 +16,7 @@ import { addWorktree, creationNotices, listGitWorktrees, plannedPath, registered
 import { redact } from './validation.mjs';
 import { fingerprintSync, treePath } from './files.mjs';
 import { MAX_REFERENCES, pathFromCwd, referencesBlock } from './references.mjs';
+import { deliveryCounts, memoryChecks, memoryOrigins, noteIds } from './insights.mjs';
 
 const LIVE = "('starting','running','waiting','stopping')";
 const EVENT_LIMIT = 2000;
@@ -23,6 +24,17 @@ const EVENT_LIMIT = 2000;
 const parse = row => row ? JSON.parse(row.body) : null;
 const now = () => new Date().toISOString();
 const categories = ['brief', 'decision', 'constraint', 'convention', 'lesson', 'issue'];
+// One row per note in a launch that reached (or may have reached) the agent. Previews
+// (never stored), prepared and failed launches are not deliveries. :receipt limits it to one receipt.
+const RECORD_DELIVERIES = `INSERT OR IGNORE INTO deliveries(receipt_id, memory_id, revision, project_id, session_id, provider, native_id, at)
+  SELECT r.id, json_extract(i.value,'$.id'), json_extract(i.value,'$.revision'), r.project_id,
+    coalesce(json_extract(r.body,'$.sessionId'), s.id), json_extract(s.body,'$.provider'), json_extract(s.body,'$.nativeId'),
+    coalesce(json_extract(r.body,'$.updatedAt'), json_extract(r.body,'$.createdAt'))
+  FROM receipts r JOIN json_each(r.body,'$.items') i
+  LEFT JOIN sessions s ON s.id = coalesce(json_extract(r.body,'$.sessionId'),
+    (SELECT s2.id FROM sessions s2 WHERE json_extract(s2.body,'$.receiptId')=r.id LIMIT 1))
+  WHERE json_extract(r.body,'$.state') IN ('submitted','uncertain') AND json_extract(i.value,'$.id') IS NOT NULL
+    AND (:receipt IS NULL OR r.id=:receipt)`;
 
 export class JournalStore {
   constructor(path) {
@@ -72,6 +84,26 @@ export class JournalStore {
           const body = JSON.parse(row.body);
           update.run(JSON.stringify({ displayName: null, pinned: false, pinSeq: null, archived: false, removed: false, ...body }), row.id);
         }
+      }],
+      // Note trust: origin lookups, approval time and a per-conversation delivery count.
+      [8, () => {
+        const columns = new Set(this.db.prepare('PRAGMA table_info(memories)').all().map(column => column.name));
+        if (!columns.has('approved_at')) this.db.exec('ALTER TABLE memories ADD COLUMN approved_at TEXT');
+        if (!columns.has('approved_revision')) this.db.exec('ALTER TABLE memories ADD COLUMN approved_revision INTEGER');
+        this.db.exec(`CREATE INDEX IF NOT EXISTS proposals_memory ON proposals(json_extract(body,'$.memoryId'));
+          CREATE INDEX IF NOT EXISTS proposals_session ON proposals(json_extract(body,'$.evidence.sessionId'));
+          CREATE TABLE IF NOT EXISTS deliveries(receipt_id TEXT NOT NULL, memory_id TEXT NOT NULL, revision INTEGER, project_id TEXT NOT NULL,
+            session_id TEXT, provider TEXT, native_id TEXT, at TEXT NOT NULL, PRIMARY KEY(receipt_id, memory_id));
+          CREATE INDEX IF NOT EXISTS deliveries_memory ON deliveries(project_id, memory_id);
+          CREATE INDEX IF NOT EXISTS deliveries_session ON deliveries(session_id);`);
+        // Latest approval per note, in one ordered pass over the audit log (no per-row subquery).
+        const latest = new Map();
+        for (const row of this.db.prepare(`SELECT at, body FROM audit WHERE action='memory-active' ORDER BY id`).all()) {
+          try { const body = JSON.parse(row.body); if (typeof body.id === 'string') latest.set(body.id, { at: row.at, revision: Number.isInteger(body.revision) ? body.revision : null }); } catch { /* truncated body: skip */ }
+        }
+        const set = this.db.prepare('UPDATE memories SET approved_at=?, approved_revision=? WHERE id=?');
+        for (const [id, approval] of latest) set.run(approval.at, approval.revision, id);
+        this.db.prepare(RECORD_DELIVERIES).run({ receipt: null });
       }],
     ];
     for (const [version, apply] of steps) {
@@ -189,7 +221,7 @@ export class JournalStore {
       this.db.prepare('DELETE FROM revisions WHERE memory_id IN (SELECT id FROM memories WHERE project_id=?)').run(id);
       this.db.prepare('DELETE FROM memories WHERE project_id=?').run(id);
       this.db.prepare('DELETE FROM events WHERE session_id IN (SELECT id FROM sessions WHERE project_id=?)').run(id);
-      for (const table of ['sessions', 'receipts', 'proposals', 'workspaces']) this.db.prepare(`DELETE FROM ${table} WHERE project_id=?`).run(id);
+      for (const table of ['sessions', 'receipts', 'deliveries', 'proposals', 'workspaces']) this.db.prepare(`DELETE FROM ${table} WHERE project_id=?`).run(id);
       this.db.prepare('DELETE FROM projects WHERE id=?').run(id);
       this.audit('project-removed', { id, deleteData: true, knowledge: revisionIds.length });
     });
@@ -299,18 +331,36 @@ export class JournalStore {
     return { scope, memoryId: previous?.id ?? null, previousRevision: previous?.revision ?? null, previousStatement: previous?.statement ?? null, ...draft };
   }
   // Paged, filtered list for the knowledge panel; validation runs per page.
-  listMemoryPage(projectId, { offset = 0, limit = 100, filter = 'all', search = '' } = {}) {
+  // Category counts ignore the category; the other-branch count ignores the category, the
+  // other-branch toggle and the note list, so each control shows what choosing it would list.
+  listMemoryPage(projectId, { offset = 0, limit = 100, filter = 'all', search = '', category = 'all', otherBranch = false, ids = null } = {}) {
     const project = this.project(projectId); const cache = new Map();
     if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error('Invalid page');
     const statuses = { all: ['candidate', 'active'], review: ['candidate'], active: ['active'], history: ['candidate', 'active', 'rejected', 'archived'] }[choice(filter, ['all', 'review', 'active', 'history'], 'filter')];
     search = text(search, 'search', 200, true).toLocaleLowerCase();
-    const where = `m.project_id=? AND m.status IN (${statuses.map(() => '?').join(',')}) AND (?='' OR instr(lower(json_extract(r.body,'$.statement')),?)>0 OR instr(lower(coalesce(json_extract(r.body,'$.source.path'),'')),?)>0 OR json_extract(r.body,'$.category')=?)`;
-    const args = [projectId, ...statuses, search, search, search, search];
-    const total = this.db.prepare(`SELECT count(*) AS n FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE ${where}`).get(...args).n;
-    const items = this.db.prepare(`SELECT r.body,m.status,m.pinned FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE ${where} ORDER BY m.pinned DESC, r.rowid DESC LIMIT ? OFFSET ?`).all(...args, limit, offset)
+    choice(category, ['all', ...categories], 'category');
+    if (typeof otherBranch !== 'boolean') throw new Error('Invalid filter');
+    const list = ids === null ? null : noteIds(ids);
+    const base = [`m.project_id=? AND m.status IN (${statuses.map(() => '?').join(',')}) AND (?='' OR instr(lower(json_extract(r.body,'$.statement')),?)>0 OR instr(lower(coalesce(json_extract(r.body,'$.source.path'),'')),?)>0 OR json_extract(r.body,'$.category')=?)`,
+      [projectId, ...statuses, search, search, search, search]];
+    // With a detached HEAD (no branch), every branch note belongs to another branch.
+    const other = [`json_extract(r.body,'$.scope')='branch' AND json_extract(r.body,'$.branch') IS NOT ?`, [project.branch ?? null]];
+    const conditions = [base, ...(otherBranch ? [other] : []), ...(list ? [['m.id IN (SELECT value FROM json_each(?))', [list]]] : [])];
+    const join = parts => [parts.map(([sql]) => `(${sql})`).join(' AND '), parts.flatMap(([, args]) => args)];
+    const [where, args] = join([...conditions, [`(?='all' OR json_extract(r.body,'$.category')=?)`, [category, category]]]);
+    const from = 'FROM memories m JOIN revisions r ON r.id=m.current_revision';
+    const total = this.db.prepare(`SELECT count(*) AS n ${from} WHERE ${where}`).get(...args).n;
+    const items = this.db.prepare(`SELECT r.body,m.status,m.pinned ${from} WHERE ${where} ORDER BY m.pinned DESC, r.rowid DESC LIMIT ? OFFSET ?`).all(...args, limit, offset)
       .map(row => { const item = { ...parse(row), status: row.status, pinned: !!row.pinned }; const validation = this.validation(project, item, cache); return { ...item, validation, drift: validation === 'current' ? this.drift(project, item, cache) : null }; });
     const counts = Object.fromEntries(this.db.prepare('SELECT status, count(*) AS n FROM memories WHERE project_id=? GROUP BY status').all(projectId).map(row => [row.status, row.n]));
-    return { items, total, offset, limit, counts };
+    const [byWhere, byArgs] = join(conditions);
+    const categoryCounts = Object.fromEntries(['all', ...categories].map(name => [name, 0]));
+    for (const row of this.db.prepare(`SELECT json_extract(r.body,'$.category') AS category, count(*) AS n ${from} WHERE ${byWhere} GROUP BY 1`).all(...byArgs)) {
+      categoryCounts.all += row.n; if (row.category in categoryCounts && row.category !== 'all') categoryCounts[row.category] = row.n;
+    }
+    const [otherWhere, otherArgs] = join([base, other]);
+    const otherCount = this.db.prepare(`SELECT count(*) AS n ${from} WHERE ${otherWhere}`).get(...otherArgs).n;
+    return { items, total, offset, limit, counts, categoryCounts, otherBranch: otherCount };
   }
   // Git refuses to check out a branch that another worktree has checked out.
   wrongBranch(projectId, branch, verb) {
@@ -330,6 +380,8 @@ export class JournalStore {
     }
     this.transaction(() => {
       this.db.prepare('UPDATE memories SET status=?, pinned=CASE WHEN ?=\'active\' THEN pinned ELSE 0 END WHERE id=?').run(status, status, id);
+      // Archive and reject keep these: an archived note still says when it was remembered.
+      if (status === 'active') this.db.prepare('UPDATE memories SET approved_at=?, approved_revision=? WHERE id=?').run(now(), memory.revision, id);
       // Approving a replacement retires the claim it supersedes.
       if (status === 'active' && memory.supersedes) this.db.prepare(`UPDATE memories SET status='archived', pinned=0 WHERE id=? AND status='active'`).run(memory.supersedes.id);
       if (status === 'active' && memory.category === 'brief' && memory.scope === 'branch') this.db.prepare(`UPDATE proposals SET body=json_set(body,'$.state','accepted','$.memoryId',?) WHERE project_id=? AND json_extract(body,'$.kind')='branch-status' AND json_extract(body,'$.branch')=? AND json_extract(body,'$.state')='open'`).run(id, memory.projectId, memory.branch);
@@ -337,6 +389,9 @@ export class JournalStore {
     });
     return this.getMemory(id);
   }
+  memoryOrigins(projectId, ids) { return memoryOrigins(this, projectId, ids); }
+  deliveryCounts(projectId, ids) { return deliveryCounts(this, projectId, ids); }
+  memoryChecks(projectId, options) { return memoryChecks(this, projectId, options); }
   setPinned(id, pinned) {
     const memory = this.getMemory(id);
     if (typeof pinned !== 'boolean') throw new Error('Invalid pin');
@@ -533,15 +588,21 @@ export class JournalStore {
     return this.db.prepare(`SELECT r.body FROM receipts r WHERE r.project_id=? AND NOT (json_extract(r.body,'$.state')='prepared' AND json_extract(r.body,'$.sessionId') IS NULL
       AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.project_id=r.project_id AND json_extract(s.body,'$.receiptId')=r.id)) ORDER BY r.rowid DESC LIMIT 50`).all(projectId).map(parse);
   }
+  // One transaction: the app and the runtime both record deliveries, and the
+  // delivery rows must match the state change exactly once.
   updateReceiptState(id, state, sessionId, launchPrompt) {
     choice(state, ['submitted', 'failed', 'uncertain'], 'delivery state');
-    const receipt = this.getReceipt(id);
-    if (receipt.state !== 'prepared' && !(receipt.state === 'submitted' && state === 'uncertain')) throw new Error('Receipt delivery is already recorded');
     if (launchPrompt !== undefined && (typeof launchPrompt !== 'string' || Buffer.byteLength(launchPrompt) > 32000)) throw new Error('Invalid launch prompt snapshot');
-    const updated = { ...receipt, state, sessionId: sessionId ?? receipt.sessionId, updatedAt: now(),
-      ...(receipt.state === 'prepared' && launchPrompt !== undefined ? { launchPrompt } : {}) };
-    this.db.prepare('UPDATE receipts SET body=? WHERE id=?').run(JSON.stringify(updated), id);
-    return updated;
+    return this.transaction(() => {
+      const receipt = this.getReceipt(id);
+      if (receipt.state !== 'prepared' && !(receipt.state === 'submitted' && state === 'uncertain')) throw new Error('Receipt delivery is already recorded');
+      const updated = { ...receipt, state, sessionId: sessionId ?? receipt.sessionId, updatedAt: now(),
+        ...(receipt.state === 'prepared' && launchPrompt !== undefined ? { launchPrompt } : {}) };
+      this.db.prepare('UPDATE receipts SET body=? WHERE id=?').run(JSON.stringify(updated), id);
+      // From prepared only: submitted → uncertain is the same delivery.
+      if (receipt.state === 'prepared' && state !== 'failed') this.db.prepare(RECORD_DELIVERIES).run({ receipt: id });
+      return updated;
+    });
   }
   // Runtime saves carry status; user-owned fields (name, pin, archive,
   // removal) always come from the stored row, so a status save can never

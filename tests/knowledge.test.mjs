@@ -219,3 +219,34 @@ test('stored previews from older versions are kept but not listed; a launch rece
   const failed = f.store.prepareContext(f.project.id, 'Docker'); f.store.updateReceiptState(failed.id, 'failed', null);
   assert.deepEqual(listed(), [failed.id, launch.id]);
 });
+test('listMemoryPage: category, counts and other branches', t => {
+  const f = fixture(t);
+  const note = (statement, category, extra = {}) => f.store.proposeMemory(f.project.id, { statement, category, scope: 'checkout', area: '', source: { kind: 'user', note: 'Fixture' }, ...extra });
+  const lessons = [note('Docker caches layers between runs', 'lesson'), note('Retries need jitter', 'lesson')];
+  note('We chose SQLite for storage', 'decision'); const rule = note('Integration tests need Docker running', 'constraint');
+  f.store.setMemoryStatus(rule.id, 'active');
+  const page = options => f.store.listMemoryPage(f.project.id, options);
+  const lessonPage = page({ category: 'lesson' });
+  assert.deepEqual(lessonPage.items.map(item => item.id).sort(), lessons.map(item => item.id).sort());
+  assert.equal(lessonPage.total, 2);
+  assert.deepEqual(lessonPage.categoryCounts, { all: 4, brief: 0, decision: 1, constraint: 1, convention: 0, lesson: 2, issue: 0 });
+  assert.deepEqual(page({ search: 'docker', category: 'decision' }).categoryCounts, { all: 2, brief: 0, decision: 0, constraint: 1, convention: 0, lesson: 1, issue: 0 });
+  assert.deepEqual(page({ filter: 'active' }).categoryCounts, { all: 1, brief: 0, decision: 0, constraint: 1, convention: 0, lesson: 0, issue: 0 });
+  assert.equal(page().otherBranch, 0);
+
+  f.git('switch', '-c', 'feature/x');
+  const elsewhere = note('Feature flags live in flags.ts', 'lesson', { scope: 'branch' });
+  f.git('switch', 'main');
+  const all = page();
+  assert.equal(all.otherBranch, 1); assert.equal(all.total, 5);
+  assert.deepEqual(page({ otherBranch: true }).items.map(item => item.id), [elsewhere.id]);
+  assert.equal(page({ otherBranch: true, category: 'decision' }).items.length, 0);
+  assert.equal(page({ otherBranch: true, category: 'decision' }).otherBranch, 1, 'The toggle count ignores the category');
+  assert.equal(page({ otherBranch: true }).categoryCounts.lesson, 1);
+  assert.deepEqual(page({ ids: [rule.id, elsewhere.id] }).items.map(item => item.id).sort(), [rule.id, elsewhere.id].sort());
+  assert.equal(page({ ids: [rule.id] }).total, 1);
+  assert.throws(() => page({ category: 'nope' }), /category/);
+  assert.throws(() => page({ ids: Array.from({ length: 201 }, (_, i) => `id-${i}`) }), /Invalid note list/);
+  assert.throws(() => page({ otherBranch: 'yes' }), /Invalid filter/);
+  assert.deepEqual(page().items.map(item => item.id), page({ category: 'all', otherBranch: false, ids: null }).items.map(item => item.id));
+});

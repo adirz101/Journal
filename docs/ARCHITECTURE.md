@@ -40,13 +40,14 @@ Session states: `starting`, `running` (activity `working` or `idle` when Claude 
 
 ## Data
 
-One SQLite file with ordered, idempotent migrations (`PRAGMA user_version`, currently 7):
+One SQLite file with ordered, idempotent migrations (`PRAGMA user_version`, currently 8):
 
 - `projects`, `memories`, `revisions` (immutable), and `receipts` (immutable packet, plus the exact launch prompt once delivered).
 - `sessions`: provider, project, branch, baseline (HEAD plus files already dirty at start), native ID and confirmation, PID identity, runtime ID, last activity, survivors, recovery marker and archived flag.
 - `events`: a bounded per-session timeline of at most 2,000 rows. Rows hold small metadata only: redacted command text, exit codes, durations and edited paths. No prompts, tool output or terminal output.
 - `memory_fts`: FTS5 with `porter unicode61` over the statement plus an alias column built from identifiers and paths.
-- `workspaces` (managed and imported worktrees), `proposals` (inbox, unique per project and fingerprint), `audit` (reviewer and maintenance actions), and a `pinned` flag on memories.
+- `workspaces` (managed and imported worktrees), `proposals` (inbox, unique per project and fingerprint), `audit` (reviewer and maintenance actions), a `pinned` flag on memories, and each note's latest approval time and revision.
+- `deliveries`: one row per note in a launch that reached the agent (`submitted` or `uncertain`; previews, prepared and failed launches never count), written in the same transaction as the receipt's state. "Sent to N sessions" counts distinct native conversations at query time, joining the session's current native ID, so a resume chain counts once. Purging a session deletes its rows; removing (hiding) it keeps them. Receipt bodies are never rewritten for this.
 
 The Changes view runs Git with literal pathspecs, reads untracked files only when no path component is a symlink and the file stays inside the checkout, and serves diffs only for paths it listed. **Open** uses the system default application only for regular, non-executable, non-launchable files; anything else is revealed in the file manager.
 
