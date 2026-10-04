@@ -336,8 +336,9 @@ const actions = {
     if (result.inserted) return { inserted: true, text: textValue };
     clipboard.writeText(textValue);
     const event = referenceEvent(record, 'copied');
-    await store.appendEvent(id, 'reference', event).catch(() => {});
-    send({ type: 'timeline', event: { sessionId: id, kind: 'reference', at: new Date().toISOString(), body: event } });
+    const at = new Date().toISOString();
+    await store.appendEvent(id, 'reference', event, at).catch(() => {});
+    send({ type: 'timeline', event: { sessionId: id, kind: 'reference', at, body: event } });
     return { inserted: false, copied: true, reason: result.reason, text: textValue };
   },
   // A reference chosen for the next task: validated and fingerprinted now,

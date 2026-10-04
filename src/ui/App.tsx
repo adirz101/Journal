@@ -197,7 +197,7 @@ export default function App() {
     const slot = /^slot-([1-4])$/.exec(id);
     if (slot) { const target = slotTarget(ordered, Number(slot[1])); if (!busy && target && target.id !== selectedId) void selectSession(target); return; }
     if (id === 'next-needs-you') { const target = nextNeedsYou(ordered, selectedId); if (!busy && target) void selectSession(target); return; }
-    if (id === 'new-session') { if (state && canStart) newSession(); return; }
+    if (id === 'new-session') { if (state) newSession(); return; }
     if (id === 'open-project') { if (!busy) void openProject(); return; }
     if (id === 'settings') { setSettingsOpen(true); return; }
     if (id === 'toggle-sidebar') { layout.toggleSidebar(); return; }
@@ -336,8 +336,8 @@ export default function App() {
   async function loginCursor() { if (checkingProvider) return; setProviderNote(''); setCheckingProvider(true); try { const result = await api<{ id: string }>('cursorLogin'); setProcessView({ id: result.id, command: 'agent login', title: 'Sign in to Cursor', kind: 'login' }); } catch (error) { failed(error); } finally { setCheckingProvider(false); } }
   const projectBranchChanged = session && state && !session.workspaceId && session.projectId === state.project.id && isLive(session) && session.branch !== undefined && session.branch !== state.project.branch;
   // One timeline fetch and one changes source per session, shared by the header, status bar and inspector.
-  const { events } = useSessionEvents(session?.id ?? null, liveEvents);
-  const fileEvents = useMemo(() => session ? liveEvents.filter(e => e.sessionId === session.id && e.kind === 'file').length : 0, [liveEvents, session]);
+  const { events } = useSessionEvents(session?.id ?? null, liveEvents, `${session?.status ?? ''}:${connected}`);
+  const fileEvents = useMemo(() => session ? liveEvents.filter(e => e.sessionId === session.id && (e.kind === 'file' || e.kind === 'command-end')).length : 0, [liveEvents, session]);
   const sessionChanges = useSessionChanges(session, fileEvents);
   const changed = diffSummary(sessionChanges.changes)?.files ?? 0;
   const filesView = filesChoice ?? (changed ? 'changed' : 'all');
@@ -367,8 +367,8 @@ export default function App() {
   // === Region C: the ResizableWorkspace wrapper (layout modes) ===
   return <ResizableWorkspace layout={layout} wide={previewing && panel === 'files'} inspector={state ? inspector : null}
     sidebar={(pane, overlay) => <Sidebar pane={pane} inOverlay={overlay} projects={projects} project={state?.project ?? null} sessions={ordered} proposals={proposals} selectedId={selectedId} connected={connected}
-      runtimeState={runtime.state === 'connected' || runtime.state === 'disconnected' ? runtime.state : 'connecting'} now={now} canStart={!!state && canStart}
-      shortcuts={bootstrap?.shortcuts} appearance={appearance} update={update}
+      runtimeState={runtime.state === 'connected' || runtime.state === 'disconnected' ? runtime.state : 'connecting'} now={now} canCompose={!!state}
+      shortcuts={bootstrap?.shortcuts} appearance={appearance} update={state && session ? null : update}
       onSelect={next => { if (overlay) layout.closeOverlays(false); void selectSession(next); }} onSessionMenu={(next, position) => void sessionMenu(next, position)} onNew={() => { if (overlay) layout.closeOverlays(false); newSession(); }}
       onSwitchProject={position => void switcherMenu(position).catch(failed)} onProjectMenu={position => void projectMenu(position).catch(failed)}
       onOpenMemory={() => { setPanel('memory'); layout.showInspector(); }} onOpenSettings={() => setSettingsOpen(true)} onError={failed}

@@ -491,7 +491,7 @@ export class TerminalManager extends EventEmitter {
   }
   record(sessionId, kind, body) {
     const event = { sessionId, kind, at: new Date().toISOString(), body };
-    try { Promise.resolve(this.store.appendEvent?.(sessionId, kind, body)).catch(() => {}); } catch { /* timeline is best effort */ }
+    try { Promise.resolve(this.store.appendEvent?.(sessionId, kind, body, event.at)).catch(() => {}); } catch { /* timeline is best effort */ }
     if (!this.disposed) this.emit('event', { type: 'timeline', event });
   }
   attach(id) {

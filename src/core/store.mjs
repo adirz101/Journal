@@ -967,10 +967,12 @@ export class JournalStore {
   archiveSession(id) { return this.updateSessionUser(id, { archived: true, archivedAt: now() }); }
   // Bounded per-session timeline. Bodies are small metadata: no terminal
   // output, prompts or tool results.
-  appendEvent(sessionId, kind, body) {
+  // at: the time the caller also broadcast live, so the window can merge the two copies.
+  appendEvent(sessionId, kind, body, at) {
     const text = JSON.stringify(body ?? {});
     if (text.length > 4000) throw new Error('Timeline event is too large');
-    this.db.prepare('INSERT INTO events(session_id,at,kind,body) VALUES(?,?,?,?)').run(sessionId, now(), choice(kind, ['start', 'resume', 'context', 'prompt', 'permission', 'turn-end', 'command-start', 'command-end', 'file', 'interrupt', 'stop', 'exit', 'error', 'recovered', 'cleanup', 'disconnected', 'reference'], 'event kind'), text);
+    const stamp = typeof at === 'string' && Number.isFinite(Date.parse(at)) ? new Date(at).toISOString() : now();
+    this.db.prepare('INSERT INTO events(session_id,at,kind,body) VALUES(?,?,?,?)').run(sessionId, stamp, choice(kind, ['start', 'resume', 'context', 'prompt', 'permission', 'turn-end', 'command-start', 'command-end', 'file', 'interrupt', 'stop', 'exit', 'error', 'recovered', 'cleanup', 'disconnected', 'reference'], 'event kind'), text);
     this.eventCounts ??= new Map(); const count = (this.eventCounts.get(sessionId) ?? 0) + 1; this.eventCounts.set(sessionId, count);
     if (count % 50 === 0) this.db.prepare(`DELETE FROM events WHERE session_id=? AND id <= (SELECT id FROM events WHERE session_id=? ORDER BY id DESC LIMIT 1 OFFSET ${EVENT_LIMIT})`).run(sessionId, sessionId);
   }

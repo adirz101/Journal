@@ -3,11 +3,13 @@ import { api, type Changes, type Session } from './types';
 import { shell } from './copy';
 
 // The Files tab's Changed view. The data comes from useSessionChanges, which
-// the status bar and the Files badge share.
+// the status bar and the Files badge share; showing the view refreshes it.
 export function ChangesPanel({ session, changes, loading, error: loadError, refresh }: { session: Session; changes: Changes | null; loading: boolean; error: string; refresh: () => void }) {
   const [error, setError] = useState('');
   const [open, setOpen] = useState<string | null>(null); const [diff, setDiff] = useState<{ path: string; text: string; hidden: boolean; truncated?: boolean } | null>(null);
   useEffect(() => { setOpen(null); setDiff(null); setError(''); }, [session.id]);
+  // Opening the view reads the working tree again: shell commands change files without a file event.
+  useEffect(() => { refresh(); }, [refresh]);
   async function toggle(path: string) {
     if (open === path) { setOpen(null); setDiff(null); return; }
     setOpen(path); setDiff(null);

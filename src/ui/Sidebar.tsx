@@ -25,10 +25,13 @@ const Icon = ({ d }: { d: string }) => <svg viewBox="0 0 24 24" width="18" heigh
 const ICONS = { plus: 'M12 5v14M5 12h14', recent: 'M12 7v5l3 2M21 12a9 9 0 1 1-9-9 9 9 0 0 1 9 9Z', memory: 'M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3ZM5 17a3 3 0 0 1 3-3h11', expand: 'm9 6 6 6-6 6' };
 
 // inOverlay: the full sidebar shown over a narrow window (the rail keeps the ID).
-export function Sidebar({ pane, inOverlay = false, projects, project, sessions, proposals, selectedId, connected, runtimeState, now, canStart, shortcuts, appearance, update,
+// canCompose: a project is open, so the New session view can be shown (even with
+// all slots in use: the user can write the task while Start explains why it waits).
+// update: shown in the footer; the caller passes null while the session view's status bar shows it.
+export function Sidebar({ pane, inOverlay = false, projects, project, sessions, proposals, selectedId, connected, runtimeState, now, canCompose, shortcuts, appearance, update,
   onSelect, onSessionMenu, onNew, onSwitchProject, onProjectMenu, onOpenMemory, onOpenSettings, onExpand, onShowRecent, onError }: {
   pane: Pane; inOverlay?: boolean; projects: Project[]; project: Project | null; sessions: Session[]; proposals: Proposal[];
-  selectedId: string | null; connected: boolean; runtimeState: 'connected' | 'connecting' | 'disconnected'; now: number; canStart: boolean;
+  selectedId: string | null; connected: boolean; runtimeState: 'connected' | 'connecting' | 'disconnected'; now: number; canCompose: boolean;
   shortcuts: Keys; appearance: Appearance; update: UpdateState | null;
   onSelect(session: Session): void; onSessionMenu(session: Session, at?: Point): void; onNew(): void;
   onSwitchProject(at?: Point): void; onProjectMenu(at?: Point): void; onOpenMemory(): void; onOpenSettings(): void;
@@ -70,7 +73,7 @@ export function Sidebar({ pane, inOverlay = false, projects, project, sessions, 
       <button className="rail-tile rail-project" aria-label={switcherName} aria-haspopup={hasMenu} title={project?.name ?? shell.noProject}
         onClick={event => switchProject(event.currentTarget)} onContextMenu={event => { if (!project) return; event.preventDefault(); onProjectMenu(menuPosition(event)); }}>
         <img className="brand-icon" src={mark} alt="" width={26} height={26} /></button>
-      <button className="rail-tile" aria-label={withKeys(shell.newSession, shortcuts?.['new-session'])} title={withKeys(shell.newSession, shortcuts?.['new-session'])} aria-keyshortcuts={shortcuts?.['new-session']?.aria} disabled={!canStart} onClick={onNew}><Icon d={ICONS.plus} /></button>
+      <button className="rail-tile" aria-label={withKeys(shell.newSession, shortcuts?.['new-session'])} title={withKeys(shell.newSession, shortcuts?.['new-session'])} aria-keyshortcuts={shortcuts?.['new-session']?.aria} disabled={!canCompose} onClick={onNew}><Icon d={ICONS.plus} /></button>
       <span className="rsep" aria-hidden="true" />
       {active.filter(s => isLive(s) && s.slot).map(session => {
         const state = stateFor(session, now, connected); const attention = needsYou(session) || state.tone === 'attention'; const slot = slotKeys(session, shortcuts);
@@ -96,7 +99,7 @@ export function Sidebar({ pane, inOverlay = false, projects, project, sessions, 
         {project && <span className="project-sub"><span className="project-path">{project.root}</span><span className="branch-badge">⑂ {project.branch ?? 'detached HEAD'}</span></span>}</span>
       <span className="switcher-chevron" aria-hidden="true">▾</span>
     </button>
-    <button className="new-session" onClick={onNew} disabled={!canStart} aria-keyshortcuts={shortcuts?.['new-session']?.aria} title={withKeys(shell.newSession, shortcuts?.['new-session'])}>
+    <button className="new-session" onClick={onNew} disabled={!canCompose} aria-keyshortcuts={shortcuts?.['new-session']?.aria} title={withKeys(shell.newSession, shortcuts?.['new-session'])}>
       <span aria-hidden="true">＋</span> {shell.newSession}{shortcuts?.['new-session'] && <kbd aria-hidden="true">{shortcuts['new-session'].label}</kbd>}</button>
     <nav aria-label="Sessions" className="session-nav">
       <div className="side-heading"><span>{shell.active}</span><span className="slots-used">{shell.slotsUsed(used)}<span className="slot-meter" aria-hidden="true">{[1, 2, 3, 4].map(n => <span key={n} className={n <= used ? 'on' : ''} />)}</span></span></div>
@@ -108,7 +111,7 @@ export function Sidebar({ pane, inOverlay = false, projects, project, sessions, 
       {!active.length && !groups.length && !archived.length && <p className="nav-empty">Your sessions will appear here.</p>}
     </nav>
     <div className="sidebar-footer">
-      {!project && <UpdateNotice state={update} onError={onError} />}
+      <UpdateNotice state={update} onError={onError} />
       {project && <button className="footer-button" onClick={onOpenMemory} aria-label={memoryName}><span>{copy.memory}</span>{proposals.length > 0 && <span className="badge count-badge" aria-hidden="true">{proposals.length}</span>}</button>}
       <button className="footer-button" onClick={onOpenSettings} aria-keyshortcuts={shortcuts?.settings?.aria} title={withKeys(shell.settings, shortcuts?.settings)}><span>{shell.settings}</span></button>
       <p className="runtime-line"><span className={`status-dot ${connected ? 'running' : 'waiting'}`} aria-hidden="true" />{connected ? shell.runtimeConnected : runtimeState === 'connecting' ? shell.runtimeStarting : shell.runtimeDisconnected}</p>

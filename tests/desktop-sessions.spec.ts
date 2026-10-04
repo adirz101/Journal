@@ -81,6 +81,8 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
       await page.getByRole('button', { name: i % 2 ? 'Start Codex' : 'Start Claude', exact: true }).click();
       await expect(page.locator('.terminal-surface')).toContainText(`TASK TASK_${i}`);
     }
+    // With every slot in use, the New session view still opens; Start waits and says why.
+    await newSession(page);
     await expect(page.getByRole('button', { name: 'Start Claude', exact: true })).toBeDisabled();
     await expect(page.getByText('4 sessions are running')).toBeVisible();
     await expect(slotsUsed(page, 4)).toBeVisible();
@@ -180,12 +182,12 @@ test('focus, new-session and panel shortcuts act on the UI while the terminal ha
     await page.getByRole('button', { name: 'New session' }).focus();
     await pressKey(app, 'E', [...cmd]);
     await expect(terminal).toBeFocused();
-    // Panel tabs: Memory, then Session (the Context panel until Phase 3); the terminal keeps focus.
+    // Inspector tabs: Memory, then Session; the terminal keeps focus.
     await pressKey(app, '3', [...tab]);
     await expect(selectedTab).toHaveText('Memory');
     await expect(terminal).toBeFocused();
     await pressKey(app, '1', [...tab]);
-    await expect(selectedTab).toHaveText('Context');
+    await expect(selectedTab).toHaveText('Session');
     await expect(terminal).toBeFocused();
     // new-session: no session selected and the task box has focus.
     await pressKey(app, 'N', [...cmd]);
@@ -291,13 +293,15 @@ test('a managed worktree is created from the dialog, hosts a research session an
     await expect(page.locator('.terminal-surface')).toContainText(/CWD .*worktrees/);
     await expect(sessionStatus(page)).toContainText('Separate copy (worktree) · ⑂ journal/isolated');
     await expect(sessionStatus(page)).toContainText('Read-only');
-    await page.getByRole('button', { name: 'Workspaces…' }).click();
+    // Workspaces… lives in the New session view.
+    await newSession(page); await page.getByRole('button', { name: 'Workspaces…' }).click();
     await page.getByRole('button', { name: 'Remove worktree' }).click();
     await expect(page.getByText(/still running in it/)).toBeVisible();
     await page.getByRole('button', { name: 'Done' }).click();
+    await sessionButton(page, 'WORKTREE_TASK').click();
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(sessionStatus(page)).toContainText('Stopped');
-    await page.getByRole('button', { name: 'Workspaces…' }).click();
+    await newSession(page); await page.getByRole('button', { name: 'Workspaces…' }).click();
     await page.getByRole('button', { name: 'Remove worktree' }).click();
     await expect(page.getByRole('list', { name: 'Workspaces' })).not.toContainText('journal/isolated');
     expect(existsSync(resolve(f.project, 'uncommitted.txt'))).toBe(true);
