@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { createNotifier, PREFERENCE_DEFAULTS, readPreferences, writePreferences, APP_USER_MODEL_ID } from '../src/desktop/notify.mjs';
+import { createNotifier, PREFERENCE_DEFAULTS, readPreferences, writePreferences, APP_USER_MODEL_ID, systemSurface } from '../src/desktop/notify.mjs';
 
 class FakeNotification {
   static instances = [];
@@ -253,4 +253,41 @@ test('preferences: defaults, booleans only, unknown keys ignored, private file',
 
 test('the Windows AppUserModelId equals the packaged appId', () => {
   assert.equal(APP_USER_MODEL_ID, 'io.github.adirz101.journal');
+});
+
+// I1: headless test runs never reach the OS notification, badge or taskbar.
+function surface({ headless, hooks = {} }) {
+  const calls = { constructed: 0, badge: [], flash: [] };
+  const Real = class { constructor(options) { calls.constructed++; this.options = options; } static isSupported() { return true; } };
+  const s = systemSurface({ headless, hook: name => headless && typeof hooks[name] === 'function' ? hooks[name] : null, Notification: Real,
+    setBadgeCount: count => calls.badge.push(count), flashFrame: count => calls.flash.push(count), isFocused: () => false });
+  return { s, calls };
+}
+
+test('headless without test hooks: notifications unsupported, the real constructor refused, badge and flash do nothing', () => {
+  const { s, calls } = surface({ headless: true });
+  assert.equal(s.isSupported(), false);
+  assert.throws(() => new s.Notification({ title: 'x' }), /Headless runs never create a real notification/);
+  s.setBadge(2);
+  assert.deepEqual(calls, { constructed: 0, badge: [], flash: [] });
+  assert.equal(s.isFocused(), false);
+});
+
+test('headless with test hooks: the stand-ins receive every call', () => {
+  const made = []; const badges = [];
+  const hooks = { __journalNotification: class { constructor(options) { made.push(options); } }, __journalBadge: count => badges.push(count), __journalFocused: () => true };
+  const { s, calls } = surface({ headless: true, hooks });
+  assert.equal(s.isSupported(), true);
+  new s.Notification({ title: 'a' });
+  s.setBadge(1);
+  assert.equal(s.isFocused(), true);
+  assert.deepEqual([made, badges, calls], [[{ title: 'a' }], [1], { constructed: 0, badge: [], flash: [] }]);
+});
+
+test('a normal run uses the real notification, badge and flash; hooks are ignored', () => {
+  const { s, calls } = surface({ headless: false, hooks: { __journalNotification: class {}, __journalBadge: () => { throw new Error('unused'); } } });
+  assert.equal(s.isSupported(), true);
+  new s.Notification({ title: 'b' });
+  s.setBadge(3);
+  assert.deepEqual(calls, { constructed: 1, badge: [3], flash: [3] });
 });

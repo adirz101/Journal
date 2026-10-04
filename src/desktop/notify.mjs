@@ -114,3 +114,26 @@ export function createNotifier({ Notification, isSupported = () => true, isFocus
     },
   };
 }
+
+// The OS side of the notifier. Headless test runs (JOURNAL_HEADLESS=1) never
+// reach the OS: a test's stand-ins (__journalNotification, __journalBadge,
+// __journalFocused, read through `hook`) receive the calls, and without them
+// notifications are unsupported, the real constructor refuses, and the badge
+// and taskbar flash do nothing. `hook` returns null outside headless runs.
+export function systemSurface({ headless, hook, Notification, setBadgeCount, flashFrame, isFocused }) {
+  return {
+    // Constructing through a plain function lets a test install its stand-in after launch.
+    Notification: function JournalNotification(options) {
+      const Stand = hook('__journalNotification'); if (Stand) return new Stand(options);
+      if (headless) throw new Error('Headless runs never create a real notification');
+      return new Notification(options);
+    },
+    isSupported: () => !!hook('__journalNotification') || (!headless && Notification.isSupported()),
+    isFocused: () => { const focused = hook('__journalFocused'); return focused ? !!focused() : isFocused(); },
+    setBadge: count => {
+      const badge = hook('__journalBadge'); if (badge) { badge(count); return; }
+      if (headless) return;
+      setBadgeCount(count); flashFrame(count);
+    },
+  };
+}
