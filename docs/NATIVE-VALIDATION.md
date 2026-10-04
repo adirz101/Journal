@@ -84,3 +84,4 @@ Final required local checks are reported in [implementation status](IMPLEMENTATI
 - Claude permission prompts are answered with a digit, Enter or Esc, which Journal uses to know the prompt was answered.
 - Whether Claude can show a second permission prompt (for example from a parallel subagent) before the first is answered.
 - Whether denying a Claude permission with Esc or Ctrl+C fires any hook (PostToolUseFailure or Stop).
+- Packaged macOS and Windows builds show the approval notification (Windows needs the AppUserModelId), and clicking it focuses Journal on the session. The macOS Dock badge and the Windows taskbar flash follow Claude sessions waiting for approval and orphaned sessions, and clear when none remain. The fixture tests (`tests/notify.test.mjs`, `tests/desktop-notify.spec.ts`) replace the OS notification, badge and focus, so they do not prove the OS behaviour.
