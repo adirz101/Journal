@@ -239,9 +239,15 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
     const observer = new ResizeObserver(() => setHeight(node.clientHeight)); observer.observe(node); return () => observer.disconnect();
   }, [preview, filter]);
   // One-shot: App clears the signal once handled, so a remount (a tab switch) never takes focus.
-  useEffect(() => { if (focusSignal) { onFocusHandled?.(); if (preview) closePreview(); else requestAnimationFrame(() => { const focused = tree.getFocusedItem?.(); (focused?.getElement() ?? scroller.current?.querySelector<HTMLElement>('[role=treeitem]'))?.focus(); }); } }, [focusSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+  // When the tree has not loaded yet (the panel was just mounted), focus waits for its first row
+  // instead of staying behind (in the terminal, for example).
+  // It waits at most 2 s, so a slow listing never takes focus from what the user went on to do.
+  const focusPending = useRef(0);
+  const focusTree = () => { const focused = tree.getFocusedItem?.(); const row = focused?.getElement() ?? scroller.current?.querySelector<HTMLElement>('[role=treeitem]'); if (row) { focusPending.current = 0; row.focus(); } else if (!focusPending.current) focusPending.current = Date.now(); };
+  useEffect(() => { if (focusSignal) { onFocusHandled?.(); if (preview) closePreview(); else requestAnimationFrame(focusTree); } }, [focusSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const rows = tree.getItems();
+  useEffect(() => { if (!focusPending.current || !rows.length) return; if (Date.now() - focusPending.current > 2000) focusPending.current = 0; else requestAnimationFrame(focusTree); }, [rows.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const first = Math.max(0, Math.floor(top / ROW) - 8); const last = Math.min(rows.length, Math.ceil((top + height) / ROW) + 8);
   const selectedId = preview ? idOf(preview.rootKey, preview.path) : null;
 

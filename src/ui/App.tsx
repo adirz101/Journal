@@ -263,6 +263,8 @@ export default function App() {
   }
   async function opened(project: Project) {
     setProjects(items => [project, ...items.filter(p => p.id !== project.id)]); await refresh(project.id); setSelectedId(null); setReceipt(null);
+    // The Welcome button that opened it is gone: the task box takes focus (Getting to know your project focuses its own heading).
+    if (!document.activeElement || document.activeElement === document.body) setTaskFocus(n => n + 1);
   }
   async function openProject() {
     userChose.current = true;
@@ -595,7 +597,7 @@ export default function App() {
         project={state.project} trustVersion={trustVersion} sessions={ordered} onOpenSession={openSession}
         onToggle={id => { const next = disabled.includes(id) ? disabled.filter(x => x !== id) : [...disabled, id]; setDisabled(next); if (receipt?.state === 'prepared') void api<Receipt>('prepareContext', { projectId: state.project.id, task: receipt.query, workspaceId: workspaceId || null, disabled: next, references: referenceInputs }).then(setReceipt).catch(failed); }}
         onSelectReceipt={setReceipt} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />} />}
-      {panel === 'files' && <FilesTab hasSession={!!session} view={filesView} onView={setFilesChoice} changed={changed}
+      {panel === 'files' && <FilesTab hasSession={!!session} view={filesView} onView={setFilesChoice} changed={changed} focusSignal={explorerFocus} onFocusHandled={() => setExplorerFocus(0)}
         changes={session && <ChangesPanel session={session} changes={sessionChanges.changes} loading={sessionChanges.loading} error={sessionChanges.error} refresh={sessionChanges.refresh} />}
         files={<ExplorerPanel key={state.project.id} project={state.project} session={session} rootsVersion={workspaces?.workspaces.map(w => `${w.id}:${w.state}`).join(',') ?? ''} revealLabel={`Reveal in ${revealLabel}`} focusSignal={explorerFocus} onFocusHandled={() => setExplorerFocus(0)} onPreviewing={setPreviewing} onError={failed}
         onAddReference={async ref => {
