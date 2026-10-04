@@ -80,3 +80,4 @@ Final required local checks are reported in [implementation status](IMPLEMENTATI
 - Which hook events follow a denial with feedback. Journal clears the prompt when a new tool starts while only the pending tool is in flight.
 - Whether subagent hooks share the parent `session_id`. If they do, a sibling tool must not hide an open approval.
 - Claude permission prompts are answered with a digit, Enter or Esc, which Journal uses to know the prompt was answered.
+- Whether Claude can show a second permission prompt (for example from a parallel subagent) before the first is answered.

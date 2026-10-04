@@ -222,7 +222,7 @@ async function hooked(t) {
   const send = (event, extra = {}) => f.manager.ingest(session.id, { event, nativeId: session.nativeId, ...extra });
   const state = () => { const s = f.store.getSession(session.id); return `${s.status}/${s.activity}`; };
   const write = data => f.manager.write(session.id, data);
-  return { send, state, write };
+  return { send, state, write, f, session };
 }
 
 test('the real hook order (PreToolUse before an id-less PermissionRequest) clears on that tool completing', async t => {
@@ -310,8 +310,12 @@ test('a lone Esc answers (denies) the prompt; a new request resets the answer', 
   send('PermissionRequest', { tool: 'Edit' });
   send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
   assert.equal(state(), 'waiting/permission');
+  // Two prompts are open (Bash, Edit): each needs its own answer.
   write('\x1b');
   send('PreToolUse', { tool: 'Grep', toolUseId: 'g2' });
+  assert.equal(state(), 'waiting/permission');
+  write('\x1b');
+  send('PreToolUse', { tool: 'Grep', toolUseId: 'g3' });
   assert.equal(state(), 'running/working');
 });
 
@@ -335,4 +339,38 @@ test('turn boundaries reset approval tracking and unknown completions are harmle
   send('UserPromptSubmit');
   send('PostToolUse', { tool: 'Bash', toolUseId: 'ghost2' });
   assert.equal(state(), 'running/working');
+});
+
+test('two open prompts need two answers; one answer settles one prompt', async t => {
+  const { send, state, write } = await hooked(t);
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'a1', command: 'a' });
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'b' });
+  send('PermissionRequest', { tool: 'Bash', toolUseId: 'a1' });
+  send('PermissionRequest', { tool: 'Bash', toolUseId: 'b1' });
+  write('1');
+  send('PostToolUse', { tool: 'Bash', toolUseId: 'a1' });
+  assert.equal(state(), 'waiting/permission');
+  write('1');
+  send('PostToolUse', { tool: 'Bash', toolUseId: 'b1' });
+  assert.equal(state(), 'running/working');
+});
+
+test('which input counts as answering the prompt', async t => {
+  for (const [data, answers] of [['\r\n', true], ['\x1bb', false], ['\x1b[200~ok\r\x1b[201~', false], ['\x03', true]]) {
+    const { send, state, write } = await hooked(t);
+    send('PermissionRequest', { tool: 'Bash' });
+    write(data);
+    send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
+    assert.equal(state(), answers ? 'running/working' : 'waiting/permission', JSON.stringify(data));
+  }
+});
+
+test('exit releases the tracked tools, commands and prompts', async t => {
+  const { send, f, session } = await hooked(t);
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'ls' });
+  send('PermissionRequest', { tool: 'Bash' });
+  const entry = f.manager.entries.get(session.id);
+  f.callbacks.exit({ exitCode: 0 });
+  assert.equal(entry.tools.size, 0); assert.equal(entry.commands.size, 0);
+  assert.deepEqual(entry.pending, []); assert.equal(entry.answered, false);
 });
