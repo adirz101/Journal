@@ -166,3 +166,14 @@ export async function inspectContext(page: Page) {
   await expect(contextPreview(page).getByText('Sources checked', { exact: true })).toBeVisible({ timeout: 10_000 });
   await contextPreview(page).getByRole('button', { name: 'Inspect all', exact: true }).click();
 }
+
+// ----- Phase 6: session end -----
+
+// An ended session opens on its wrap-up; this switches to its terminal (no-op when the
+// terminal is already shown). Specs that read an ended session's output call it first.
+export async function showTerminal(page: Page) {
+  const wrapUp = page.locator('.wrap-up');
+  const button = wrapUp.getByRole('button', { name: 'Show terminal', exact: true }).first();
+  if (await button.count()) await button.click();
+  await expect(page.locator('.terminal-surface, .wrap-not-saved').first()).toBeVisible();
+}

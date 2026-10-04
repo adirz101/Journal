@@ -102,3 +102,8 @@ Final required local checks are reported in [implementation status](IMPLEMENTATI
 - Phase 7 first run: "Getting to know your project" on a detached HEAD (only the project card) and on a large monorepo (the top-level fallback, and how long drafting takes).
 - Phase 7 first run: the first window appears before a slow CLI (for example one waiting on the network) finishes its version or help read.
 - Phase 7 first run: a probe that times out ends the whole process tree (no `claude`, `codex` or `agent` child left running), on macOS and on Windows.
+- Phase 6 wrap-up: a real Claude Code exit shows "Same conversation · ID confirmed by Claude" when Claude reported its session ID, and Continue resumes that exact conversation.
+- Phase 6 wrap-up: a real Codex exit shows "From Codex’s exit message · confirm before continuing" when the ID came from the exit banner, and Continue stays disabled until the ID is confirmed.
+- Phase 6 wrap-up: a real Claude test command (for example `npm test`) fills Tests run with its pass or fail count and command; Codex and Cursor show "Not visible for Codex" or "Not visible for Cursor".
+- Phase 6 wrap-up: an authenticated session that exits with an error (for example a bad Codex `config.toml`) leads with the real last output, and Copy output copies it on macOS and Windows.
+- Phase 6 wrap-up: ⌘↵ (macOS) and Ctrl+Enter (Windows) continue from the wrap-up, and ⇧⌘↵ / Ctrl+Shift+Enter remember all, with VoiceOver and Narrator announcing the shortcut on the buttons.

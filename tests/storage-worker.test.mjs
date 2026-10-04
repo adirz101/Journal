@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -75,5 +75,9 @@ test('the Phase 6 session-end methods are callable through the worker', async t 
   // No baseline was recorded, so the live changes count every file against the empty tree.
   const caught = await store.staleNotesForSession(id);
   assert.deepEqual(caught.notes.map(item => item.note.id), [file.id]);
+  const whole = await store.staleNoteDiff(project.id, file.id, id);
+  assert.equal(whole.available, true); assert.equal(whole.contentHash, caught.notes[0].contentHash); assert.match(whole.text, /^\+2$/m);
+  // The renderer reaches it only through its own allowlist entry.
+  assert.match(readFileSync(new URL('../src/desktop/preload.cjs', import.meta.url), 'utf8'), /^allowed\.add\('staleNoteDiff'\);$/m);
   assert.equal((await store.reaffirmMemory(file.id, { expectedHash: caught.notes[0].contentHash })).revision, 2);
 });

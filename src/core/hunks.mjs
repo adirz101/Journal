@@ -31,6 +31,14 @@ export function diffText(root, commit, path) {
   catch { return null; }
 }
 
+// The same diff as diffText, untruncated and bounded: the text, or why it is not shown
+// ('too-large' past 200 KB, 'failed' when Git fails or times out).
+export function wholeDiff(root, commit, path) {
+  if (!commit || !/^[0-9a-f]{7,64}$/i.test(commit)) return { text: null, reason: 'failed' };
+  try { return { text: run(root, ['-c', 'diff.suppressBlankEmpty=false', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '-U3', commit, '--', path], MAX_DIFF, 'utf8'), reason: null }; }
+  catch (error) { return { text: null, reason: error?.code === 'ENOBUFS' || /maxBuffer/i.test(String(error?.message)) ? 'too-large' : 'failed' }; }
+}
+
 // Unified-diff hunks with both line numbers on every line. An added line also
 // records `at`: the old line it follows (0 above the first line).
 export function parseHunks(text) {

@@ -587,3 +587,64 @@ test('sessionSummary reports changes unavailable without a baseline', t => {
   assert.match(changes.reason, /start/);
   assert.equal(f.store.sessionSummary(f.session('', { baseline: undefined }).id).changes.available, false, 'also with no snapshot');
 });
+
+// ----- Review fix: "Show the whole change" uses the note's own base -----
+
+test('staleNoteDiff gives the whole change from the note\'s base, with the hash the catch shows', t => {
+  const f = fixture(t); const target = f.note('src/a.js', 5, 6);
+  const s = f.session('');
+  writeFileSync(join(f.repo, 'src', 'a.js'), lines('line', 12).replace('line 4\n', `line 4\n${lines('inserted', 100)}`)); f.end(s);
+  const [item] = f.store.staleNotesForSession(s.id).notes;
+  assert.equal(item.truncated, true);
+  const whole = f.store.staleNoteDiff(f.project.id, target.id, s.id);
+  assert.equal(whole.available, true); assert.equal(whole.reason, null); assert.equal(whole.path, 'src/a.js');
+  assert.equal(whole.contentHash, item.contentHash, 'the same file content the catch hashed');
+  for (let i = 1; i <= 100; i++) assert.ok(whole.text.includes(`+inserted ${i}\n`), `inserted ${i} is in the whole diff`);
+  assert.equal(whole.base, f.store.getMemory(target.id).source.commit);
+});
+
+test('staleNoteDiff starts at the note\'s capture commit, not at the session baseline (C1 -> C2)', t => {
+  const f = fixture(t);
+  const target = f.note('src/a.js', 3, 5); // captured at C1
+  const c1 = f.git('rev-parse', 'HEAD');
+  writeFileSync(join(f.repo, 'src', 'a.js'), lines('line', 12).replace('line 10\n', 'line ten\n')); f.commit('C2 touches a.js');
+  const s = f.session(''); // the session baseline is C2
+  writeFileSync(join(f.repo, 'src', 'a.js'), lines('line', 12).replace('line 10\n', 'line ten\n').replace('line 4\n', 'line four\n')); f.end(s);
+  const [item] = f.store.staleNotesForSession(s.id).notes;
+  assert.equal(item.note.id, target.id);
+  const whole = f.store.staleNoteDiff(f.project.id, target.id, s.id);
+  assert.equal(whole.available, true); assert.equal(whole.base, c1);
+  assert.match(whole.text, /^\+line four$/m); assert.match(whole.text, /^\+line ten$/m, 'C2\'s change is part of the note\'s change');
+  assert.doesNotMatch(f.store.sessionFileDiff(s.id, 'src/a.js').text, /line ten/, 'the session diff starts at C2');
+  // Every hunk the catch shows is inside the whole diff.
+  for (const line of item.hunks.flatMap(hunk => hunk.lines).filter(line => line.kind !== ' ')) assert.ok(whole.text.includes(`\n${line.kind}${line.text}\n`), line.text);
+});
+
+test('staleNoteDiff refuses notes outside the catch, a missing base, a large diff and a deadline', t => {
+  const f = fixture(t);
+  const target = f.note('src/a.js', 3, 5); const untouched = f.note('src/other.js', 1, 2);
+  const s = f.session(''); writeFileSync(join(f.repo, 'src', 'a.js'), lines('line', 12).replace('line 4\n', 'line four\n')); f.end(s);
+  assert.equal(f.store.staleNoteDiff(f.project.id, untouched.id, s.id).reason, 'not-in-session', 'a file the session did not change');
+  assert.equal(f.store.staleNoteDiff('other-project', target.id, s.id).reason, 'not-in-session');
+  assert.equal(f.store.staleNoteDiff(f.project.id, 'missing', s.id).reason, 'not-in-session');
+  assert.equal(f.store.staleNoteDiff(f.project.id, target.id, 'missing').reason, 'failed');
+  assert.equal(f.store.staleNoteDiff(f.project.id, target.id, s.id, { deadlineMs: -1 }).reason, 'failed', 'past the deadline');
+  writeFileSync(join(f.repo, 'src', 'a.js'), lines('line', 12).replace('line 4\n', `line four\n${lines('x'.repeat(200), 1200)}`));
+  const large = f.store.staleNoteDiff(f.project.id, target.id, s.id);
+  assert.deepEqual([large.available, large.reason, large.text, large.contentHash], [false, 'too-large', null, null]);
+  // A file hidden for its name is never diffed (notes cannot cite one; an imported row could).
+  const row = f.store.db.prepare('SELECT r.id, r.body FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.id=?').get(target.id);
+  const body = JSON.parse(row.body); body.source.path = 'config/.env';
+  f.store.db.prepare('UPDATE revisions SET body=? WHERE id=?').run(JSON.stringify(body), row.id);
+  assert.equal(f.store.staleNoteDiff(f.project.id, target.id, s.id).reason, 'hidden');
+  // A note saved from uncommitted content has no base to diff from.
+  const g = fixture(t);
+  writeFileSync(join(g.repo, 'src', 'a.js'), lines('draft', 12)); const draft = g.note('src/a.js', 2, 3);
+  writeFileSync(join(g.repo, 'src', 'a.js'), lines('line', 12));
+  const s2 = g.session(''); writeFileSync(join(g.repo, 'src', 'a.js'), lines('line', 12).replace('line 3\n', 'line three\n')); g.end(s2);
+  assert.equal(g.store.staleNoteDiff(g.project.id, draft.id, s2.id).reason, 'no-base');
+  // A deleted file.
+  const h = fixture(t); const gone = h.note('src/a.js', 1, 2);
+  const s3 = h.session(''); h.git('rm', '-q', 'src/a.js'); h.end(s3);
+  assert.equal(h.store.staleNoteDiff(h.project.id, gone.id, s3.id).reason, 'file-missing');
+});
