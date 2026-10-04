@@ -37,7 +37,7 @@ async function open(f: ReturnType<typeof setup>) {
   const app = await electron.launch({ args: ['.'], env: f.env });
   await app.evaluate(({ dialog }, p) => { (dialog as any).showOpenDialog = async () => ({ canceled: false, filePaths: [p] }); }, f.project);
   const page = await app.firstWindow();
-  await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
   await expect(taskBox(page)).toBeVisible();
   return { app, page };
 }
@@ -289,12 +289,12 @@ test('agent cards are honest', async () => {
   const f = setup(); const { app, page } = await open(f);
   try {
     const cards = page.getByRole('radiogroup', { name: 'Agent' });
-    await expect(cards.getByRole('radio', { name: 'Claude Code', exact: true })).toContainText('Installed · fixture 1.0');
-    await expect(cards.getByRole('radio', { name: 'Codex', exact: true })).toContainText('Installed · fixture 1.0');
+    await expect(cards.getByRole('radio', { name: 'Claude Code', exact: true })).toContainText('Installed · 1.0');
+    await expect(cards.getByRole('radio', { name: 'Codex', exact: true })).toContainText('Installed · 1.0');
     await expect(cards).not.toContainText('Signed in');
     const cursor = cards.getByRole('radio', { name: 'Cursor', exact: true });
     await expect(cursor).toContainText('Not installed');
-    await expect(cards.getByRole('button', { name: 'Install… Cursor', exact: true })).toBeVisible();
+    await expect(cards.getByRole('button', { name: 'Install Cursor…', exact: true })).toBeVisible();
     // Unavailable agents stay selectable, and Start says why it waits.
     await chooseAgent(page, 'cursor');
     await expect(startButton(page)).toBeDisabled();
@@ -405,5 +405,74 @@ test('the composer fits a 900×640 window and every control is reachable by keyb
     for (const pattern of [/^Claude Code$/, /^Build$/, /^Workspace$/, /^Manage workspaces$/, /^Start Claude Code/]) expect([...reached].some(entry => pattern.test(entry)), `${pattern} in ${order}`).toBe(true);
     await startButton(page).scrollIntoViewIfNeeded();
     await expect(startButton(page)).toBeInViewport();
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+// The composer's geometry in the main column: the form keeps a usable width or
+// the preview stacks under it, nothing overlaps, no text column collapses and
+// nothing scrolls sideways. Measured in the page, so a failure names the cause.
+async function composerGeometry(page: Page) {
+  return page.evaluate(() => {
+    const rect = (selector: string) => { const r = document.querySelector(selector)!.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; };
+    const overlaps = (a: ReturnType<typeof rect>, b: ReturnType<typeof rect>) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+    const form = rect('.composer-form'), header = rect('.new-session-header'), preview = rect('.context-preview');
+    // Text that wraps (not a single-line truncated label) needs room for words.
+    const squeezed: string[] = [];
+    for (const el of document.querySelectorAll<HTMLElement>('.new-session-inner *')) {
+      const own = [...el.childNodes].filter(node => node.nodeType === Node.TEXT_NODE).map(node => node.textContent ?? '').join('').trim();
+      if (own.length < 12) continue;
+      const style = getComputedStyle(el); const r = el.getBoundingClientRect();
+      if (style.whiteSpace === 'nowrap' || r.width === 0) continue;
+      if (r.width < 120) squeezed.push(`${el.tagName.toLowerCase()}.${el.className} ${Math.round(r.width)}px "${own.slice(0, 30)}"`);
+    }
+    const view = document.querySelector('.new-session-view')!; const main = document.querySelector('main.workspace')!;
+    return { main: Math.round(main.getBoundingClientRect().width), form: Math.round(form.width), stacked: preview.top >= form.bottom - 0.5,
+      overlap: overlaps(form, preview) || overlaps(header, preview), squeezed,
+      overflow: view.scrollWidth > view.clientWidth || main.scrollWidth > main.clientWidth };
+  });
+}
+async function expectSaneComposer(page: Page, label: string) {
+  const g = await composerGeometry(page);
+  expect(g.form >= 420 || g.stacked, `${label}: form ${g.form}px beside the preview in a ${g.main}px column`).toBe(true);
+  expect(g.overlap, `${label}: the preview overlaps the form or header`).toBe(false);
+  expect(g.squeezed, `${label}: text squeezed into a narrow column`).toEqual([]);
+  expect(g.overflow, `${label}: horizontal overflow`).toBe(false);
+  return g;
+}
+const sizeWindow = async (app: ElectronApplication, page: Page, width: number, height: number) => {
+  await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height), { width, height });
+  await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
+};
+
+test('the composer lays out sanely with a wide stored inspector and sidebar (regression)', async () => {
+  const f = setup();
+  execFileSync('git', ['-C', f.project, 'checkout', '-qb', 'feat/editor-core-workbench-chat-f141044']);
+  const app = await electron.launch({ args: ['.'], env: f.env });
+  await app.evaluate(({ dialog }, p) => { (dialog as any).showOpenDialog = async () => ({ canceled: false, filePaths: [p] }); }, f.project);
+  const page = await app.firstWindow();
+  try {
+    await sizeWindow(app, page, 1440, 900);
+    // The user's layout: a 340 px sidebar and a 525 px inspector, stored by earlier drags.
+    await page.evaluate(() => localStorage.setItem('journal-panel-widths', JSON.stringify({ project: 340, knowledge: 525 })));
+    await page.reload();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
+    await expect(taskBox(page)).toBeVisible();
+    await expect(page.locator('.knowledge-panel')).toBeVisible();
+    const g = await expectSaneComposer(page, '1440 with stored widths');
+    expect(g.main).toBeLessThan(760);
+    // The checkout line truncates on one line and keeps the full text in a tooltip.
+    const line = page.locator('.new-session-header p');
+    await expect(line).toHaveAttribute('title', /feat\/editor-core-workbench-chat-f141044/);
+    expect(await line.evaluate(el => { const s = getComputedStyle(el); return [s.whiteSpace, s.textOverflow]; })).toEqual(['nowrap', 'ellipsis']);
+    // The defaults at 1440, 1024 and 900×640.
+    await page.evaluate(() => localStorage.removeItem('journal-panel-widths'));
+    await page.reload(); await expect(page.locator('.new-session-view, .welcome, main').first()).toBeVisible();
+    if (!await taskBox(page).count()) await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
+    await expect(taskBox(page)).toBeVisible();
+    await expectSaneComposer(page, '1440 default');
+    await sizeWindow(app, page, 1024, 768);
+    await expectSaneComposer(page, '1024 default');
+    await sizeWindow(app, page, 900, 640);
+    await expectSaneComposer(page, '900×640 default');
   } finally { await closeApp(app); f.cleanup(); }
 });

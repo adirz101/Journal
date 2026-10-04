@@ -45,7 +45,7 @@ else console.log('ECHO '+command);
   try {
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
     let page = await app.firstWindow();
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await startSession(page, 'claude', { task: 'LIFECYCLE_INITIAL_TASK' });
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
     const firstArgs = launches()[0].argv; const nativeId = firstArgs[firstArgs.indexOf('--session-id') + 1];

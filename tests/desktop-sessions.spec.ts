@@ -75,7 +75,7 @@ const sessionButton = (page: Page, task: string) => page.getByRole('button', { n
 test('four concurrent sessions stay isolated, switch instantly and survive a renderer reload', async () => {
   const f = setup('sessions'); let { app, page } = await open(f.env, f.project);
   try {
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     for (let i = 0; i < 4; i++) {
       await startSession(page, i % 2 ? 'codex' : 'claude', { task: `TASK_${i}` });
       await expect(page.locator('.terminal-surface')).toContainText(`TASK TASK_${i}`);
@@ -154,7 +154,7 @@ test('Ctrl+O opens a project outside the terminal and reaches the CLI inside it'
       dialog.showOpenDialog = async () => { (globalThis as any).__opens += 1; return { canceled: false, filePaths: [selected] }; };
     }, f.project);
     const opens = () => app.evaluate(() => (globalThis as any).__opens as number);
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await expect.poll(opens).toBe(1);
     await startSession(page, 'claude', { task: 'PLAIN_TASK' });
     await expect(page.locator('.terminal-surface')).toContainText('TASK PLAIN_TASK');
@@ -174,7 +174,7 @@ test('focus, new-session and panel shortcuts act on the UI while the terminal ha
   const cmd = mac ? ['meta'] as const : ['control', 'shift'] as const; const tab = mac ? ['meta', 'alt'] as const : ['alt', 'shift'] as const;
   const terminal = page.locator('.xterm-helper-textarea'); const selectedTab = page.locator('.panel-tabs [role=tab][aria-selected=true]');
   try {
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await startSession(page, 'claude', { task: 'KEYS_TASK' });
     await expect(page.locator('.terminal-surface')).toContainText('TASK KEYS_TASK');
     // focus-terminal, from another control.
@@ -199,7 +199,7 @@ test('focus, new-session and panel shortcuts act on the UI while the terminal ha
 test('an app crash leaves sessions running in the runtime; the next launch reconnects without relaunching', async () => {
   const f = setup('crash'); let { app, page } = await open(f.env, f.project);
   try {
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await startSession(page, 'claude', { task: 'SURVIVE_CRASH' });
     await expect(page.locator('.terminal-surface')).toContainText('TASK SURVIVE_CRASH');
     await typeLine(page, 'before-crash');
@@ -220,7 +220,7 @@ test('an app crash leaves sessions running in the runtime; the next launch recon
 test('a runtime crash is reported, recovered as interrupted, and never resends the prompt', async () => {
   const f = setup('runtime'); const { app, page } = await open(f.env, f.project);
   try {
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await startSession(page, 'codex', { task: 'RUNTIME_CRASH' });
     await expect(page.locator('.terminal-surface')).toContainText('TASK RUNTIME_CRASH');
     const before = f.runtimeInfo();
@@ -239,7 +239,7 @@ test('a runtime crash is reported, recovered as interrupted, and never resends t
 test('keep-running quit is rediscovered; stopping reports and cleans detached leftovers; changes are listed', async () => {
   const f = setup('keep'); let { app, page } = await open({ ...f.env, JOURNAL_QUIT_POLICY: 'keep' }, f.project);
   try {
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await startSession(page, 'claude', { task: 'KEEP_RUNNING' });
     await expect(page.locator('.terminal-surface')).toContainText('TASK KEEP_RUNNING');
     await closeApp(app);
@@ -271,7 +271,7 @@ test('keep-running quit is rediscovered; stopping reports and cleans detached le
 test('a managed worktree is created from the dialog, hosts a research session and refuses removal while in use', async () => {
   const f = setup('worktree'); const { app, page } = await open(f.env, f.project);
   try {
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     writeFileSync(resolve(f.project, 'uncommitted.txt'), 'local\n');
     await page.getByRole('button', { name: 'Manage workspaces' }).click();
     await page.getByLabel('New branch').fill('journal/isolated');
@@ -305,7 +305,7 @@ test('a managed worktree is created from the dialog, hosts a research session an
 test('a branch switched outside Journal is picked up and live sessions say where they started', async () => {
   const f = setup('switch'); const { app, page } = await open(f.env, f.project);
   try {
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await startSession(page, 'claude', { task: 'SWITCH_TASK' });
     await expect(page.locator('.terminal-surface')).toContainText('TASK SWITCH_TASK');
     await expect(page.locator('.project-switcher .branch-badge')).toContainText('main');
@@ -328,7 +328,7 @@ async function startAndWait(page: Page, task: string, provider: 'Claude' | 'Code
 test('slot shortcuts keep their session across a renderer reload and after another session stops', async () => {
   const f = setup('slots'); const { app, page } = await open(f.env, f.project);
   try {
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await startAndWait(page, 'SLOT_A', 'Claude'); await startAndWait(page, 'SLOT_B', 'Codex');
     // Slot keys are ignored while a start or switch is still finishing (aria-busy);
     // once that settles, the first press selects.
@@ -362,7 +362,7 @@ test('next needs-you jumps to a Claude session waiting for approval and shows wh
   const f = setup('needs-you'); const { app, page } = await open(f.env, f.project);
   const next = process.platform === 'darwin' ? ['meta'] as const : ['control', 'shift'] as const;
   try {
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await startAndWait(page, 'CALM_ONE', 'Claude'); await startAndWait(page, 'ASKING_TWO', 'Claude');
     // The fixture runs Journal's real hook with a PermissionRequest payload.
     await typeLine(page, 'perm TOKEN=abc123456 npm publish');
@@ -398,7 +398,7 @@ test('next needs-you jumps to a Claude session waiting for approval and shows wh
 test('Codex shows Running with output time and limited status', async () => {
   const f = setup('codex-state'); const { app, page } = await open(f.env, f.project);
   try {
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await startAndWait(page, 'CODEX_STATE', 'Codex');
     const row = sessionButton(page, 'CODEX_STATE');
     await expect(row).toContainText('Running');
@@ -421,7 +421,7 @@ test('Codex shows Running with output time and limited status', async () => {
 test('a fifth start is refused with the SLOTS_FULL code through the preload bridge', async () => {
   const f = setup('slots-full'); const { app, page } = await open(f.env, f.project);
   try {
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     for (let i = 0; i < 4; i++) await startAndWait(page, `FULL_${i}`, i % 2 ? 'Codex' : 'Claude');
     const fifth = async () => page.evaluate(async () => {
       const journal = (window as any).journal; const boot = await journal.request('bootstrap');

@@ -1,30 +1,36 @@
-import type { AgentInfo } from './types';
-import { ProviderMark } from './ProviderMark';
+import { PROVIDER_NAMES, type AgentInfo, type Provider } from './types';
+import { agentRow } from './firstRunModel';
+import { CheckAgain } from './AgentRow';
+import { firstEnabled, useKeepFocus } from './useKeepFocus';
+import { providers as words } from './copy';
 
-// Cursor's provider row when something needs the user: not installed, not the
-// real Cursor CLI, too old, or signed out. Installing and signing in always run
-// visibly, after confirmation; Journal never handles Cursor credentials.
-export function CursorStatus({ agent, checking, note, onInstall, onLogin, onCheck }: {
-  agent: AgentInfo | undefined; checking: boolean; note: string;
-  onInstall: () => void; onLogin: () => void; onCheck: () => void;
+// Cursor's two extra hints: the CLI Journal uses is off PATH, or it has no modes.
+export function cursorHints(agent: AgentInfo | undefined) {
+  if (!agent?.available) return [];
+  return [agent.onPath === false && agent.path ? words.cursorOffPath(agent.path) : null, agent.supports && !agent.supports.mode ? words.cursorNoModes : null].filter((hint): hint is string => !!hint);
+}
+
+// An agent's details under the composer's cards (region "<name> provider status"): what its
+// card has no room for. The card already shows the state and the one next action (install,
+// install page or sign-in); this adds the row's explanation, Cursor's hints, what the last
+// install or sign-in changed, and Check again while the agent needs the user.
+// It is mounted for every agent, so its note is an always-present live region (announced when
+// set); the details show for the chosen agent (open), and the region is named only while it
+// has something to show. When an update removes the focused Check again, focus moves to the
+// agent's card (fallback).
+export function ProviderStatus({ provider, agent, open, busy, rechecking = false, note, onCheck, fallback }: {
+  provider: Provider; agent: AgentInfo | undefined; open: boolean; busy: boolean; rechecking?: boolean; note: string; onCheck(provider: Provider): void;
+  fallback(): HTMLElement | null;
 }) {
-  if (!agent) return null;
-  const check = <button className="text-button" disabled={checking} onClick={onCheck}>{checking ? 'Checking…' : 'Check again'}</button>;
-  const install = <button disabled={checking} onClick={onInstall}>Install Cursor CLI</button>;
-  const signIn = <button disabled={checking} onClick={onLogin}>Sign in to Cursor</button>;
-  const mark = <ProviderMark provider="cursor" size={16} />;
-  let body: React.ReactNode = null;
-  if (agent.state === 'checking') body = <p className="muted">{mark}Checking for the Cursor CLI…</p>;
-  else if (agent.state === 'unlaunchable') body = <><p>{mark}<strong>Cursor Agent</strong> · cannot be started</p><p className="muted">Journal found {agent.unlaunchable?.path} but cannot start it safely: {agent.unlaunchable?.reason}</p><div className="provider-actions">{check}</div></>;
-  else if (agent.state === 'missing') body = <><p>{mark}<strong>Cursor Agent</strong> · CLI not found</p><p className="muted">Run Cursor's official installer to add the Cursor Agent CLI.</p><div className="provider-actions">{install}{check}</div></>;
-  else if (agent.state === 'not-cursor') body = <><p>{mark}<strong>Cursor Agent</strong> · not the Cursor CLI</p><p className="muted">An <code>agent</code> command at {agent.impostor} does not identify as the Cursor CLI, so Journal will not run it.</p><div className="provider-actions">{install}{check}</div></>;
-  else if (agent.state === 'unsupported') body = <><p>{mark}<strong>Cursor Agent</strong> {agent.version} · unsupported version</p><p className="muted">This version cannot open a chat by its exact ID. Update it in a terminal with <code>agent update</code>.</p><div className="provider-actions">{check}</div></>;
-  else if (agent.state === 'login-required') body = <><p>{mark}<strong>Cursor</strong> {agent.version} · login required</p><p className="muted">Sign in with Cursor's own login flow. Journal does not see or store your credentials.</p><div className="provider-actions">{signIn}{check}</div></>;
-  else if (agent.available && agent.auth !== 'signed-in') body = <><p>{mark}<strong>Cursor</strong> {agent.version} · {agent.auth === 'unchecked' ? 'checking sign-in…' : 'sign-in status unknown'}</p><div className="provider-actions">{signIn}{check}</div></>;
-  const hints = [
-    agent.available && agent.onPath === false && `Journal uses ${agent.path}, which is not on your PATH. To run agent in your own terminal, add its folder to PATH (the installer printed the command).`,
-    agent.available && agent.supports && !agent.supports.mode && 'This version has no Ask or Plan mode, so Read-only and Plan are unavailable for Cursor. Update with agent update.',
-  ].filter(Boolean) as string[];
-  if (!body && !hints.length && !note) return null;
-  return <section className="provider-status" aria-label="Cursor provider status">{body}{hints.map(hint => <p className="hint" key={hint}>{hint}</p>)}{note && <p className="hint" role="status">{note}</p>}</section>;
+  const checking = !agent || agent.state === 'checking';
+  const row = agentRow(agent, provider);
+  const hints = open ? [row.hint, ...(provider === 'cursor' ? cursorHints(agent) : [])].filter((hint): hint is string => !!hint) : [];
+  const needsYou = open && !checking && (row.tone === 'warn' || (!!row.action && !row.quietLogin));
+  const shown = needsYou || hints.length > 0 || !!note;
+  const ref = useKeepFocus<HTMLElement>(root => firstEnabled(root) ?? fallback());
+  return <section ref={ref} className={`provider-status${shown ? '' : ' empty'}`} aria-label={shown ? `${PROVIDER_NAMES[provider]} provider status` : undefined}>
+    {hints.map(hint => <p className="agent-hint" key={hint}>{hint}</p>)}
+    <p className="agent-hint agent-note" role="status">{note}</p>
+    {needsYou && <div><CheckAgain name={row.name} busy={busy} rechecking={rechecking} onCheck={() => onCheck(provider)} /></div>}
+  </section>;
 }

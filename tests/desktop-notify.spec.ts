@@ -102,7 +102,7 @@ const bash = (toolUseId: string) => ({ tool_name: 'Bash', tool_use_id: toolUseId
 test('an unfocused window gets one notification per episode, without the command, and the badge follows', async () => {
   const f = setup('notify'); const { app, page } = await open(f.env, f.project);
   try {
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     const session = await startClaude(page, 'NOTIFY_A');
     expect(session?.nativeId).toBeTruthy();
     hook(f.root, f.project, session, 'PreToolUse', bash('t1'));
@@ -155,7 +155,7 @@ test('an unfocused window gets one notification per episode, without the command
 test('a headless run without test hooks never reaches the OS notification, badge or taskbar', async () => {
   const f = setup('notify-headless'); const { app, page } = await open(f.env, f.project, { hooks: false });
   try {
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     const session = await startClaude(page, 'HEADLESS_A');
     hook(f.root, f.project, session, 'PreToolUse', bash('h1'));
     hook(f.root, f.project, session, 'PermissionRequest', bash('h1'));
@@ -173,7 +173,7 @@ test('a headless run without test hooks never reaches the OS notification, badge
 test('clicking the notification sends focus-session for its session', async () => {
   const f = setup('notify-click'); const { app, page } = await open(f.env, f.project);
   try {
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     const first = await startClaude(page, 'CLICK_A');
     await startClaude(page, 'CLICK_B');
     await expect(sessionButton(page, 'CLICK_B')).toHaveAttribute('aria-current', 'true');
@@ -190,7 +190,7 @@ test('clicking the notification sends focus-session for its session', async () =
 test('clicking the notification selects its session in the renderer, but not while a dialog is open', async () => {
   const f = setup('notify-select'); const { app, page } = await open(f.env, f.project);
   try {
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     const first = await startClaude(page, 'SELECT_A');
     await startClaude(page, 'SELECT_B');
     await expect(sessionButton(page, 'SELECT_B')).toHaveAttribute('aria-current', 'true');

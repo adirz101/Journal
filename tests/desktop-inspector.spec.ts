@@ -48,7 +48,7 @@ async function open(env: Record<string, string>, project: string): Promise<{ app
   // The window counts as focused, so a waiting Claude never posts a real notification.
   await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); (globalThis as any).__journalFocused = () => true; }, project);
   const page = await app.firstWindow();
-  await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
   return { app, page };
 }
 const closeApp = async (app: ElectronApplication) => {

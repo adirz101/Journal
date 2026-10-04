@@ -55,7 +55,7 @@ test('the explorer browses, decorates, previews and references files without edi
     await app.evaluate(({ dialog, shell }) => { (shell as any).showItemInFolder = (p: string) => { (globalThis as any).__revealed = p; }; (dialog as any).showOpenDialog = async () => ({ canceled: false, filePaths: [(globalThis as any).__nextFolder] }); });
     const choose = (path: string) => app.evaluate((_e, p) => { (globalThis as any).__nextFolder = p; }, path);
     const page = await app.firstWindow();
-    await choose(next); await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await choose(next); await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await inspectorTab(page, 'Files'); await filesView(page, 'all');
 
     // Tree: the primary root is open; .git is never listed; links, sensitive files and ignored folders are marked.

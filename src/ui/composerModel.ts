@@ -1,6 +1,7 @@
 // The New session composer's rules (boards B5 and B13). Pure: Composer.tsx
 // renders them and tests/composer.test.mjs checks them.
 import { composer, states } from './copy';
+import { agentRow, type AgentAction } from './firstRunModel';
 import { PROVIDER_NAMES, type AgentInfo, type Memory, type Mode, type Provider, type Receipt, type SelectionInfo, type SelectionPreview } from './types';
 
 export const MODES: readonly Mode[] = ['build', 'plan', 'read-only'];
@@ -32,33 +33,26 @@ export function modeBlock(provider: Provider, agent: AgentInfo | null | undefine
 // An agent is ready to start when it is installed and nothing needs the user first.
 export const agentReady = (agent: AgentInfo | null | undefined) => !!agent && agent.available && (agent.state ?? 'ready') === 'ready';
 
-export interface AgentCard { sub: string; tone: 'ok' | 'warn' | 'muted'; action?: 'install' | 'page' | 'login' }
-// What an agent card says (Phase 7 data for every provider). "Signed in" and "Sign in
-// needed" appear only when the agent's own status check answered (auth); a check that
-// could not conclude says so, and an agent without a status check claims neither.
-// Install runs the official command when this platform has one; otherwise the card
-// offers the install page. Sign in is offered when the CLI documents its sign-in command.
-export function agentCard(agent: AgentInfo | null | undefined): AgentCard {
-  if (!agent || agent.state === 'checking') return { sub: composer.checking, tone: 'muted' };
-  const login = agent.supports?.login ? { action: 'login' as const } : {};
-  if (agent.state === 'login-required' || agent.auth === 'signed-out') return { sub: composer.signInNeeded, tone: 'warn', ...login };
-  if (agent.state === 'unsupported') return { sub: composer.unsupported, tone: 'warn' };
-  if (agent.state === 'not-cursor') return { sub: composer.notCursor, tone: 'warn' };
-  if (agent.state === 'unlaunchable') return { sub: composer.cantLaunch, tone: 'warn' };
-  if (!agent.available || agent.state === 'missing') return { sub: composer.notInstalled, tone: 'muted', ...installAction(agent) };
-  const installed = composer.installed(agent.version);
-  if (agent.auth === 'signed-in') return { sub: `${installed} · ${composer.signedIn}`, tone: 'ok' };
-  if (agent.auth === 'unknown') return { sub: `${installed} · ${composer.signInUnknown}`, tone: 'ok', ...login };
-  return { sub: installed, tone: 'ok' };
+export interface AgentCard { sub: string; tone: 'ok' | 'warn' | 'muted'; action: AgentAction | null; quiet: boolean }
+// What an agent card says: Phase 7's agentRow for every provider and state, so a card and
+// its Welcome row always agree. "Signed in" and "Sign in needed" appear only when the
+// agent's own status check answered; a check that could not conclude says "Sign-in unknown",
+// and an agent without a status check claims neither. Install runs the official command
+// where this platform has one; otherwise the card offers the install page. quiet: a sign-in
+// offered without a warning (status unknown or unchecked).
+export function agentCard(agent: AgentInfo | null | undefined, provider: Provider = agent?.provider ?? 'claude'): AgentCard {
+  const row = agentRow(agent ?? undefined, provider);
+  return { sub: row.sub, tone: row.tone, action: row.action, quiet: row.quietLogin };
 }
-const installAction = (agent: AgentInfo): Pick<AgentCard, 'action'> => agent.commands?.install ? { action: 'install' } : agent.commands?.installPage ? { action: 'page' } : {};
 
 // The card's tooltip keeps the technical detail the old provider line showed.
+// It also carries the card's whole state line and the version exactly as the CLI reported it.
 export function agentTitle(agent: AgentInfo | null | undefined): string | undefined {
   if (!agent) return undefined;
-  if (!agent.available) return agent.provider === 'cursor' ? undefined : 'Not found on PATH';
+  const sub = agentRow(agent, agent.provider).sub;
+  if (!agent.available) return agent.provider === 'cursor' ? sub : `${sub}\nNot found on PATH`;
   const caps = agent.capabilities;
-  return [agent.path ?? '', caps && `Resume: ${caps.exactResume}`, caps && `Observed: status ${caps.status.join(', ')}; commands ${caps.commands}`, caps?.modes && `Modes: ${caps.modes}`].filter(Boolean).join('\n') || undefined;
+  return [sub, agent.version && `Version: ${agent.version}`, agent.path ?? '', caps && `Resume: ${caps.exactResume}`, caps && `Observed: status ${caps.status.join(', ')}; commands ${caps.commands}`, caps?.modes && `Modes: ${caps.modes}`].filter(Boolean).join('\n') || undefined;
 }
 
 export const isProvider = (value: string | null | undefined): value is Provider => !!value && (AGENT_ORDER as readonly string[]).includes(value);
@@ -68,6 +62,8 @@ export function defaultProvider(agents: AgentInfo[] | undefined, remembered: str
   return AGENT_ORDER.find(provider => agentReady(agents?.find(a => a.provider === provider))) ?? 'claude';
 }
 
+// Why an installed agent can't start yet, in a word (the card's line also names the version).
+const NEEDS: Record<string, string> = { checking: composer.checking, 'login-required': composer.signInNeeded, unsupported: composer.unsupported, 'not-cursor': composer.notCursor, unlaunchable: composer.cantLaunch };
 // The first reason Start is unavailable, or null. Busy has no text (the button just waits).
 export function startBlock({ connected, liveCount, busy, agent, provider, mode }: { connected: boolean; liveCount: number; busy: boolean; agent: AgentInfo | null | undefined; provider: Provider; mode: Mode }): string | null {
   if (busy) return '';
@@ -75,9 +71,9 @@ export function startBlock({ connected, liveCount, busy, agent, provider, mode }
   // Phase 8: New session stays open while all slots are in use; Start says why it waits.
   if (liveCount >= MAX_LIVE) return states.slotsFull;
   if (!agentReady(agent)) {
-    const card = agentCard(agent);
+    const card = agentCard(agent, provider);
     if (!agent || agent.state === 'missing' || (!agent.available && !agent.state)) return composer.agentMissing(PROVIDER_NAMES[provider], card.action);
-    return `${PROVIDER_NAMES[provider]}: ${card.sub}`;
+    return `${PROVIDER_NAMES[provider]}: ${NEEDS[agent.state ?? ''] ?? card.sub}`;
   }
   return modeBlock(provider, agent, mode);
 }

@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import ts from 'typescript';
-import { composer, copy, excludedReason, memoryState, palette, selectionReason, shell, states, tip, warningText, wrapUp } from '../src/ui/copy.ts';
+import * as copyModule from '../src/ui/copy.ts';
+import { composer, copy, excludedReason, firstRun, memoryState, palette, providers, selectionReason, shell, states, tip, warningText, wrapUp } from '../src/ui/copy.ts';
 
 // Plain-language vocabulary (design board B8). The technical term may stay in a
 // tooltip (the title attribute of an element) but not in visible text or names.
@@ -27,7 +28,6 @@ const ALLOWED = [
 // Visible strings kept until a later phase of the UX redesign replaces them: [file, text, phase].
 // Each must still be present, so an entry is removed when its phase lands.
 const DEFERRED = [
-  ['KnowledgePanel.tsx', 'Propose branch update', 'Phase 7'], ['KnowledgePanel.tsx', 'Propose overview', 'Phase 7'],
   ['KnowledgeForm.tsx', 'Save for review', 'Phase 6'],
 ];
 const exempt = ([, text, file, position]) => ALLOWED.some(([f, t, p]) => f === file && t === text && p === position) || DEFERRED.some(([f, t]) => f === file && t === text);
@@ -333,6 +333,84 @@ test('the wrap-up vocabulary avoids the old terms', () => {
   assert.equal(wrapUp.moreSuggestions(2), 'More suggestions from this session');
   assert.equal(wrapUp.moreSuggestionsLabel(1), '1 more suggestion from this session');
   assert.doesNotMatch(wrapUp.notSavedFailed, /was not saved|no longer available/, 'a failed start does not claim it had output');
+});
+
+// ----- Phase 7: voice (board 12) -----
+// Every string copy.ts exports, as [key, text]: nested objects and arrays are walked, and
+// functions are called with sample arguments (a name, a count, or the facts of a draft).
+const SAMPLE_ARGS = { facts: [{ readme: 'README.md', folders: 8, commits: 93, counted: true }], emptyTerminalBody: ['⌘N'], cursorInstalled: ['2026.10.01', true],
+  commitsSince: [2, 'main'], recentCommits: [3, 'abc1234'], cantStart: ['/usr/bin/agent', 'it is a script'], leaveOutTip: [true], matchesTerms: [['windows', 'menu']],
+  crashBody: [{ total: 2, sessions: [{}] }], filesTruncated: [1234, 'timeout'], cantStartTitle: ['Codex', 'signed-out'] };
+function copyStrings() {
+  const out = [];
+  const walk = (key, value) => {
+    if (typeof value === 'string') out.push([key, value]);
+    else if (typeof value === 'function') {
+      const name = key.split('.').pop();
+      const args = SAMPLE_ARGS[name] ?? Array.from({ length: Math.max(1, value.length) }, (_, i) => i === 0 ? 'Codex' : '2');
+      walk(key, value(...args)); if (!SAMPLE_ARGS[name] && value.length <= 1) walk(key, value(2));
+    } else if (value && typeof value === 'object') for (const [inner, next] of Object.entries(value)) walk(`${key}.${inner}`, next);
+  };
+  for (const [name, value] of Object.entries(copyModule)) if (value && typeof value === 'object') walk(name, value);
+  return out;
+}
+const uiFiles = () => readdirSync(new URL('../src/ui/', import.meta.url)).filter(name => name.endsWith('.tsx'));
+
+test('no exclamation marks or emoji in visible copy', () => {
+  const strings = [...copyStrings(), ...uiFiles().flatMap(file => visibleStrings(file).map(([at, text]) => [at, text]))];
+  assert.ok(strings.length > 500 && strings.some(([key]) => key === 'firstRun.welcomeTitle'), 'the scan read copy.ts and the components');
+  // Symbols, not sentences: [file, text, why]. Each must still be present.
+  const SYMBOLS = [['ExplorerPanel.tsx', '!', 'Git’s own status letter for a conflict'], ['SessionHeader.tsx', '!', 'the attention banner’s icon, hidden from assistive technology']];
+  const symbol = ([at, text]) => SYMBOLS.some(([file, t]) => at.startsWith(`${file}:`) && t === text);
+  assert.deepEqual(strings.filter(entry => entry[1].includes('!') && !symbol(entry)).map(([key, text]) => `${key}: ${text}`), []);
+  assert.deepEqual(SYMBOLS.filter(([file, t]) => !strings.some(([at, text]) => at.startsWith(`${file}:`) && text === t)), [], 'remove symbol entries whose string is gone');
+  // Emoji: pictographs shown as emoji by default, or forced by the emoji variation selector.
+  // Typographic symbols the UI uses (↗, ⚲, ⑂, ✓) have text presentation and pass.
+  const EMOJI = /\p{Emoji_Presentation}|\p{Extended_Pictographic}\uFE0F/u;
+  assert.deepEqual(strings.filter(([, text]) => EMOJI.test(text)).map(([key, text]) => `${key}: ${text}`), []);
+  assert.ok(EMOJI.test('Oops 😅') && EMOJI.test('Done ✅') && !EMOJI.test('Preview context ↗'), 'the emoji check itself');
+});
+
+// First person (the mascot's voice) only in onboarding, empty states and explanations (board 12):
+// [key, why]. Status, errors, buttons and menus stay neutral.
+// "I" only as a capital (so "i.e." passes); "me" and "my" in any case, including a sentence-initial "My".
+const FIRST_PERSON = { test: text => /\bI\b/.test(text) || /\b(?:me|my)\b/i.test(text) };
+const FIRST_PERSON_ALLOWED = [
+  ['firstRun.knowTitle', 'onboarding: Getting to know your project'],
+  ['firstRun.howSteps.1.body', 'onboarding: How Journal remembers'],
+  ['firstRun.noBranch.detached', 'onboarding: why a card is missing'],
+  ['firstRun.noBranch.failed', 'onboarding: why a card is missing'], ['firstRun.noProject.failed', 'onboarding: why a card is missing'],
+  ['firstRun.didEmpty', 'empty state: the Session tab explains "What it did"'],
+  ['composer.relevantEmpty', 'empty state: Relevant to your task'],
+  ['wrapUp.explainer', 'explanation: the first wrap-up explainer (Phase 6)'],
+  ['shell.notifyApproval', 'the user\'s own voice in a setting ("Notify me…"), not the mascot'],
+];
+test('first person only where board 12 allows it', () => {
+  for (const text of ['My notes', 'Tell me', 'I’ll list it', 'MY turn']) assert.ok(FIRST_PERSON.test(text), text);
+  for (const text of ['i.e. the menu', 'Mystery', 'Remembered', 'API key']) assert.ok(!FIRST_PERSON.test(text), text);
+  const found = copyStrings().filter(([, text]) => FIRST_PERSON.test(text));
+  assert.deepEqual([...new Set(found.map(([key]) => key))].filter(key => !FIRST_PERSON_ALLOWED.some(([allowed]) => allowed === key)), []);
+  assert.deepEqual(FIRST_PERSON_ALLOWED.filter(([key]) => !found.some(([k]) => k === key)), [], 'remove allow-list entries whose string is gone');
+  // Components take first-person text from copy.ts only.
+  // [file, text, why]: the user's own voice in a control, not the mascot's.
+  const USER_VOICE = [['KnowledgeForm.tsx', 'My explicit statement', 'a source option: the user states the note themselves']];
+  const userVoice = ([at, text]) => USER_VOICE.some(([file, t]) => at.startsWith(`${file}:`) && t === text);
+  const inline = uiFiles().flatMap(file => visibleStrings(file)).filter(([, text]) => FIRST_PERSON.test(text));
+  assert.deepEqual(inline.filter(entry => !userVoice(entry)).map(([at, text]) => `${at}: ${text}`), []);
+  assert.deepEqual(USER_VOICE.filter(entry => !inline.some(found => userVoice([found[0], found[1]]) && found[1] === entry[1])), [], 'remove user-voice entries whose string is gone');
+});
+
+test('the first-run vocabulary avoids the old terms', () => {
+  const strings = copyStrings().filter(([key]) => key.startsWith('firstRun.') || key.startsWith('providers.'));
+  assert.ok(strings.length > 60, 'the first-run strings were read');
+  for (const [key, text] of strings) { assert.doesNotMatch(text, OLD_TERMS, key); assert.doesNotMatch(text, CAPS_RUN, key); }
+  assert.equal(firstRun.facts({ readme: 'README.md', folders: 8, commits: 93, counted: true }), 'Drafted from Git: README, 8 top-level folders, 93 commits · no AI call · nothing left this computer');
+  assert.equal(firstRun.facts({ readme: null, folders: 1, commits: 1, counted: false }), 'Drafted from Git: 1 top-level entry, 1 commit · no AI call · nothing left this computer');
+  assert.equal(firstRun.emptyTerminalBody('Ctrl+N'), 'Start an agent with Ctrl+N. Your logins, settings and approvals stay with the CLI.');
+  assert.equal(providers.installName('Claude Code'), 'Install Claude Code…');
+  assert.equal(providers.cursorInstalled(null, false), 'Cursor CLI is installed.');
+  assert.equal(providers.cursorInstalled('2026.10.01', true), 'Cursor CLI 2026.10.01 is installed. Sign in to continue.');
+  for (const [key, text] of copyStrings()) assert.doesNotMatch(text, / {2}/, `${key} has a double space`);
 });
 
 test('Phase 8: a truncated file search names its reason, and the crash count covers every recovered session', () => {

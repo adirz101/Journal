@@ -111,7 +111,7 @@ export interface FileStatus { available: boolean; reason?: string; entries: Stat
 export interface FilePreviewData { path: string; kind: 'text' | 'binary' | 'sensitive' | 'too-large'; size?: number; contentHash?: string; text?: string; invalidUtf8?: boolean; highlight?: boolean; eol?: string; lineCount?: number; }
 export interface FileReference { projectId?: string; kind: 'file' | 'lines' | 'folder'; rootKey: string; rootLabel?: string; path: string; display?: string; startLine: number | null; endLine: number | null; contentHash?: string | null; rangeHash?: string | null; }
 export interface UpdateState { status: 'off' | 'idle' | 'checking' | 'none' | 'available' | 'downloading' | 'ready' | 'error'; mode: 'off' | 'auto' | 'notify'; current: string; version: string | null; percent: number | null; message: string | null; automatic: boolean; installing: boolean; }
-export interface ProjectState { project: Project; sessions: Session[]; receipts: Receipt[]; }
+export interface ProjectState { project: Project; sessions: Session[]; receipts: Receipt[]; needsOrientation?: boolean; }
 export interface ChangedFile { path: string; from: string | null; additions: number | null; deletions: number | null; binary: boolean; untracked: boolean; preexisting: boolean; sensitive: boolean; }
 export interface Changes { base: string; available: boolean; reason?: string; head?: string; branch?: string; headMoved?: boolean; commitsSince?: number; files: ChangedFile[]; truncated?: boolean; additions?: number; deletions?: number; preexistingCount?: number; }
 // Phase 7. auth is signed-in or signed-out only from a probe that parsed cleanly (src/core/agents.mjs probeAuth).
@@ -129,7 +129,7 @@ export interface DraftFacts { readme: string | null; folders: number; commits: n
 // branchName: the branch the drafts were made on (null when detached); each remembered part sends it
 // back with head, and a switch to another branch refuses. 'failed': Git could not be read for that card.
 export interface FirstRunDrafts { projectId: string; head: string; branchName: string | null; overview: StatusDraft | null; branch: StatusDraft | null;
-  branchSkipped: 'detached' | 'unborn' | 'failed' | null; overviewSkipped: 'failed' | null }
+  branchSkipped: 'detached' | 'failed' | null; overviewSkipped: 'failed' | null }
 export interface Bootstrap { projects: Project[]; agents: AgentInfo[]; platform: string; shortcuts: Partial<Record<CommandId, { label: string; aria: string }>>; runtime: { state: 'connected' | 'disconnected' | 'connecting'; warning: string | null }; live: Session[]; active: Session[];
   // Phase 7: any remembered note in any project (the first-note moment never plays for an upgrading install).
   hasNotes: boolean;

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type Memory, type MemoryPage, type Project, type Proposal, type Session, type StatusDraft, type Workspace } from './types';
 import { noteActions } from './wrapUpModel'; // Phase 6 B8
-import { category, copy, tip } from './copy';
+import { category, copy, firstRun, tip } from './copy';
 import { NoteCard } from './NoteCard';
 import { CATEGORY_ORDER, chipLabel } from './noteCardModel';
 import { useNoteTrust, useOpenable } from './useNoteTrust';
@@ -21,7 +21,7 @@ const announcedCounts = new Map<string, number>();
 // Phase 8: the last palette request handled, so a remounted panel (a tab switch) never takes focus again.
 let focusHandled = 0;
 
-export function KnowledgePanel({ project, workspaces = [], version, trustVersion, busy, proposals: shared, sessions = [], filters: heldFilters, onFilters, onOpenSession, onEdit, onPropose, onChanged, onError, focus }: {
+export function KnowledgePanel({ project, workspaces = [], version, trustVersion, busy, proposals: shared, sessions = [], filters: heldFilters, onFilters, onOpenSession, onEdit, onPropose, onChanged, onError, onRemembered, justRemembered, focus }: {
   // proposals: App's window-wide fetch (useProposals); when set, the panel does not fetch its own.
   // trustVersion: bumps with version and when a session starts running (a new delivery).
   // sessions: the loaded sessions; an origin links to its session only when App can select it.
@@ -31,6 +31,8 @@ export function KnowledgePanel({ project, workspaces = [], version, trustVersion
   filters?: MemoryFilters | null; onFilters?: (filters: MemoryFilters) => void;
   onEdit: (form: { memory?: Memory; supersedes?: Memory; initialCategory?: string; draft?: StatusDraft }) => void;
   onPropose: (scope: 'checkout' | 'branch') => void; onChanged: () => void; onError: (error: unknown) => void;
+  // Phase 7: a note was remembered here (the first-note moment); notes remembered on the first-run screen this app run.
+  onRemembered?: () => void; justRemembered?: ReadonlySet<string>;
   // Phase 8: a note opened from the palette (seq increases per request).
   focus?: { id: string; seq: number } | null;
 }) {
@@ -87,13 +89,14 @@ export function KnowledgePanel({ project, workspaces = [], version, trustVersion
   // optimistic: the action returns the updated note (remember, reject,
   // forget, pin), whose new status is shown at once. A null result means the
   // user cancelled a confirmation (Forget…): nothing changed, so no reload.
-  const act = async (action: () => Promise<unknown>, { optimistic = false } = {}) => {
+  const act = async (action: () => Promise<unknown>, { optimistic = false, remembered = false } = {}) => {
     setPending(true);
     try {
       const result = await action();
       if (result === null) return;
       if (optimistic && result && typeof result === 'object') { const updated = result as Memory; setItems(current => current.map(item => item.id === updated.id ? { ...item, status: updated.status, pinned: updated.pinned } : item)); }
       onChanged(); // the write succeeded; a failed reload below is reported separately
+      if (remembered) onRemembered?.();
       try { await load(0); } catch (error) { onError(error); }
     } catch (error) { onError(error); } finally { setPending(false); }
   };
@@ -130,10 +133,10 @@ export function KnowledgePanel({ project, workspaces = [], version, trustVersion
   const rootName = (memory: Memory) => { const name = memory.source.rootId ? project.roots?.find(root => root.id === memory.source.rootId)?.name : undefined; return name ? `${name}/` : ''; };
   const empty = attention === 'check' ? checks.done ? copy.trust.noneNeedCheck : copy.trust.checkingNotes : attention === 'other' ? copy.trust.noneOtherBranch : search ? 'No matching notes' : filter === 'review' ? 'Nothing waiting for review' : 'Keep the useful parts.';
   return <div className="panel-content"><div className="section-heading"><div><h2>{copy.memory}</h2></div></div><p className="muted panel-intro">{copy.aboutProject} and {copy.branchStands} reach every session. Relevant decisions, rules and lessons are added for the task.</p>
-    <div className="brief-actions"><button onClick={() => onEdit({ initialCategory: 'brief' })}>{copy.addSummary}</button><button disabled={busy || !project.branch} onClick={() => onPropose('branch')}>Propose branch update</button><button disabled={busy} onClick={() => onPropose('checkout')}>Propose overview</button></div>
+    <div className="brief-actions"><button onClick={() => onEdit({ initialCategory: 'brief' })}>{copy.addSummary}</button><button disabled={busy || !project.branch} onClick={() => onPropose('branch')}>{firstRun.draftBranch}</button><button disabled={busy} onClick={() => onPropose('checkout')}>{firstRun.draftProject}</button></div>
     {proposals.length > 0 && <section className="proposal-inbox" aria-label={copy.suggestions}><span className="eyebrow">{copy.suggestions} · {proposals.length}</span>
       {proposals.map(proposal => <article key={proposal.id} className="proposal"><p dir="auto">{proposal.statement}</p><small className="muted">{proposal.kind === 'rule' ? 'You stated this rule in a task' : proposal.kind === 'test-command' ? 'Seen passing in your sessions' : 'Branch moved after a session'} · {category(proposal.category, proposal.scope)}{proposal.branch ? ` · ⑂ ${proposal.branch}` : ''}</small>
-        <div className="memory-actions">{proposal.kind === 'branch-status' ? <button disabled={proposal.branch !== project.branch} title={proposal.branch !== project.branch ? `Switch to ${proposal.branch} to update it` : undefined} onClick={() => onPropose('branch')}>Propose branch update</button>
+        <div className="memory-actions">{proposal.kind === 'branch-status' ? <button disabled={proposal.branch !== project.branch} title={proposal.branch !== project.branch ? `Switch to ${proposal.branch} to update it` : undefined} onClick={() => onPropose('branch')}>{firstRun.draftBranch}</button>
           : <button className="approve" disabled={pending} onClick={() => void act(() => api('acceptProposal', { id: proposal.id }))}>Add for review</button>}<button disabled={pending} onClick={() => void act(() => api('dismissProposal', { id: proposal.id }))}>Dismiss</button></div></article>)}
     </section>}
     <div className="memory-search"><input className="knowledge-search" aria-label={copy.searchMemory} placeholder={`${copy.searchMemory}…`} value={search} onChange={e => change({ search: e.target.value })} maxLength={200} /><button aria-label={copy.addNote} onClick={() => onEdit({})}>＋ Add</button></div>
@@ -153,7 +156,8 @@ export function KnowledgePanel({ project, workspaces = [], version, trustVersion
       const elsewhere = attention === 'other' || !allowed.revise;
       const origin = trust[memory.id]?.origin; const sessionId = origin?.session?.id;
       return <NoteCard key={memory.id} note={memory} project={project} variant="memory" trust={trust[memory.id]} checkNeeded={checks.stale.has(memory.id)} onOpenSession={sessionId && openable.has(sessionId) ? onOpenSession : undefined}
-        actions={<>{memory.status === 'candidate' && <>{allowed.approve && <button className="approve" disabled={(memory.validation !== 'current' && memory.validation !== 'wrong-branch') || busy || pending} title={tip.remember} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'active' }), { optimistic: true })}>{copy.remember}</button>}<button disabled={busy || pending} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'rejected' }), { optimistic: true })}>Reject</button></>}{memory.category === 'brief' && memory.status !== 'rejected' && memory.status !== 'archived' && (memory.scope === 'checkout' || memory.branch === project.branch) && <button disabled={busy} onClick={() => onPropose(memory.scope)}>Propose update</button>}{memory.status === 'active' && memory.category !== 'brief' && <button disabled={pending} onClick={() => void act(() => api('setPinned', { id: memory.id, pinned: !memory.pinned }), { optimistic: true })}>{memory.pinned ? 'Unpin' : 'Pin'}</button>}{memory.status === 'active' && memory.scope === 'branch' && memory.category !== 'brief' && <button disabled={pending} onClick={() => void act(() => api('proposePromotion', { id: memory.id }))}>Propose for all branches</button>}{!elsewhere && <button onClick={() => onEdit({ memory })}>Revise</button>}{memory.status === 'active' && memory.category !== 'brief' && (memory.scope === 'checkout' || memory.branch === project.branch) && <button onClick={() => onEdit({ supersedes: memory })}>Replace…</button>}{memory.status === 'active' && <button title={tip.forget} disabled={pending} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'archived' }), { optimistic: true })}>{copy.forget}</button>}</>}>
+        actions={<>{memory.status === 'candidate' && <>{allowed.approve && <button className="approve" disabled={(memory.validation !== 'current' && memory.validation !== 'wrong-branch') || busy || pending} title={tip.remember} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'active' }), { optimistic: true, remembered: true })}>{copy.remember}</button>}<button disabled={busy || pending} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'rejected' }), { optimistic: true })}>Reject</button></>}{memory.category === 'brief' && memory.status !== 'rejected' && memory.status !== 'archived' && (memory.scope === 'checkout' || memory.branch === project.branch) && <button disabled={busy} onClick={() => onPropose(memory.scope)}>{firstRun.draftUpdate}</button>}{memory.status === 'active' && memory.category !== 'brief' && <button disabled={pending} onClick={() => void act(() => api('setPinned', { id: memory.id, pinned: !memory.pinned }), { optimistic: true })}>{memory.pinned ? 'Unpin' : 'Pin'}</button>}{memory.status === 'active' && memory.scope === 'branch' && memory.category !== 'brief' && <button disabled={pending} onClick={() => void act(() => api('proposePromotion', { id: memory.id }))}>Propose for all branches</button>}{!elsewhere && <button onClick={() => onEdit({ memory })}>Revise</button>}{memory.status === 'active' && memory.category !== 'brief' && (memory.scope === 'checkout' || memory.branch === project.branch) && <button onClick={() => onEdit({ supersedes: memory })}>Replace…</button>}{memory.status === 'active' && <button title={tip.forget} disabled={pending} onClick={() => void act(() => api('setMemoryStatus', { id: memory.id, status: 'archived' }), { optimistic: true })}>{copy.forget}</button>}</>}>
+        {justRemembered?.has(memory.id) && memory.status === 'active' && <span className="chip just-remembered">{firstRun.justRemembered}</span>}
         {memory.category === 'brief' && memory.scope === 'branch' && (memory as Memory & { createdAt?: string }).createdAt ? <p className={memory.drift ? 'memory-drift' : 'memory-age'}>Updated {Math.max(0, Math.floor((Date.now() - Date.parse((memory as Memory & { createdAt: string }).createdAt)) / 86400000))} day(s) ago{memory.drift ? ` · ${memory.drift} commit${memory.drift === 1 ? '' : 's'} since` : ''}</p> : memory.drift ? <p className="memory-drift">{memory.drift} commit{memory.drift === 1 ? '' : 's'} since this update</p> : null}
         {memory.status === 'candidate' && memory.conflicts?.length ? <div className="memory-conflict" role="note"><strong>Possible conflict</strong>{memory.conflicts.map(c => <span key={c.id}>r{c.revision}: {c.statement}</span>)}</div> : null}
         <button className="source-button" aria-expanded={expanded === memory.id} title={memory.source.kind === 'file' ? `${rootName(memory)}${memory.source.path}:${memory.source.startLine}` : undefined} onClick={() => setExpanded(expanded === memory.id ? null : memory.id)}>{expanded === memory.id ? copy.trust.hideSource : copy.trust.showSource} <span aria-hidden="true">{expanded === memory.id ? '−' : '+'}</span></button>

@@ -218,7 +218,11 @@ test('fillDraft never edits a carried line', () => {
 });
 
 test('fillDraft refuses a remaining placeholder and a credential', () => {
-  assert.throws(() => fillDraft('Purpose: [describe what this repo delivers and for whom]\nStructure: src', {}), /Replace the bracketed placeholders before saving the update/);
+  assert.throws(() => fillDraft('Purpose: Ledger\nStructure: [describe the folders]', {}), /Replace the bracketed placeholders before saving the update/);
+  // Purpose is a field: filled, it replaces the placeholder; empty, the line goes (like the others).
+  assert.equal(fillDraft('Purpose: [describe what this repo delivers and for whom]\nStructure: src', { purpose: ' Bills shops ' }), 'Purpose: Bills shops\nStructure: src');
+  assert.equal(fillDraft('Purpose: [describe what this repo delivers and for whom]\nStructure: src', {}), 'Structure: src');
+  assert.throws(() => fillDraft('Purpose: [describe it]', { purpose: 'token ghp_0123456789abcdefghijklmnopqrstuvwxyzAB' }), /credential|secret|token/i);
   assert.throws(() => fillDraft(BRANCH, { currentWork: 'token ghp_0123456789abcdefghijklmnopqrstuvwxyzAB', next: '' }), /credential|secret|token/i);
   assert.throws(() => fillDraft(BRANCH, { currentWork: 'two\nlines' }), /one line/);
   assert.throws(() => fillDraft(BRANCH, { currentWork: 'x'.repeat(501) }), /500/);

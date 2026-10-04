@@ -1,5 +1,5 @@
 import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { composer, copy, excludedReason } from './copy';
+import { composer, copy, excludedReason, firstRun } from './copy';
 import { NoteCard } from './NoteCard';
 import { BYTE_LIMIT, meterText, NOTE_LIMIT, type PreviewItem, type PreviewView } from './composerModel';
 import type { Project } from './types';
@@ -8,9 +8,10 @@ import type { Project } from './types';
 // words FTS matched, one line per row (compact). Until the sources are checked
 // (unchecked), a file note says it is checked when you start, never that the file
 // is unchanged. tabbable: false for a list row that is not the active one.
-export const PreviewNote = memo(function PreviewNote({ item, project, variant, checked, tabbable = true, onLeaveOut }: { item: PreviewItem; project: Project; variant: 'hover' | 'preview'; checked: boolean; tabbable?: boolean; onLeaveOut?(): void }) {
+// badge: a chip in the meta row ("Just remembered" for a note remembered on the first-run screen).
+export const PreviewNote = memo(function PreviewNote({ item, project, variant, checked, tabbable = true, badge, onLeaveOut }: { item: PreviewItem; project: Project; variant: 'hover' | 'preview'; checked: boolean; tabbable?: boolean; badge?: string; onLeaveOut?(): void }) {
   const note = useMemo(() => checked ? { ...item, validation: 'current' as const } : item, [item, checked]);
-  return <NoteCard note={note} project={project} variant={variant} compact matched={item.selection?.terms ?? NONE} unchecked={!checked} tabbable={tabbable} onLeaveOut={onLeaveOut} />;
+  return <NoteCard note={note} project={project} variant={variant} compact matched={item.selection?.terms ?? NONE} unchecked={!checked} tabbable={tabbable} badge={badge} onLeaveOut={onLeaveOut} />;
 });
 const NONE: string[] = [];
 
@@ -51,13 +52,15 @@ function Meter({ label, value, max, text }: { label: string; value: number; max:
 // replaced in place as replies arrive; nothing animates.
 // Memoized: the composer passes stable callbacks, so typing re-renders it only when a reply
 // or the task's emptiness changes. hasTask: the task box holds more than whitespace.
-export const ContextPreview = memo(function ContextPreview({ view, error, taskNotes, project, mac, hasTask, onLeaveOut, onRestore, onInspect }: {
-  view: PreviewView | null; error: string | null; taskNotes: number | null; project: Project; mac: boolean; hasTask: boolean;
+// mark: the mascot beside the first-session copy; justRemembered: notes remembered on the first-run screen in this app run.
+export const ContextPreview = memo(function ContextPreview({ view, error, taskNotes, project, mac, hasTask, mark, justRemembered, onLeaveOut, onRestore, onInspect }: {
+  view: PreviewView | null; error: string | null; taskNotes: number | null; project: Project; mac: boolean; hasTask: boolean; mark: string; justRemembered: ReadonlySet<string>;
   onLeaveOut(id: string): void; onRestore(): void; onInspect(): void;
 }) {
   const aside = useRef<HTMLElement>(null);
   const checked = !!view?.checked;
-  const note = (item: PreviewItem, leaveOut: () => void, tabbable: boolean) => <PreviewNote item={item} project={project} variant="preview" checked={checked} tabbable={tabbable} onLeaveOut={leaveOut} />;
+  const note = (item: PreviewItem, leaveOut: () => void, tabbable: boolean) => <PreviewNote item={item} project={project} variant="preview" checked={checked} tabbable={tabbable}
+    badge={justRemembered.has(item.id) ? firstRun.justRemembered : undefined} onLeaveOut={leaveOut} />;
   // A group's last note left out: its list goes, so focus stays in the preview instead of falling to the page.
   const lastLeft = useRef(false);
   useLayoutEffect(() => { if (lastLeft.current) { lastLeft.current = false; aside.current?.focus(); } });
@@ -80,7 +83,7 @@ export const ContextPreview = memo(function ContextPreview({ view, error, taskNo
       <section className="preview-group" aria-label={copy.relevant}>
         <h3>{copy.relevant}</h3>
         {view.relevant.length > 0 ? <NoteList label={copy.relevant} items={view.relevant} render={note} onLeaveOut={onLeaveOut} onLastLeft={() => { lastLeft.current = true; }} />
-          : relevantEmpty ? <p className="preview-empty">{composer.relevantEmpty}</p>
+          : relevantEmpty ? <div className="preview-empty"><img src={mark} alt="" width={32} height={32} /><p>{composer.relevantEmpty}</p></div>
           : <p className="muted preview-none">{hasTask ? composer.relevantNone : composer.relevantNoTask}</p>}
       </section>
       <div className="preview-excluded">

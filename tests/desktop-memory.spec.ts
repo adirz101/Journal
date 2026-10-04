@@ -26,7 +26,7 @@ async function launch(name: string) {
   await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
   const page = await app.firstWindow();
   await ensureWide(app, page);
-  await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
   await expect(page.getByText(name, { exact: true }).first()).toBeVisible();
   return { app, page, root, project, git, close: async () => { await app.close(); rmSync(root, { recursive: true, force: true }); } };
 }

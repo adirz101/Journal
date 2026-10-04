@@ -13,7 +13,7 @@ export function RecoveryPanel({ recovery, view, busy, onContinue, onSelect, onDo
 }) {
   const leftovers = view.leftovers.length;
   return <section className="recovery-panel" aria-labelledby="recovery-title">
-    <h2 id="recovery-title"><span className="recovery-icon" aria-hidden="true">!</span>{states.crashTitle}</h2>
+    <h2 id="recovery-title"><svg className="recovery-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16.5v.5" /></svg>{states.crashTitle}</h2>
     <p className="recovery-body">{states.crashBody(recovery)}{view.allResumable ? ` ${states.crashContinue}` : ''}</p>
     <ul className="recovery-rows" aria-label={states.recoveryLabel}>
       {view.rows.map(({ session, action, reason }) => <li key={session.id}>

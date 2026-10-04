@@ -63,7 +63,7 @@ test('update notices: progress, restart only for a downloaded update, settings i
     const project = resolve(root, 'project'); mkdirSync(project);
     execFileSync('git', ['init', '-q', '-b', 'main', project]);
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     await expect(page.getByLabel('Task', { exact: true })).toBeVisible();
     await emit({ status: 'ready', version: '0.2.0-alpha.4', percent: 100 });
     await expect(page.locator('.sidebar-footer .update-notice')).toContainText('Journal 0.2.0-alpha.4 is ready.');

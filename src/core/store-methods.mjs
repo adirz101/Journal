@@ -83,6 +83,7 @@ export const STORE_METHODS = [
   'reaffirmMemory',
   'needsOrientation',
   'firstRunDrafts',
+  'markOrientationShown',
   'rememberDraft',
   'skipOrientation',
   'hasActiveNotes',

@@ -17,7 +17,7 @@ test('both sidebars resize by pointer and keyboard, persist, and leave room for 
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
     const page = await app.firstWindow();
     await ensureWide(app, page);
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     const left = page.getByRole('separator', { name: 'Resize project sidebar', exact: true });
     const right = page.getByRole('separator', { name: 'Resize side panel', exact: true });
     await expect(left).toBeVisible(); await expect(right).toBeVisible();

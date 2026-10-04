@@ -350,7 +350,7 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
             <span className="tree-twisty" aria-hidden="true">{folder ? item.isExpanded() ? '▾' : '▸' : ''}</span>
             <span className={`tree-name${kind ? ` git-${kind}` : ''}${data.sensitive ? ' sensitive' : ''}`}>{data.name}</span>
             {data.type === 'root' && <span className="tree-dir">{rootFor(data.rootKey)?.family === 'folder' ? 'folder' : rootFor(data.rootKey)?.branch ? `⑂ ${rootFor(data.rootKey)!.branch}` : ''}</span>}
-            {data.sensitive && <span className="tree-badge" aria-hidden="true" title="May contain credentials: not previewed">🔒</span>}
+            {data.sensitive && <span className="tree-badge" aria-hidden="true" title="May contain credentials: not previewed"><svg viewBox="0 0 24 24" width="11" height="11" focusable="false"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg></span>}
             {data.type === 'symlink' && <span className="tree-badge" aria-hidden="true" title="Link: not followed">↪</span>}
             {kind && kind !== 'ignored' ? <span className={`git-letter git-${kind}`} aria-hidden="true">{LETTER[kind]}</span>
               : dot && dot !== 'ignored' ? <span className={`git-dot git-${dot}`} aria-hidden="true">●</span> : null}

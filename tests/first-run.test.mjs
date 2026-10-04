@@ -34,7 +34,7 @@ function fixture(t, { commit = true } = {}) {
 }
 
 test('the store exposes the first-run methods to the worker', () => {
-  for (const name of ['needsOrientation', 'firstRunDrafts', 'rememberDraft', 'skipOrientation', 'hasActiveNotes']) assert.ok(STORE_METHODS.includes(name), name);
+  for (const name of ['needsOrientation', 'firstRunDrafts', 'markOrientationShown', 'rememberDraft', 'skipOrientation', 'hasActiveNotes']) assert.ok(STORE_METHODS.includes(name), name);
 });
 
 test('a fresh repo needs orientation once', t => {
@@ -46,9 +46,14 @@ test('a fresh repo needs orientation once', t => {
   assert.deepEqual(drafts.overview.basis.facts, { readme: 'README.md', folders: 1, commits: 1, counted: true });
   assert.equal(drafts.branch.scope, 'branch'); assert.equal(drafts.branchSkipped, null); assert.equal(drafts.overviewSkipped, null);
   assert.equal(drafts.branchName, 'main');
-  assert.equal(f.flag(), 'shown', 'marked when the drafts are produced, even if the user walks away');
+  // Producing drafts marks nothing: a reply the window never painted (a project switch, a reload) is offered again.
+  assert.equal(f.flag(), null); assert.equal(f.store.needsOrientation(f.project.id), true);
+  assert.ok(f.store.firstRunDrafts(f.project.id), 'drafts again while the screen was never shown');
+  assert.equal(f.store.markOrientationShown(f.project.id), true);
+  assert.equal(f.flag(), 'shown', 'marked once the screen painted, even if the user walks away');
   assert.equal(f.store.needsOrientation(f.project.id), false);
   assert.equal(f.store.firstRunDrafts(f.project.id), null);
+  assert.equal(f.store.markOrientationShown(f.project.id), false, 'only the first call sets it');
   // Reopening the folder keeps the flag.
   f.store.openProject(f.repo); assert.equal(f.flag(), 'shown');
   assert.equal(f.store.listMemories(f.project.id).length, 0, 'drafting stores no note');
@@ -71,7 +76,7 @@ test('an unborn repo returns null and stays eligible', t => {
   assert.equal(f.flag(), null); assert.equal(f.store.needsOrientation(f.project.id), true);
   f.commitAll('first');
   const drafts = f.store.firstRunDrafts(f.project.id);
-  assert.ok(drafts.overview && drafts.branch); assert.equal(f.flag(), 'shown');
+  assert.ok(drafts.overview && drafts.branch); assert.equal(f.flag(), null);
 });
 
 test('a detached HEAD drafts the overview only', t => {
@@ -104,7 +109,7 @@ test('rememberDraft remembers both in one step', t => {
 
 test('rememberDraft is all-or-nothing', t => {
   const f = fixture(t);
-  const drafts = f.store.firstRunDrafts(f.project.id);
+  const drafts = f.store.firstRunDrafts(f.project.id); f.store.markOrientationShown(f.project.id);
   const input = f.parts(drafts);
   input.branch.statement = input.branch.statement.replace('Refund export', 'token ghp_0123456789abcdefghijklmnopqrstuvwxyzAB');
   assert.throws(() => f.store.rememberDraft(f.project.id, input, { via: 'first-run' }), /credential/);
@@ -192,4 +197,40 @@ test('hasActiveNotes looks across every project', t => {
   const note = b.store.proposeMemory(b.project.id, { statement: 'Use npm test.', category: 'convention', scope: 'checkout', source: { kind: 'user', note: 'mine' } });
   assert.equal(b.store.hasActiveNotes(), false, 'a candidate is not remembered');
   b.store.setMemoryStatus(note.id, 'active'); assert.equal(b.store.hasActiveNotes(), true);
+});
+
+test('markOrientationShown never replaces remembered or skipped, and Draft again needs a shown screen', t => {
+  const f = fixture(t);
+  assert.equal(f.store.firstRunDrafts(f.project.id, { again: true }) !== null, true, 'a project that still needs orientation drafts either way');
+  f.store.markOrientationShown(f.project.id);
+  assert.equal(f.store.firstRunDrafts(f.project.id), null, 'shown: not offered again');
+  // The project moved while the screen was open: Draft again makes fresh drafts on the new HEAD.
+  writeFileSync(join(f.repo, 'b.txt'), 'b\n'); f.commitAll('second');
+  const again = f.store.firstRunDrafts(f.project.id, { again: true });
+  assert.equal(again.head, f.git('rev-parse', 'HEAD')); assert.equal(f.flag(), 'shown');
+  assert.equal(f.store.firstRunDrafts(f.project.id, { again: 'yes' }), null, 'only a strict true drafts again');
+  f.store.skipOrientation(f.project.id);
+  assert.equal(f.store.markOrientationShown(f.project.id), false); assert.equal(f.flag(), 'skipped');
+  assert.equal(f.store.firstRunDrafts(f.project.id, { again: true }), null, 'never after Skip');
+  const g = fixture(t);
+  g.store.markOrientationShown(g.project.id);
+  g.store.proposeMemory(g.project.id, { statement: 'Ledger is a billing service.', category: 'brief', scope: 'checkout', source: { kind: 'user', note: 'mine' } });
+  assert.equal(g.store.firstRunDrafts(g.project.id, { again: true }), null, 'never once a project summary exists');
+  const done = fixture(t);
+  const drafts = done.store.firstRunDrafts(done.project.id); done.store.markOrientationShown(done.project.id);
+  done.store.rememberDraft(done.project.id, done.parts(drafts), { via: 'first-run' });
+  assert.equal(done.store.markOrientationShown(done.project.id), false); assert.equal(done.flag(), 'remembered');
+});
+
+test('a README without a purpose line drafts a Purpose field that fillDraft fills or drops', t => {
+  const f = fixture(t);
+  writeFileSync(join(f.repo, 'README.md'), '# Ledger\n'); f.commitAll('bare readme');
+  const drafts = f.store.firstRunDrafts(f.project.id);
+  assert.match(drafts.overview.statement, /^Purpose: \[describe/m);
+  const filled = fillDraft(drafts.overview.statement, { purpose: 'Bills small shops' });
+  assert.match(filled, /^Purpose: Bills small shops$/m);
+  assert.doesNotMatch(fillDraft(drafts.overview.statement, {}), /Purpose:/, 'an empty field drops the line');
+  // Both cards are remembered, with the purpose the user wrote.
+  const notes = f.store.rememberDraft(f.project.id, f.parts(drafts, { purpose: 'Bills small shops', currentWork: 'Refund export', next: '' }), { via: 'first-run' });
+  assert.equal(notes.length, 2); assert.match(notes[0].statement, /^Purpose: Bills small shops$/m);
 });

@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 // Phase 8 B4: failure states. Transpiles statesModel.ts with the renderer modules it imports.
-const MODULES = ['types', 'copy', 'sessionState', 'composerModel', 'statesModel'];
+const MODULES = ['types', 'copy', 'sessionState', 'firstRunModel', 'composerModel', 'statesModel'];
 async function load(t) {
   mkdirSync(resolve('.cache/tmp'), { recursive: true });
   const dir = mkdtempSync(resolve('.cache/tmp', 'states-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
