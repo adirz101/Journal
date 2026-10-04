@@ -101,3 +101,23 @@ test('purging detaches open test-command suggestions from the session and its ev
   assert.equal(f.store.getProposal(handled.id).evidence.sessionId, s.id, 'Only open proposals are detached');
   assert.equal(f.store.acceptProposal(open.id).status, 'candidate');
 });
+
+test('a branch suggestion cannot be remembered while another branch is checked out', t => {
+  const f = fixture(t);
+  const s = f.session('Rule: Feature flags on this branch default to off.', { survivors: [] });
+  const [created] = f.store.generateProposals(s.id);
+  f.store.db.prepare(`UPDATE proposals SET body=json_set(body,'$.scope','branch','$.branch','feature/flags') WHERE id=?`).run(created.id);
+  assert.throws(() => f.store.acceptProposal(created.id), /Switch to feature\/flags/);
+  assert.equal(f.store.getProposal(created.id).state, 'open', 'Nothing changed');
+});
+
+test('a branch suggestion made on the checked-out branch is remembered on that branch', t => {
+  const f = fixture(t);
+  const current = f.store.project(f.project.id).branch;
+  assert.equal(current, 'main');
+  const s = f.session('Rule: Feature flags on this branch default to off.', { survivors: [] });
+  const [created] = f.store.generateProposals(s.id);
+  f.store.db.prepare(`UPDATE proposals SET body=json_set(body,'$.scope','branch','$.branch',?) WHERE id=?`).run(current, created.id);
+  const memory = f.store.acceptProposal(created.id);
+  assert.equal(memory.scope, 'branch'); assert.equal(memory.branch, 'main');
+});
