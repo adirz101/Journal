@@ -17,15 +17,15 @@ import { taskBox } from './support/ui';
 test.skip(process.platform === 'win32', 'POSIX fixture CLIs; native Windows is verified separately');
 
 const mac = process.platform === 'darwin';
-const keys = {
+type Modifier = 'meta' | 'control' | 'alt' | 'shift';
+const keys: Record<string, [string, Modifier[]]> = {
   openProject: mac ? ['O', ['meta']] : ['O', ['control']],
   newSession: mac ? ['N', ['meta']] : ['N', ['control', 'shift']],
   nextNeedsYou: mac ? ['J', ['meta']] : ['J', ['control', 'shift']],
   focusTerminal: mac ? ['E', ['meta']] : ['E', ['control', 'shift']],
   slot1: mac ? ['1', ['meta']] : ['1', ['alt']],
-} as const;
-type Key = keyof typeof keys;
-const press = (app: ElectronApplication, key: Key) => pressKey(app, keys[key][0], [...keys[key][1]]);
+};
+const press = (app: ElectronApplication, key: 'openProject' | 'newSession' | 'nextNeedsYou' | 'focusTerminal' | 'slot1') => pressKey(app, keys[key][0], keys[key][1]);
 const startKey = mac ? 'Meta+Enter' : 'Control+Enter';
 
 function setup(name: string) {
