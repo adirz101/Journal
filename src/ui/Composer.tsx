@@ -4,8 +4,10 @@ import { ContextPreview, PreviewNote } from './ContextPreview';
 import { CursorStatus } from './ProviderStatus';
 import { ProviderMark } from './ProviderMark';
 import { useContextPreview } from './useContextPreview';
-import { AGENT_ORDER, MAX_LIVE, agentCard, agentTitle, modeBlock, MODES, modeSupport, previewView, startBlock, type PreviewItem } from './composerModel';
-import { composer, copy } from './copy';
+import { AGENT_ORDER, MAX_LIVE, agentCard, agentReady, agentTitle, modeBlock, MODES, modeSupport, previewView, startBlock, type PreviewItem } from './composerModel';
+import { composer, copy, palette } from './copy';
+import { StartError } from './StartError'; // Phase 8
+import { startProblem } from './statesModel'; // Phase 8
 import { PROVIDER_NAMES, type Bootstrap, type FileReference, type Mode, type Project, type Provider, type Receipt, type WorkspaceList } from './types';
 
 export interface ComposerProps {
@@ -24,6 +26,7 @@ export interface ComposerProps {
   providers: { checking: boolean; note: string; onInstall(p: Provider): void; onInstallPage(p: Provider): void; onLogin(p: Provider): void; onCheck(p: Provider): void };
   startError: { code?: string; message: string } | null;
   knowledgeVersion: number;
+  onAddReference?(): void;               // Phase 8: opens the palette's file search to reference a file
 }
 
 const MODE_LABEL: Record<Mode, string> = { build: composer.build, plan: composer.plan, 'read-only': composer.readOnly };
@@ -90,12 +93,19 @@ export function Composer(props: ComposerProps) {
   const startKeys = mac ? '⌘↵' : 'Ctrl+Enter';
   // A refused start is explained while its cause holds: "4 sessions are running" goes once a slot frees.
   const startError = props.startError && !(props.startError.code === 'SLOTS_FULL' && props.liveCount < MAX_LIVE) ? props.startError : null;
-  const shown = block ?? (startError ? startError.message : null);
+  // === Phase 8: an agent that can't start (StartError) ===
+  // A refused start's card stays until the agent is ready again (Check again) or the choice
+  // changes; an agent's own status check shows its card only for a sign-in (a missing or
+  // unsupported agent that was never started keeps the reason beside Start).
+  const problem = startProblem({ provider, agent, error: startError });
+  const problemCard = problem && (startError ? !(problem.kind === 'missing' && agentReady(agent)) : problem.kind === 'signed-out') ? problem : null;
+  const shown = block ?? (startError && !problemCard ? startError.message : null);
+  // === End Phase 8 ===
 
   return <div className="composer">
     <form className="composer-form" aria-label="Start a session" onSubmit={start} onKeyDown={keys}>
       <div className="composer-field">
-        <div className="field-label"><label htmlFor="task">{composer.task}</label><span id="task-hint">· {composer.taskHint}</span></div>
+        <div className="field-label"><label htmlFor="task">{composer.task}</label><span id="task-hint">· {composer.taskHint}</span>{props.onAddReference && <button type="button" className="text-button reference-add" onClick={props.onAddReference}>{palette.addReference}</button>}</div>
         <TaskField ref={props.taskRef} value={task} onChange={props.onTask} matched={view?.matchedTerms ?? EMPTY} matchCount={view?.matchCount ?? 0} cardNotes={card} footer={footer} />
       </div>
 
@@ -143,10 +153,12 @@ export function Composer(props: ComposerProps) {
         {worktree && <p className="field-help">{composer.separateCopyHelp}</p>}
       </div>
 
+      {problemCard && <StartError problem={problemCard} alert={!!startError}
+        onOpenTerminal={problemCard.kind === 'signed-out' && agent?.supports?.login ? () => props.providers.onLogin(provider) : problemCard.kind === 'missing' && problemCard.command ? () => props.providers.onInstall(provider) : null} />}
       <div className="start-row">
-        <button type="submit" className="primary start-button" disabled={block !== null} aria-keyshortcuts={mac ? 'Meta+Enter' : 'Control+Enter'}>
+        <button type="submit" className="primary start-button" disabled={block !== null} aria-describedby="start-reason" aria-keyshortcuts={mac ? 'Meta+Enter' : 'Control+Enter'}>
           {composer.start(PROVIDER_NAMES[provider])} <kbd aria-hidden="true">{startKeys}</kbd></button>
-        <span className="start-reason" role="status">{shown}</span>
+        <span className="start-reason" id="start-reason" role="status">{shown}</span>
       </div>
       <p className="field-help native-stays">{composer.nativeStays}</p>
     </form>

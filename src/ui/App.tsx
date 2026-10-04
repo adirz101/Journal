@@ -17,6 +17,10 @@ import { SettingsDialog } from './SettingsDialog';
 import { ManageProjectDialog } from './ManageProjectDialog';
 import { RenameDialog } from './RenameDialog';
 import { CommandPalette } from './CommandPalette';
+import { RuntimeBanner } from './RuntimeBanner'; // Phase 8
+import { RecoveryPanel } from './RecoveryPanel'; // Phase 8
+import { recoveryView } from './statesModel'; // Phase 8
+import { PALETTE_ACTIONS, type PaletteActionId } from './paletteModel'; // Phase 8
 import { Inspector } from './Inspector';
 import { SessionTab } from './SessionTab';
 import { FilesTab } from './FilesTab';
@@ -35,11 +39,12 @@ import journalMarkWhite from '../../assets/branding/journal-mark-white.png';
 import journalMarkDark from '../../assets/branding/journal-mark.png';
 import journalWordmark from '../../assets/branding/journal-wordmark.png';
 import { storedAppearance, type Appearance } from './theme';
-import { composer, copy, shell, tip, wrapUp as wrapUpCopy } from './copy';
+import { composer, copy, palette as paletteCopy, shell, states as statesCopy, tip, wrapUp as wrapUpCopy } from './copy';
 import { keyLetter } from './keys';
-import { api, errorCode, isLive, PROVIDER_NAMES, type AgentInfo, type Bootstrap, type CommandId, type FileReference, type InspectorTab, type Memory, type Mode, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
+import { api, errorCode, isLive, PROVIDER_NAMES, type AgentInfo, type Bootstrap, type CommandId, type FileReference, type InspectorTab, type Memory, type Mode, type Project, type ProjectState, type Provider, type Receipt, type Recovery, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
 
 const MAX_SESSIONS = 4;
+const NO_KEYS = {}; // Phase 8: the palette's keys before bootstrap
 const latest = (a: string | null | undefined, b: string | null | undefined) => !a ? b : !b ? a : a > b ? a : b;
 
 export default function App() {
@@ -53,7 +58,7 @@ export default function App() {
   const [sessions, setSessions] = useState<Record<string, Session>>({}); const [selectedId, setSelectedId] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null); const [task, setTask] = useState('');
   const [panel, setPanel] = useState<InspectorTab>('memory');
-  const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState<{ memory?: Memory; supersedes?: Memory; initialCategory?: string; draft?: StatusDraft; after?: () => void } | null>(null);
+  const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState<{ memory?: Memory; supersedes?: Memory; initialCategory?: string; initialStatement?: string; draft?: StatusDraft; after?: () => void } | null>(null);
   const [knowledgeVersion, setKnowledgeVersion] = useState(0);
   // Phase 5: note trust lines refetch on note changes and when a session starts running (a new delivery).
   // statuses: each live session's last status, pruned when sessions disappear.
@@ -81,8 +86,15 @@ export default function App() {
   // === End Phase 4: composer state ===
   const [processView, setProcessView] = useState<{ id: string; title: string; command?: string; kind: 'install' | 'login' } | null>(null); const [providerNote, setProviderNote] = useState(''); const [checkingProvider, setCheckingProvider] = useState(false);
   const [workspaceDialog, setWorkspaceDialog] = useState(false); const [disabled, setDisabled] = useState<string[]>([]); const [settingsOpen, setSettingsOpen] = useState(false); const [manageId, setManageId] = useState<string | null>(null);
-  // Phase 8: the command palette (null when closed).
-  const [palette, setPalette] = useState<{ mode: 'all' | 'files' } | null>(null);
+  // === Phase 8: palette and states ===
+  // The command palette (null when closed); purpose reference: the composer's Add reference….
+  const [palette, setPalette] = useState<{ mode: 'all' | 'files'; purpose: 'open' | 'reference' } | null>(null);
+  // A note or file opened from the palette (seq: one request each).
+  const [memoryFocus, setMemoryFocus] = useState<{ id: string; seq: number } | null>(null);
+  const [filesReveal, setFilesReveal] = useState<{ rootKey: string; path: string; seq: number } | null>(null);
+  // Sessions a crashed runtime left behind, until Done (acknowledgeRecovery); loadedAt: the recovery whose rows are fetched.
+  const [recovery, setRecovery] = useState<Recovery | null>(null); const [recoveryLoadedAt, setRecoveryLoadedAt] = useState<string | null>(null);
+  // === End Phase 8 ===
   const [renameTarget, setRenameTarget] = useState<{ kind: 'project'; project: Project } | { kind: 'session'; session: Session } | null>(null);
   // Right panel: collapsible, wider while previewing a file; references chosen for the next task.
   const update = useUpdateState();
@@ -169,7 +181,7 @@ export default function App() {
   }, [merge]);
   useEffect(() => {
     void api<Bootstrap>('bootstrap').then(async data => {
-      setBootstrap(latestAgents.current ? { ...data, agents: latestAgents.current } : data); setProjects(data.projects); if (!rememberedAgent.current) setProviderState(defaultProvider(latestAgents.current ?? data.agents, null)); setRuntime(data.runtime); merge([...data.active, ...data.live]);
+      setBootstrap(latestAgents.current ? { ...data, agents: latestAgents.current } : data); setProjects(data.projects); if (!rememberedAgent.current) setProviderState(defaultProvider(latestAgents.current ?? data.agents, null)); setRuntime(data.runtime); merge([...data.active, ...data.live]); setRecovery(data.recovery ?? null);
       const remembered = (() => { try { return localStorage.getItem('journal-project'); } catch { return null; } })();
       const firstLive = slotOrder([...data.active, ...data.live]).find(isLive);
       const selected = data.projects.find(p => p.id === (firstLive?.projectId ?? remembered));
@@ -184,6 +196,8 @@ export default function App() {
       if (event.type === 'error') { setError(event.message); return; }
       if (event.type === 'runtime') {
         setRuntime({ state: event.state, warning: event.warning });
+        // Phase 8: a connected event carries the recovery main holds (null when none or acknowledged).
+        if (event.state === 'connected' && 'recovery' in event) setRecovery(event.recovery ?? null);
         if (event.state === 'connected') void reloadSessions().then(() => refresh()).catch(failed);
         return;
       }
@@ -248,21 +262,39 @@ export default function App() {
   // === Region: command handler (Phase 3: A adds settings, B the tab commands, C the layout toggles) ===
   // App shortcuts arrive as commands from the main process (src/desktop/shortcuts.mjs),
   // so they also work while the terminal has focus. The ref keeps the handler current.
+  // Phase 8: why a command is unavailable, or null; the keys and the palette share it
+  // (the palette lists a blocked action with this reason). Busy has a reason only for the
+  // commands that wait for it (slot switches and next-needs-you are handled below).
+  const commandBlock = (id: PaletteActionId): string | null => {
+    const reasons = paletteCopy.reasons;
+    if (id === 'next-needs-you') return busy ? reasons.busy : nextNeedsYou(ordered, selectedId) ? null : reasons.noneNeedsYou;
+    if (id === 'open-project') return busy ? reasons.busy : null;
+    if (id === 'settings' || id === 'toggle-sidebar' || id === 'command-palette' || id === 'check-agents' || /^slot-/.test(id)) return null;
+    if (!state) return reasons.needsProject;
+    if (id === 'focus-terminal') return session ? null : reasons.needsSession;
+    return null;
+  };
   const command = useRef<(id: CommandId) => void>(() => {});
+  const runCommand = useRef<(id: CommandId) => void>(() => {});
   command.current = id => {
     // An open dialog owns the keyboard. Main stops claiming keys once it hears
     // about the dialog (setModalOpen); this covers a key pressed before that.
     if (document.querySelector('dialog[open]')) return;
+    runCommand.current(id);
+  };
+  runCommand.current = id => {
     // Commands do only what the matching buttons allow at the moment.
     // Slot shortcuts follow the runtime's stable slots. They and next-needs-you
     // are ignored while busy (clicks are not) so two switches never overlap.
     const slot = /^slot-([1-4])$/.exec(id);
     if (slot) { const target = slotTarget(ordered, Number(slot[1])); if (!busy && target && target.id !== selectedId) void selectSession(target); return; }
-    if (id === 'next-needs-you') { const target = nextNeedsYou(ordered, selectedId); if (!busy && target) void selectSession(target); return; }
-    if (id === 'new-session') { if (state) newSession(); return; }
-    if (id === 'open-project') { if (!busy) void openProject(); return; }
+    if (commandBlock(id) !== null) return;
+    if (id === 'next-needs-you') { const target = nextNeedsYou(ordered, selectedId); if (target) void selectSession(target); return; }
+    if (id === 'new-session') { newSession(); return; }
+    if (id === 'open-project') { void openProject(); return; }
     if (id === 'settings') { setSettingsOpen(true); return; }
-    if (id === 'command-palette' || id === 'open-file') { setPalette({ mode: id === 'open-file' ? 'files' : 'all' }); return; }
+    // Phase 8: open-file needs a project; without one the palette lists Open project.
+    if (id === 'command-palette' || id === 'open-file') { setPalette({ mode: id === 'open-file' && state ? 'files' : 'all', purpose: 'open' }); return; }
     if (id === 'toggle-sidebar') { layout.toggleSidebar(); return; }
     if (!projectRef.current) return;
     if (id === 'add-note') setForm({});
@@ -304,13 +336,15 @@ export default function App() {
         if (submitted) setTask(current => current || submitted);
         // Another window or a stale count: all four slots are taken. Catch up and say so plainly.
         const code = errorCode(error);
-        if (code === 'SLOTS_FULL') { void reloadSessions().catch(() => {}); if (!resumeFrom) { setStartError({ code, message: composer.slotsFull }); return; } throw new Error(copy.slotsFull(MAX_SESSIONS)); }
+        if (code === 'SLOTS_FULL') { void reloadSessions().catch(() => {}); if (!resumeFrom) { setStartError({ code, message: statesCopy.slotsFull }); return; } throw new Error(copy.slotsFull(MAX_SESSIONS)); }
         // The agent went missing since detection: say so beside Start and check that provider
         // again now (fresh), so its card follows what is installed instead of staying Not installed.
         if (code === 'PROVIDER_MISSING' && !resumeFrom) {
           void checkProvider(provider, true);
           setStartError({ code, message: error instanceof Error ? error.message : String(error) }); return;
         }
+        // Phase 8: an agent that couldn't start is explained above Start (StartError), not in the app banner.
+        if ((code === 'START_FAILED' || code === 'PROVIDER_UNSUPPORTED') && !resumeFrom) { setStartError({ code, message: error instanceof Error ? error.message : String(error) }); return; }
         throw error;
       }
     });
@@ -428,6 +462,67 @@ export default function App() {
     onLogin: (target: Provider) => void composerLatest.current.loginProvider(target), onCheck: (target: Provider) => void composerLatest.current.checkProvider(target),
   }), []);
   const providerProps = useMemo(() => ({ checking: checkingProvider, note: providerNote, ...providerActions }), [checkingProvider, providerNote, providerActions]);
+  // === Phase 8: palette and states ===
+  // A file reference for the next task (Files → Add to next task, and the palette's Add reference…).
+  async function addReference(ref: { rootKey: string; path: string; startLine: number | null; endLine: number | null }) {
+    const projectId = state?.project.id; if (!projectId) return;
+    const described = await api<FileReference>('describeReference', { projectId, workspaceId: workspaceId || null, rootKey: ref.rootKey, path: ref.path, startLine: ref.startLine, endLine: ref.endLine });
+    if (projectRef.current?.id !== projectId) return; // switched projects meanwhile
+    setReferences(current => current.some(r => r.rootKey === described.rootKey && r.path === described.path && r.startLine === described.startLine && r.endLine === described.endLine) ? current : [...current, described].slice(-20));
+  }
+  // The palette searches the Files tab's root: the selected session's separate copy, else the checkout.
+  const filesRoot = session && session.projectId === state?.project.id && session.workspaceId && !session.workspaceId.startsWith('root:') ? session.workspaceId : 'checkout';
+  // The palette's callbacks stay the same object (they read the newest App state through a ref),
+  // so terminal and timeline events do not re-render the open palette.
+  const paletteLatest = useRef({ palette, filesRoot, selectSession, newSession, addReference, checkProvider, runCommand, showInspector: layout.showInspector, failed });
+  paletteLatest.current = { palette, filesRoot, selectSession, newSession, addReference, checkProvider, runCommand, showInspector: layout.showInspector, failed };
+  const paletteCallbacks = useMemo(() => ({
+    onClose: () => setPalette(null),
+    // Closed first, then run on the next frame, so the open-dialog guard never swallows it.
+    onRun: (id: PaletteActionId) => {
+      setPalette(null);
+      requestAnimationFrame(() => {
+        const latest = paletteLatest.current;
+        if (id === 'manage-workspaces') setWorkspaceDialog(true);
+        else if (id === 'check-agents') for (const provider of ['claude', 'codex', 'cursor'] as const) void latest.checkProvider(provider, true);
+        else latest.runCommand.current(id);
+      });
+    },
+    onOpenSession: (target: Session) => { setPalette(null); void paletteLatest.current.selectSession(target); },
+    onOpenNote: (id: string) => { setPalette(null); setPanel('memory'); paletteLatest.current.showInspector(); setMemoryFocus(current => ({ id, seq: (current?.seq ?? 0) + 1 })); },
+    onOpenFile: (path: string) => {
+      const { palette: open, filesRoot: rootKey } = paletteLatest.current; setPalette(null);
+      if (open?.purpose === 'reference') { void paletteLatest.current.addReference({ rootKey, path, startLine: null, endLine: null }).catch(paletteLatest.current.failed); return; }
+      setFilesChoice('all'); setPanel('files'); paletteLatest.current.showInspector(); setFilesReveal(current => ({ rootKey, path, seq: (current?.seq ?? 0) + 1 }));
+    },
+    // Prefills only: nothing starts, and a draft task is kept (the query goes on a new line).
+    onNewWithTask: (text: string) => { setPalette(null); paletteLatest.current.newSession(); setTask(current => current.trim() ? `${current.replace(/\s+$/, '')}\n${text}` : text); },
+    // The note form, prefilled: saving adds it for review, as any new note.
+    onAddNote: (text: string) => { setPalette(null); setForm({ initialStatement: text }); },
+  }), []);
+  // Each action's reason, recomputed per render but passed on only when one changes.
+  const blockList = PALETTE_ACTIONS.map(id => commandBlock(id));
+  const blockKey = blockList.join('\u0000');
+  const paletteBlocks = useMemo(() => Object.fromEntries(PALETTE_ACTIONS.map((id, i) => [id, blockList[i]])), [blockKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const openReferencePicker = useCallback(() => { if (!document.querySelector('dialog[open]')) setPalette({ mode: 'files', purpose: 'reference' }); }, []);
+  // Recovery rows: interrupted sessions of other projects are not loaded yet, so they are fetched.
+  const sessionsRef = useRef(sessions); sessionsRef.current = sessions;
+  useEffect(() => {
+    if (!recovery) return; let current = true;
+    const missing = recovery.sessions.filter(entry => !sessionsRef.current[entry.id]).map(entry => entry.id);
+    void Promise.all(missing.map(id => api<Session>('getSession', { id }).then(found => { if (found) merge([found]); }).catch(() => {})))
+      .then(() => { if (current) setRecoveryLoadedAt(recovery.at); });
+    return () => { current = false; };
+  }, [recovery, merge]);
+  const startBlocked = !connected ? composer.runtimeDown : liveCount >= MAX_SESSIONS ? statesCopy.slotsFull : null;
+  const recoveryShown = useMemo(() => recoveryView(recovery, sessions, startBlocked), [recovery, sessions, startBlocked]);
+  const acknowledgeRecovery = useCallback((at: string) => {
+    setRecovery(current => current?.at === at ? null : current);
+    void api('acknowledgeRecovery', { at }).catch(() => {});
+  }, []);
+  // Once every row is resolved (continued, removed or archived), the panel closes and acknowledges.
+  useEffect(() => { if (recovery && recoveryLoadedAt === recovery.at && !recoveryShown) acknowledgeRecovery(recovery.at); }, [recovery, recoveryLoadedAt, recoveryShown, acknowledgeRecovery]);
+  // === End Phase 8 ===
   const projectBranchChanged = session && state && !session.workspaceId && session.projectId === state.project.id && isLive(session) && session.branch !== undefined && session.branch !== state.project.branch;
   // One timeline fetch and one changes source per session, shared by the header, status bar and inspector.
   const { events } = useSessionEvents(session?.id ?? null, liveEvents, `${session?.status ?? ''}:${connected}`);
@@ -451,14 +546,9 @@ export default function App() {
       {panel === 'files' && <FilesTab hasSession={!!session} view={filesView} onView={setFilesChoice} changed={changed}
         changes={session && <ChangesPanel session={session} changes={sessionChanges.changes} loading={sessionChanges.loading} error={sessionChanges.error} refresh={sessionChanges.refresh} />}
         files={<ExplorerPanel key={state.project.id} project={state.project} session={session} rootsVersion={workspaces?.workspaces.map(w => `${w.id}:${w.state}`).join(',') ?? ''} revealLabel={`Reveal in ${revealLabel}`} focusSignal={explorerFocus} onFocusHandled={() => setExplorerFocus(0)} onPreviewing={setPreviewing} onError={failed}
-        onAddReference={async ref => {
-          const projectId = state.project.id;
-          const described = await api<FileReference>('describeReference', { projectId, workspaceId: workspaceId || null, rootKey: ref.rootKey, path: ref.path, startLine: ref.startLine, endLine: ref.endLine });
-          if (projectRef.current?.id !== projectId) return; // switched projects meanwhile
-          setReferences(current => current.some(r => r.rootKey === described.rootKey && r.path === described.path && r.startLine === described.startLine && r.endLine === described.endLine) ? current : [...current, described].slice(-20));
-        }}
+        onAddReference={addReference} reveal={filesReveal}
         onSaveEvidence={source => setEvidenceSource({ kind: 'file', path: source.path, startLine: source.startLine, endLine: source.endLine, ...(source.rootKey.startsWith('root:') ? { rootId: source.rootKey.slice(5) } : {}) })} />} />}
-      {panel === 'memory' && <MemoryTab><KnowledgePanel project={state.project} workspaces={workspaces?.workspaces} version={knowledgeVersion} trustVersion={trustVersion} sessions={ordered} filters={memoryFilters} onFilters={setMemoryFilters} onOpenSession={openSession} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} /></MemoryTab>}
+      {panel === 'memory' && <MemoryTab><KnowledgePanel project={state.project} workspaces={workspaces?.workspaces} version={knowledgeVersion} trustVersion={trustVersion} sessions={ordered} filters={memoryFilters} onFilters={setMemoryFilters} focus={memoryFocus} onOpenSession={openSession} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} /></MemoryTab>}
   </Inspector>;
   // === End region B: inspector ===
   // === Region C: the ResizableWorkspace wrapper (layout modes) ===
@@ -473,13 +563,17 @@ export default function App() {
 
     {/* === Region B: main column (session view) === */}
     <main className="workspace" aria-busy={busy || undefined}>
-      {runtime.state === 'disconnected' && <div className="error-banner" role="status"><span>The Journal runtime is not connected. Reconnecting… Running sessions are shown as disconnected until their state is known; nothing is resent.</span></div>}
-      {runtime.warning && <div className="error-banner" role="status"><span>{runtime.warning}</span></div>}
+      {/* === Phase 8: runtime disconnected and crash recovery (board 9) === */}
+      {runtime.state === 'disconnected' && <RuntimeBanner runtime={runtime} onReconnect={() => api('reconnectRuntime')} />}
+      {runtime.warning && runtime.state !== 'disconnected' && <div className="error-banner" role="status"><span>{runtime.warning}</span></div>}
+      {recovery && recoveryShown && <RecoveryPanel recovery={recovery} view={recoveryShown} busy={busy} onContinue={target => void start(target.provider, target)}
+        onSelect={target => void selectSession(target)} onDone={() => acknowledgeRecovery(recovery.at)} />}
+      {/* === End Phase 8 === */}
       {error && <div className="error-banner" role="alert"><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
       {!state ? <section className="welcome"><img className="welcome-wordmark" src={journalWordmark} alt="Journal" width={280} height={84} /><span className="eyebrow">A continuous thread</span><h2>Your project, remembered.</h2><p>Work with Claude Code and Codex in their native terminals.<br />Carry the decisions and lessons into the next session.</p><button className="primary" onClick={() => void openProject()} disabled={busy} aria-keyshortcuts={bootstrap?.shortcuts['open-project']?.aria}>Open project</button><div className="welcome-steps"><span>01 <strong>Open a checkout</strong></span><span>02 <strong>Work in a terminal</strong></span><span>03 <strong>Keep what matters</strong></span></div></section>
         : !session ? <NewSessionView project={state.project} bootstrap={bootstrap} workspaces={workspaces} workspaceId={workspaceId}
           task={task} onTask={setTask} taskRef={taskRef} references={references} disabled={disabled} onDisabled={setDisabled} provider={provider} mode={mode}
-          connected={connected} liveCount={liveCount} busy={busy} startError={startError} knowledgeVersion={knowledgeVersion}
+          connected={connected} liveCount={liveCount} busy={busy} startError={startError} knowledgeVersion={knowledgeVersion} onAddReference={openReferencePicker}
           {...composerCallbacks} providers={providerProps} />
         : <section className="session-view" aria-label="Session">
           <SessionHeader session={session} state={stateFor(session, now, connected)} connected={connected} busy={busy} canStart={canStart} now={now} mac={bootstrap?.platform === 'darwin'}
@@ -521,11 +615,12 @@ export default function App() {
       note="Only Journal's label changes. The native Claude, Codex or Cursor session ID and continuing the same conversation are unaffected." onClose={() => setRenameTarget(null)}
       onSave={async name => { merge([await api<Session>('renameSession', { id: renameTarget.session.id, name })]); }} />}
     {processView && <ProcessDialog id={processView.id} title={processView.title} command={processView.command} appearance={appearance} onClose={() => setProcessView(null)} onExit={() => {}} />}
-    {palette && <CommandPalette mode={palette.mode} onClose={() => setPalette(null)} />}
+    {palette && <CommandPalette mode={palette.mode} purpose={palette.purpose} projectId={state?.project.id ?? null} rootKey={filesRoot} projectName={state?.project.name ?? null}
+      sessions={ordered} now={now} connected={connected} mac={bootstrap?.platform === 'darwin'} keys={bootstrap?.shortcuts ?? NO_KEYS} blocks={paletteBlocks} {...paletteCallbacks} />}
     {settingsOpen && <SettingsDialog appearance={appearance} onAppearance={setAppearance} update={update} project={state?.project ?? null} onClose={() => setSettingsOpen(false)} onDataChanged={() => { setKnowledgeVersion(v => v + 1); void refresh().catch(() => {}); }} />}
     {state && workspaceDialog && <WorkspaceDialog project={state.project} onClose={() => setWorkspaceDialog(false)} onChanged={() => void refresh().catch(failed)} />}
     {state && evidenceSource && <KnowledgeForm project={state.project} initialSource={evidenceSource} onClose={() => setEvidenceSource(null)} onSaved={() => { setEvidenceSource(null); setPanel('memory'); setKnowledgeVersion(v => v + 1); }} />}
-    {state && form && <KnowledgeForm project={state.project} memory={form.memory} supersedes={form.supersedes} initialCategory={form.initialCategory} draft={form.draft} onClose={() => setForm(null)} onSaved={() => { form.after?.(); setForm(null); setPanel('memory'); setKnowledgeVersion(v => v + 1); }} />}
+    {state && form && <KnowledgeForm project={state.project} memory={form.memory} supersedes={form.supersedes} initialCategory={form.initialCategory} initialStatement={form.initialStatement} draft={form.draft} onClose={() => setForm(null)} onSaved={() => { form.after?.(); setForm(null); setPanel('memory'); setKnowledgeVersion(v => v + 1); }} />}
   </ResizableWorkspace>;
   // === End region C ===
 }

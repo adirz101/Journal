@@ -329,7 +329,9 @@ process.exit(1)`;
     const reason = page.getByRole('form', { name: 'Start a session' }).locator('.start-reason');
     await expect(reason).toHaveText('Cursor isn’t installed on this computer. Choose Install… on its card.');
     await expect(startButton(page)).toBeDisabled();
-    await expect(page.getByRole('alert')).toHaveCount(0);
+    // Phase 8: the refused start is explained above Start (StartError), never in the app's error banner.
+    await expect(page.locator('.start-error')).toContainText('Cursor isn’t installed');
+    await expect(page.locator('.error-banner')).toHaveCount(0);
   } finally { await closeApp(app); f.cleanup(); }
 });
 

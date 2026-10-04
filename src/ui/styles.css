@@ -347,3 +347,87 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 /* === Phase 8: palette and states === */
 
 
+/* The command palette (board 7). No motion of any kind: it opens and closes many times a day
+   from the keyboard, so the dialog, its backdrop and its options have no transition. The
+   backdrop is the scrim without blur (blur costs frames while terminals stream output). */
+.palette{padding:0;border:0;background:transparent;color:var(--tx);margin:72px auto auto;width:min(640px,calc(100vw - 32px));max-width:none;max-height:calc(100vh - 96px);overflow:visible;transition:none}
+.palette::backdrop{background:var(--scrim);transition:none}
+.palette-box{display:flex;flex-direction:column;max-height:calc(100vh - 96px);border:1px solid var(--line2);border-radius:12px;background:var(--raised);box-shadow:0 24px 60px var(--shadow-overlay);overflow:hidden}
+.palette-search{display:flex;align-items:center;gap:10px;padding:0 16px;height:52px;flex:none;border-bottom:1px solid var(--line)}
+.palette-search:focus-within{box-shadow:inset 0 -2px 0 var(--acc)}
+.palette-icon{flex:none;color:var(--tx3);fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round}
+.palette-search input{flex:1;min-width:0;border:0;background:transparent;padding:0;font-size:var(--text-title);color:var(--tx)}
+.palette-search input:focus-visible{outline:none}
+.palette-search input::placeholder{color:var(--tx3)}
+.palette-list{overflow-y:auto;max-height:min(60vh,520px);padding:8px;display:flex;flex-direction:column;gap:2px}
+.palette-list:empty{display:none}
+.palette-group{display:flex;flex-direction:column;gap:2px}
+.palette-caption{padding:6px 10px 4px;font-size:var(--text-meta);font-weight:600;color:var(--tx3)}
+.palette-group+.palette-group .palette-caption{padding-top:10px}
+.palette-option{display:flex;align-items:center;gap:10px;min-height:36px;padding:8px 10px;border-radius:8px;font-size:var(--text-body);cursor:default;transition:none}
+/* The active option: a fill and a 2 px bar, so it is not shown by colour alone. */
+.palette-option.active{background:var(--accsoft);box-shadow:inset 2px 0 0 var(--acc)}
+.palette-option[aria-disabled=true] .palette-label{color:var(--tx3)}
+.palette-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.palette-detail,.palette-hint{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--text-meta);color:var(--tx3)}
+.palette-hint{color:var(--acc)}
+.palette-glyph{flex:none;width:18px;text-align:center;color:var(--tx3)}
+.palette-cat{flex:none;font-size:var(--text-caption);font-weight:600;padding:2px 6px;border-radius:4px;background:var(--hover);color:var(--tx2)}
+.palette-option kbd{flex:none}
+.palette mark{background:var(--accsoft);color:var(--acc);border-radius:3px}
+.palette-option.active mark{background:transparent}
+/* A file: its name, then its folder ellipsised from the left (the full path is the title). */
+.palette-label.palette-file{flex:0 1 auto;max-width:60%;font-family:var(--font-mono);font-size:var(--text-meta)}
+.palette-folder{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left;font-family:var(--font-mono);font-size:var(--text-meta);color:var(--tx3)}
+.palette-folder>span{direction:ltr;unicode-bidi:isolate}
+/* No results: the message, then the two fallbacks side by side (they prefill; nothing starts). */
+.palette-group.none{align-items:center;gap:12px;padding:20px 12px 16px;text-align:center}
+.palette-none{color:var(--tx2);overflow-wrap:anywhere}
+.palette-fallbacks{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
+.palette-option.fallback{min-height:30px;padding:5px 12px;border:1px solid var(--line2);border-radius:7px;font-weight:500}
+/* The active fallback is filled like a primary button (the other stays outlined): Enter runs it. */
+.palette-option.fallback.active{background:var(--accbtn);border-color:var(--accbtn);color:var(--on-acc);box-shadow:none}.palette-option.fallback.active kbd{color:var(--on-acc);border-color:transparent}
+.palette-option.fallback .palette-label{flex:none}
+.palette-note{padding:10px 16px;border-top:1px solid var(--line);font-size:var(--text-meta);color:var(--tx3);line-height:1.5}
+.palette-footer{display:flex;align-items:center;gap:16px;padding:10px 16px;border-top:1px solid var(--line);font-size:var(--text-meta);color:var(--tx3);flex:none}
+.palette-footer kbd{margin-right:2px}.palette-footer-end{margin-left:auto}
+@media(hover:hover) and (pointer:fine){.palette-option{cursor:pointer}.palette-option[aria-disabled=true]{cursor:default}}
+@media(max-width:560px){.palette{margin-top:16px}.palette-detail{display:none}}
+
+/* Runtime disconnected (board 9, panel 1): amber, because it needs the user. */
+.runtime-banner{margin:12px 25px 0;padding:10px 12px;border:1px solid var(--ambline);border-radius:8px;background:var(--ambsoft);color:var(--tx);display:flex;flex-direction:column;align-items:flex-start;gap:6px;font-size:var(--text-body)}
+.runtime-banner-title{display:flex;align-items:center;gap:8px;font-weight:600}
+.runtime-banner-icon,.recovery-icon{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;border:1.5px solid currentColor;font-size:var(--text-caption);font-weight:700;line-height:1;flex:none}
+.runtime-banner-icon{color:var(--amb)}
+.runtime-banner-body,.runtime-banner-warning{font-size:var(--text-meta);color:var(--tx2);line-height:1.5}
+.runtime-banner button{font-size:var(--text-meta);padding:5px 10px;margin-top:2px}
+
+/* Crash recovery (board 9, panel 2): not modal; the terminal below stays usable. */
+.recovery-panel{margin:12px 25px 0;padding:14px 16px;border:1px solid var(--line2);border-radius:10px;background:var(--panel);display:flex;flex-direction:column;gap:10px}
+.recovery-panel h2{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600;letter-spacing:0}
+.recovery-icon{color:var(--red)}
+.recovery-body{font-size:var(--text-meta);color:var(--tx2);line-height:1.5}
+.recovery-rows{list-style:none;margin:0;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--raised);max-height:200px;overflow-y:auto}
+.recovery-rows li{display:flex;align-items:center;gap:10px;padding:8px 0;min-width:0}
+.recovery-rows li+li{border-top:1px solid var(--line)}
+.recovery-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--text-body)}
+.recovery-reason{flex:none;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--text-meta);color:var(--tx3)}
+.recovery-rows button,.recovery-done{font-size:var(--text-meta);padding:4px 10px}
+.recovery-footer{display:flex;align-items:center;gap:12px}.recovery-footer p{font-size:var(--text-meta);color:var(--tx3)}
+.recovery-footer .text-button{font-size:var(--text-meta);padding:0 2px}.recovery-done{margin-left:auto}
+
+/* An agent that can't start (board 9, panel 3), directly above Start. */
+.start-error{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:12px;border:1px solid var(--redline);border-radius:8px;background:var(--redsoft);max-width:560px}
+.start-error-title{font-weight:600;color:var(--tx)}
+.start-error-body,.start-error-kept{font-size:var(--text-meta);color:var(--tx2);line-height:1.5}
+.start-error-command{display:block;max-width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--term);color:var(--tx);font-size:var(--text-meta);overflow-wrap:anywhere;user-select:text}
+.start-error-actions{display:flex;flex-wrap:wrap;gap:6px}.start-error-actions button{font-size:var(--text-meta);padding:5px 10px}
+.start-error-actions button.ghost{background:transparent}
+.reference-add{margin-left:auto;font-weight:400;font-size:var(--text-meta);padding:0 2px}
+@media(forced-colors:active){
+  .palette-box,.runtime-banner,.recovery-panel,.start-error{border-color:CanvasText}
+  .palette-option.active,.palette-option.fallback.active{forced-color-adjust:none;background:Highlight;color:HighlightText;border-color:Highlight;box-shadow:none}
+  .palette-option.active .palette-detail,.palette-option.active .palette-hint,.palette-option.active mark,.palette-option.active kbd{color:HighlightText}
+  .palette mark{forced-color-adjust:none;background:Mark;color:MarkText}
+  .palette-search:focus-within{box-shadow:none;border-bottom:2px solid Highlight}
+}
