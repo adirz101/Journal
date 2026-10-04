@@ -274,3 +274,8 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
   .task-matches:not(:disabled):hover{background:var(--hover);color:var(--tx)}
   .preview-list>li:not(:hover):not(:focus-within) .memory-actions{opacity:0}
 }
+
+
+/* === Phase 8: palette and states === */
+
+

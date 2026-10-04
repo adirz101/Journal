@@ -55,6 +55,8 @@ const preferencesFile = join(userData, 'preferences.json');
 let preferences = readPreferences(preferencesFile);
 if (!app.requestSingleInstanceLock()) app.quit();
 // modalOpen: the renderer reports whether a modal dialog is open (setModalOpen).
+// recovery: sessions the runtime recovered from a crashed predecessor (its hello), until the renderer acknowledges them.
+let recovery = null;
 let window; let modalOpen = false; let store; let runtime; let updater; let updatePolicy = null; let closing = false; let closed = false; let runtimeState = 'connecting'; let runtimeWarning = null;
 const devUrl = process.env.JOURNAL_DEV_URL;
 // Automated tests run without visible windows or a Dock icon.
@@ -180,7 +182,7 @@ const findEditor = () => {
 runtime.on('warning', message => { runtimeWarning = message; send({ type: 'runtime', state: runtimeState, warning: message }); });
 runtime.on('disconnected', () => { runtimeState = 'disconnected'; send({ type: 'runtime', state: 'disconnected' }); });
 runtime.on('failed', message => { runtimeWarning = message; send({ type: 'runtime', state: 'disconnected', warning: message }); });
-runtime.on('reconnected', () => { runtimeState = 'connected'; send({ type: 'runtime', state: 'connected', recovered: true }); void seedNotifier(); });
+runtime.on('reconnected', hello => { runtimeState = 'connected'; recovery = hello?.recovery ?? null; send({ type: 'runtime', state: 'connected', recovered: true, recovery }); void seedNotifier(); });
 // Phase 7: every provider starts as "checking"; detection, help reads and sign-in
 // probes start at once when main loads (refreshProviders below), before the window
 // exists, and run asynchronously beside it, one check in flight per provider. Only signed in / signed out / unknown is kept.
@@ -244,8 +246,12 @@ const actions = {
     const projects = await store.listProjects(); const runtimeInfo = { state: runtimeState, warning: runtimeWarning };
     const live = runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [];
     const active = await store.activeSessions(); const hasNotes = await store.hasActiveNotes();
-    return { projects, agents, platform: process.platform, shortcuts: shortcutKeys(process.platform), runtime: runtimeInfo, live, active, hasNotes };
+    return { projects, agents, platform: process.platform, shortcuts: shortcutKeys(process.platform), runtime: runtimeInfo, live, active, hasNotes, recovery };
   },
+  // Phase 8 seams (A0 stubs; Group A replaces them).
+  searchFiles: async ({ projectId, rootKey, query }) => { await fileRoot(projectId, rootKey); text(query, 'query', 200, true); return { available: true, hits: [], total: 0, truncated: false }; },
+  acknowledgeRecovery: ({ at }) => { if (recovery?.at === text(at, 'recovery time', 40)) recovery = null; return null; },
+  reconnectRuntime: () => { void runtime.reconnect(); return null; },
   openProject: async () => {
     const result = await dialog.showOpenDialog(window, { title: 'Open a Git project', properties: ['openDirectory'] });
     return result.canceled ? null : store.openProject(result.filePaths[0]);
@@ -595,7 +601,7 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
     try { return { ok: true, value: await (hook ? hook(action, () => actions[action](input)) : actions[action](input)) }; } finally { if (ROOT_CHANGES.has(action)) rootCache.clear(); }
   } catch (error) { return settledError(error); }
 });
-try { await runtime.connect(); runtimeState = 'connected'; await seedNotifier(); }
+try { recovery = (await runtime.connect())?.recovery ?? null; runtimeState = 'connected'; await seedNotifier(); }
 catch (error) { runtimeState = 'disconnected'; console.error('Journal runtime unavailable:', error.message); void runtime.reconnect(); }
 createWindow();
 // Updates: packaged builds only. The automatic-check preference lives in the data folder.

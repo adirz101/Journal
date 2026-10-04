@@ -214,6 +214,45 @@ export const providers = {
   installedHere: (name: string) => `${name} is installed on this computer.`,
 } as const;
 
+// Phase 8: the command palette and open-file (board 7). Group B may fix wording; keys stay.
+export const palette = {
+  placeholder: 'Search sessions, commands and notes…', filePlaceholder: (root: string) => `Open a file in ${root}…`,
+  referencePlaceholder: (root: string) => `Reference a file in ${root}…`,
+  title: 'Command palette', fileTitle: 'Open a file', referenceTitle: 'Reference a file',
+  groups: { sessions: 'Sessions', quiet: 'Quiet sessions to check', actions: 'Actions', memory: 'Project memory', files: 'Files' },
+  noResults: (q: string) => `No sessions, commands or notes match “${q}”.`, newWithTask: 'New session with this task', addAsNote: 'Add as a note',
+  searches: 'Searches titles, tasks and notes. Terminal output isn’t saved, so it isn’t searched.',
+  move: 'move', open: 'open', commandsOnly: 'Type > for commands only', continueHint: 'Continue',
+  fileHint: 'Type part of a file name', notGit: 'File search needs a Git folder. Use the Files tab.',
+  fileFailed: 'Git couldn’t list the files in this folder. Use the Files tab.',
+  filesTruncated: (n: number) => `Only the first ${n.toLocaleString('en-US')} files are searched.`,
+  // One label per routed command (CommandId) and per palette-only action.
+  actions: {
+    'new-session': 'New session', 'open-project': 'Open project…', 'add-note': 'Add a note', 'focus-terminal': 'Focus the terminal',
+    'toggle-inspector': 'Show or hide the inspector', 'toggle-sidebar': 'Show or hide the sidebar',
+    'slot-1': 'Go to session 1', 'slot-2': 'Go to session 2', 'slot-3': 'Go to session 3', 'slot-4': 'Go to session 4',
+    'next-needs-you': 'Jump to the next session that needs you', 'tab-session': 'Show the Session tab', 'tab-files': 'Show the Files tab',
+    'tab-memory': 'Show the Memory tab', settings: 'Settings', 'command-palette': 'Command palette', 'open-file': 'Open a file…',
+    'manage-workspaces': 'Manage workspaces…', 'new-session-separate-copy': 'New session in a separate copy', 'check-agents': 'Check agents again',
+  },
+} as const;
+
+// Phase 8: failure states (board 9): one honest sentence and one next step each.
+export const states = {
+  lostTitle: 'Lost connection to the session runtime', lostBody: 'Your agents may still be running. Journal is trying again every few seconds.',
+  reconnectNow: 'Reconnect now', reconnecting: 'Reconnecting…',
+  crashTitle: 'The session runtime stopped unexpectedly',
+  crashBody: (n: number) => `${n === 1 ? '1 session was' : `${n} sessions were`} interrupted. Nothing was resent to the agents.`,
+  crashContinue: 'Continue each one when you’re ready; it reopens the same conversation.',
+  needsId: 'Needs the conversation ID before continuing', confirmId: 'Confirm ID…', stillRunning: 'Still running outside Journal',
+  leftover: (n: number) => n === 1 ? '1 leftover process still running' : `${n} leftover processes still running`, review: 'Review', done: 'Done',
+  cantStartTitle: (name: string, problem: 'signed-out' | 'missing' | 'unsupported' | 'failed') => problem === 'signed-out' ? `${name} isn’t signed in`
+    : problem === 'missing' ? `${name} isn’t installed` : problem === 'unsupported' ? `This ${name} version isn’t supported` : `${name} couldn’t start`,
+  signInBody: 'Sign in once in a terminal, then start again. Journal never handles your login.',
+  openTerminal: 'Open terminal', copyCommand: 'Copy command', copyFailed: 'Copy failed', checkAgain: 'Check again', kept: 'Your task text is kept. Nothing was sent.',
+  slotsFull: '4 of 4 running. Stop or finish one to start another. You can still write the task now.',
+} as const;
+
 const CATEGORIES: Record<string, string> = { constraint: copy.rule, decision: 'Decision', convention: 'Convention', lesson: 'Lesson', issue: 'Known issue' };
 // A brief is "About this project" (checkout scope) or "Where this branch stands" (branch scope).
 export function category(name: string, scope?: string) {

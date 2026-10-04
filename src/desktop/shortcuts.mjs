@@ -15,8 +15,15 @@
 // also match (the modifiers must still match exactly).
 // label: shown in tooltips and <kbd>. aria: the same keys in the format of the
 // aria-keyshortcuts attribute (modifiers Alt, Control, Meta, Shift, then the key).
+// alias: a second key for the same id; it is matched but never labelled, so
+// tooltips, menus and aria-keyshortcuts show the primary row.
 const digit = n => `Digit${n}`;
 const MAC = [
+  // Phase 8: ⇧⌘P is an alias of ⌘K (it comes first and is marked, so labels show ⌘K).
+  // ⌘K differs from the add-note row ⇧⌘K by Shift, which matchShortcut compares.
+  { id: 'command-palette', meta: true, shift: true, key: 'p', label: '⇧⌘P', aria: 'Meta+Shift+P', alias: true },
+  { id: 'command-palette', meta: true, key: 'k', label: '⌘K', aria: 'Meta+K' },
+  { id: 'open-file', meta: true, key: 'p', label: '⌘P', aria: 'Meta+P' },
   { id: 'new-session', meta: true, key: 'n', label: '⌘N', aria: 'Meta+N' },
   { id: 'open-project', meta: true, key: 'o', label: '⌘O', aria: 'Meta+O' },
   { id: 'add-note', meta: true, shift: true, key: 'k', label: '⇧⌘K', aria: 'Meta+Shift+K' },
@@ -32,6 +39,9 @@ const MAC = [
   { id: 'settings', meta: true, code: 'Comma', label: '⌘,', aria: 'Meta+,' },
 ];
 const OTHER = [
+  // Phase 8: Ctrl+K is kill-line and Ctrl+P is shell history; both stay with the terminal.
+  { id: 'command-palette', control: true, shift: true, key: 'p', label: 'Ctrl+Shift+P', aria: 'Control+Shift+P' },
+  { id: 'open-file', control: true, shift: true, key: 'o', label: 'Ctrl+Shift+O', aria: 'Control+Shift+O' },
   { id: 'new-session', control: true, shift: true, key: 'n', label: 'Ctrl+Shift+N', aria: 'Control+Shift+N' },
   { id: 'add-note', control: true, shift: true, key: 'k', label: 'Ctrl+Shift+K', aria: 'Control+Shift+K' },
   { id: 'focus-terminal', control: true, shift: true, key: 'e', label: 'Ctrl+Shift+E', aria: 'Control+Shift+E' },
@@ -85,8 +95,9 @@ export function shortcutLabels(platform) {
 }
 
 // { label, aria } by command id: what the renderer receives as bootstrap.shortcuts.
+// Alias rows are skipped: an id is always labelled by its primary keys.
 export function shortcutKeys(platform) {
-  const keys = Object.fromEntries(shortcutRows(platform).map(row => [row.id, { label: row.label, aria: row.aria }]));
+  const keys = Object.fromEntries(shortcutRows(platform).filter(row => !row.alias).map(row => [row.id, { label: row.label, aria: row.aria }]));
   return platform === 'darwin' ? keys : { ...keys, 'open-project': { label: 'Ctrl+O', aria: 'Control+O' } };
 }
 

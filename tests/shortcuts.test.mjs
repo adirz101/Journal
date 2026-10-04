@@ -18,11 +18,12 @@ const ROUTED = {
 };
 ROUTED.linux = ROUTED.win32;
 
-// Keys the terminal and its CLI own: never intercepted.
+// Keys the terminal and its CLI own: never intercepted. (Phase 8 moved Meta+K and
+// Meta+P on macOS and Control+Shift+P elsewhere to the palette; see the Phase 8 tests.)
 const TERMINAL = {
-  darwin: ['Control+C', 'Control+D', 'Control+Z', 'Control+L', 'Control+R', 'Control+O', 'Control+A', 'Control+E', 'Control+K', 'Control+U', 'Control+W', 'Control+1', 'Alt+1', 'Alt+B', 'Meta+C', 'Meta+V', 'Meta+Q', 'Meta+W', 'Meta+R', 'Meta+5', 'Meta+K', 'Meta+P', 'Meta+Enter', 'Meta+Shift+J', 'Control+J', 'Meta+Shift+,', 'Control+,', 'Control+\\', 'Meta+Shift+\\'],
+  darwin: ['Control+C', 'Control+D', 'Control+Z', 'Control+L', 'Control+R', 'Control+O', 'Control+A', 'Control+E', 'Control+K', 'Control+U', 'Control+W', 'Control+1', 'Alt+1', 'Alt+B', 'Meta+C', 'Meta+V', 'Meta+Q', 'Meta+W', 'Meta+R', 'Meta+5', 'Meta+Enter', 'Meta+Shift+J', 'Control+J', 'Meta+Shift+,', 'Control+,', 'Control+\\', 'Meta+Shift+\\'],
   win32: ['Control+C', 'Control+D', 'Control+Z', 'Control+L', 'Control+R', 'Control+O', 'Control+N', 'Control+P', 'Control+K', 'Control+W', 'Control+E', 'Control+B', 'Control+A', 'Control+U',
-    'Control+1', 'Control+Enter', 'Control+J', 'Alt+J', 'Alt+B', 'Alt+F', 'Alt+5', 'Control+Alt+2', 'Control+Shift+C', 'Control+Shift+V', 'Control+Shift+P', 'Control+Shift+T', 'Control+Shift+W', 'Control+Shift+F', 'Control+Shift+X', 'Control+Shift+Z', 'Control+Shift+A', 'Meta+1', 'Meta+N', 'Control+Shift+,', 'Meta+,', 'Control+\\', 'Meta+\\'],
+    'Control+1', 'Control+Enter', 'Control+J', 'Alt+J', 'Alt+B', 'Alt+F', 'Alt+5', 'Control+Alt+2', 'Control+Shift+C', 'Control+Shift+V', 'Control+Shift+T', 'Control+Shift+W', 'Control+Shift+F', 'Control+Shift+X', 'Control+Shift+Z', 'Control+Shift+A', 'Meta+1', 'Meta+N', 'Control+Shift+,', 'Meta+,', 'Control+\\', 'Meta+\\'],
 };
 TERMINAL.linux = TERMINAL.win32;
 
@@ -118,4 +119,40 @@ test('aria-keyshortcuts strings name the same keys as each row', () => {
   assert.deepEqual(shortcutKeys('linux')['open-project'], { label: 'Ctrl+O', aria: 'Control+O' });
   assert.deepEqual(shortcutKeys('win32')['new-session'], { label: 'Ctrl+Shift+N', aria: 'Control+Shift+N' });
   assert.equal(shortcutKeys('darwin')['tab-files'].aria, 'Alt+Meta+2');
+});
+
+// Phase 8: the command palette and open-file (master plan section 2.1).
+test('⌘K and ⇧⌘P open the palette; ⌘P opens a file on macOS', () => {
+  assert.equal(matchShortcut(key('Meta+K'), 'darwin'), 'command-palette');
+  assert.equal(matchShortcut(key('Meta+Shift+P'), 'darwin'), 'command-palette');
+  assert.equal(matchShortcut(key('Meta+P'), 'darwin'), 'open-file');
+  // Ctrl+K and Ctrl+P stay with the terminal on macOS too.
+  for (const spec of ['Control+K', 'Control+P', 'Control+Shift+P', 'Control+Shift+O']) assert.equal(matchShortcut(key(spec), 'darwin'), null, spec);
+});
+
+test('Ctrl+Shift+P and Ctrl+Shift+O on Windows and Linux; Ctrl+K and Ctrl+P stay with the terminal', () => {
+  for (const platform of ['win32', 'linux']) {
+    assert.equal(matchShortcut(key('Control+Shift+P'), platform), 'command-palette', platform);
+    assert.equal(matchShortcut(key('Control+Shift+O'), platform), 'open-file', platform);
+    for (const spec of ['Control+K', 'Control+P', 'Control+O', 'Meta+K', 'Meta+P', 'Alt+P']) assert.equal(matchShortcut(key(spec), platform), null, `${platform} ${spec}`);
+  }
+});
+
+test('an alias row never replaces the label', () => {
+  assert.deepEqual(shortcutKeys('darwin')['command-palette'], { label: '⌘K', aria: 'Meta+K' });
+  assert.equal(shortcutLabels('darwin')['command-palette'], '⌘K');
+  assert.deepEqual(shortcutKeys('darwin')['open-file'], { label: '⌘P', aria: 'Meta+P' });
+  for (const platform of ['win32', 'linux']) {
+    assert.deepEqual(shortcutKeys(platform)['command-palette'], { label: 'Ctrl+Shift+P', aria: 'Control+Shift+P' }, platform);
+    assert.deepEqual(shortcutKeys(platform)['open-file'], { label: 'Ctrl+Shift+O', aria: 'Control+Shift+O' }, platform);
+  }
+  // Only the macOS ⇧⌘P row is an alias, and it names an id that also has a primary row.
+  const aliases = ['darwin', 'win32', 'linux'].flatMap(platform => shortcutRows(platform).filter(row => row.alias).map(row => [platform, row.id, row.aria]));
+  assert.deepEqual(aliases, [['darwin', 'command-palette', 'Meta+Shift+P']]);
+});
+
+test('⇧⌘K stays add-note', () => {
+  assert.equal(matchShortcut(key('Meta+Shift+K'), 'darwin'), 'add-note');
+  assert.equal(matchShortcut(key('Meta+K'), 'darwin'), 'command-palette');
+  for (const platform of ['win32', 'linux']) assert.equal(matchShortcut(key('Control+Shift+K'), platform), 'add-note', platform);
 });
