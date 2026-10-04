@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -176,6 +176,131 @@ test('prepareContext packets are unchanged by the selection refactor', t => {
   }
 });
 
+// A session in an additional folder: five branch updates and no repo overview
+// (brief limit and missing-brief warnings), a branch update with Git-range
+// evidence that later commits have drifted from, an environment-qualified note,
+// folder evidence, and a matching note whose area the task never mentions.
+function folderSessionFixture(t) {
+  const root = mkdtempSync(join(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'preview-folder-'));
+  const repo = join(root, 'repo'); const handbook = join(root, 'handbook');
+  for (const dir of ['src/payments', 'src/billing', 'src/storage']) mkdirSync(join(repo, dir), { recursive: true });
+  mkdirSync(handbook); writeFileSync(join(handbook, 'guide.md'), 'Refunds wait for the nightly settlement run.\n');
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe', encoding: 'utf8', env: GIT_ENV }).trim();
+  git('init', '-q', '-b', 'main'); git('config', 'core.autocrlf', 'false');
+  writeFileSync(join(repo, 'src/payments/refund.mjs'), 'export const refunds = true;\n');
+  writeFileSync(join(repo, 'src/billing/invoice.mjs'), 'export const invoice = 1;\n');
+  writeFileSync(join(repo, 'src/storage/jsonStore.mjs'), 'export function readTable() {}\n');
+  git('add', '.'); git('commit', '-qm', 'init'); const base = git('rev-parse', 'HEAD');
+  writeFileSync(join(repo, 'src/payments/refund.mjs'), 'export const refunds = "queued";\n'); git('commit', '-qam', 'queue refunds');
+  const store = new JournalStore(join(root, 'journal.sqlite')); const project = store.openProject(repo);
+  const [folder] = store.addProjectRoot(project.id, handbook).roots;
+  t.after(() => { store.close(); removeLater(root); });
+  const labels = new Map();
+  const remember = (label, statement, extra = {}) => {
+    const memory = store.proposeMemory(project.id, { statement, category: 'constraint', scope: 'checkout', area: '', source: { kind: 'user', note: `Fixture ${label}` }, ...extra });
+    store.setMemoryStatus(memory.id, 'active'); labels.set(memory.id, label); return memory;
+  };
+  for (let i = 1; i <= 4; i++) remember(`branch-${i}`, `main update ${i}: refund queue milestone ${i} is done.`, { category: 'brief', scope: 'branch' });
+  remember('branch-range', 'main: refunds are queued now; next step is settlement retries.', { category: 'brief', scope: 'branch', source: { kind: 'git', base } });
+  remember('environment', 'Refund webhooks need the local tunnel to receive callbacks.', { category: 'convention', environment: 'with the payments tunnel running' });
+  remember('folder-guide', 'Refunds wait for the nightly settlement run.', { category: 'decision', source: { kind: 'file', rootId: folder.id, path: 'guide.md', startLine: 1, endLine: 1 } });
+  remember('billing-area', 'Refund credit notes are numbered separately from invoices.', { area: 'src/billing' });
+  remember('storage-area', 'Quokkas nap under marmalade lanterns.', { area: 'src/storage', category: 'decision' });
+  // Two commits after the branch update with Git-range evidence: it has drifted.
+  writeFileSync(join(repo, 'src/payments/refund.mjs'), 'export const refunds = "settled";\n'); git('commit', '-qam', 'settle refunds');
+  writeFileSync(join(repo, 'src/payments/refund.mjs'), 'export const refunds = "retried";\n'); git('commit', '-qam', 'retry refunds');
+  return { root, repo, git, store, project, labels, base, folder, workspaceId: `root:${folder.id}`, task: 'Make refund webhooks retry safely',
+    references: [{ rootKey: 'checkout', path: 'src/storage' }, { rootKey: `root:${folder.id}`, path: 'guide.md' }] };
+}
+
+// Literal snapshot of an additional-folder session's packet.
+const FOLDER_SNAPSHOT = {
+  packet: [
+    "Journal project knowledge \u2014 checkout <head>, receipt <receipt>",
+    "Project: repo; branch main.",
+    "Working folder: <root>/handbook. Evidence paths without a folder are relative to the primary repository at <root>/repo.",
+    "These are reviewed, scoped claims with evidence. Native project instructions take precedence. Validate against current code.",
+    "",
+    "Branch update",
+    "[<branch-range> r1; brief; branch main]",
+    "main: refunds are queued now; next step is settlement retries.",
+    "Evidence: Git history <base>..<range-head>; 2 commits since this update",
+    "",
+    "Branch update",
+    "[<branch-4> r1; brief; branch main]",
+    "main update 4: refund queue milestone 4 is done.",
+    "Evidence: User statement: Fixture branch-4",
+    "",
+    "Branch update",
+    "[<branch-3> r1; brief; branch main]",
+    "main update 3: refund queue milestone 3 is done.",
+    "Evidence: User statement: Fixture branch-3",
+    "",
+    "Branch update",
+    "[<branch-2> r1; brief; branch main]",
+    "main update 2: refund queue milestone 2 is done.",
+    "Evidence: User statement: Fixture branch-2",
+    "",
+    "[<storage-area> r1; decision; checkout; area src/storage]",
+    "Quokkas nap under marmalade lanterns.",
+    "Evidence: User statement: Fixture storage-area",
+    "",
+    "[<environment> r1; convention; checkout]",
+    "Refund webhooks need the local tunnel to receive callbacks.",
+    "Applies when: with the payments tunnel running",
+    "Evidence: User statement: Fixture environment",
+    "",
+    "[<folder-guide> r1; decision; checkout]",
+    "Refunds wait for the nightly settlement run.",
+    "Evidence: <root>/handbook/guide.md:1 @ untracked folder",
+    "",
+    "Referenced by the user (read these yourself; their contents are not included here):",
+    "- <root>/repo/src/storage (folder: focus on this area)",
+    "- guide.md (sha256 702f18cc6e52)",
+    "",
+  ].join('\n'),
+  items: [
+    ["branch-range", "branch update"],
+    ["branch-4", "branch update"],
+    ["branch-3", "branch update"],
+    ["branch-2", "branch update"],
+    ["storage-area", "referenced area src/storage"],
+    ["environment", "matched refund, webhooks"],
+    ["folder-guide", "matched refund, guide"],
+  ],
+  excluded: [
+    ["branch-1", "brief-limit"],
+    ["billing-area", "area-not-requested"],
+  ],
+  warnings: [
+    "The current branch update is 2 commits behind HEAD. Propose a status update to review recent progress.",
+    "Claims <branch-4> r1 and <branch-3> r1 may conflict. Review them in Knowledge.",
+    "Claims <branch-4> r1 and <branch-2> r1 may conflict. Review them in Knowledge.",
+    "Claims <branch-3> r1 and <branch-2> r1 may conflict. Review them in Knowledge.",
+    "Only four current project brief entries fit the orientation limit. Consolidate superseded briefs.",
+    "No current approved project brief is included. Add a checkout-scoped brief to orient every session.",
+  ],
+};
+
+test('prepareContext packets for an additional-folder session are unchanged', t => {
+  const f = folderSessionFixture(t);
+  const commits = [['head', f.git('rev-parse', 'HEAD')], ['base', f.base], ['range-head', f.git('rev-parse', 'HEAD~2')]];
+  // Temporary folders differ per run and resolve through symlinks (macOS /private) or short names (Windows).
+  const roots = [...new Set([realpathSync.native(f.root), realpathSync(f.root), f.root])];
+  const mask = receipt => {
+    const replacements = [...roots.map(root => [root, '<root>']), [receipt.id, '<receipt>'], ...commits.flatMap(([name, hash]) => [[hash, `<${name}>`], [hash.slice(0, 7), `<${name}>`]]),
+      ...[...f.labels].flatMap(([id, label]) => [[id, `<${label}>`], [id.slice(0, 8), `<${label}>`]])];
+    const masked = value => replacements.reduce((text, [from, to]) => text.replaceAll(from, to), value).replaceAll('\\', '/');
+    return { packet: masked(receipt.packet), items: receipt.items.map(item => [f.labels.get(item.id), item.selection.reason]),
+      excluded: receipt.excluded.map(item => [f.labels.get(item.id), item.reason]), warnings: receipt.warnings.map(masked) };
+  };
+  for (const persist of [false, true]) {
+    const receipt = f.store.prepareContext(f.project.id, f.task, { workspaceId: f.workspaceId, references: f.references, persist });
+    assert.deepEqual(mask(receipt), FOLDER_SNAPSHOT);
+    if (persist) assert.deepEqual(mask(f.store.getReceipt(receipt.id)), FOLDER_SNAPSHOT, 'the stored receipt holds the same packet');
+  }
+});
+
 // A small project: a Git checkout on main with approved notes added by remember().
 function basic(t) {
   const root = mkdtempSync(join(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'preview-basic-'));
@@ -236,16 +361,43 @@ test('previewSelection never runs Git or reads evidence', t => {
 test('previewSelection selects what prepareContext selects when every source is current', t => {
   const f = selectionFixture(t);
   writeFileSync(join(f.repo, 'src/payments/webhook.mjs'), 'export const verify = true;\n');
+  // An additional folder, a worktree, and an area note that shares no word
+  // with the task or the referenced path: only the referenced area selects it.
+  const docs = join(f.root, 'handbook'); mkdirSync(docs); writeFileSync(join(docs, 'guide.md'), 'Guide\n');
+  const [folder] = f.store.addProjectRoot(f.project.id, docs).roots;
+  const ws = f.store.createWorkspace(f.project.id, { branch: 'feature/p4', base: 'main' }, join(f.root, 'worktrees'));
+  const quiet = f.store.proposeMemory(f.project.id, { statement: 'Quokkas nap under marmalade lanterns.', category: 'decision', scope: 'checkout', area: 'src/storage', source: { kind: 'user', note: 'Fixture quiet' } });
+  f.store.setMemoryStatus(quiet.id, 'active');
   const leftOut = [...f.labels].find(([, label]) => label === 'retry-file')[0];
-  for (const disabled of [[], [leftOut]]) {
-    const full = f.store.prepareContext(f.project.id, f.task, { references: f.references, disabled, persist: false });
-    const preview = f.store.previewSelection(f.project.id, f.task, { branch: 'main', references: f.references, disabled });
-    const shape = result => ({ items: result.items.map(item => [item.id, item.selection.reason, item.selection.terms]), excluded: result.excluded.map(item => [item.id, item.reason]), warnings: result.warnings });
-    assert.deepEqual(shape(preview), shape(full));
-    assert.equal(preview.kind, 'selection'); assert.equal(preview.checked, false); assert.equal(preview.branch, 'main'); assert.equal(preview.query, f.task);
+  const shape = result => ({ items: result.items.map(item => [item.id, item.selection.reason, item.selection.terms]), excluded: result.excluded.map(item => [item.id, item.reason]), warnings: result.warnings });
+  const sessions = [
+    { workspaceId: null, branch: 'main', references: f.references, disabled: [[], [leftOut]] },
+    // A reference to the primary checkout from an additional-folder session is primary: its area applies.
+    { workspaceId: `root:${folder.id}`, branch: 'main', references: [{ rootKey: 'checkout', path: 'src/storage' }, { rootKey: `root:${folder.id}`, path: 'guide.md' }], disabled: [[]], quiet: true },
+    { workspaceId: ws.id, branch: 'feature/p4', references: [{ rootKey: ws.id, path: 'src/storage' }], disabled: [[]], quiet: true },
+  ];
+  for (const session of sessions) for (const disabled of session.disabled) {
+    const { workspaceId, branch, references } = session;
+    const full = f.store.prepareContext(f.project.id, f.task, { workspaceId, references, disabled, persist: false });
+    const preview = f.store.previewSelection(f.project.id, f.task, { workspaceId, branch, references, disabled });
+    assert.deepEqual(shape(preview), shape(full), `session ${workspaceId}`);
+    if (session.quiet) assert.ok(preview.items.some(item => item.id === quiet.id), `the referenced area selects the quiet note in ${workspaceId}`);
+    assert.equal(preview.kind, 'selection'); assert.equal(preview.checked, false); assert.equal(preview.branch, branch); assert.equal(preview.query, f.task);
     assert.deepEqual(preview.terms, full.terms);
     assert.equal(preview.bytes, Buffer.byteLength(full.packet.slice(0, full.packet.indexOf('\nReferenced by the user'))), 'packet bytes before references');
   }
+  // A primary path from another copy, and unknown roots, are refused with prepareContext's messages.
+  const message = action => { try { action(); } catch (error) { return error.message; } return null; };
+  const refused = [
+    [ws.id, [{ rootKey: 'checkout', path: 'src/storage' }]], [null, [{ rootKey: ws.id, path: 'src/storage' }]],
+    [null, [{ rootKey: 'root:missing', path: 'guide.md' }]], [null, [{ rootKey: randomUUID(), path: 'src' }]],
+  ];
+  for (const [workspaceId, references] of refused) {
+    const expected = message(() => f.store.prepareContext(f.project.id, f.task, { workspaceId, references, persist: false }));
+    assert.ok(expected, `prepareContext refuses ${JSON.stringify(references)} from ${workspaceId}`);
+    assert.equal(message(() => f.store.previewSelection(f.project.id, f.task, { workspaceId, branch: 'main', references })), expected);
+  }
+  assert.match(message(() => f.store.previewSelection(f.project.id, f.task, { workspaceId: ws.id, references: [{ rootKey: 'checkout', path: 'src' }] })), /^src is in repo \(checkout\), but this session runs in repo \(worktree feature\/p4\)\. Reference it from the session's own copy\.$/);
 });
 
 test('wrong-branch and removed-folder notes are excluded from the stored records alone', t => {

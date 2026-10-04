@@ -10,7 +10,9 @@ export interface Conflict { id: string; revision: number; statement: string; }
 export interface Memory { pinned?: boolean; environment?: string; selection?: SelectionInfo; promotedFrom?: { id: string; revision: number; branch: string }; supersedes?: { id: string; revision: number }; id: string; projectId: string; revisionId: string; revision: number; statement: string; category: string; scope: 'checkout' | 'branch'; area: string; branch: string | null; source: Source; status: 'candidate' | 'active' | 'rejected' | 'archived'; validation: 'current' | 'stale' | 'wrong-branch' | 'folder-removed'; drift?: number | null; conflicts?: Conflict[]; }
 // Composer modes: the launch flags stay plan/research (Phase 4).
 export type Mode = 'build' | 'plan' | 'read-only';
-// Why a note was selected. terms: the raw task terms FTS matched (receipts from Phase 4 on).
+// Why a note was selected. terms: the searched terms FTS matched (receipts from Phase 4 on). The
+// searched terms come from the task text and the referenced paths, so a term may be a path word
+// ("billing" from src/billing) that does not appear in the task; underline only the spans found in the task.
 export interface SelectionInfo { reason: string; bytes: number; terms?: string[]; }
 // The typing preview (previewSelection): stored records only, nothing validated or written.
 export interface SelectionPreview {
