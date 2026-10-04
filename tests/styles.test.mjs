@@ -63,7 +63,17 @@ test('states: primary hover keeps its text readable, selection survives hover an
     assert.ok(selectedHover.includes(selector), `${selector} uses --sel-hover`);
   // The generic button hover (0,2,1) would replace the approve button's accent tint with grey.
   assert.ok(rulesFor('.memory-actions .approve:not(:disabled):hover').some(rule => declares(rule, 'background', 'var(--accsoft-hover)') && rule.at.some(at => /hover:hover/.test(at) && /pointer:fine/.test(at))), 'approve keeps an accent hover');
-  for (const selector of ['.project-link.selected', '.session-select.selected']) assert.ok(rulesFor(selector).some(rule => declares(rule, 'box-shadow', 'inset 2px 0 0 var(--acc)')), selector);
+  // Selected rows carry an accent bar as a ::before, not a box-shadow, so focus styles and the
+  // rounded corners never fight it; it is out of flow and inside the row.
+  for (const host of ['.project-link', '.session-select']) {
+    assert.ok(rulesFor(host).some(rule => declares(rule, 'position', 'relative')), `${host} positions its bar`);
+    assert.ok(!rulesFor(`${host}.selected`).some(rule => declares(rule, 'box-shadow')), `${host}.selected has no box-shadow`);
+    const bar = rulesFor(`${host}.selected::before`).filter(rule => rule.at.length === 0);
+    for (const [property, value] of [['content', '""'], ['position', 'absolute'], ['inset-block', '6px'], ['left', '0'], ['width', '2px'], ['border-radius', '1px'], ['background', 'var(--acc)']])
+      assert.ok(bar.some(rule => declares(rule, property, value)), `${host}.selected::before ${property}:${value}`);
+    // Forced colors replace backgrounds with Canvas; the bar opts out and uses the system highlight.
+    assert.ok(rulesFor(`${host}.selected::before`).some(rule => rule.at.some(at => /forced-colors:\s*active/.test(at)) && declares(rule, 'forced-color-adjust', 'none') && declares(rule, 'background', 'Highlight')), `${host} bar in forced colors`);
+  }
 });
 
 test('borderless tab and link buttons hover by color, not with the generic background patch', () => {

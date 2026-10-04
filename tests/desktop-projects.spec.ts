@@ -31,6 +31,9 @@ test('projects can be renamed, pinned, given extra folders and removed from Jour
     await expect.poll(projectNames).toEqual(['Alpha Engine', 'beta']);
     await page.getByRole('button', { name: /^Alpha Engine/ }).click();
     await expect(page.locator('.workspace-heading h1')).toHaveText('Alpha Engine');
+    // The selected project is announced like the selected session, not only shown by color.
+    await expect(page.locator('.project-link[aria-current="true"]')).toHaveCount(1);
+    await expect(page.locator('.project-link[aria-current="true"] .project-name')).toHaveText('Alpha Engine');
     await expect(page.getByLabel('Workspace')).toContainText('Folder · docs');
     await page.getByRole('button', { name: 'Manage Alpha Engine' }).click();
     await page.getByRole('button', { name: 'Use folder name (alpha)' }).click();
