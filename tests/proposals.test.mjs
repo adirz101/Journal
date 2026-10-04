@@ -71,3 +71,14 @@ test('approving a branch update closes that branch\'s open status proposals', t 
   f.store.setMemoryStatus(update.id, 'active');
   assert.equal(f.store.listProposals(f.project.id).length, 0);
 });
+
+test('a suggestion from a purged session can still be accepted; forged sessions are still refused', t => {
+  const f = fixture(t);
+  const s = f.session('Ship it.\nRule: Release tags must be signed before publishing.', { survivors: [] });
+  const [created] = f.store.generateProposals(s.id);
+  f.store.purgeSession(s.id);
+  const kept = f.store.getProposal(created.id);
+  assert.equal(kept.evidence.sessionId, null);
+  assert.equal(kept.evidence.sessionPurged, true);
+  assert.equal(f.store.acceptProposal(created.id).status, 'candidate');
+});
