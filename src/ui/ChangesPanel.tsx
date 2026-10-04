@@ -1,25 +1,22 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, type Changes, type Session } from './types';
+import { shell } from './copy';
 
-// fileEvents: count of observed file edits; a change refreshes the list.
-export function ChangesPanel({ session, fileEvents = 0 }: { session: Session; fileEvents?: number }) {
-  const [changes, setChanges] = useState<Changes | null>(null); const [error, setError] = useState(''); const [loading, setLoading] = useState(false);
+// The Files tab's Changed view. The data comes from useSessionChanges, which
+// the status bar and the Files badge share.
+export function ChangesPanel({ session, changes, loading, error: loadError, refresh }: { session: Session; changes: Changes | null; loading: boolean; error: string; refresh: () => void }) {
+  const [error, setError] = useState('');
   const [open, setOpen] = useState<string | null>(null); const [diff, setDiff] = useState<{ path: string; text: string; hidden: boolean; truncated?: boolean } | null>(null);
-  const refresh = useCallback(async () => {
-    setLoading(true); setError('');
-    try { setChanges(await api<Changes>('sessionChanges', { id: session.id })); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setLoading(false); }
-  }, [session.id]);
-  useEffect(() => { setChanges(null); setOpen(null); setDiff(null); void refresh(); }, [refresh]);
-  useEffect(() => { if (!fileEvents) return; const timer = setTimeout(() => void refresh(), 500); return () => clearTimeout(timer); }, [fileEvents, refresh]);
+  useEffect(() => { setOpen(null); setDiff(null); setError(''); }, [session.id]);
   async function toggle(path: string) {
     if (open === path) { setOpen(null); setDiff(null); return; }
     setOpen(path); setDiff(null);
     try { setDiff(await api('sessionFileDiff', { id: session.id, path })); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
   return <div className="panel-content changes-content">
-    <div className="section-heading"><div><span className="eyebrow">Since this session started</span><h2>Changes</h2></div><button onClick={() => void refresh()} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button></div>
-    <p className="muted panel-intro">Working tree compared with the commit checked out when the session started ({(changes?.base ?? session.head ?? '').slice(0, 7) || 'none'}). Other sessions and editors in this checkout can contribute changes too.</p>
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="section-heading"><div><h2>{shell.changesSinceStart}</h2><small className="muted">base {(changes?.base ?? session.head ?? '').slice(0, 7) || 'none'}</small></div><button onClick={refresh} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button></div>
+    <p className="muted panel-intro">Working tree compared with the commit checked out when the session started. Other sessions and editors in this checkout can contribute changes too.</p>
+    {(error || loadError) && <p className="form-error" role="alert">{error || loadError}</p>}
     {changes && !changes.available && <p className="hint">{changes.reason}</p>}
     {changes?.available && <>
       <div className="receipt-meta"><span>{changes.files.length} file{changes.files.length === 1 ? '' : 's'}</span><span className="additions">+{changes.additions}</span><span className="deletions">−{changes.deletions}</span>{changes.commitsSince ? <span>{changes.commitsSince} new commit{changes.commitsSince === 1 ? '' : 's'}{(changes as { folderPrefix?: string | null }).folderPrefix ? ' in the repository' : ''}</span> : null}</div>

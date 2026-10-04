@@ -1,4 +1,4 @@
-import type { ElectronApplication, Locator, Page } from '@playwright/test';
+import { expect, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 
 // Selectors that the Phase 3 shell changes, behind one helper each. Specs call
 // these instead of the selectors, so each group rewrites only the bodies of the
@@ -9,69 +9,100 @@ const startsWith = (text: string) => new RegExp(`^${text.replace(/[.*+?^${}()|[\
 
 // ----- Group A: sidebar and settings -----
 
+// Native menus cannot be clicked by automation. In headless runs main hands
+// each menu to globalThis.__journalMenuHook, which records the items in
+// __lastMenu and returns the chosen id; `pick` chooses from the items.
+async function withMenu(app: ElectronApplication, pick: { id?: string | null; labelStartsWith?: string }, open: () => Promise<void>) {
+  await app.evaluate((_electron, choice) => {
+    (globalThis as any).__journalMenuHook = (items: any[]) => {
+      (globalThis as any).__lastMenu = items;
+      if (choice.labelStartsWith !== undefined) return items.find(item => String(item.id ?? '').startsWith('project:') && String(item.label).startsWith(choice.labelStartsWith!))?.id ?? null;
+      return choice.id ?? null;
+    };
+  }, pick);
+  await open();
+}
+const switcher = (page: Page) => page.locator('.project-switcher');
+
 // The current project's name.
-export const currentProject = (page: Page): Locator => page.locator('.workspace-heading h1');
+export const currentProject = (page: Page): Locator => switcher(page).locator('.project-name');
 
-// Every project's name, in the order Journal lists them.
-export const projectNames = (_app: ElectronApplication, page: Page): Promise<string[]> =>
-  page.getByRole('navigation', { name: 'Projects' }).locator('.project-name').allTextContents();
-
-// Makes the project whose name starts with `name` current.
-export async function switchProject(_app: ElectronApplication, page: Page, name: string) {
-  await page.locator('.project-link').filter({ has: page.locator('.project-name', { hasText: startsWith(name) }) }).first().click();
+// Every project's name, in the order Journal lists them (the switcher menu).
+export async function projectNames(app: ElectronApplication, page: Page): Promise<string[]> {
+  await withMenu(app, { id: null }, () => switcher(page).click());
+  await expect.poll(() => app.evaluate(() => Array.isArray((globalThis as any).__lastMenu))).toBe(true);
+  return app.evaluate(() => ((globalThis as any).__lastMenu as any[]).filter(item => String(item.id ?? '').startsWith('project:')).map(item => String(item.label).replace(/ · (Pinned|Current)/g, '')));
 }
 
-// Opens another project (the caller stubs dialog.showOpenDialog first).
-export async function openAnotherProject(_app: ElectronApplication, page: Page) {
-  await page.locator('.open-project').click();
+// Makes the project whose name starts with `name` current.
+export async function switchProject(app: ElectronApplication, page: Page, name: string) {
+  await withMenu(app, { labelStartsWith: name }, () => switcher(page).click());
+  await expect(currentProject(page)).toHaveText(startsWith(name));
+}
+
+// Opens another project (the caller stubs dialog.showOpenDialog first). With no
+// project open, the switcher opens one directly.
+export async function openAnotherProject(app: ElectronApplication, page: Page) {
+  await withMenu(app, { id: 'open-project' }, () => switcher(page).click());
 }
 
 // The element whose right-click opens the current project's context menu.
-export const projectContextMenu = (page: Page): Locator => page.locator('.project-link').first();
+export const projectContextMenu = (page: Page): Locator => switcher(page);
 
-// Opens Manage project for the project named `name`.
-export async function manageProject(_app: ElectronApplication, page: Page, name: string) {
-  await page.getByRole('button', { name: `Manage ${name}`, exact: true }).click();
+// Opens Manage project for the project named `name` (switching to it first).
+export async function manageProject(app: ElectronApplication, page: Page, name: string) {
+  if ((await currentProject(page).textContent()) !== name) await switchProject(app, page, name);
+  await withMenu(app, { id: 'manage' }, () => switcher(page).click());
 }
 
-// Switches the appearance to `theme` (no-op if it is already set).
+// Switches the appearance to `theme` in Settings (no-op if it is already set).
 export async function setTheme(page: Page, theme: 'dark' | 'light') {
-  const toggle = page.getByRole('button', { name: `Switch to ${theme} mode`, exact: true });
-  if (await toggle.count()) await toggle.click();
+  if (await page.evaluate(() => document.documentElement.dataset.theme) === theme) return;
+  await openSettings(page, 'appearance');
+  await page.getByRole('dialog', { name: 'Settings' }).getByRole('radio', { name: theme === 'dark' ? 'Dark' : 'Light', exact: true }).check();
+  await page.getByRole('dialog', { name: 'Settings' }).getByRole('button', { name: 'Done', exact: true }).click();
 }
 
-// Opens the settings that hold data, backups and updates. `section` names the part a spec needs next.
+// Opens Settings from the sidebar footer. `section` names the part a spec needs next.
 export async function openSettings(page: Page, _section?: 'appearance' | 'notifications' | 'updates' | 'data') {
-  await page.getByRole('button', { name: 'Data and backups' }).click();
+  await page.locator('.sidebar-footer').getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
 }
 
 // The Active group's count of used slots, showing `n` of the four.
-export const slotsUsed = (page: Page, n: number): Locator => page.getByText(`${n}/4 active`);
+export const slotsUsed = (page: Page, n: number): Locator => page.locator('.slots-used', { hasText: new RegExp(`^${n} of 4$`) });
 
 // ----- Group B: session header, status bar and inspector -----
 
-// Shows the New session view before a start. Today the launch bar is always
-// visible, so starts need nothing; B makes this click New session.
-export async function newSession(_page: Page) {}
+// Shows the New session view before a start (no-op if it is already shown).
+export async function newSession(page: Page) {
+  if (await page.getByLabel('Initial task').count()) return;
+  await page.locator('.sidebar .new-session').click();
+  await expect(page.getByLabel('Initial task')).toBeVisible();
+}
 
-// The selected session's state line (state word, branch, workspace and mode).
-export const sessionStatus = (page: Page): Locator => page.locator('.terminal-label');
+// The selected session's state line (provider, workspace, mode, start time and state).
+export const sessionStatus = (page: Page): Locator => page.locator('.session-header .session-meta');
 
 // The selected session's action buttons (Interrupt, Stop, Continue, Archive, More).
-export const sessionActions = (page: Page): Locator => page.locator('.terminal-actions');
+export const sessionActions = (page: Page): Locator => page.locator('.session-actions');
 
-// Selects an inspector tab by today's name and returns it.
-export async function inspectorTab(page: Page, name: 'Context' | 'Changes' | 'Activity' | 'Files' | 'Memory'): Promise<Locator> {
+// Selects an inspector tab and returns it.
+export async function inspectorTab(page: Page, name: 'Session' | 'Files' | 'Memory'): Promise<Locator> {
   const tab = page.getByRole('tab', { name: startsWith(name) });
   await tab.click();
   return tab;
 }
 
-// Chooses the Files tab's view. Today there is one view per tab.
-export async function filesView(_page: Page, _view: 'changed' | 'all') {}
+// Chooses the Files tab's view (only shown while a session is selected).
+export async function filesView(page: Page, view: 'changed' | 'all') {
+  const group = page.getByRole('radiogroup', { name: 'Files view' });
+  if (!await group.count()) return;
+  await group.getByRole('radio', { name: view === 'changed' ? /^Changed/ : /^All files/ }).check();
+}
 
 // The bar under the terminal.
-export const statusBar = (page: Page): Locator => page.locator('.terminal-footer');
+export const statusBar = (page: Page): Locator => page.locator('.status-bar');
 
 // ----- Group C: layout, rails and overlay -----
 

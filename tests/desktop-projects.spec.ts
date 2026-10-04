@@ -32,9 +32,8 @@ test('projects can be renamed, pinned, given extra folders and removed from Jour
     await expect.poll(names).toEqual(['Alpha Engine', 'beta']);
     await switchProject(app, page, 'Alpha Engine');
     await expect(currentProject(page)).toHaveText('Alpha Engine');
-    // The selected project is announced like the selected session, not only shown by color.
-    await expect(page.locator('.project-link[aria-current="true"]')).toHaveCount(1);
-    await expect(page.locator('.project-link[aria-current="true"] .project-name')).toHaveText('Alpha Engine');
+    // The switcher names the current project for screen readers, not only visually.
+    await expect(page.locator('.project-switcher')).toHaveAccessibleName('Switch project. Current: Alpha Engine');
     await expect(page.getByLabel('Workspace')).toContainText('Folder · docs');
     await manageProject(app, page, 'Alpha Engine');
     await page.getByRole('button', { name: 'Use folder name (alpha)' }).click();

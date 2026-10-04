@@ -162,7 +162,8 @@ function caseIssues(file, code = readFileSync(new URL(`../src/ui/${file}`, impor
 test('eyebrows are sentence case', () => {
   const files = readdirSync(new URL('../src/ui/', import.meta.url)).filter(name => name.endsWith('.tsx'));
   const results = files.map(file => caseIssues(file));
-  assert.ok(results.reduce((n, r) => n + r.eyebrows, 0) >= 15 && results.reduce((n, r) => n + r.names, 0) >= 40, 'the scan found eyebrows and names');
+  // Floors only prove the scan sees the sources (the Phase 3 shell dropped several decorative eyebrows).
+  assert.ok(results.reduce((n, r) => n + r.eyebrows, 0) >= 10 && results.reduce((n, r) => n + r.names, 0) >= 40, 'the scan found eyebrows and names');
   assert.deepEqual(results.flatMap(r => r.found), []);
   // The scanner itself: uppercase eyebrows, caps runs in names and component titles fail; abbreviations pass.
   const probe = caseIssues('probe.tsx', `const A = () => <><span className="eyebrow">COMMANDS</span><span className="eyebrow">Timeline · {n} KB</span>

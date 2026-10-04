@@ -1,6 +1,6 @@
 export type Provider = 'claude' | 'codex' | 'cursor';
 // Commands the main process sends for app shortcuts (src/desktop/shortcuts.mjs).
-export type CommandId = 'new-session' | 'open-project' | 'add-note' | 'focus-terminal' | 'toggle-inspector' | 'slot-1' | 'slot-2' | 'slot-3' | 'slot-4' | 'next-needs-you' | 'tab-session' | 'tab-files' | 'tab-memory';
+export type CommandId = 'new-session' | 'open-project' | 'add-note' | 'focus-terminal' | 'toggle-inspector' | 'slot-1' | 'slot-2' | 'slot-3' | 'slot-4' | 'next-needs-you' | 'tab-session' | 'tab-files' | 'tab-memory' | 'settings';
 // Phase 3 shell: the inspector's three tabs, and whether a sidebar or inspector renders in full or as a rail.
 export type InspectorTab = 'session' | 'files' | 'memory';
 export type Pane = 'full' | 'rail';

@@ -2,7 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { inspectorTab, sessionActions, sessionStatus, setTheme, switchProject } from './support/ui';
+import { inspectorTab, newSession, sessionActions, sessionStatus, setTheme, switchProject } from './support/ui';
 
 test('reviewed file knowledge reaches a real PTY and survives renderer and app restart', async () => {
   test.skip(process.platform === 'win32', 'Windows native desktop smoke requires a separate real-machine fixture');
@@ -45,7 +45,7 @@ process.stdin.on('data',data=>{
     await page.getByRole('button', { name: 'Save for review' }).click();
     await expect(page.getByText('Fixture tests require Docker', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Remember', exact: true }).click();
-    await page.getByLabel('Initial task').fill('Review Docker tests');
+    await newSession(page); await page.getByLabel('Initial task').fill('Review Docker tests');
     await page.getByRole('button', { name: 'Preview context' }).click();
     await expect(page.getByTestId('context-packet')).toContainText('Fixture tests require Docker');
     await page.getByRole('button', { name: 'Start Claude' }).click();
@@ -126,7 +126,7 @@ process.stdin.on('data',data=>{
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(sessionStatus(page)).toContainText('Stopped');
     // Reviewed knowledge is provider-neutral; Codex needs an explicitly confirmed UUID.
-    await page.getByLabel('Initial task').fill('Docker tests');
+    await newSession(page); await page.getByLabel('Initial task').fill('Docker tests');
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
     // Codex shows the OpenAI mark in its heading and in its session row, hidden from assistive technology.
@@ -143,7 +143,7 @@ process.stdin.on('data',data=>{
     await expect(sessionStatus(page)).toContainText('Stopped');
     // Selecting a confirmed older session must not prefill a new conversation's ID.
     await page.getByRole('button', { name: /^Codex:/ }).first().click();
-    await page.getByLabel('Initial task').fill('Docker tests NEW_CODEX_SESSION_MARKER');
+    await newSession(page); await page.getByLabel('Initial task').fill('Docker tests NEW_CODEX_SESSION_MARKER');
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('NEW_CODEX_SESSION_MARKER');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
@@ -158,7 +158,7 @@ process.stdin.on('data',data=>{
     app = await electron.launch({ args: ['.'], env }); page = await app.firstWindow();
     await switchProject(app, page, 'fixture project');
     await expect(page.getByText('Fixture tests require Docker', { exact: true })).toBeVisible();
-    await inspectorTab(page, 'Context');
+    await inspectorTab(page, 'Session');
     await expect(page.getByTestId('context-packet')).toContainText('Fixture tests require Docker');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     mkdirSync(resolve('.cache/screenshots'), { recursive: true });
@@ -169,7 +169,7 @@ process.stdin.on('data',data=>{
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.screenshot({ path: resolve('.cache/screenshots/journal-light-dialog.png') });
     await page.keyboard.press('Escape');
-    await inspectorTab(page, 'Context');
+    await inspectorTab(page, 'Session');
     await setTheme(page, 'dark');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     await expect(page.locator('.brand-icon')).toHaveAttribute('src', /journal-mark-white-/);

@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { hotkeysCoreFeature, searchFeature, selectionFeature, syncDataLoaderFeature, type ItemInstance } from '@headless-tree/core';
 import { useTree } from '@headless-tree/react';
 import { menuPosition, showMenu, type MenuItem } from './menu';
-import { copy } from './copy';
+import { copy, shell, tip } from './copy';
 import { api, isLive, type DirectoryListing, type FilePreviewData, type FileReference, type FileRoot, type FileStatus, type GitKind, type Project, type Session } from './types';
 import type { LineRange } from './FilePreview';
 
@@ -257,7 +257,7 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
         </select></label>
       <div className="explorer-tools" role="group" aria-label="Show">
         <button aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>All</button>
-        <button aria-pressed={filter === 'changed'} onClick={() => setFilter('changed')}>Changed{changedRows.length ? ` ${changedRows.length}` : ''}</button>
+        <button aria-pressed={filter === 'changed'} title={tip.uncommitted} onClick={() => setFilter('changed')}>{shell.uncommitted}{changedRows.length ? ` ${changedRows.length}` : ''}</button>
         <button aria-label="Refresh files" title="Refresh" onClick={() => { generation.current++; children.current.clear(); loading.current.clear(); tree.rebuildTree(); setVersion(v => v + 1); void refreshStatus(); for (const id of expanded) void load(id); }}>↻</button>
       </div>
     </div>

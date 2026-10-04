@@ -108,11 +108,24 @@ for (const [name, t] of Object.entries(themes)) {
   test(`${name} theme: provider marks are at least 3:1 on their tile on every surface they sit on`, () => {
     const base = rgba(t.bg).slice(0, 3); const solid = token => mix(t[token], base);
     assert.equal(rgba(t.hover)[3], 1, 'The neutral mark tile (--hover) is opaque');
+    // An attention row composites --ambsoft over the sidebar.
+    const surfaceColor = surface => surface === 'ambsoft-over-side' ? mix(t.ambsoft, solid('side')) : solid(surface);
     const low = [];
-    for (const surface of [...SURFACES, 'sel-hover']) {
-      const tile = solid(surface);
+    for (const surface of [...SURFACES, 'sel-hover', 'ambsoft-over-side']) {
+      const tile = surfaceColor(surface);
       const ratio = contrast(solid('tx'), solid('hover')); if (ratio < 3) low.push(`tx on the mark tile: ${ratio.toFixed(2)}`);
       const claude = contrast(solid('claude'), mix(t['claude-soft'], tile)); if (claude < 3) low.push(`claude on its tile over ${surface}: ${claude.toFixed(2)}`);
+    }
+    assert.deepEqual(low, []);
+  });
+
+  // WCAG 1.4.11: a rail tile's state dot is a graphic that carries the state (its name says it too).
+  test(`${name} theme: state dots are at least 3:1 on the rail`, () => {
+    const base = rgba(t.bg).slice(0, 3); const solid = token => mix(t[token], base);
+    const surfaces = { side: solid('side'), sel: solid('sel'), 'ambsoft over side': mix(t.ambsoft, solid('side')) };
+    const low = [];
+    for (const dot of ['amb', 'grn', 'red', 'tx3']) for (const [surface, color] of Object.entries(surfaces)) {
+      const ratio = contrast(solid(dot), color); if (ratio < 3) low.push(`${dot} on ${surface}: ${ratio.toFixed(2)}`);
     }
     assert.deepEqual(low, []);
   });

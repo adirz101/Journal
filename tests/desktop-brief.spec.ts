@@ -2,7 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { inspectorTab, switchProject } from './support/ui';
+import { inspectorTab, newSession, switchProject } from './support/ui';
 
 test('empty-task launches carry an approved repo overview and current branch update to either provider', async () => {
   test.skip(process.platform === 'win32', 'POSIX provider fixture; native Windows is verified separately');
@@ -87,14 +87,14 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
     await expect(page.getByTestId('context-packet')).toContainText('REPO_PURPOSE');
     // Suggestions are fetched once for the window (App) and reach the Memory tab:
     // a rule stated in a task becomes one shortly after its session ends, and dismissing it refetches.
-    await page.getByLabel('Initial task').fill('rule: Release tags must be signed by maintainers');
+    await newSession(page); await page.getByLabel('Initial task').fill('rule: Release tags must be signed by maintainers');
     await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY');
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await inspectorTab(page, 'Memory');
     const suggestion = page.locator('.proposal').filter({ hasText: 'Release tags must be signed by maintainers' });
     await expect(suggestion).toBeVisible({ timeout: 10000 });
-    await expect(page.getByRole('region', { name: 'Suggestions' })).toContainText(/Suggestions from your sessions · \d/);
+    await expect(page.getByRole('region', { name: 'Suggestions' })).toContainText(/Suggestions · \d/);
     await suggestion.getByRole('button', { name: 'Dismiss', exact: true }).click();
     await expect(suggestion).toHaveCount(0);
   } finally { await app.close(); rmSync(root, { recursive: true, force: true }); }

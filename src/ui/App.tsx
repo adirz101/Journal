@@ -4,20 +4,28 @@ import { KnowledgeForm } from './KnowledgeForm';
 import { KnowledgePanel } from './KnowledgePanel';
 import { ResizableWorkspace } from './ResizableWorkspace';
 import { useProposals } from './useProposals';
-import { SessionList } from './SessionList';
-import { needsYou, nextNeedsYou, resumable, slotOrder, slotTarget, stateFor } from './sessionState';
+import { Sidebar } from './Sidebar';
+import { nextNeedsYou, resumable, slotOrder, slotTarget, stateFor } from './sessionState';
 import { ChangesPanel } from './ChangesPanel';
-import { ActivityPanel } from './ActivityPanel';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import { ContextPanel } from './ContextPanel';
 import { ExplorerPanel } from './ExplorerPanel';
 import { CursorStatus } from './ProviderStatus';
 import { ProcessDialog } from './ProcessDialog';
 import { UpdateNotice, useUpdateState } from './UpdateNotice';
-import { DataDialog } from './DataDialog';
+import { SettingsDialog } from './SettingsDialog';
 import { ManageProjectDialog } from './ManageProjectDialog';
 import { RenameDialog } from './RenameDialog';
-import { menuPosition, showMenu } from './menu';
+import { Inspector } from './Inspector';
+import { SessionTab } from './SessionTab';
+import { FilesTab } from './FilesTab';
+import { MemoryTab } from './MemoryTab';
+import { NewSessionView } from './NewSessionView';
+import { AttentionBanner, SessionHeader } from './SessionHeader';
+import { StatusBar } from './StatusBar';
+import { useSessionChanges, useSessionEvents } from './useSessionData';
+import { diffSummary } from './sessionView';
+import { showMenu } from './menu';
 import { ProviderMark } from './ProviderMark';
 import journalMarkWhite from '../../assets/branding/journal-mark-white.png';
 import journalMarkDark from '../../assets/branding/journal-mark.png';
@@ -25,10 +33,9 @@ import journalWordmark from '../../assets/branding/journal-wordmark.png';
 import { storedAppearance, type Appearance } from './theme';
 import { copy, tip } from './copy';
 import { keyLetter } from './keys';
-import { api, errorCode, isLive, PROVIDER_NAMES, type Bootstrap, type CommandId, type FileReference, type Memory, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
+import { api, errorCode, isLive, PROVIDER_NAMES, type Bootstrap, type CommandId, type FileReference, type InspectorTab, type Memory, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
 
 const MAX_SESSIONS = 4;
-type Panel = 'files' | 'memory' | 'context' | 'changes' | 'activity';
 const latest = (a: string | null | undefined, b: string | null | undefined) => !a ? b : !b ? a : a > b ? a : b;
 const storedCollapsed = () => { try { return localStorage.getItem('journal-panel-collapsed') === '1'; } catch { return false; } };
 
@@ -43,7 +50,7 @@ export default function App() {
   const [state, setState] = useState<ProjectState | null>(null);
   const [sessions, setSessions] = useState<Record<string, Session>>({}); const [selectedId, setSelectedId] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null); const [task, setTask] = useState('');
-  const [panel, setPanel] = useState<Panel>('memory');
+  const [panel, setPanel] = useState<InspectorTab>('memory');
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState<{ memory?: Memory; supersedes?: Memory; initialCategory?: string; draft?: StatusDraft } | null>(null);
   const [knowledgeVersion, setKnowledgeVersion] = useState(0);
   const [runtime, setRuntime] = useState<{ state: string; warning?: string | null }>({ state: 'connecting' });
@@ -51,11 +58,13 @@ export default function App() {
   const [now, setNow] = useState(Date.now());
   const [workspaces, setWorkspaces] = useState<WorkspaceList | null>(null); const [workspaceId, setWorkspaceId] = useState<string>(''); const [research, setResearch] = useState(false); const [plan, setPlan] = useState(false);
   const [processView, setProcessView] = useState<{ id: string; title: string; command?: string; kind: 'install' | 'login' } | null>(null); const [providerNote, setProviderNote] = useState(''); const [checkingProvider, setCheckingProvider] = useState(false);
-  const [workspaceDialog, setWorkspaceDialog] = useState(false); const [disabled, setDisabled] = useState<string[]>([]); const [dataDialog, setDataDialog] = useState(false); const [manageId, setManageId] = useState<string | null>(null);
+  const [workspaceDialog, setWorkspaceDialog] = useState(false); const [disabled, setDisabled] = useState<string[]>([]); const [settingsOpen, setSettingsOpen] = useState(false); const [manageId, setManageId] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ kind: 'project'; project: Project } | { kind: 'session'; session: Session } | null>(null);
   // Right panel: collapsible, wider while previewing a file; references chosen for the next task.
   const update = useUpdateState();
   const [collapsed, setCollapsed] = useState(storedCollapsed); const [previewing, setPreviewing] = useState(false); const [explorerFocus, setExplorerFocus] = useState(0);
+  // The Files tab's view: the user's last choice for this app run, else Changed while the session changed something.
+  const [filesChoice, setFilesChoice] = useState<'changed' | 'all' | null>(null); const [packetSignal, setPacketSignal] = useState(0);
   const [references, setReferences] = useState<FileReference[]>([]); const [evidenceSource, setEvidenceSource] = useState<{ kind: 'file'; path: string; startLine: number; endLine: number; rootId?: string } | null>(null);
   useEffect(() => { try { localStorage.setItem('journal-panel-collapsed', collapsed ? '1' : '0'); } catch { /* optional */ } }, [collapsed]);
   // References belong to the project they were chosen in; switching projects drops them.
@@ -172,7 +181,7 @@ export default function App() {
       setSelectedId(next.id); setReceipt(await api<Receipt>('getReceipt', { id: next.receiptId }));
     });
   }
-  function newSession() { userChose.current = true; setSelectedId(null); setPanel(current => current === 'changes' || current === 'activity' ? 'memory' : current); requestAnimationFrame(() => taskRef.current?.focus()); }
+  function newSession() { userChose.current = true; setSelectedId(null); requestAnimationFrame(() => taskRef.current?.focus()); }
   // === Region: command handler (Phase 3: A adds settings, B the tab commands, C the layout toggles) ===
   // App shortcuts arrive as commands from the main process (src/desktop/shortcuts.mjs),
   // so they also work while the terminal has focus. The ref keeps the handler current.
@@ -189,12 +198,12 @@ export default function App() {
     if (id === 'next-needs-you') { const target = nextNeedsYou(ordered, selectedId); if (!busy && target) void selectSession(target); return; }
     if (id === 'new-session') { if (state && canStart) newSession(); return; }
     if (id === 'open-project') { if (!busy) void openProject(); return; }
+    if (id === 'settings') { setSettingsOpen(true); return; }
     if (!projectRef.current) return;
     if (id === 'add-note') setForm({});
     else if (id === 'toggle-inspector') setCollapsed(value => !value);
     else if (id === 'focus-terminal') { if (session) window.dispatchEvent(new CustomEvent('journal:focus-terminal', { detail: session.id })); }
-    // Until the three-tab inspector (Phase 3): Session opens Context, Memory opens the Memory panel.
-    else if (id === 'tab-session') { setCollapsed(false); setPanel('context'); }
+    else if (id === 'tab-session') { setCollapsed(false); setPanel('session'); }
     else if (id === 'tab-files') { setCollapsed(false); setPanel('files'); setExplorerFocus(n => n + 1); }
     else if (id === 'tab-memory') { setCollapsed(false); setPanel('memory'); }
   };
@@ -223,7 +232,7 @@ export default function App() {
     await run(async () => {
       try {
         const result = await api<{ session: Session; receipt: Receipt }>('start', { projectId, provider, task: submitted, resumeId: resumeFrom?.id, ...(resumeFrom ? {} : { workspaceId: workspaceId || null, research, plan: plan && !research, disabled, references: referenceInputs }) });
-        merge([result.session]); setSelectedId(result.session.id); setReceipt(result.receipt); setDisabled([]); if (!resumeFrom) setReferences([]); setPanel('context'); await refresh(projectId);
+        merge([result.session]); setSelectedId(result.session.id); setReceipt(result.receipt); setDisabled([]); if (!resumeFrom) setReferences([]); setPanel('session'); await refresh(projectId);
       } catch (error) {
         if (submitted) setTask(current => current || submitted);
         // Another window or a stale count: all four slots are taken. Catch up and say so plainly.
@@ -270,17 +279,16 @@ export default function App() {
     if (choice === 'open') await selectSession(target);
     else if (choice && choice in sessionActions) await sessionActions[choice as keyof typeof sessionActions](target);
   }
-  // === Region A: project menus (Phase 3: the switcher menu goes here) ===
-  // Project actions shared by the right-click menu and Manage Project.
+  // === Region A: project menus ===
+  // The switcher lists every project, then the current project's actions; right-click on it opens those actions alone.
   const removedProject = (id: string) => { setProjects(items => items.filter(p => p.id !== id)); if (state?.project.id === id) { setState(null); setSelectedId(null); setReceipt(null); } void reloadProjects().catch(failed); };
-  async function projectMenu(target: Project, position?: { x: number; y: number }) {
-    const choice = await showMenu([
-      { id: 'open', label: 'Open' }, { id: 'rename', label: 'Rename…' }, { id: 'pin', label: target.pinned ? 'Unpin' : 'Pin' },
-      { id: 'manage', label: 'Manage Project…' }, { id: 'addFolder', label: 'Add Folder…' },
-      { separator: true }, { id: 'reveal', label: `Reveal in ${revealLabel}` }, { id: 'copyPath', label: 'Copy Path' },
-      { separator: true }, { id: 'remove', label: 'Remove from Journal…' },
-    ], position);
-    if (choice === 'open') await chooseProject(target);
+  const projectItems = (target: Project) => [
+    { id: 'open-project', label: 'Open project…' }, { id: 'manage', label: 'Manage project…' }, { id: 'rename', label: 'Rename…' }, { id: 'pin', label: target.pinned ? 'Unpin' : 'Pin' }, { id: 'addFolder', label: 'Add folder…' },
+    { separator: true as const }, { id: 'reveal', label: `Reveal in ${revealLabel}` }, { id: 'copyPath', label: 'Copy path' },
+    { separator: true as const }, { id: 'remove', label: 'Remove from Journal…' },
+  ];
+  async function projectAction(choice: string | null, target: Project) {
+    if (choice === 'open-project') await openProject();
     else if (choice === 'rename') setRenameTarget({ kind: 'project', project: target });
     else if (choice === 'pin') await run(async () => { await api('setProjectPinned', { id: target.id, pinned: !target.pinned }); await reloadProjects(); });
     else if (choice === 'manage') setManageId(target.id);
@@ -288,6 +296,22 @@ export default function App() {
     else if (choice === 'reveal') await run(async () => { await api('revealProject', { id: target.id }); });
     else if (choice === 'copyPath') await run(async () => { await api('copyProjectPath', { id: target.id }); });
     else if (choice === 'remove') await run(async () => { if (await api('removeProject', { id: target.id })) removedProject(target.id); });
+  }
+  async function projectMenu(position?: { x: number; y: number }) {
+    const target = state?.project; if (!target) return;
+    await projectAction(await showMenu(projectItems(target), position), target);
+  }
+  // With no project open it lists the known projects and Open project…; with none known it opens one directly.
+  async function switcherMenu(position?: { x: number; y: number }) {
+    const current = state?.project ?? null; if (!current && !projects.length) { await openProject(); return; }
+    // Menu item IDs are short (main allows 40 characters and 40 items), so projects are listed by position in this snapshot.
+    const listed = projects.slice(0, 28);
+    const choice = await showMenu([...listed.map((p, index) => ({ id: `project:${index}`, label: `${p.name}${p.pinned ? ' · Pinned' : ''}${p.id === current?.id ? ' · Current' : ''}` })), { separator: true },
+      ...(current ? projectItems(current) : [{ id: 'open-project', label: 'Open project…' }])], position);
+    const picked = choice?.startsWith('project:') ? listed[Number(choice.slice('project:'.length))] ?? null : null;
+    if (picked) await chooseProject(picked);
+    else if (current) await projectAction(choice, current);
+    else if (choice === 'open-project') await openProject();
   }
   // === End region A: project menus ===
   async function proposeUpdate(scope: 'checkout' | 'branch') {
@@ -307,37 +331,40 @@ export default function App() {
   }
   async function installCursor() { if (checkingProvider) return; setProviderNote(''); setCheckingProvider(true); try { const result = await api<{ id: string; command: string } | null>('installCursor'); if (result) setProcessView({ id: result.id, command: result.command, title: 'Install Cursor CLI', kind: 'install' }); } catch (error) { failed(error); } finally { setCheckingProvider(false); } }
   async function loginCursor() { if (checkingProvider) return; setProviderNote(''); setCheckingProvider(true); try { const result = await api<{ id: string }>('cursorLogin'); setProcessView({ id: result.id, command: 'agent login', title: 'Sign in to Cursor', kind: 'login' }); } catch (error) { failed(error); } finally { setCheckingProvider(false); } }
-  const label = session ? stateFor(session, now, connected).word : '';
   const projectBranchChanged = session && state && !session.workspaceId && session.projectId === state.project.id && isLive(session) && session.branch !== undefined && session.branch !== state.project.branch;
-
-  const inspectorKeys = bootstrap?.shortcuts['toggle-inspector']?.label;
+  // One timeline fetch and one changes source per session, shared by the header, status bar and inspector.
+  const { events } = useSessionEvents(session?.id ?? null, liveEvents);
+  const fileEvents = useMemo(() => session ? liveEvents.filter(e => e.sessionId === session.id && e.kind === 'file').length : 0, [liveEvents, session]);
+  const sessionChanges = useSessionChanges(session, fileEvents);
+  const changed = diffSummary(sessionChanges.changes)?.files ?? 0;
+  const filesView = filesChoice ?? (changed ? 'changed' : 'all');
+  // A preview or an older record never feeds the status bar.
+  const sessionReceipt = session && receipt?.id === session.receiptId ? receipt : null;
+  const showSent = () => { setPanel('session'); setCollapsed(false); setPacketSignal(n => n + 1); };
   // === Region C: the ResizableWorkspace wrapper (layout modes) ===
   return <ResizableWorkspace hasKnowledge={!!state} collapsed={collapsed} wide={previewing && panel === 'files'}>
     {/* === Region A: sidebar === */}
-    <aside className="sidebar" id="project-sidebar">
-      <div className="brand"><img className="brand-icon" src={journalMark} alt="" width={32} height={32} /><div>Journal<small>PROJECT MEMORY</small></div><span className="local-tag">LOCAL</span></div>
-      <button className="open-project" onClick={() => void openProject()} disabled={busy} aria-keyshortcuts={bootstrap?.shortcuts['open-project']?.aria}><span aria-hidden="true">＋</span> Open project {bootstrap?.shortcuts['open-project'] && <kbd aria-hidden="true">{bootstrap.shortcuts['open-project'].label}</kbd>}</button>
-      <div className="nav-caption">PROJECTS <span>{projects.length}</span></div>
-      <nav aria-label="Projects">{projects.map(project => <div key={project.id} className="project-row"><button className={`project-link ${state?.project.id === project.id ? 'selected' : ''}`} aria-current={state?.project.id === project.id ? 'true' : undefined} onClick={() => void chooseProject(project)} onContextMenu={event => { event.preventDefault(); void projectMenu(project, menuPosition(event)); }} title={project.root}><svg className="folder-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 11h18" /></svg><span className="project-name">{project.name}</span>{project.pinned && <span className="pin-mark"><span aria-hidden="true">⚲</span><span className="visually-hidden">pinned</span></span>}{ordered.some(s => s.projectId === project.id && needsYou(s)) && <span className="attention" aria-label="needs attention">●</span>}</button><button className="project-manage" aria-label={`Manage ${project.name}`} onClick={() => setManageId(project.id)}>⋯</button></div>)}</nav>
-      <SessionList sessions={ordered} projects={projects} selectedId={selectedId} currentProjectId={state?.project.id ?? null} connected={connected} now={now} onSelect={next => void selectSession(next)} onMenu={(next, position) => void sessionMenu(next, position)} onNew={newSession} newShortcut={bootstrap?.shortcuts['new-session']} shortcuts={bootstrap?.shortcuts} canStart={!!state && canStart} />
-      <div className="sidebar-footer">{!state && <UpdateNotice state={update} onError={failed} />}<button className="theme-toggle" aria-label={`Switch to ${appearance === 'dark' ? 'light' : 'dark'} mode`} onClick={() => setAppearance(value => value === 'dark' ? 'light' : 'dark')}><span aria-hidden="true">{appearance === 'dark' ? '☀' : '◐'}</span> {appearance === 'dark' ? 'Light mode' : 'Dark mode'}</button><button className="theme-toggle" onClick={() => setDataDialog(true)}><span aria-hidden="true">⛁</span> Data and backups</button><span className={`status-dot ${connected ? 'running' : 'waiting'}`} /> {connected ? 'Runtime connected' : runtime.state === 'connecting' ? 'Starting runtime…' : 'Runtime disconnected'}<small>No terminal transcripts saved</small></div>
-    </aside>
+    <Sidebar pane="full" projects={projects} project={state?.project ?? null} sessions={ordered} proposals={proposals} selectedId={selectedId} connected={connected}
+      runtimeState={runtime.state === 'connected' || runtime.state === 'disconnected' ? runtime.state : 'connecting'} now={now} canStart={!!state && canStart}
+      shortcuts={bootstrap?.shortcuts} appearance={appearance} update={update}
+      onSelect={next => void selectSession(next)} onSessionMenu={(next, position) => void sessionMenu(next, position)} onNew={newSession}
+      onSwitchProject={position => void switcherMenu(position).catch(failed)} onProjectMenu={position => void projectMenu(position).catch(failed)}
+      onOpenMemory={() => { setPanel('memory'); setCollapsed(false); }} onOpenSettings={() => setSettingsOpen(true)} onError={failed} />
     {/* === End region A: sidebar === */}
 
     {/* === Region B: main column (session view) === */}
     <main className="workspace">
-      <header className="workspace-heading"><div><span className="eyebrow">Workspace</span><h1>{state?.project.name ?? 'Welcome to Journal'}</h1></div>{state && <span className="branch-badge">⑂ {state.project.branch ?? 'detached HEAD'} <span>{state.project.head?.slice(0, 7)}</span></span>}</header>
       {runtime.state === 'disconnected' && <div className="error-banner" role="status"><span>The Journal runtime is not connected. Reconnecting… Running sessions are shown as disconnected until their state is known; nothing is resent.</span></div>}
       {runtime.warning && <div className="error-banner" role="status"><span>{runtime.warning}</span></div>}
       {error && <div className="error-banner" role="alert"><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
       {!state ? <section className="welcome"><img className="welcome-wordmark" src={journalWordmark} alt="Journal" width={280} height={84} /><span className="eyebrow">A continuous thread</span><h2>Your project, remembered.</h2><p>Work with Claude Code and Codex in their native terminals.<br />Carry the decisions and lessons into the next session.</p><button className="primary" onClick={() => void openProject()} disabled={busy} aria-keyshortcuts={bootstrap?.shortcuts['open-project']?.aria}>Open project</button><div className="welcome-steps"><span>01 <strong>Open a checkout</strong></span><span>02 <strong>Work in a terminal</strong></span><span>03 <strong>Keep what matters</strong></span></div></section>
-        : <>
+        : !session ? <NewSessionView mark={journalMark}>
           <section className="launch-bar" aria-label="Start an agent terminal"><label htmlFor="initial-task">Initial task <span className="optional">optional · picks relevant notes</span></label><textarea ref={taskRef} id="initial-task" value={task} onChange={e => setTask(e.target.value)} maxLength={4000} rows={2} placeholder="What are you working on? Mention a module or path to include notes about it." />
             {references.length > 0 && <ul className="reference-chips" aria-label="Files referenced for the next task">{references.map((ref, index) => <li key={`${ref.rootKey}:${ref.path}:${ref.startLine}`}>
               <span title={`${ref.rootLabel ?? ''} · ${ref.path}${ref.contentHash ? ` · sha256 ${ref.contentHash.slice(0, 12)}` : ''}`}>{ref.kind === 'folder' ? '▸ ' : ''}{ref.display ?? ref.path}{ref.startLine ? `:${ref.startLine}${ref.endLine !== ref.startLine ? `-${ref.endLine}` : ''}` : ''}</span>
               <button aria-label={`Remove ${ref.path} from the next task`} onClick={() => setReferences(current => current.filter((_, i) => i !== index))}>×</button></li>)}
               <li className="muted">Paths and lines only; the agent reads the files itself.</li></ul>}
-            <div className="launch-actions"><div><button className="primary" disabled={busy || !canStart || !available('claude')} onClick={() => void start('claude')}>Start Claude</button><button disabled={busy || !canStart || !available('codex') || (plan && !research)} title={plan && !research ? 'Codex has no plan mode' : undefined} onClick={() => void start('codex')}>Start Codex</button><button disabled={busy || !canStart || !available('cursor') || ((research || plan) && !cursorAgent?.supports?.mode)} onClick={() => void start('cursor')}>Start Cursor</button>{liveCount >= MAX_SESSIONS && <span className="hint inline">{copy.slotsFull(MAX_SESSIONS)}</span>}</div><button className="text-button" disabled={busy} onClick={() => void run(async () => { setReceipt(await api<Receipt>('prepareContext', { projectId: state.project.id, task, workspaceId: workspaceId || null, disabled, references: referenceInputs })); setCollapsed(false); setPanel('context'); })}>Preview context ↗</button></div>
+            <div className="launch-actions"><div><button className="primary" disabled={busy || !canStart || !available('claude')} onClick={() => void start('claude')}>Start Claude</button><button disabled={busy || !canStart || !available('codex') || (plan && !research)} title={plan && !research ? 'Codex has no plan mode' : undefined} onClick={() => void start('codex')}>Start Codex</button><button disabled={busy || !canStart || !available('cursor') || ((research || plan) && !cursorAgent?.supports?.mode)} onClick={() => void start('cursor')}>Start Cursor</button>{liveCount >= MAX_SESSIONS && <span className="hint inline">{copy.slotsFull(MAX_SESSIONS)}</span>}</div><button className="text-button" disabled={busy} onClick={() => void run(async () => { setReceipt(await api<Receipt>('prepareContext', { projectId: state.project.id, task, workspaceId: workspaceId || null, disabled, references: referenceInputs })); setCollapsed(false); setPanel('session'); })}>Preview context ↗</button></div>
             <div className="launch-options"><label className="inline-label">Workspace<select value={workspaceId} onChange={e => setWorkspaceId(e.target.value)} aria-label="Workspace">
               <option value="">Current checkout · {state.project.branch ?? 'detached HEAD'}</option>
               {workspaces?.workspaces.filter(w => w.state === 'ready').map(w => <option key={w.id} value={w.id!}>{w.kind === 'managed' ? copy.separateCopy : 'Existing worktree'} · {w.branch ?? 'detached'}</option>)}
@@ -349,54 +376,43 @@ export default function App() {
             <CursorStatus agent={cursorAgent} checking={checkingProvider} note={providerNote} onInstall={() => void installCursor()} onLogin={() => void loginCursor()} onCheck={() => void checkCursor()} />
             {bootstrap?.agents.some(a => !a.available && a.provider !== 'cursor') && <p className="hint">{bootstrap.agents.filter(a => !a.available && a.provider !== 'cursor').map(a => PROVIDER_NAMES[a.provider]).join(', ')} not found on PATH. Install the native CLI, then reopen Journal.</p>}
           </section>
-          <section className="terminal-panel"><div className="terminal-heading"><div><span className={`status-dot ${session?.status ?? ''}`} />{session && <ProviderMark provider={session.provider} size={18} />}<strong>{session ? PROVIDER_NAMES[session.provider] : 'Terminal'}</strong><span className="terminal-label">{session ? `${label}${session.branch ? ` · ${projectBranchChanged ? 'started on ' : ''}⑂ ${session.branch}` : ''}${session.workspaceId ? session.workspaceId.startsWith('root:') ? ' · folder' : ' · worktree' : ''}${session.research ? ' · read-only' : session.plan ? ' · plan' : ''}` : 'Ready to start'}</span>{session && <span className="terminal-title" title={session.displayName || session.title}>{session.displayName || session.title}</span>}</div>
-            {session && <div className="terminal-actions">
-              {isLive(session) && connected && <><button onClick={() => void sessionAction('interrupt')}>Interrupt <kbd>^C</kbd></button><button onClick={() => void sessionAction('stop')} disabled={session.status === 'stopping'}>{copy.stop}</button></>}
-              {resumable(session) && <button title={tip.continue} disabled={busy || !canStart} onClick={() => void start(session.provider, session)}>{copy.continue}</button>}
-              {session.status === 'orphaned' && session.identityVerified !== false && <button onClick={() => void sessionAction('terminateOrphan')}>End orphaned process</button>}
-              {!!session.survivors?.length && <button onClick={() => void sessionAction('terminateSurvivors')}>End {session.survivors.length} leftover process{session.survivors.length === 1 ? '' : 'es'}</button>}
-              <button onClick={() => void (session.archived ? sessionActions.unarchive(session) : sessionActions.archive(session))}>{session.archived ? 'Unarchive' : 'Archive'}</button>
-              <button onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); void sessionMenu(session, { x: rect.left, y: rect.bottom }); }} aria-label="More session actions" aria-haspopup="menu">⋯</button>
-            </div>}</div>
-            {projectBranchChanged && <p className="hint session-hint">The checkout is now on {state.project.branch ?? 'a detached HEAD'}; this session started on {session.branch ?? 'a detached HEAD'}.</p>}
-            {session?.status === 'orphaned' && <p className="hint session-hint">{session.identityVerified === false ? `A process with this session's PID (${(session as { pid?: number }).pid ?? 'unknown'}) is still running, but Journal cannot verify it is the original agent, so it will not signal it. Continuing stays blocked until it ends; check it outside Journal.` : 'The runtime that owned this terminal stopped while its process kept running. Journal cannot reattach to it. End it here, or leave it running; continuing this conversation stays blocked while it runs.'}</p>}
-            {session?.status === 'interrupted' && <p className="hint session-hint">This session's runtime stopped unexpectedly. Whether its first message reached the agent is uncertain, and nothing was resent.{resumable(session) ? ' Continue reopens the same conversation.' : ''}</p>}
-            {!!session?.survivors?.length && <p className="hint session-hint">Child processes outlived the agent: {session.survivors.map(s => `${s.pid} ${s.command}`).join('; ')}</p>}
-            {session ? <TerminalPane key={session.id} sessionId={session.id} live={isLive(session) && connected} appearance={appearance} onError={setError} /> : <div className="terminal-empty"><img className="terminal-brand-mark" src={journalMark} alt="" width={50} height={50} /><h2>A familiar place to work.</h2><p>Start an agent above. Your native login, settings,<br />and tool approvals stay with the CLI.</p></div>}
-            {session && !isLive(session) && session.status !== 'orphaned' && !session.nativeIdConfirmed && <div className="resume-id"><label>Native session ID<input value={resumeValue} onChange={e => setResumeDraft({ sessionId: session.id, value: e.target.value })} placeholder="Exact UUID from the native CLI" /></label><button disabled={busy} onClick={() => void run(async () => { const next = await api<Session>('confirmNativeId', { id: session.id, nativeId: resumeValue }); merge([next]); })}>Confirm conversation ID</button></div>}
-            <footer className="terminal-footer"><span>{state.project.root}</span><span>Native permissions · volatile output</span><UpdateNotice compact state={update} onError={failed} /></footer>
-          </section>
-        </>}
+        </NewSessionView>
+        : <section className="session-view" aria-label="Session">
+          <SessionHeader session={session} state={stateFor(session, now, connected)} connected={connected} busy={busy} canStart={canStart} now={now} mac={bootstrap?.platform === 'darwin'}
+            projectBranch={session.projectId === state.project.id ? state.project.branch : session.branch ?? null} agentVersion={bootstrap?.agents.find(a => a.provider === session.provider)?.version ?? null}
+            onInterrupt={() => void sessionAction('interrupt')} onStop={() => void sessionAction('stop')} onContinue={() => void start(session.provider, session)}
+            onArchiveToggle={() => void (session.archived ? sessionActions.unarchive(session) : sessionActions.archive(session))}
+            onEndOrphan={() => void sessionAction('terminateOrphan')} onEndSurvivors={() => void sessionAction('terminateSurvivors')} onMenu={position => void sessionMenu(session, position)} />
+          <AttentionBanner session={session} />
+          {projectBranchChanged && <p className="hint session-hint">The checkout is now on {state.project.branch ?? 'a detached HEAD'}; this session started on {session.branch ?? 'a detached HEAD'}.</p>}
+          {session.status === 'orphaned' && <p className="hint session-hint">{session.identityVerified === false ? `A process with this session's PID (${(session as { pid?: number }).pid ?? 'unknown'}) is still running, but Journal cannot verify it is the original agent, so it will not signal it. Continuing stays blocked until it ends; check it outside Journal.` : 'The runtime that owned this terminal stopped while its process kept running. Journal cannot reattach to it. End it here, or leave it running; continuing this conversation stays blocked while it runs.'}</p>}
+          {session.status === 'interrupted' && <p className="hint session-hint">This session's runtime stopped unexpectedly. Whether its first message reached the agent is uncertain, and nothing was resent.{resumable(session) ? ' Continue reopens the same conversation.' : ''}</p>}
+          {!!session.survivors?.length && <p className="hint session-hint">Child processes outlived the agent: {session.survivors.map(s => `${s.pid} ${s.command}`).join('; ')}</p>}
+          <div className="terminal-panel"><TerminalPane key={session.id} sessionId={session.id} live={isLive(session) && connected} appearance={appearance} onError={setError} /></div>
+          {!isLive(session) && session.status !== 'orphaned' && !session.nativeIdConfirmed && <div className="resume-id"><label>Native session ID<input value={resumeValue} onChange={e => setResumeDraft({ sessionId: session.id, value: e.target.value })} placeholder="Exact UUID from the native CLI" /></label><button disabled={busy} onClick={() => void run(async () => { const next = await api<Session>('confirmNativeId', { id: session.id, nativeId: resumeValue }); merge([next]); })}>Confirm conversation ID</button></div>}
+          <StatusBar receipt={sessionReceipt} changes={sessionChanges.changes} update={update} onShowSent={showSent} onError={failed} />
+        </section>}
     </main>
     {/* === End region B: main column === */}
 
     {/* === Region B: inspector === */}
-    {state && collapsed && <aside className="knowledge-panel panel-rail" id="knowledge-sidebar" aria-label="Side panel (collapsed)">
-      <button className="rail-button" aria-label="Show side panel" title={`Show side panel${inspectorKeys ? ` (${inspectorKeys})` : ''}`} onClick={() => setCollapsed(false)}>‹</button>
-      {(['files', 'memory', 'context', 'changes', 'activity'] as Panel[]).map(name => <button key={name} className="rail-button rail-tab" disabled={!session && (name === 'changes' || name === 'activity')} onClick={() => { setPanel(name); setCollapsed(false); }} aria-label={`Open ${name}`} title={name[0].toUpperCase() + name.slice(1)}>{name[0].toUpperCase()}</button>)}
-    </aside>}
-    {state && !collapsed && <aside className="knowledge-panel" id="knowledge-sidebar"><div className="panel-tabs" role="tablist" aria-label="Project information">
-      <button role="tab" aria-selected={panel === 'files'} onClick={() => setPanel('files')}><span className="panel-tab-label">Files</span></button>
-      <button role="tab" aria-selected={panel === 'memory'} title={tip.memoryTab} onClick={() => setPanel('memory')}><span className="panel-tab-label">{copy.memoryTab}</span></button>
-      <button role="tab" aria-selected={panel === 'context'} onClick={() => setPanel('context')}><span className="panel-tab-label">Context</span></button>
-      <button role="tab" aria-selected={panel === 'changes'} disabled={!session} onClick={() => setPanel('changes')}><span className="panel-tab-label">Changes</span></button>
-      <button role="tab" aria-selected={panel === 'activity'} disabled={!session} onClick={() => setPanel('activity')}><span className="panel-tab-label">Activity</span></button>
-      <button className="panel-collapse" aria-label="Hide side panel" title={`Hide side panel${inspectorKeys ? ` (${inspectorKeys})` : ''}`} onClick={() => setCollapsed(true)}>›</button></div>
-      {panel === 'files' && <ExplorerPanel key={state.project.id} project={state.project} session={session} rootsVersion={workspaces?.workspaces.map(w => `${w.id}:${w.state}`).join(',') ?? ''} revealLabel={`Reveal in ${revealLabel}`} focusSignal={explorerFocus} onPreviewing={setPreviewing} onError={failed}
+    {state && <Inspector pane={collapsed ? 'rail' : 'full'} tab={panel} onTab={tab => { setPanel(tab); if (tab === 'files') setExplorerFocus(n => n + 1); }} badges={{ files: changed, memory: proposals.length }} shortcuts={bootstrap?.shortcuts}
+      onHide={() => setCollapsed(true)} onShow={() => setCollapsed(false)}>
+      {panel === 'session' && <SessionTab session={session} events={events} now={now} onShowSent={showSent} context={<ContextPanel receipt={receipt} session={session} bootstrap={bootstrap} history={state.receipts} disabled={disabled} events={events} now={now} packetSignal={packetSignal}
+        onToggle={id => { const next = disabled.includes(id) ? disabled.filter(x => x !== id) : [...disabled, id]; setDisabled(next); if (receipt?.state === 'prepared') void api<Receipt>('prepareContext', { projectId: state.project.id, task: receipt.query, workspaceId: workspaceId || null, disabled: next, references: referenceInputs }).then(setReceipt).catch(failed); }}
+        onSelectReceipt={setReceipt} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />} />}
+      {panel === 'files' && <FilesTab hasSession={!!session} view={filesView} onView={setFilesChoice} changed={changed}
+        changes={session && <ChangesPanel session={session} changes={sessionChanges.changes} loading={sessionChanges.loading} error={sessionChanges.error} refresh={sessionChanges.refresh} />}
+        files={<ExplorerPanel key={state.project.id} project={state.project} session={session} rootsVersion={workspaces?.workspaces.map(w => `${w.id}:${w.state}`).join(',') ?? ''} revealLabel={`Reveal in ${revealLabel}`} focusSignal={explorerFocus} onPreviewing={setPreviewing} onError={failed}
         onAddReference={async ref => {
           const projectId = state.project.id;
           const described = await api<FileReference>('describeReference', { projectId, workspaceId: workspaceId || null, rootKey: ref.rootKey, path: ref.path, startLine: ref.startLine, endLine: ref.endLine });
           if (projectRef.current?.id !== projectId) return; // switched projects meanwhile
           setReferences(current => current.some(r => r.rootKey === described.rootKey && r.path === described.path && r.startLine === described.startLine && r.endLine === described.endLine) ? current : [...current, described].slice(-20));
         }}
-        onSaveEvidence={source => setEvidenceSource({ kind: 'file', path: source.path, startLine: source.startLine, endLine: source.endLine, ...(source.rootKey.startsWith('root:') ? { rootId: source.rootKey.slice(5) } : {}) })} />}
-      {panel === 'memory' && <KnowledgePanel project={state.project} version={knowledgeVersion} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />}
-      {panel === 'changes' && session && <ChangesPanel session={session} fileEvents={liveEvents.filter(e => e.sessionId === session.id && e.kind === 'file').length} />}
-      {panel === 'activity' && session && <ActivityPanel session={session} live={liveEvents} />}
-      {(panel === 'context' || (!session && (panel === 'changes' || panel === 'activity'))) && <ContextPanel receipt={receipt} session={session} bootstrap={bootstrap} history={state.receipts} disabled={disabled} live={liveEvents}
-        onToggle={id => { const next = disabled.includes(id) ? disabled.filter(x => x !== id) : [...disabled, id]; setDisabled(next); if (receipt?.state === 'prepared') void api<Receipt>('prepareContext', { projectId: state.project.id, task: receipt.query, workspaceId: workspaceId || null, disabled: next, references: referenceInputs }).then(setReceipt).catch(failed); }}
-        onSelectReceipt={setReceipt} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />}
-    </aside>}
+        onSaveEvidence={source => setEvidenceSource({ kind: 'file', path: source.path, startLine: source.startLine, endLine: source.endLine, ...(source.rootKey.startsWith('root:') ? { rootId: source.rootKey.slice(5) } : {}) })} />} />}
+      {panel === 'memory' && <MemoryTab><KnowledgePanel project={state.project} version={knowledgeVersion} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} /></MemoryTab>}
+    </Inspector>}
     {/* === End region B: inspector === */}
     {manageId && <ManageProjectDialog projectId={manageId} onClose={() => setManageId(null)} onChanged={() => { void reloadProjects().catch(failed); if (state?.project.id === manageId) void refresh().catch(failed); }}
       onRemoved={() => { const removed = manageId; setManageId(null); removedProject(removed); }} />}
@@ -407,7 +423,7 @@ export default function App() {
       note="Only Journal's label changes. The native Claude, Codex or Cursor session ID and continuing the same conversation are unaffected." onClose={() => setRenameTarget(null)}
       onSave={async name => { merge([await api<Session>('renameSession', { id: renameTarget.session.id, name })]); }} />}
     {processView && <ProcessDialog id={processView.id} title={processView.title} command={processView.command} appearance={appearance} onClose={() => setProcessView(null)} onExit={() => void checkCursor(processView.kind)} />}
-    {dataDialog && <DataDialog update={update} project={state?.project ?? null} onClose={() => setDataDialog(false)} onChanged={() => { setKnowledgeVersion(v => v + 1); void refresh().catch(() => {}); }} />}
+    {settingsOpen && <SettingsDialog appearance={appearance} onAppearance={setAppearance} update={update} project={state?.project ?? null} onClose={() => setSettingsOpen(false)} onDataChanged={() => { setKnowledgeVersion(v => v + 1); void refresh().catch(() => {}); }} />}
     {state && workspaceDialog && <WorkspaceDialog project={state.project} onClose={() => setWorkspaceDialog(false)} onChanged={() => void refresh().catch(failed)} />}
     {state && evidenceSource && <KnowledgeForm project={state.project} initialSource={evidenceSource} onClose={() => setEvidenceSource(null)} onSaved={() => { setEvidenceSource(null); setPanel('memory'); setKnowledgeVersion(v => v + 1); }} />}
     {state && form && <KnowledgeForm project={state.project} memory={form.memory} supersedes={form.supersedes} initialCategory={form.initialCategory} draft={form.draft} onClose={() => setForm(null)} onSaved={() => { setForm(null); setPanel('memory'); setKnowledgeVersion(v => v + 1); }} />}

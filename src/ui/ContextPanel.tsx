@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ProviderMark } from './ProviderMark';
 import { api, PROVIDER_NAMES, type Bootstrap, type FileReference, type Receipt, type Session, type TimelineEvent } from './types';
-import { category, copy, count, deliveryState, excludedReason, selectionReason, warningText } from './copy';
+import { category, copy, count, deliveryState, excludedReason, selectionReason, shell, warningText } from './copy';
+import { relativeTime } from './sidebarModel';
 
 // Files the user referenced, with whether each still matches what was referenced.
 function References({ title, projectId, workspaceId, references }: { title: string; projectId: string; workspaceId: string | null; references: (FileReference & { note?: string })[] }) {
@@ -22,30 +23,32 @@ function References({ title, projectId, workspaceId, references }: { title: stri
     <small>{ref.note ? `${ref.note} · ` : ''}{ref.rootLabel ?? ref.rootKey}{ref.contentHash ? ` · sha256 ${ref.contentHash.slice(0, 8)}` : ''}{changed[index] === 'changed' ? ' · changed since referenced' : changed[index] === 'missing' ? ' · no longer available' : changed[index] === 'same' ? ' · unchanged' : ''}</small></li>)}</ul></section>;
 }
 
-function SessionReferences({ session, live }: { session: Session; live: TimelineEvent[] }) {
-  const [stored, setStored] = useState<TimelineEvent[]>([]);
-  const ownNow = live.filter(e => e.sessionId === session.id && e.kind === 'reference'); const ownKey = ownNow.map(e => e.at).join('|');
-  const own = useMemo(() => ownNow, [ownKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { let cancelled = false; void api<TimelineEvent[]>('sessionEvents', { id: session.id }).then(events => { if (!cancelled) setStored(events.filter(e => e.kind === 'reference')); }).catch(() => {}); return () => { cancelled = true; }; }, [session.id, own.length]);
+function SessionReferences({ session, events }: { session: Session; events: TimelineEvent[] }) {
+  const own = events.filter(e => e.kind === 'reference'); const key = own.map(e => e.id ?? e.at).join('|');
   // Stable until a reference is added, so files are not re-hashed on every render.
-  const references = useMemo(() => {
-    const seen = new Set(stored.map(e => e.at));
-    return [...stored, ...own.filter(e => !seen.has(e.at))].map(e => { const b = e.body as Record<string, any>; return { kind: b.kind, rootKey: b.rootKey, rootLabel: b.rootLabel, path: b.path, display: b.path, startLine: b.startLine, endLine: b.endLine, contentHash: b.contentHash, rangeHash: b.rangeHash, note: `${b.delivery === 'inserted' ? 'typed' : 'copied'} ${new Date(e.at).toLocaleTimeString()}` } as FileReference & { note: string }; });
-  }, [stored, own]);
+  const references = useMemo(() => own.map(e => { const b = e.body as Record<string, any>; return { kind: b.kind, rootKey: b.rootKey, rootLabel: b.rootLabel, path: b.path, display: b.path, startLine: b.startLine, endLine: b.endLine, contentHash: b.contentHash, rangeHash: b.rangeHash, note: `${b.delivery === 'inserted' ? 'typed' : 'copied'} ${new Date(e.at).toLocaleTimeString()}` } as FileReference & { note: string }; }), [key]); // eslint-disable-line react-hooks/exhaustive-deps
   return <References title="Referenced during this session" projectId={session.projectId} workspaceId={session.workspaceId ?? null} references={references} />;
 }
 
 // What the agent receives: the exact packet, why each note is there, what
 // was left out and why, and what Journal cannot observe.
-export function ContextPanel({ receipt, session, bootstrap, history, disabled, live = [], onToggle, onSelectReceipt, onChanged, onError }: {
-  receipt: Receipt | null; session: Session | null; bootstrap: Bootstrap | null; history: Receipt[]; disabled: string[]; live?: TimelineEvent[];
+// events: the session's timeline (useSessionEvents). packetSignal: bumped by
+// "See what was sent", which shows the exact text and moves focus to it.
+export function ContextPanel({ receipt, session, bootstrap, history, disabled, events = [], now = Date.now(), packetSignal = 0, onToggle, onSelectReceipt, onChanged, onError }: {
+  receipt: Receipt | null; session: Session | null; bootstrap: Bootstrap | null; history: Receipt[]; disabled: string[]; events?: TimelineEvent[]; now?: number; packetSignal?: number;
   onToggle: (id: string) => void; onSelectReceipt: (receipt: Receipt) => void; onChanged: () => void; onError: (error: unknown) => void;
 }) {
   const [raw, setRaw] = useState(false); const [open, setOpen] = useState<string | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null); const packet = useRef<HTMLPreElement>(null);
+  useEffect(() => { if (!packetSignal) return; setRaw(true); requestAnimationFrame(() => { packet.current?.scrollIntoView({ block: 'nearest' }); heading.current?.focus({ preventScroll: true }); }); }, [packetSignal]);
   const preview = receipt?.state === 'prepared';
+  // The selected session's own record reads as what this agent knows; an
+  // uncertain delivery never reads as sent.
+  const own = !!session && receipt?.id === session.receiptId;
+  const title = !receipt || preview ? copy.willKnow : receipt.state === 'failed' ? copy.wasGoingToSend : receipt.state === 'uncertain' ? shell.sentUncertain : own ? shell.whatThisAgentKnows : copy.whatWasSent;
   const agent = session ? bootstrap?.agents.find(a => a.provider === session.provider) : null;
   const act = async (action: () => Promise<unknown>) => { try { await action(); onChanged(); } catch (error) { onError(error); } };
-  return <div className="panel-content context-content"><div className="section-heading"><div><span className="eyebrow">What the agent receives</span><h2>{!receipt || preview ? copy.willKnow : receipt.state === 'failed' ? copy.wasGoingToSend : copy.whatWasSent}</h2></div></div>
+  return <div className="panel-content context-content"><div className="section-heading"><div><span className="eyebrow">What the agent receives</span><h2 ref={heading} tabIndex={-1}>{title}</h2>{own && receipt?.state === 'submitted' && <small className="muted">{shell.atLaunch(relativeTime(receipt.createdAt, now))}</small>}</div></div>
     {!receipt ? <div className="knowledge-empty"><h3>Inspect before you start.</h3><p>Enter an initial task and preview its context.</p></div> : <>
       <div className="receipt-meta"><span>{count(receipt.items.length, 'note')}</span><span>{new TextEncoder().encode(receipt.packet).length} bytes · ≈{receipt.estimatedTokens} tokens</span><span className="receipt-state">{deliveryState(receipt.state)}</span></div>
       <dl className="receipt-facts"><dt>Task</dt><dd>{receipt.query || <em>none (only what {copy.everySession.toLowerCase()})</em>}</dd>
@@ -65,12 +68,12 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, l
         </div>
       </li>)}</ol>
       {receipt.references?.length ? <References title={`Referenced for this task · ${receipt.references.length}`} projectId={(receipt as any).projectId} workspaceId={receipt.workspaceId ?? null} references={receipt.references} /> : null}
-      {session && <SessionReferences session={session} live={live} />}
+      {session && <SessionReferences session={session} events={events} />}
       {preview && disabled.length > 0 && <p className="hint">{count(disabled.length, 'note')} left out for the next start. <button className="text-button" onClick={() => disabled.forEach(onToggle)}>Restore all</button></p>}
       {receipt.excluded.length > 0 && <details><summary>{copy.notIncluded} · {receipt.excluded.length}</summary>{receipt.excluded.map(x => <p key={x.id + x.reason} className="muted">{x.id.slice(0, 8)} · {excludedReason(x.reason)}{x.reason === 'left-out-for-task' && preview ? <> · <button className="text-button" onClick={() => onToggle(x.id)}>restore</button></> : null}</p>)}</details>}
       {receipt.warnings?.map(warning => <p className="hint" key={warning}>{warningText(warning)}</p>)}
       <button className="text-button" aria-expanded={raw} onClick={() => setRaw(!raw)}>{raw ? 'Hide' : 'Show'} exact {receipt.launchPrompt !== undefined ? 'launch text' : 'text'}</button>
-      {raw && <pre className="context-packet" data-testid="context-packet" dir="auto">{(receipt.launchPrompt ?? receipt.packet) || 'No Journal text supplied at launch.'}</pre>}
+      {raw && <pre ref={packet} className="context-packet" data-testid="context-packet" dir="auto">{(receipt.launchPrompt ?? receipt.packet) || 'No Journal text supplied at launch.'}</pre>}
       {!raw && <pre className="context-packet visually-hidden" data-testid="context-packet" aria-hidden="true">{(receipt.launchPrompt ?? receipt.packet) || 'No Journal text supplied at launch.'}</pre>}
       <p className="receipt-note">{receipt.state === 'prepared' ? 'Preview only. Sources are checked again when you start.' : receipt.state === 'submitted' ? 'Sent means the CLI process started with this text. It does not prove the model read or used it.' : receipt.state === 'failed' ? 'Launch failed. Delivery to the native CLI was not confirmed.' : 'Delivery is uncertain after interruption. No input will be replayed automatically.'}{receipt.preview ? '' : ' This record never changes.'}</p>{!receipt.preview && <small className="receipt-id">{receipt.id}</small>}
     </>}

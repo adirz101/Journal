@@ -37,7 +37,7 @@ export function UpdateNotice({ state, onError, compact = false }: { state: Updat
   return null;
 }
 
-// Updates section of the data dialog: version, manual check, automatic checks.
+// Updates section of the Settings dialog: version, manual check, automatic checks.
 export function UpdateSettings({ state }: { state: UpdateState | null }) {
   const [checked, setChecked] = useState(false); const [error, setError] = useState('');
   if (!state) return null;
