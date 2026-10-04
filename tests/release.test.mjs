@@ -47,8 +47,14 @@ test('packaging config: stable ID, platforms, per-user installer, data kept, upd
   const local = withEnv({ CSC_LINK: undefined, CSC_NAME: 'Adir Zak (N859VCGPS7)', CSC_IDENTITY_AUTO_DISCOVERY: undefined, APPLE_API_KEY: undefined, APPLE_KEYCHAIN_PROFILE: 'journal-notary' }, () => loadConfig());
   assert.equal(local.mac.hardenedRuntime, true); assert.equal(local.mac.notarize, true);
   // macOS gets full-bleed artwork (macOS 26+ masks it); other platforms keep the original.
-  assert.equal(config.mac.icon, 'assets/branding/journal-app-icon-macos.png'); assert.equal(config.icon, 'assets/branding/journal-app-icon.png');
-  const png = readFileSync(config.mac.icon); assert.equal(png.readUInt32BE(16), 1024); assert.equal(png.readUInt32BE(20), 1024);
+  assert.equal(config.mac.icon, 'assets/branding/Journal.icon'); assert.equal(config.icon, 'assets/branding/journal-app-icon.png');
+  // One layer, the full-bleed artwork as is: no glass, shadow, highlight or translucency.
+  const icon = JSON.parse(readFileSync(join(config.mac.icon, 'icon.json'), 'utf8'));
+  assert.equal(icon.groups.length, 1); const [group] = icon.groups;
+  assert.deepEqual(group.layers, [{ glass: false, 'image-name': 'journal.png', name: 'journal' }]);
+  assert.equal(group.specular, false); assert.equal(group.shadow.kind, 'none'); assert.equal(group.translucency.enabled, false);
+  assert.deepEqual(icon['supported-platforms'], { squares: ['macOS'] });
+  const png = readFileSync(join(config.mac.icon, 'Assets', 'journal.png')); assert.equal(png.readUInt32BE(16), 1024); assert.equal(png.readUInt32BE(20), 1024);
   assert.equal(png[25], 2, 'Opaque RGB: no transparent margin for macOS to frame');
   const signedOnly = withEnv({ CSC_LINK: 'secret-path', CSC_IDENTITY_AUTO_DISCOVERY: undefined, APPLE_API_KEY: undefined }, () => loadConfig());
   assert.equal(signedOnly.mac.notarize, false, 'Notarization only with App Store Connect credentials');

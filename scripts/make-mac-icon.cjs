@@ -1,4 +1,5 @@
-// Generates assets/branding/journal-app-icon-macos.png from the original app icon:
+// Generates the artwork of the macOS icon, assets/branding/Journal.icon/Assets/journal.png,
+// from the original app icon:
 //   npx electron scripts/make-mac-icon.cjs
 // macOS 26 and later put icons that do not fill the whole square on a grey
 // platter. This version is full-bleed: the artwork's dark background (a slight
@@ -21,7 +22,7 @@ function rgbPng(rgba, size) {
 }
 
 const source = resolve(__dirname, '../assets/branding/journal-app-icon.png');
-const target = resolve(__dirname, '../assets/branding/journal-app-icon-macos.png');
+const target = resolve(__dirname, '../assets/branding/Journal.icon/Assets/journal.png');
 app.whenReady().then(async () => {
   const window = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
   await window.loadURL('about:blank');
