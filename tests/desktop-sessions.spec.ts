@@ -99,7 +99,7 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     await typeLine(page, 'after-reload');
     await expect(page.locator('.terminal-surface')).toContainText('ECHO after-reload');
     expect(f.launches()).toHaveLength(4);
-    await page.getByRole('button', { name: 'Stop terminal' }).click();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.locator('.terminal-label')).toContainText('stopped');
     await expect(page.getByRole('button', { name: 'Start Claude', exact: true })).toBeEnabled();
   } finally { await closeApp(app); f.cleanup(); }
@@ -169,7 +169,7 @@ test('keep-running quit is rediscovered; stopping reports and cleans detached le
     await expect.poll(() => existsSync(f.daemonRecord)).toBe(true);
     const daemon = JSON.parse(readFileSync(f.daemonRecord, 'utf8')).pid;
     // Descendants are sampled every 5 s and immediately before stop.
-    await page.getByRole('button', { name: 'Stop terminal' }).click();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.locator('.terminal-label')).toContainText('stopped');
     expect(alive(daemon)).toBe(true);
     await page.getByRole('button', { name: /End 1 leftover process/ }).click();
@@ -191,19 +191,19 @@ test('a managed worktree is created from the dialog, hosts a research session an
     await page.getByRole('button', { name: 'Create worktree' }).click();
     await expect(page.getByRole('list', { name: 'Workspaces' })).toContainText('managed · ready');
     await page.getByRole('button', { name: 'Done' }).click();
-    await page.getByLabel('Workspace').selectOption({ label: 'Worktree · journal/isolated' });
-    await page.getByLabel(/Research/).check();
+    await page.getByLabel('Workspace').selectOption({ label: 'Separate copy (worktree) · journal/isolated' });
+    await page.getByLabel('Read-only', { exact: true }).check();
     await page.getByLabel('Initial task').fill('WORKTREE_TASK');
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('TASK WORKTREE_TASK');
     await expect(page.locator('.terminal-surface')).toContainText('ARGS ["--sandbox","read-only"]');
     await expect(page.locator('.terminal-surface')).toContainText(/CWD .*worktrees/);
-    await expect(page.locator('.terminal-label')).toContainText('worktree · research');
+    await expect(page.locator('.terminal-label')).toContainText('worktree · read-only');
     await page.getByRole('button', { name: 'Workspaces…' }).click();
     await page.getByRole('button', { name: 'Remove worktree' }).click();
     await expect(page.getByText(/still running in it/)).toBeVisible();
     await page.getByRole('button', { name: 'Done' }).click();
-    await page.getByRole('button', { name: 'Stop terminal' }).click();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.locator('.terminal-label')).toContainText('stopped');
     await page.getByRole('button', { name: 'Workspaces…' }).click();
     await page.getByRole('button', { name: 'Remove worktree' }).click();

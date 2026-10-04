@@ -90,15 +90,15 @@ console.log('Installed to ~/.local/bin/agent. Add ~/.local/bin to your PATH.');`
     await expect(status).not.toContainText('login required');
 
     // Launch with an exact chat ID in Ask mode, beside a Claude session.
-    await page.getByLabel(/Research \(starts/).check();
+    await page.getByLabel('Read-only', { exact: true }).check();
     await page.getByLabel('Initial task').fill('Summarise the readme');
     await page.getByRole('button', { name: 'Start Cursor' }).click();
     await expect(page.locator('.terminal-surface')).toContainText(`RAN ["--resume=${CHAT}","--mode=ask"]`);
-    await expect(page.locator('.terminal-label')).toContainText('research');
+    await expect(page.locator('.terminal-label')).toContainText('read-only');
     const cursorLaunch = launches().find(l => l.bin === 'agent')!;
     expect(cursorLaunch.argv.slice(-2)).toEqual(['--', 'Summarise the readme']); // no approved knowledge yet: the task alone
     expect(cursorLaunch.argv).not.toContain('--force');
-    await page.getByLabel(/Research \(starts/).uncheck();
+    await page.getByLabel('Read-only', { exact: true }).uncheck();
     await page.getByLabel('Initial task').fill('Claude side task');
     await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
     await expect(page.getByRole('button', { name: /^Cursor: Summarise the readme/ })).toBeVisible();
@@ -114,8 +114,8 @@ console.log('Installed to ~/.local/bin/agent. Add ~/.local/bin to your PATH.');`
     await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('.terminal-surface'))).toBe(true);
 
     // Stop and resume the exact chat.
-    await page.getByRole('button', { name: 'Stop terminal' }).click(); await expect(page.locator('.terminal-label')).toContainText('stopped');
-    await page.getByRole('button', { name: 'Resume', exact: true }).click();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click(); await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await expect.poll(() => launches().filter(l => l.bin === 'agent').length).toBe(2);
     expect(launches().filter(l => l.bin === 'agent')[1].argv.slice(0, 2)).toEqual([`--resume=${CHAT}`, '--mode=ask']);
     // Journal's data never contains Cursor sign-in output.

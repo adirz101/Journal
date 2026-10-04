@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, type Session, type TimelineEvent } from './types';
+import { count, deliveryState } from './copy';
 
 interface Command { toolUseId: string; command: string; cwd: string | null; test: boolean; at: string; status: string; exitCode: number | null; durationMs: number | null; endedAt: string | null; }
 
@@ -7,8 +8,8 @@ const describe = (event: TimelineEvent) => {
   const b = event.body as Record<string, any>;
   switch (event.kind) {
     case 'start': return `Session started on ${b.branch ?? 'detached HEAD'}`;
-    case 'resume': return 'Resumed the native conversation';
-    case 'context': return `Context ${b.state ?? 'prepared'}: ${b.claims} claim${b.claims === 1 ? '' : 's'}`;
+    case 'resume': return 'Continued the same conversation';
+    case 'context': return `Context ${deliveryState(b.state)}: ${count(Number(b.claims ?? 0), 'note')}`;
     case 'prompt': return 'Prompt submitted';
     case 'permission': return `Waiting for approval${b.tool ? `: ${b.tool}` : ''}`;
     case 'turn-end': return 'Agent finished its turn';

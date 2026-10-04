@@ -21,7 +21,7 @@ export function CursorStatus({ agent, checking, note, onInstall, onLogin, onChec
   else if (agent.available && agent.auth !== 'signed-in') body = <><p><strong>Cursor</strong> {agent.version} · {agent.auth === 'unchecked' ? 'checking sign-in…' : 'sign-in status unknown'}</p><div className="provider-actions">{signIn}{check}</div></>;
   const hints = [
     agent.available && agent.onPath === false && `Journal uses ${agent.path}, which is not on your PATH. To run agent in your own terminal, add its folder to PATH (the installer printed the command).`,
-    agent.available && agent.supports && !agent.supports.mode && 'This version has no Ask or Plan mode, so Research and Plan are unavailable for Cursor. Update with agent update.',
+    agent.available && agent.supports && !agent.supports.mode && 'This version has no Ask or Plan mode, so Read-only and Plan are unavailable for Cursor. Update with agent update.',
   ].filter(Boolean) as string[];
   if (!body && !hints.length && !note) return null;
   return <section className="provider-status" aria-label="Cursor provider status">{body}{hints.map(hint => <p className="hint" key={hint}>{hint}</p>)}{note && <p className="hint" role="status">{note}</p>}</section>;

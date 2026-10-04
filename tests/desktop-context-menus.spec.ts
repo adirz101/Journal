@@ -79,7 +79,7 @@ console.log('PTY_READY '+JSON.stringify(process.argv.slice(2,4)));process.stdin.
     await expect.poll(() => launches().length).toBe(2);
     expect(launches()[1].argv.slice(0, 2)).toEqual(['--resume', nativeId]);
     await expect(page.getByRole('button', { name: /^Claude Code: Resume · Notes draft/ })).toBeVisible();
-    await page.getByRole('button', { name: 'Stop terminal' }).click(); await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await page.getByRole('button', { name: 'Stop', exact: true }).click(); await expect(page.locator('.terminal-label')).toContainText('stopped');
     // Cancel changes nothing; "Stop and remove" stops the agent first, then removes it.
     await page.getByLabel('Initial task').fill('Throwaway run');
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();

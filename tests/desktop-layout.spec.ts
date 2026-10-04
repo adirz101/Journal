@@ -16,7 +16,7 @@ test('both sidebars resize by pointer and keyboard, persist, and leave room for 
     const page = await app.firstWindow();
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
     const left = page.getByRole('separator', { name: 'Resize project sidebar', exact: true });
-    const right = page.getByRole('separator', { name: 'Resize knowledge sidebar', exact: true });
+    const right = page.getByRole('separator', { name: 'Resize side panel', exact: true });
     await expect(left).toBeVisible(); await expect(right).toBeVisible();
     // Type floor (design board B8): nothing outside the terminal renders below 11 px.
     expect(await page.evaluate(() => [...document.querySelectorAll('body *')]
@@ -85,7 +85,7 @@ test('both sidebars resize by pointer and keyboard, persist, and leave room for 
     await expect.poll(() => width('.sidebar')).toBe(initialLeft);
     await expect.poll(() => width('.knowledge-panel')).toBe(initialRight);
     await page.getByRole('button', { name: 'Switch to light mode' }).click();
-    await page.getByRole('tab', { name: /^Knowledge/ }).hover();
+    await page.getByRole('tab', { name: /^Memory/ }).hover();
     mkdirSync(resolve('.cache/screenshots'), { recursive: true });
     await page.screenshot({ path: resolve('.cache/screenshots/journal-resizable-light.png') });
   } finally { await app.close(); rmSync(directory, { recursive: true, force: true }); }

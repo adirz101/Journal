@@ -37,13 +37,13 @@ process.stdin.on('data',data=>{
     await expect(page.getByRole('heading', { name: 'Your project, remembered.' })).toBeVisible();
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
     await expect(page.getByText('fixture project', { exact: true }).first()).toBeVisible();
-    await page.getByRole('button', { name: 'Add knowledge' }).first().click();
+    await page.getByRole('button', { name: 'Add a note' }).first().click();
     await page.getByRole('textbox', { name: 'Statement', exact: true }).fill('Fixture tests require Docker');
     await page.getByLabel('Source type').selectOption('file');
     await page.getByLabel('Source path').fill('README.md');
     await page.getByRole('button', { name: 'Save for review' }).click();
     await expect(page.getByText('Fixture tests require Docker', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Approve', exact: true }).click();
+    await page.getByRole('button', { name: 'Remember', exact: true }).click();
     await page.getByLabel('Initial task').fill('Review Docker tests');
     await page.getByRole('button', { name: 'Preview context' }).click();
     await expect(page.getByTestId('context-packet')).toContainText('Fixture tests require Docker');
@@ -74,7 +74,7 @@ process.stdin.on('data',data=>{
     await expect(page.locator('.brand-icon')).toHaveAttribute('src', /\/journal-mark-(?!white-)[^.]+\.png$/);
     await expect(page.locator('.xterm-scrollable-element')).toHaveCSS('background-color', 'rgb(250, 250, 251)');
     await page.getByRole('separator', { name: 'Resize project sidebar', exact: true }).press('ArrowRight');
-    await page.getByRole('separator', { name: 'Resize knowledge sidebar', exact: true }).press('ArrowLeft');
+    await page.getByRole('separator', { name: 'Resize side panel', exact: true }).press('ArrowLeft');
     expect(await terminalElement!.evaluate(element => element.isConnected)).toBe(true);
     expect(await page.evaluate(async () => (await (window as any).journal.request('bootstrap')).live.map((x: any) => x.id))).toEqual(beforeTheme);
     await page.locator('.xterm-helper-textarea').pressSequentially('after-theme');
@@ -114,31 +114,31 @@ process.stdin.on('data',data=>{
     await expect(page.locator('.terminal-surface')).toContainText('FLOOD_COMPLETE', { timeout: 15000 });
     await page.getByRole('button', { name: /^Interrupt/ }).click();
     await expect(page.locator('.terminal-surface')).toContainText('INTERRUPTED');
-    await page.getByRole('button', { name: 'Stop terminal' }).click();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.locator('.terminal-label')).toContainText('stopped');
-    await page.getByRole('button', { name: 'Resume', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).first().click();
     await expect(page.locator('.terminal-surface')).toContainText('--resume');
-    await page.getByRole('button', { name: 'Stop terminal' }).click();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.locator('.terminal-label')).toContainText('stopped');
     // Reviewed knowledge is provider-neutral; Codex needs an explicitly confirmed UUID.
     await page.getByLabel('Initial task').fill('Docker tests');
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
-    await page.getByRole('button', { name: 'Stop terminal' }).click();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.getByLabel('Native session ID')).toBeVisible();
     await page.getByLabel('Native session ID').fill('bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb');
-    await page.getByRole('button', { name: 'Confirm resume ID' }).click();
-    await page.locator('.terminal-actions').getByRole('button', { name: 'Resume', exact: true }).click();
+    await page.getByRole('button', { name: 'Confirm conversation ID' }).click();
+    await page.locator('.terminal-actions').getByRole('button', { name: 'Continue', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb');
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
-    await page.getByRole('button', { name: 'Stop terminal' }).click();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.locator('.terminal-label')).toContainText('stopped');
     // Selecting a confirmed older session must not prefill a new conversation's ID.
     await page.getByRole('button', { name: /^Codex:/ }).first().click();
     await page.getByLabel('Initial task').fill('Docker tests NEW_CODEX_SESSION_MARKER');
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('NEW_CODEX_SESSION_MARKER');
-    await page.getByRole('button', { name: 'Stop terminal' }).click();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(page.getByLabel('Native session ID')).toHaveValue('');
     // Security boundary rejects arbitrary IPC actions and filesystem operations.
     const error = await page.evaluate(async () => {
@@ -155,9 +155,9 @@ process.stdin.on('data',data=>{
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     mkdirSync(resolve('.cache/screenshots'), { recursive: true });
     await page.screenshot({ path: resolve('.cache/screenshots/journal-light.png') });
-    await page.getByRole('tab', { name: /Knowledge/ }).click();
+    await page.getByRole('tab', { name: /^Memory/ }).click();
     await page.screenshot({ path: resolve('.cache/screenshots/journal-light-knowledge.png') });
-    await page.getByRole('button', { name: 'Add knowledge' }).first().click();
+    await page.getByRole('button', { name: 'Add a note' }).first().click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.screenshot({ path: resolve('.cache/screenshots/journal-light-dialog.png') });
     await page.keyboard.press('Escape');

@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { hotkeysCoreFeature, searchFeature, selectionFeature, syncDataLoaderFeature, type ItemInstance } from '@headless-tree/core';
 import { useTree } from '@headless-tree/react';
 import { menuPosition, showMenu, type MenuItem } from './menu';
+import { copy } from './copy';
 import { api, isLive, type DirectoryListing, type FilePreviewData, type FileReference, type FileRoot, type FileStatus, type GitKind, type Project, type Session } from './types';
 import type { LineRange } from './FilePreview';
 
@@ -252,7 +253,7 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
     <div className="explorer-header">
       <label className="explorer-root"><span className="visually-hidden">Root</span>
         <select aria-label="Explorer root" value={primaryKey} onChange={event => setOverride(event.target.value === followKey ? null : event.target.value)}>
-          {roots?.primary.map(root => <option key={root.key} value={root.key}>{root.kind === 'checkout' ? `Checkout · ${root.branch ?? 'detached'}` : `${root.kind === 'managed' ? 'Worktree' : 'Imported'} · ${root.branch ?? 'detached'}`}</option>)}
+          {roots?.primary.map(root => <option key={root.key} value={root.key}>{root.kind === 'checkout' ? `Checkout · ${root.branch ?? 'detached'}` : `${root.kind === 'managed' ? copy.separateCopy : 'Existing worktree'} · ${root.branch ?? 'detached'}`}</option>)}
         </select></label>
       <div className="explorer-tools" role="group" aria-label="Show">
         <button aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>All</button>
@@ -276,7 +277,7 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
         {preview.mode === 'file' && preview.data?.kind === 'text' && <>
           <button disabled={!liveSession} title={liveSession ? 'Type the reference into the running agent\'s input' : 'Select a running session of this project'} onClick={() => void referenceInSession(describeTarget(preview.rootKey, preview.path, range ? 'lines' : 'file', range))}>{range ? `Reference lines ${range.startLine}–${range.endLine}` : 'Reference in session'}</button>
           <button onClick={() => void addToTask(describeTarget(preview.rootKey, preview.path, range ? 'lines' : 'file', range))}>Add to next task</button>
-          {canEvidence && <button onClick={() => onSaveEvidence({ rootKey: preview.rootKey, path: preview.path, startLine: range!.startLine, endLine: range!.endLine })}>Save as knowledge…</button>}
+          {canEvidence && <button onClick={() => onSaveEvidence({ rootKey: preview.rootKey, path: preview.path, startLine: range!.startLine, endLine: range!.endLine })}>Save as a note…</button>}
         </>}
         <button onClick={() => act(() => api('openInEditor', { projectId: project.id, rootKey: preview.rootKey, path: preview.path, line: range?.startLine }))}>Open in editor</button>
       </div>

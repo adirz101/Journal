@@ -16,6 +16,8 @@ function storedWidths(): Widths {
 }
 
 export const RAIL_WIDTH = 34;
+// Accessible names; the side ids are also the keys of the stored widths.
+const names: Record<Side, string> = { project: 'project sidebar', knowledge: 'side panel' };
 // collapsed: the right panel shrinks to a rail; wide: it widens while a file is previewed (not saved).
 export function ResizableWorkspace({ hasKnowledge, collapsed = false, wide = false, children }: { hasKnowledge: boolean; collapsed?: boolean; wide?: boolean; children: ReactNode }) {
   const shell = useRef<HTMLDivElement>(null);
@@ -86,7 +88,7 @@ function ResizeHandle({ side, value, max, onChange, onCommit }: {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
   return <div className={`panel-resizer ${side}-resizer${dragging ? ' dragging' : ''}`}
-    role="separator" tabIndex={0} aria-orientation="vertical" aria-label={`Resize ${side} sidebar`}
+    role="separator" tabIndex={0} aria-orientation="vertical" aria-label={`Resize ${names[side]}`}
     aria-controls={side === 'project' ? 'project-sidebar' : 'knowledge-sidebar'}
     aria-valuemin={limits[side].min} aria-valuemax={max} aria-valuenow={value} aria-valuetext={`${value} pixels`}
     title="Drag or use arrow keys to resize. Double-click to reset."

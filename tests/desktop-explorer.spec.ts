@@ -145,7 +145,7 @@ test('the explorer browses, decorates, previews and references files without edi
     await expect(page.locator('.terminal-surface')).not.toContainText('IN:');
     await page.getByRole('tab', { name: 'Context' }).click();
     await expect(page.getByRole('region', { name: 'REFERENCED DURING THIS SESSION' })).toContainText('README.md');
-    await page.getByRole('button', { name: 'Stop terminal' }).click(); await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await page.getByRole('button', { name: 'Stop', exact: true }).click(); await expect(page.locator('.terminal-label')).toContainText('stopped');
 
     // Additional folders appear as their own roots.
     await page.getByRole('tab', { name: 'Files' }).click();

@@ -71,11 +71,11 @@ else console.log('ECHO '+command);
     expect(alive(launches()[0].pid)).toBe(true);
 
     const stopped = await runChild();
-    await page.getByRole('button', { name: 'Stop terminal' }).click();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect.poll(() => alive(stopped)).toBe(false);
     await expect.poll(() => alive(launches()[0].pid)).toBe(false);
-    await expect(page.getByRole('button', { name: 'Resume', exact: true }).first()).toBeEnabled();
-    await page.getByRole('button', { name: 'Resume', exact: true }).first().click();
+    await expect(page.getByRole('button', { name: 'Continue', exact: true }).first()).toBeEnabled();
+    await page.getByRole('button', { name: 'Continue', exact: true }).first().click();
     await expect.poll(() => launches().length).toBe(2);
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
     expect(launches()[1].argv).toContain(nativeId);
@@ -106,11 +106,11 @@ else console.log('ECHO '+command);
     }
     expect(after.project.receipts[0].state).toBe('submitted');
     await page.getByRole('button', { name: /^Claude Code:/ }).first().click();
-    await page.getByRole('button', { name: 'Resume', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).first().click();
     await expect.poll(() => launches().length).toBe(count + 1);
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
     expect(launches()[count].argv).toEqual(['--resume', nativeId, '--settings', launches()[count].argv[3]]);
-    await page.getByRole('button', { name: 'Stop terminal' }).click();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect.poll(() => alive(launches()[count].pid)).toBe(false);
   } finally {
     await app.close();
