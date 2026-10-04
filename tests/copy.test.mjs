@@ -18,11 +18,13 @@ const ALLOWED = [['ResizableWorkspace.tsx', 'knowledge', 'side id, stored in jou
 
 // Every string a user can see or hear: JSX text and string or template literals,
 // except code positions (types, imports, comparisons, object keys, code attributes and calls).
-function visibleStrings(file) {
-  const source = ts.createSourceFile(file, readFileSync(new URL(`../src/ui/${file}`, import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+function visibleStrings(file, code = readFileSync(new URL(`../src/ui/${file}`, import.meta.url), 'utf8')) {
+  const source = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const found = [];
   const visit = node => {
-    if (ts.isImportDeclaration(node) || ts.isTypeNode(node) || ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node) || ts.isCaseClause(node)) return;
+    if (ts.isImportDeclaration(node) || ts.isTypeNode(node) || ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) return;
+    // A case label is a compared value (code); its statements can be visible.
+    if (ts.isCaseClause(node)) { for (const statement of node.statements) visit(statement); return; }
     if (ts.isBinaryExpression(node) && /^(?:===|!==|in)$/.test(node.operatorToken.getText())) return;
     if (ts.isPropertyAssignment(node)) { if (node.name.getText() !== 'id') visit(node.initializer); return; }
     if (ts.isElementAccessExpression(node)) { visit(node.expression); return; }
@@ -44,8 +46,13 @@ function visibleStrings(file) {
 
 test('components use the plain vocabulary in visible text', () => {
   const files = readdirSync(new URL('../src/ui/', import.meta.url)).filter(name => name.endsWith('.tsx'));
-  const old = files.flatMap(visibleStrings).filter(([, text, file]) => OLD_TERMS.test(text) && !ALLOWED.some(([f, t]) => f === file && t === text));
+  const old = files.flatMap(file => visibleStrings(file)).filter(([, text, file]) => OLD_TERMS.test(text) && !ALLOWED.some(([f, t]) => f === file && t === text));
   assert.deepEqual(old.map(([at, text]) => `${at}: ${text}`), []);
+});
+
+test('the scanner reads case bodies and skips only the case label', () => {
+  const probe = "function f(kind) { switch (kind) { case 'stale': return 'Shown text'; default: return 'Fallback'; } }";
+  assert.deepEqual(visibleStrings('probe.tsx', probe).map(([, text]) => text), ['Shown text', 'Fallback']);
 });
 
 test('the vocabulary itself avoids the old terms, except in tooltips', () => {
