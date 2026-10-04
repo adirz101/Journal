@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync,
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
-import { filesView, inspectorTab, newSession, sessionStatus, slotsUsed } from './support/ui';
+import { chooseAgent, filesView, inspectorTab, newSession, sessionStatus, slotsUsed, startButton, startSession } from './support/ui';
 
 // Real Electron, real runtime process and node-pty, controlled fixture CLIs.
 test.skip(process.platform === 'win32', 'POSIX fixture CLIs; native Windows is verified separately');
@@ -77,13 +77,12 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
     for (let i = 0; i < 4; i++) {
-      await newSession(page); await page.getByLabel('Initial task').fill(`TASK_${i}`);
-      await page.getByRole('button', { name: i % 2 ? 'Start Codex' : 'Start Claude', exact: true }).click();
+      await startSession(page, i % 2 ? 'codex' : 'claude', { task: `TASK_${i}` });
       await expect(page.locator('.terminal-surface')).toContainText(`TASK TASK_${i}`);
     }
     // With every slot in use, the New session view still opens; Start waits and says why.
-    await newSession(page);
-    await expect(page.getByRole('button', { name: 'Start Claude', exact: true })).toBeDisabled();
+    await newSession(page); await chooseAgent(page, 'claude');
+    await expect(startButton(page)).toBeDisabled();
     await expect(page.getByText('4 sessions are running')).toBeVisible();
     await expect(slotsUsed(page, 4)).toBeVisible();
     await sessionButton(page, 'TASK_1').click();
@@ -138,8 +137,8 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     expect(f.launches()).toHaveLength(4);
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(sessionStatus(page)).toContainText('Stopped');
-    await newSession(page);
-    await expect(page.getByRole('button', { name: 'Start Claude', exact: true })).toBeEnabled();
+    await newSession(page); await chooseAgent(page, 'claude');
+    await expect(startButton(page)).toBeEnabled();
   } finally { await closeApp(app); f.cleanup(); }
 });
 
@@ -157,8 +156,7 @@ test('Ctrl+O opens a project outside the terminal and reaches the CLI inside it'
     const opens = () => app.evaluate(() => (globalThis as any).__opens as number);
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
     await expect.poll(opens).toBe(1);
-    await newSession(page); await page.getByLabel('Initial task').fill('PLAIN_TASK');
-    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await startSession(page, 'claude', { task: 'PLAIN_TASK' });
     await expect(page.locator('.terminal-surface')).toContainText('TASK PLAIN_TASK');
     await page.locator('.xterm-helper-textarea').focus();
     await pressKey(app, 'O', ['control']);
@@ -177,8 +175,7 @@ test('focus, new-session and panel shortcuts act on the UI while the terminal ha
   const terminal = page.locator('.xterm-helper-textarea'); const selectedTab = page.locator('.panel-tabs [role=tab][aria-selected=true]');
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    await newSession(page); await page.getByLabel('Initial task').fill('KEYS_TASK');
-    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await startSession(page, 'claude', { task: 'KEYS_TASK' });
     await expect(page.locator('.terminal-surface')).toContainText('TASK KEYS_TASK');
     // focus-terminal, from another control.
     await page.getByRole('button', { name: 'New session' }).focus();
@@ -193,7 +190,7 @@ test('focus, new-session and panel shortcuts act on the UI while the terminal ha
     await expect(terminal).toBeFocused();
     // new-session: no session selected and the task box has focus.
     await pressKey(app, 'N', [...cmd]);
-    await expect(page.getByLabel('Initial task')).toBeFocused();
+    await expect(page.getByLabel('Task', { exact: true })).toBeFocused();
     await expect(sessionButton(page, 'KEYS_TASK')).not.toHaveAttribute('aria-current', 'true');
     expect(f.launches()).toHaveLength(1);
   } finally { await closeApp(app); f.cleanup(); }
@@ -203,8 +200,7 @@ test('an app crash leaves sessions running in the runtime; the next launch recon
   const f = setup('crash'); let { app, page } = await open(f.env, f.project);
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    await newSession(page); await page.getByLabel('Initial task').fill('SURVIVE_CRASH');
-    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await startSession(page, 'claude', { task: 'SURVIVE_CRASH' });
     await expect(page.locator('.terminal-surface')).toContainText('TASK SURVIVE_CRASH');
     await typeLine(page, 'before-crash');
     await expect(page.locator('.terminal-surface')).toContainText('ECHO before-crash');
@@ -225,8 +221,7 @@ test('a runtime crash is reported, recovered as interrupted, and never resends t
   const f = setup('runtime'); const { app, page } = await open(f.env, f.project);
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    await newSession(page); await page.getByLabel('Initial task').fill('RUNTIME_CRASH');
-    await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
+    await startSession(page, 'codex', { task: 'RUNTIME_CRASH' });
     await expect(page.locator('.terminal-surface')).toContainText('TASK RUNTIME_CRASH');
     const before = f.runtimeInfo();
     process.kill(before.pid, 'SIGKILL');
@@ -245,8 +240,7 @@ test('keep-running quit is rediscovered; stopping reports and cleans detached le
   const f = setup('keep'); let { app, page } = await open({ ...f.env, JOURNAL_QUIT_POLICY: 'keep' }, f.project);
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    await newSession(page); await page.getByLabel('Initial task').fill('KEEP_RUNNING');
-    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await startSession(page, 'claude', { task: 'KEEP_RUNNING' });
     await expect(page.locator('.terminal-surface')).toContainText('TASK KEEP_RUNNING');
     await closeApp(app);
     expect(alive(f.launches()[0].pid)).toBe(true);
@@ -279,7 +273,7 @@ test('a managed worktree is created from the dialog, hosts a research session an
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
     writeFileSync(resolve(f.project, 'uncommitted.txt'), 'local\n');
-    await page.getByRole('button', { name: 'Workspaces…' }).click();
+    await page.getByRole('button', { name: 'Manage workspaces' }).click();
     await page.getByLabel('New branch').fill('journal/isolated');
     await page.getByRole('button', { name: 'Review', exact: true }).click();
     await expect(page.getByText(/will not be in the new worktree/)).toBeVisible();
@@ -287,23 +281,21 @@ test('a managed worktree is created from the dialog, hosts a research session an
     await expect(page.getByRole('list', { name: 'Workspaces' })).toContainText('managed · ready');
     await page.getByRole('button', { name: 'Done' }).click();
     await page.getByLabel('Workspace').selectOption({ label: 'Separate copy (worktree) · journal/isolated' });
-    await page.getByLabel('Read-only', { exact: true }).check();
-    await newSession(page); await page.getByLabel('Initial task').fill('WORKTREE_TASK');
-    await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
+    await startSession(page, 'codex', { task: 'WORKTREE_TASK', mode: 'read-only' });
     await expect(page.locator('.terminal-surface')).toContainText('TASK WORKTREE_TASK');
     await expect(page.locator('.terminal-surface')).toContainText('ARGS ["--sandbox","read-only"]');
     await expect(page.locator('.terminal-surface')).toContainText(/CWD .*worktrees/);
     await expect(sessionStatus(page)).toContainText('Separate copy (worktree) · ⑂ journal/isolated');
     await expect(sessionStatus(page)).toContainText('Read-only');
-    // Workspaces… lives in the New session view.
-    await newSession(page); await page.getByRole('button', { name: 'Workspaces…' }).click();
+    // Manage workspaces lives in the New session view.
+    await newSession(page); await page.getByRole('button', { name: 'Manage workspaces' }).click();
     await page.getByRole('button', { name: 'Remove worktree' }).click();
     await expect(page.getByText(/still running in it/)).toBeVisible();
     await page.getByRole('button', { name: 'Done' }).click();
     await sessionButton(page, 'WORKTREE_TASK').click();
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(sessionStatus(page)).toContainText('Stopped');
-    await newSession(page); await page.getByRole('button', { name: 'Workspaces…' }).click();
+    await newSession(page); await page.getByRole('button', { name: 'Manage workspaces' }).click();
     await page.getByRole('button', { name: 'Remove worktree' }).click();
     await expect(page.getByRole('list', { name: 'Workspaces' })).not.toContainText('journal/isolated');
     expect(existsSync(resolve(f.project, 'uncommitted.txt'))).toBe(true);
@@ -314,8 +306,7 @@ test('a branch switched outside Journal is picked up and live sessions say where
   const f = setup('switch'); const { app, page } = await open(f.env, f.project);
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    await newSession(page); await page.getByLabel('Initial task').fill('SWITCH_TASK');
-    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await startSession(page, 'claude', { task: 'SWITCH_TASK' });
     await expect(page.locator('.terminal-surface')).toContainText('TASK SWITCH_TASK');
     await expect(page.locator('.project-switcher .branch-badge')).toContainText('main');
     execFileSync('git', ['-C', f.project, 'switch', '-q', '-c', 'feat/elsewhere']);
@@ -329,9 +320,8 @@ test('a branch switched outside Journal is picked up and live sessions say where
 // Phase 2: stable slots, honest states and next needs-you.
 const slotKeys = () => process.platform === 'darwin' ? ['meta'] as const : ['alt'] as const;
 const slotAria = (n: number) => process.platform === 'darwin' ? `Meta+${n}` : `Alt+${n}`;
-async function startSession(page: Page, task: string, provider: 'Claude' | 'Codex') {
-  await newSession(page); await page.getByLabel('Initial task').fill(task);
-  await page.getByRole('button', { name: `Start ${provider}`, exact: true }).click();
+async function startAndWait(page: Page, task: string, provider: 'Claude' | 'Codex') {
+  await startSession(page, provider === 'Claude' ? 'claude' : 'codex', { task });
   await expect(page.locator('.terminal-surface')).toContainText(`TASK ${task}`);
 }
 
@@ -339,7 +329,7 @@ test('slot shortcuts keep their session across a renderer reload and after anoth
   const f = setup('slots'); const { app, page } = await open(f.env, f.project);
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    await startSession(page, 'SLOT_A', 'Claude'); await startSession(page, 'SLOT_B', 'Codex');
+    await startAndWait(page, 'SLOT_A', 'Claude'); await startAndWait(page, 'SLOT_B', 'Codex');
     // Slot keys are ignored while a start or switch is still finishing (aria-busy);
     // once that settles, the first press selects.
     const select = async (key: string, task: string) => {
@@ -360,7 +350,7 @@ test('slot shortcuts keep their session across a renderer reload and after anoth
     await expect(sessionButton(page, 'SLOT_A')).not.toHaveAttribute('aria-keyshortcuts');
     await select('2', 'SLOT_B');
     await expect(sessionButton(page, 'SLOT_B')).toHaveAttribute('aria-keyshortcuts', slotAria(2));
-    await startSession(page, 'SLOT_C', 'Claude');
+    await startAndWait(page, 'SLOT_C', 'Claude');
     await expect(sessionButton(page, 'SLOT_C')).toHaveAttribute('aria-keyshortcuts', slotAria(1));
     await select('2', 'SLOT_B'); await select('1', 'SLOT_C');
     // The Active group lists sessions in slot order.
@@ -373,7 +363,7 @@ test('next needs-you jumps to a Claude session waiting for approval and shows wh
   const next = process.platform === 'darwin' ? ['meta'] as const : ['control', 'shift'] as const;
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    await startSession(page, 'CALM_ONE', 'Claude'); await startSession(page, 'ASKING_TWO', 'Claude');
+    await startAndWait(page, 'CALM_ONE', 'Claude'); await startAndWait(page, 'ASKING_TWO', 'Claude');
     // The fixture runs Journal's real hook with a PermissionRequest payload.
     await typeLine(page, 'perm TOKEN=abc123456 npm publish');
     await expect(page.locator('.terminal-surface')).toContainText('ASKED');
@@ -409,7 +399,7 @@ test('Codex shows Running with output time and limited status', async () => {
   const f = setup('codex-state'); const { app, page } = await open(f.env, f.project);
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    await startSession(page, 'CODEX_STATE', 'Codex');
+    await startAndWait(page, 'CODEX_STATE', 'Codex');
     const row = sessionButton(page, 'CODEX_STATE');
     await expect(row).toContainText('Running');
     // Output 600 ms after the key is not an echo, so it counts as agent output. Output
@@ -432,7 +422,7 @@ test('a fifth start is refused with the SLOTS_FULL code through the preload brid
   const f = setup('slots-full'); const { app, page } = await open(f.env, f.project);
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    for (let i = 0; i < 4; i++) await startSession(page, `FULL_${i}`, i % 2 ? 'Codex' : 'Claude');
+    for (let i = 0; i < 4; i++) await startAndWait(page, `FULL_${i}`, i % 2 ? 'Codex' : 'Claude');
     const fifth = async () => page.evaluate(async () => {
       const journal = (window as any).journal; const boot = await journal.request('bootstrap');
       const input = { projectId: boot.projects[0].id, provider: 'claude', task: '' };

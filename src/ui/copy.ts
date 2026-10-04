@@ -27,7 +27,7 @@ export const copy = {
     added: (date: string) => `You added this on ${date}`, git: (range: string) => `Drafted from Git (${range})`, upTo: (head: string) => `up to ${head}`,
     imported: (date: string) => `Imported on ${date}`, promoted: (branch: string) => `Proposed for all branches from ⑂ ${branch}`,
     basedOn: (where: string) => `Based on ${where}`, unchanged: 'file unchanged since you saved it', fileChanged: 'file changed',
-    atStart: 'checked when the session started', atPrepared: 'checked when this launch was prepared', onlyOn: (branch: string) => `only on ⑂ ${branch}`, anotherBranch: 'another branch', folderRemoved: 'its folder was removed from the project',
+    atStart: 'checked when the session started', whenYouStart: 'checked when you start', atPrepared: 'checked when this launch was prepared', onlyOn: (branch: string) => `only on ⑂ ${branch}`, anotherBranch: 'another branch', folderRemoved: 'its folder was removed from the project',
     notSent: 'Not sent yet', sentTo: (n: number) => n === 1 ? 'Sent to 1 session' : `Sent to ${n} sessions`,
     sentTip: 'Counted once per conversation, including resumes. Includes starts where Journal could not confirm delivery.',
     // Memory tab filters (board WrapUp): chips by category, then two attention toggles.
@@ -63,18 +63,25 @@ export const composer = {
   separateCopyHelp: 'Isolated from your other sessions. Journal never stashes, copies or force-removes your work.',
   start: (name: string) => `Start ${name}`, nativeStays: 'Your native login, settings and approvals stay with the CLI.',
   installed: (version: string | null) => version ? `Installed · ${version}` : 'Installed', signedIn: 'Signed in', signInNeeded: 'Sign in needed',
-  notInstalled: 'Not installed', install: 'Install…', signIn: 'Sign in…', checking: 'Checking…', unsupported: 'Unsupported version',
+  notInstalled: 'Not installed', install: 'Install…', installPage: 'Install page…', signIn: 'Sign in…', signInUnknown: 'Sign-in unknown', checking: 'Checking…', unsupported: 'Unsupported version',
   notCursor: 'Not the Cursor CLI', cantLaunch: 'Can’t launch',
   noPlan: (name: string) => `${name} has no plan mode. Choose Build or Read-only.`, noModes: 'This Cursor version has no modes. Choose Build.',
   slotsFull: '4 sessions are running. Stop one to start another.', runtimeDown: 'The runtime is reconnecting. Start is available again once it connects.',
-  agentMissing: (name: string) => `${name} isn’t installed on this computer.`,
+  // The action names the card's own button, so the reason beside Start says what to do next.
+  agentMissing: (name: string, action?: 'install' | 'page' | 'login') => `${name} isn’t installed on this computer.${action === 'install' ? ' Choose Install… on its card.' : action === 'page' ? ' Choose Install page… on its card.' : ''}`,
   updatesAsYouType: 'updates as you type', notes: 'Notes', size: 'Size', notChecked: 'Sources are checked when you start', checked: 'Sources checked',
   notesMatch: (n: number) => n === 1 ? '1 note matches' : `${n} notes match`, hoverHint: 'hover an underline',
   notesMatching: (word: string) => `Notes matching “${word}”`, matches: 'matches', leaveOutShort: 'Leave out',
   leaveOutTip: (mac: boolean) => `Tip: press ${mac ? '⌫' : 'Delete'} on a note to leave it out of this session only.`,
-  inspectAll: 'Inspect all', restore: 'Restore', relevantNone: 'No remembered note matches this task yet.',
+  inspectAll: 'Inspect all', restore: 'Restore', relevantNone: 'No remembered note matches this task yet.', relevantNoTask: 'Type a task to see matching notes.',
   relevantEmpty: 'Nothing here yet. After this session, I’ll suggest rules and lessons worth keeping. The ones you remember show up here when they match your task.',
-  previewFailed: (message: string) => `Preview unavailable: ${message}`,
+  previewFailed: (message: string) => `Preview unavailable: ${message}`, previewTimedOut: 'it took more than 20 seconds. Keep typing to try again.',
+  // Group B: the renderer's own words.
+  notesMatchingTask: 'Notes matching your task', pinned: 'Pinned', current: 'Current', checkedWhenYouStart: 'Checked when you start',
+  referencesHint: 'Paths and lines only; the agent reads the files itself.', referencesLabel: 'Files referenced for the next task',
+  matchesTerms: (terms: string[]) => `Matches ${terms.join(', ')}`, notIncludedChip: (n: number, reason: string) => `${n} ${reason}`,
+  inspectEmpty: 'Type a task in New session to see what the agent will know.', manageWorkspacesSuffix: ' workspaces', // visually hidden after "Manage": the button reads "Manage workspaces"
+  currentCheckout: (branch: string) => `Current checkout · ${branch}`, existingWorktree: (branch: string) => `Existing worktree · ${branch}`, folder: (name: string) => `Folder · ${name}`,
 } as const;
 
 export const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;

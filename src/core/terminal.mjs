@@ -143,7 +143,7 @@ export class TerminalManager extends EventEmitter {
     let cursor = null;
     if (provider === 'cursor') {
       cursor = await this.cursor.find();
-      if (!cursor?.path || !cursor.cursor) throw fail(ERROR_CODES.PROVIDER_MISSING, 'Cursor CLI is not installed. Install it from the Cursor provider row, then try again.');
+      if (!cursor?.path || !cursor.cursor) throw fail(ERROR_CODES.PROVIDER_MISSING, 'Cursor CLI is not installed. Choose Install… on the Cursor card in New session, then start again.');
       if (!cursor.supports?.resume || !cursor.supports?.createChat) throw fail(ERROR_CODES.PROVIDER_UNSUPPORTED, 'This Cursor CLI version cannot open a chat by its exact ID. Update it with "agent update".');
       if ((research || plan) && !cursor.supports?.mode) throw fail(ERROR_CODES.PROVIDER_UNSUPPORTED, `This Cursor CLI version has no ${research ? 'Ask' : 'Plan'} mode. Update it with "agent update", or start without ${research ? 'Read-only' : 'Plan'}.`);
     }

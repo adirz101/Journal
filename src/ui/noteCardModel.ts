@@ -87,8 +87,10 @@ export function originLine(note: Pick<Memory, 'status'> & Partial<Pick<Memory, '
 // source. A delivered snapshot (receipt) only knows its sources were current at launch.
 // title: the full location, also for "Check needed", whose text leaves the path out.
 // receiptState: a failed launch never started a session, so its sources read as checked
-// when the launch was prepared.
-export function evidenceLine(note: Memory, rootName?: string, variant?: NoteCardVariant, receiptState?: string): { text: string; tone: 'quiet' | 'amber'; title: string } | null {
+// when the launch was prepared. unchecked: nothing has checked the sources yet (the
+// composer's typing preview reads stored records only), so the line says they are checked
+// when you start and never that the file is unchanged.
+export function evidenceLine(note: Memory, rootName?: string, variant?: NoteCardVariant, receiptState?: string, unchecked?: boolean): { text: string; tone: 'quiet' | 'amber'; title: string } | null {
   const source = note.source;
   if (source.kind !== 'file' || !source.path) return null;
   const start = source.startLine; const end = source.endLine ?? start;
@@ -96,6 +98,7 @@ export function evidenceLine(note: Memory, rootName?: string, variant?: NoteCard
   const where = `${rootName ? `${rootName}/` : ''}${source.path}${lines}`;
   const based = (suffix: string) => ({ text: `${t.basedOn(where)} · ${suffix}`, tone: 'quiet' as const, title: where });
   if (variant === 'receipt') return based(receiptState === 'failed' ? t.atPrepared : t.atStart);
+  if (unchecked) return based(t.whenYouStart);
   switch (note.validation) {
     case 'stale': return { text: `${copy.checkNeeded} · ${t.fileChanged}`, tone: 'amber', title: where };
     case 'wrong-branch': return based(t.onlyOn(note.branch ?? t.anotherBranch));

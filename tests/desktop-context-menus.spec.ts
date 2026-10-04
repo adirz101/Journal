@@ -2,7 +2,7 @@ import { test, expect, _electron as electron, type ElectronApplication } from '@
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { currentProject, newSession, projectContextMenu, sessionStatus } from './support/ui';
+import { currentProject, newSession, projectContextMenu, sessionStatus, startSession } from './support/ui';
 
 test.skip(process.platform === 'win32', 'POSIX fixture CLIs');
 
@@ -52,8 +52,7 @@ console.log('PTY_READY '+JSON.stringify(process.argv.slice(2,4)));process.stdin.
     await menu(app, 'addFolder'); await projectButton.click({ button: 'right' });
     await expect(page.getByLabel('Workspace')).toContainText('Folder · extra');
     // Session menu while running: stop/interrupt, no resume.
-    await newSession(page); await page.getByLabel('Initial task').fill('Write the release notes');
-    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await startSession(page, 'claude', { task: 'Write the release notes' });
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY');
     const sessionButton = page.getByRole('button', { name: /^Claude Code: Write the release notes/ });
     await menu(app, null); await sessionButton.click({ button: 'right' });
@@ -86,8 +85,7 @@ console.log('PTY_READY '+JSON.stringify(process.argv.slice(2,4)));process.stdin.
     await expect(page.getByRole('button', { name: /^Claude Code: Resume · Notes draft/ })).toBeVisible();
     await page.getByRole('button', { name: 'Stop', exact: true }).click(); await expect(sessionStatus(page)).toContainText('Stopped');
     // Cancel changes nothing; "Stop and remove" stops the agent first, then removes it.
-    await newSession(page); await page.getByLabel('Initial task').fill('Throwaway run');
-    await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
+    await startSession(page, 'codex', { task: 'Throwaway run' });
     const throwaway = page.getByRole('button', { name: /^Codex: Throwaway run/ });
     await expect(throwaway).toBeVisible(); await expect.poll(() => launches().length).toBe(3);
     const throwawayPid = launches()[2].pid;
