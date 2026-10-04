@@ -8,6 +8,6 @@ document.documentElement.dataset.theme = storedAppearance();
 // A terminal measures its cell size when it opens. Load the bundled monospace
 // font first, so it measures JetBrains Mono rather than a fallback. Bounded:
 // a font problem never keeps the window from rendering.
-const fonts = Promise.all(['400 13px', '600 13px'].map(font => document.fonts.load(`${font} "JetBrains Mono"`)));
+const fonts = Promise.all(['400 13px', '600 13px', 'italic 400 13px', 'italic 600 13px'].map(font => document.fonts.load(`${font} "JetBrains Mono"`)));
 void Promise.race([fonts, new Promise(resolve => setTimeout(resolve, 1500))]).catch(() => {})
   .finally(() => createRoot(document.getElementById('root')!).render(<App />));

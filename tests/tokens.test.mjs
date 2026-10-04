@@ -135,8 +135,12 @@ test('the terminal font stack is the --font-mono token', async () => {
 
 test('fonts: italic faces are bundled and ligatures are off for the terminal and the editor', () => {
   const fonts = readFileSync(new URL('../src/ui/fonts.css', import.meta.url), 'utf8');
-  for (const subset of ['latin', 'latin-ext']) assert.ok(fonts.includes(`jetbrains-mono-${subset}-400-italic.woff2`), `${subset} italic`);
-  assert.match(fonts, /font-style:italic/);
-  const styles = readFileSync(new URL('../src/ui/styles.css', import.meta.url), 'utf8');
-  assert.match(styles, /\.xterm,\.cm-scroller\{font-variant-ligatures:none\}/);
+  for (const weight of [400, 600]) for (const subset of ['latin', 'latin-ext']) assert.ok(fonts.includes(`jetbrains-mono-${subset}-${weight}-italic.woff2`), `${subset} ${weight} italic`);
+  assert.equal([...fonts.matchAll(/font-style:italic/g)].length, 4, 'four italic faces');
+  const main = readFileSync(new URL('../src/ui/main.tsx', import.meta.url), 'utf8');
+  for (const font of ['italic 400 13px', 'italic 600 13px']) assert.ok(main.includes(`'${font}'`), `${font} is preloaded`);
+  // Parse the rules rather than matching one spelling: some rule whose selector list covers both .xterm and .cm-scroller turns ligatures off.
+  const styles = readFileSync(new URL('../src/ui/styles.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = [...styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(([, selector, body]) => ({ selectors: selector.split(',').map(part => part.trim()), body }));
+  assert.ok(rules.some(rule => rule.selectors.includes('.xterm') && rule.selectors.includes('.cm-scroller') && /font-variant-ligatures\s*:\s*none/.test(rule.body)));
 });

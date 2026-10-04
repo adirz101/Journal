@@ -54,9 +54,9 @@ process.stdin.on('data',data=>{
     // JetBrains Mono ships inside the app (CSP font-src 'self') and the terminal uses it.
     expect(await page.evaluate(() => [...document.fonts].some(face => face.family.replace(/"/g, '') === 'JetBrains Mono' && face.status === 'loaded'))).toBe(true);
     await expect(page.locator('.xterm-rows')).toHaveCSS('font-family', /^"JetBrains Mono"/);
-    // Semibold (bold) and italic faces are bundled too; font-synthesis is off, so a missing face would render upright or thin.
-    await page.evaluate(() => Promise.all([document.fonts.load('600 13px "JetBrains Mono"'), document.fonts.load('italic 400 13px "JetBrains Mono"')]));
-    expect(await page.evaluate(() => [document.fonts.check('600 13px "JetBrains Mono"'), document.fonts.check('italic 400 13px "JetBrains Mono"')])).toEqual([true, true]);
+    // Semibold (bold), italic and bold italic faces are bundled too; font-synthesis is off, so a missing face would render upright or thin.
+    await page.evaluate(() => Promise.all([document.fonts.load('600 13px "JetBrains Mono"'), document.fonts.load('italic 400 13px "JetBrains Mono"'), document.fonts.load('italic 600 13px "JetBrains Mono"')]));
+    expect(await page.evaluate(() => [document.fonts.check('600 13px "JetBrains Mono"'), document.fonts.check('italic 400 13px "JetBrains Mono"'), document.fonts.check('italic 600 13px "JetBrains Mono"')])).toEqual([true, true, true]);
     // The terminal is a real native PTY; user input traverses the preload and owned session.
     await page.locator('.xterm-helper-textarea').pressSequentially('hello-terminal');
     await page.locator('.xterm-helper-textarea').press('Enter');
