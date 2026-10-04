@@ -14,10 +14,15 @@ const COMPONENT_CODE = new Set(['key', 'side', 'provider', 'kind', 'id', 'classN
 // Calls whose string arguments are code: IPC actions, state values, storage keys, DOM queries.
 // Object literals passed to these calls are not scanned at all (IPC payloads are code).
 const CODE_CALLS = /^(?:api|setPanel|useState|useRef|getItem|setItem|addEventListener|removeEventListener|querySelector|includes|startsWith|has|get|set|CustomEvent|read)$/;
-// Code values that look like old terms: [file, text, why]. Each must still be present.
+// Code values that look like old terms: [file, text, position, why]. The position
+// (see where()) keeps the same word elsewhere in the file visible to the scan.
+// Each entry must still be present.
 const ALLOWED = [
-  ['KnowledgeForm.tsx', 'brief', 'category code (stored data)'], ['KnowledgeForm.tsx', 'constraint', 'category code (stored data)'],
-  ['KnowledgePanel.tsx', 'brief', 'category code passed to the note form'],
+  ['KnowledgeForm.tsx', 'brief', 'array element', 'category codes offered as select option values'],
+  ['KnowledgeForm.tsx', 'constraint', 'array element', 'category codes offered as select option values'],
+  ['KnowledgeForm.tsx', 'constraint', 'operand of ??', 'default category code for a new note'],
+  ['KnowledgeForm.tsx', 'brief', 'conditional value', 'category code of a reviewed draft'],
+  ['KnowledgePanel.tsx', 'brief', 'property initialCategory', 'category code passed to the note form'],
 ];
 // Visible strings kept until a later phase of the UX redesign replaces them: [file, text, phase].
 // Each must still be present, so an entry is removed when its phase lands.
@@ -26,7 +31,17 @@ const DEFERRED = [
   ['App.tsx', 'Preview context ↗', 'Phase 4'], ['App.tsx', 'Initial task', 'Phase 4'],
   ['KnowledgeForm.tsx', 'Save for review', 'Phase 6'], ['App.tsx', 'Native session ID', 'Phase 6'],
 ];
-const exempt = (file, text) => [...ALLOWED, ...DEFERRED].some(([f, t]) => f === file && t === text);
+const exempt = ([, text, file, position]) => ALLOWED.some(([f, t, p]) => f === file && t === text && p === position) || DEFERRED.some(([f, t]) => f === file && t === text);
+// The syntactic position of a string, so an allow-list entry names one use.
+function where(node) {
+  const parent = node.parent;
+  if (ts.isPropertyAssignment(parent)) return `property ${parent.name.getText()}`;
+  if (ts.isArrayLiteralExpression(parent)) return 'array element';
+  if (ts.isBinaryExpression(parent)) return `operand of ${parent.operatorToken.getText()}`;
+  if (ts.isJsxAttribute(parent)) return `attribute ${parent.name.getText()}`;
+  if (ts.isConditionalExpression(parent)) return 'conditional value';
+  return ts.isJsxText(node) ? 'JSX text' : ts.SyntaxKind[parent.kind];
+}
 
 // Every string a user can see or hear: JSX text and string or template literals,
 // except code positions (types, imports, comparisons, object keys, code attributes and calls).
@@ -49,7 +64,7 @@ function visibleStrings(file, code = readFileSync(new URL(`../src/ui/${file}`, i
       return;
     }
     const text = ts.isJsxText(node) || ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node) ? node.text.trim() : '';
-    if (text) found.push([`${file}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}`, text, file]);
+    if (text) found.push([`${file}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1}`, text, file, where(node)]);
     ts.forEachChild(node, visit);
   };
   visit(source);
@@ -59,15 +74,23 @@ function visibleStrings(file, code = readFileSync(new URL(`../src/ui/${file}`, i
 test('components use the plain vocabulary in visible text', () => {
   const files = readdirSync(new URL('../src/ui/', import.meta.url)).filter(name => name.endsWith('.tsx'));
   const strings = files.flatMap(file => visibleStrings(file));
-  const old = strings.filter(([, text, file]) => OLD_TERMS.test(text) && !exempt(file, text));
+  const old = strings.filter(entry => OLD_TERMS.test(entry[1]) && !exempt(entry));
   assert.deepEqual(old.map(([at, text]) => `${at}: ${text}`), []);
-  const missing = [...ALLOWED, ...DEFERRED].filter(([f, t]) => !strings.some(([, text, file]) => file === f && text === t));
+  const missing = [...ALLOWED.filter(([f, t, p]) => !strings.some(([, text, file, position]) => file === f && text === t && position === p)),
+    ...DEFERRED.filter(([f, t]) => !strings.some(([, text, file]) => file === f && text === t))];
   assert.deepEqual(missing, [], 'remove allow-list entries whose string is gone');
 });
 
 test('the scanner reads case bodies and skips only the case label', () => {
   const probe = "function f(kind) { switch (kind) { case 'stale': return 'Shown text'; default: return 'Fallback'; } }";
   assert.deepEqual(visibleStrings('probe.tsx', probe).map(([, text]) => text), ['Shown text', 'Fallback']);
+});
+
+test('an allowed code value does not exempt the same word shown elsewhere in the file', () => {
+  const probe = "export const F = () => { const [c] = useLocal(x ?? 'constraint'); return <p title={c}>constraint</p>; };";
+  const strings = visibleStrings('KnowledgeForm.tsx', probe);
+  assert.deepEqual(strings.map(([, text, , position]) => [text, position]), [['constraint', 'operand of ??'], ['constraint', 'JSX text']]);
+  assert.deepEqual(strings.filter(entry => !exempt(entry)).map(([, text, , position]) => [text, position]), [['constraint', 'JSX text']]);
 });
 
 test('the vocabulary itself avoids the old terms, except in tooltips', () => {
