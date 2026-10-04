@@ -741,6 +741,11 @@ Each task lists **files**, **what to build** (signatures and behaviour), **tests
   - Shortcuts ⌥⌘1–3 / Alt+Shift+1–3 through the router.
 - **Tests:** update every `getByRole('tab', …)` in the audit list; new tab names and the merged content render.
 
+**Phase 3 row states (from the 1.1d review; applies to 3.1 and 3.3)**
+- Selected sidebar rows today use a 2 px `::before` accent bar (out of flow, `inset-block:6px`, `Highlight` in forced colors) plus `--sel`, and hover to `--sel-hover`; the selected project carries `aria-current`.
+- File tree rows (`.tree-row`) ignore hover when selected instead. Decide one pattern for all Phase 3 rows (sidebar, inspector lists, palette) and apply it everywhere, with its tests.
+- Provider mark colors (Claude, Codex, Cursor) must be added to `tests/tokens.test.mjs` at 3:1 as non-text graphics against every surface, including `--sel` and `--sel-hover`.
+
 **Task 3.4: Rails and overlay (F12)**
 - **Files:** `src/ui/ResizableWorkspace.tsx`, `src/ui/styles.css`.
 - **Build:**
