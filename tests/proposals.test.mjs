@@ -110,7 +110,7 @@ test('a branch suggestion is remembered on the branch it came from, not the chec
   const memory = f.store.acceptProposal(created.id);
   assert.equal(memory.scope, 'branch'); assert.equal(memory.branch, 'feature/flags');
   assert.equal(f.store.getProposal(created.id).state, 'accepted');
-  assert.throws(() => f.store.setMemoryStatus(memory.id, 'active'), /branch changed/, 'It is approved on its own branch');
+  assert.throws(() => f.store.setMemoryStatus(memory.id, 'active'), /check out that branch to approve it/, "It is approved on its own branch");
   f.git('checkout', '-q', 'feature/flags'); f.store.setMemoryStatus(memory.id, 'active');
   assert.equal(f.store.prepareContext(f.project.id, 'Feature flags default').items.length, 1);
   f.git('checkout', '-q', 'main');
@@ -153,4 +153,35 @@ test('a branch suggestion made without a branch checked out is refused rather th
   f.store.db.prepare(`UPDATE proposals SET body=json_set(body,'$.scope','branch','$.branch',json('null')) WHERE id=?`).run(created.id);
   assert.throws(() => f.store.acceptProposal(created.id), /without a branch checked out/);
   assert.equal(f.store.getProposal(created.id).state, 'open', 'Nothing changed');
+});
+
+test('revising a note bound to another branch is refused; approving it elsewhere names its branch', t => {
+  const f = fixture(t); f.git('branch', 'feature/flags');
+  const s = f.session('Rule: Feature flags on this branch default to off.', { survivors: [] });
+  const [created] = f.store.generateProposals(s.id);
+  f.store.db.prepare(`UPDATE proposals SET body=json_set(body,'$.scope','branch','$.branch','feature/flags') WHERE id=?`).run(created.id);
+  const memory = f.store.acceptProposal(created.id);
+  const revise = () => f.store.proposeMemory(f.project.id, { memoryId: memory.id, statement: 'Feature flags default to off everywhere', category: memory.category, scope: 'branch', area: '', source: { kind: 'user', note: 'fixture' } });
+  assert.throws(revise, /This note belongs to branch feature\/flags; check out that branch to revise it/);
+  assert.throws(() => f.store.setMemoryStatus(memory.id, 'active'), /belongs to branch feature\/flags; check out that branch to approve it/);
+});
+
+test('a suggestion made in a worktree is remembered on the worktree branch while the main checkout is elsewhere', t => {
+  const f = fixture(t);
+  const ws = f.store.createWorkspace(f.project.id, { branch: 'feature/flags', base: 'main' }, join(f.repo, '..', 'worktrees'));
+  const s = f.session('', { survivors: [], workspaceId: ws.id, branch: 'feature/flags' });
+  f.store.appendEvent(s.id, 'command-start', { toolUseId: 'a', command: 'npm test', test: true });
+  f.store.appendEvent(s.id, 'command-end', { toolUseId: 'a', status: 'succeeded', exitCode: 0 });
+  const proposal = f.store.generateProposals(s.id).find(p => p.kind === 'test-command');
+  assert.equal(proposal.scope, 'branch'); assert.equal(proposal.branch, 'feature/flags');
+  assert.equal(f.store.project(f.project.id).branch, 'main');
+  assert.equal(f.store.acceptProposal(proposal.id).branch, 'feature/flags');
+});
+
+test('branch names are matched by exact spelling and reported when invalid', t => {
+  const f = fixture(t); f.git('branch', 'feature/flags');
+  const input = { statement: 'Feature flags default to off', category: 'constraint', scope: 'branch', area: '', source: { kind: 'user', note: 'fixture' } };
+  assert.throws(() => f.store.proposeMemory(f.project.id, input, { branch: 'Feature/Flags' }), /no longer exists.*Dismiss it/);
+  assert.throws(() => f.store.proposeMemory(f.project.id, input, { branch: 'bad..name' }), /Invalid branch name: bad\.\.name/);
+  assert.throws(() => f.store.proposeMemory(f.project.id, { ...input, source: { kind: 'user', rootId: 'x' } }, { branch: 'nope' }), /additional folders/);
 });

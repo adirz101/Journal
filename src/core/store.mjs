@@ -195,7 +195,7 @@ export class JournalStore {
     });
     return { removed: id, deletedData: true };
   }
-  // `bound.branch` is internal (never reachable from the renderer): it binds branch-scoped knowledge to the
+  // The internal `branch` option (never reachable from the renderer) binds branch-scoped knowledge to the
   // branch a suggestion came from instead of the checked-out one. Briefs always follow the checkout.
   proposeMemory(projectId, input, { branch: boundBranch = null } = {}) {
     const project = this.project(projectId);
@@ -204,12 +204,16 @@ export class JournalStore {
     const scope = choice(input.scope, ['checkout', 'branch'], 'scope');
     const target = scope === 'branch' ? boundBranch ?? project.branch : null;
     if (scope === 'branch' && !target) throw new Error('Branch scope requires a named branch');
+    if (input.source?.rootId && scope === 'branch') throw new Error('Branch scope applies to the primary repository; use project scope for knowledge from additional folders');
     if (scope === 'branch' && boundBranch) {
       if (category === 'brief') throw new Error('A project brief follows the checked-out branch');
-      // Validated before it reaches Git, so the name can never be read as an option.
-      if (typeof boundBranch !== 'string' || boundBranch.startsWith('-') || boundBranch.length > 200) throw new Error('Invalid branch name');
-      try { git(project.root, ['check-ref-format', '--branch', boundBranch]); } catch { throw new Error('Invalid branch name'); }
-      try { git(project.root, ['rev-parse', '--verify', '--quiet', `refs/heads/${boundBranch}`]); } catch { throw new Error(`The branch ${boundBranch} no longer exists; this suggestion cannot be remembered`); }
+      // Cheap checks first, then Git; the name is validated so it can never be read as an option.
+      const invalid = () => new Error(`Invalid branch name: ${String(boundBranch).slice(0, 80)}`);
+      if (typeof boundBranch !== 'string' || boundBranch.startsWith('-') || boundBranch.length > 200) throw invalid();
+      try { git(project.root, ['check-ref-format', '--branch', boundBranch]); } catch { throw invalid(); }
+      // Exact spelling: a case-insensitive file system must not match feature/Flags to feature/flags.
+      let listed = ''; try { listed = git(project.root, ['for-each-ref', '--format=%(refname:short)', `refs/heads/${boundBranch}`]); } catch { /* treated as missing */ }
+      if (listed !== boundBranch) throw new Error(`The branch ${boundBranch} no longer exists; this suggestion cannot be remembered. Dismiss it to clear it from your suggestions.`);
     }
     const area = relativePath(input.area ?? '', true);
     // Optional environment qualifier ("macOS only", "with Docker running").
@@ -217,7 +221,6 @@ export class JournalStore {
     // A revision of a replacement keeps what it replaces unless told otherwise.
     const carried = !input.supersedes && input.memoryId ? (() => { try { return this.getMemory(input.memoryId).supersedes?.id ?? null; } catch { return null; } })() : null;
     const supersedes = input.supersedes || carried ? this.getMemory(input.supersedes || carried) : null;
-    if (input.source?.rootId && scope === 'branch') throw new Error('Branch scope applies to the primary repository; use project scope for knowledge from additional folders');
     if (supersedes && supersedes.projectId !== projectId) throw new Error('Superseded memory belongs to another project');
     if (supersedes && (supersedes.id === input.memoryId || (supersedes.status !== 'active' && !carried))) throw new Error('Only another approved claim can be superseded; revise a claim to change it');
     if (category === 'brief' && area) throw new Error('Project briefs apply to the whole checkout; leave the area empty');
@@ -227,6 +230,7 @@ export class JournalStore {
     if (input.memoryId) {
       previous = this.getMemory(input.memoryId);
       if (previous.projectId !== projectId) throw new Error('Memory belongs to another project');
+      if (previous.scope === 'branch' && scope === 'branch' && !boundBranch && previous.branch !== project.branch) throw new Error(`This note belongs to branch ${previous.branch}; check out that branch to revise it`);
     }
     const id = previous?.id ?? randomUUID();
     const revision = (previous?.revision ?? 0) + 1;
@@ -313,7 +317,11 @@ export class JournalStore {
     if (reason !== null) choice(reason, ['incorrect', 'superseded', 'withdrawn'], 'reason');
     const memory = this.getMemory(id);
     if (status === 'active' && memory.status !== 'candidate') throw new Error('Only a candidate can be approved');
-    if (status === 'active' && this.validation(this.project(memory.projectId), memory) !== 'current') throw new Error('Evidence or branch changed; revise before approving');
+    if (status === 'active') {
+      const validation = this.validation(this.project(memory.projectId), memory);
+      if (validation === 'wrong-branch') throw new Error(`This note belongs to branch ${memory.branch}; check out that branch to approve it`);
+      if (validation !== 'current') throw new Error('Evidence or branch changed; revise before approving');
+    }
     this.transaction(() => {
       this.db.prepare('UPDATE memories SET status=?, pinned=CASE WHEN ?=\'active\' THEN pinned ELSE 0 END WHERE id=?').run(status, status, id);
       // Approving a replacement retires the claim it supersedes.
@@ -618,7 +626,7 @@ export class JournalStore {
     const proposal = this.getProposal(id);
     if (proposal.state !== 'open') throw new Error('This proposal was already handled');
     if (proposal.kind === 'branch-status') throw new Error('Use Propose branch update for status proposals');
-    if (proposal.scope === 'branch' && !proposal.branch) throw new Error('This suggestion was made without a branch checked out, so Journal cannot tell which branch it belongs to');
+    if (proposal.scope === 'branch' && !proposal.branch) throw new Error('This suggestion was made without a branch checked out, so Journal cannot tell which branch it belongs to. Dismiss it to clear it from your suggestions.');
     if (proposal.evidence?.sessionId) this.getSession(proposal.evidence.sessionId);
     const memory = this.proposeMemory(proposal.projectId, { statement: proposal.statement, category: proposal.category, scope: proposal.scope, area: '', source: proposal.source },
       proposal.scope === 'branch' ? { branch: proposal.branch } : undefined);
