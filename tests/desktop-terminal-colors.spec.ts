@@ -2,7 +2,7 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { setTheme, skipFirstRun, startSession } from './support/ui';
+import { openSettings, setTheme, skipFirstRun, startSession } from './support/ui';
 import { fixtureEnv } from './support/env';
 
 // Terminal colour queries (OSC 10/11, DA1) and the COLORFGBG hint, with a fixture
@@ -92,9 +92,16 @@ test('switching the appearance reports it to an agent that asked, which then see
     await startSession(page, 'claude');
     await ready(page);
     await expect.poll(() => replies(f.input(), 11)).toEqual([LIGHT_BG]);
-    await setTheme(page, 'dark');
+    // Switched in Settings: the agent asks again while the dialog is still open, and the window's
+    // DA1 answer must still reach it (keys are dropped while a dialog is open; reports are not).
+    await openSettings(page, 'appearance');
+    const settings = page.getByRole('dialog', { name: 'Settings' });
+    await settings.getByRole('radio', { name: 'Dark', exact: true }).check();
     await expect.poll(() => f.input()).toContain('\x1b[?997;1n');
     await expect.poll(() => replies(f.input(), 11)).toEqual([LIGHT_BG, DARK_BG]);
+    await expect.poll(() => da1(f.input())).toBe(2);
+    await expect(settings).toBeVisible();
+    await settings.getByRole('button', { name: 'Done', exact: true }).click();
     await setTheme(page, 'light');
     await expect.poll(() => f.input()).toContain('\x1b[?997;2n');
     await expect.poll(() => replies(f.input(), 11)).toEqual([LIGHT_BG, DARK_BG, LIGHT_BG]);

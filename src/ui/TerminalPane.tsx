@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import '@xterm/xterm/css/xterm.css';
 import { api, errorCode, type OutputSnapshot, type TerminalEvent } from './types';
-import { modalDialogActive } from './modal';
+import { modalDialogActive, TERMINAL_REPORT } from './modal';
 import { MONO_FONT, monoFontFamily, terminalThemes, type Appearance } from './theme';
 
 // What a wrap-up can ask of an ended session's terminal (Phase 6): its last lines as text.
@@ -92,7 +92,10 @@ export function TerminalPane({ sessionId, live, appearance, onError, onUnavailab
     attach();
     // Keys never reach the agent while a modal dialog is open or about to open (a key typed right
     // after ⌘K or ⌘P, before the palette has focus, is dropped: modal.ts expectModalDialog).
-    const input = terminal.onData(data => { if (acceptInput && liveRef.current && !modalDialogActive()) void api('write', { id: sessionId, data }).catch(failed); });
+    // Replies the terminal itself sends to the CLI's queries (device attributes, cursor position,
+    // mode and colour reports) still go through: they are not keys, and a CLI waiting for one would
+    // otherwise hang (Claude Code asks again when the appearance changes, from the Settings dialog).
+    const input = terminal.onData(data => { if (acceptInput && liveRef.current && (!modalDialogActive() || TERMINAL_REPORT.test(data))) void api('write', { id: sessionId, data }).catch(failed); });
     // No session ID: whichever terminal is shown (an overlay returning focus).
     // A read-only preview takes focus only when asked for by its session ID; a hidden one never.
     const focus = (event: Event) => {
