@@ -19,7 +19,9 @@ export interface ComposerProps {
   onStart(): void;                       // App's start(provider) with modeFlags(mode)
   onInspect(receipt: Receipt): void;     // set the receipt, show the inspector's Session tab
   onChecked?(receipt: Receipt): void;    // every applied full check (the inspector follows a preview it shows)
-  cursor: { checking: boolean; note: string; onInstall(): void; onLogin(): void; onCheck(): void };
+  // Provider rows (Phase 7, every provider): install, the install page, sign in and check again.
+  // note: Cursor's result after its install or sign-in (shown in Cursor's status row).
+  providers: { checking: boolean; note: string; onInstall(p: Provider): void; onInstallPage(p: Provider): void; onLogin(p: Provider): void; onCheck(p: Provider): void };
   startError: { code?: string; message: string } | null;
   knowledgeVersion: number;
 }
@@ -99,12 +101,13 @@ export function Composer(props: ComposerProps) {
                 onClick={() => props.onProvider(p)} onKeyDown={event => { if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); props.onProvider(p); } else roving(event, AGENT_ORDER, provider, props.onProvider); }}>
                 <ProviderMark provider={p} size={24} /><span className="agent-name">{PROVIDER_NAMES[p]}</span><span className={`agent-sub tone-${status.tone}`} id={`agent-sub-${p}`}>{status.sub}</span>
               </div>
-              {status.action && p === 'cursor' && <button type="button" className="agent-action link" disabled={props.cursor.checking}
-                onClick={status.action === 'install' ? props.cursor.onInstall : props.cursor.onLogin}>{status.action === 'install' ? composer.install : composer.signIn}</button>}
+              {status.action && <button type="button" className="agent-action link" disabled={props.providers.checking} aria-describedby={`agent-sub-${p}`}
+                onClick={() => (status.action === 'install' ? props.providers.onInstall : status.action === 'page' ? props.providers.onInstallPage : props.providers.onLogin)(p)}>
+                {status.action === 'install' ? composer.install : status.action === 'page' ? composer.installPage : composer.signIn}<span className="visually-hidden"> {PROVIDER_NAMES[p]}</span></button>}
             </div>;
           })}
         </div>
-        {provider === 'cursor' && <CursorStatus agent={agent} checking={props.cursor.checking} note={props.cursor.note} onInstall={props.cursor.onInstall} onLogin={props.cursor.onLogin} onCheck={props.cursor.onCheck} />}
+        {provider === 'cursor' && <CursorStatus agent={agent} checking={props.providers.checking} note={props.providers.note} onInstall={() => props.providers.onInstall('cursor')} onLogin={() => props.providers.onLogin('cursor')} onCheck={() => props.providers.onCheck('cursor')} />}
       </div>
 
       <div className="composer-field">

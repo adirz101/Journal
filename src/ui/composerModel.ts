@@ -32,18 +32,26 @@ export function modeBlock(provider: Provider, agent: AgentInfo | null | undefine
 // An agent is ready to start when it is installed and nothing needs the user first.
 export const agentReady = (agent: AgentInfo | null | undefined) => !!agent && agent.available && (agent.state ?? 'ready') === 'ready';
 
-export interface AgentCard { sub: string; tone: 'ok' | 'warn' | 'muted'; action?: 'install' | 'login' }
-// What an agent card says. It never claims "Signed in" without sign-in data:
-// only Cursor reports it (auth), Claude and Codex do not before Phase 7.
+export interface AgentCard { sub: string; tone: 'ok' | 'warn' | 'muted'; action?: 'install' | 'page' | 'login' }
+// What an agent card says (Phase 7 data for every provider). "Signed in" and "Sign in
+// needed" appear only when the agent's own status check answered (auth); a check that
+// could not conclude says so, and an agent without a status check claims neither.
+// Install runs the official command when this platform has one; otherwise the card
+// offers the install page. Sign in is offered when the CLI documents its sign-in command.
 export function agentCard(agent: AgentInfo | null | undefined): AgentCard {
   if (!agent || agent.state === 'checking') return { sub: composer.checking, tone: 'muted' };
-  if (agent.state === 'login-required' || agent.auth === 'signed-out') return { sub: composer.signInNeeded, tone: 'warn', ...(agent.supports?.login ? { action: 'login' as const } : {}) };
+  const login = agent.supports?.login ? { action: 'login' as const } : {};
+  if (agent.state === 'login-required' || agent.auth === 'signed-out') return { sub: composer.signInNeeded, tone: 'warn', ...login };
   if (agent.state === 'unsupported') return { sub: composer.unsupported, tone: 'warn' };
   if (agent.state === 'not-cursor') return { sub: composer.notCursor, tone: 'warn' };
   if (agent.state === 'unlaunchable') return { sub: composer.cantLaunch, tone: 'warn' };
-  if (!agent.available || agent.state === 'missing') return { sub: composer.notInstalled, tone: 'muted', ...(agent.provider === 'cursor' ? { action: 'install' as const } : {}) };
-  return { sub: `${composer.installed(agent.version)}${agent.auth === 'signed-in' ? ` · ${composer.signedIn}` : ''}`, tone: 'ok' };
+  if (!agent.available || agent.state === 'missing') return { sub: composer.notInstalled, tone: 'muted', ...installAction(agent) };
+  const installed = composer.installed(agent.version);
+  if (agent.auth === 'signed-in') return { sub: `${installed} · ${composer.signedIn}`, tone: 'ok' };
+  if (agent.auth === 'unknown') return { sub: `${installed} · ${composer.signInUnknown}`, tone: 'ok', ...login };
+  return { sub: installed, tone: 'ok' };
 }
+const installAction = (agent: AgentInfo): Pick<AgentCard, 'action'> => agent.commands?.install ? { action: 'install' } : agent.commands?.installPage ? { action: 'page' } : {};
 
 // The card's tooltip keeps the technical detail the old provider line showed.
 export function agentTitle(agent: AgentInfo | null | undefined): string | undefined {
@@ -65,7 +73,11 @@ export function startBlock({ connected, liveCount, busy, agent, provider, mode }
   if (busy) return '';
   if (!connected) return composer.runtimeDown;
   if (liveCount >= MAX_LIVE) return composer.slotsFull;
-  if (!agentReady(agent)) return !agent || agent.state === 'missing' || (!agent.available && !agent.state) ? composer.agentMissing(PROVIDER_NAMES[provider]) : `${PROVIDER_NAMES[provider]}: ${agentCard(agent).sub}`;
+  if (!agentReady(agent)) {
+    const card = agentCard(agent);
+    if (!agent || agent.state === 'missing' || (!agent.available && !agent.state)) return composer.agentMissing(PROVIDER_NAMES[provider], card.action);
+    return `${PROVIDER_NAMES[provider]}: ${card.sub}`;
+  }
   return modeBlock(provider, agent, mode);
 }
 

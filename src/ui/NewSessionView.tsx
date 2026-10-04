@@ -1,10 +1,12 @@
+import { memo } from 'react';
 import { Composer, type ComposerProps } from './Composer';
 import { composer } from './copy';
 
 // The main column while no session is selected: a header and the composer
 // (board B5). The column scrolls; no launch bar sits above a running terminal,
-// so a session's terminal keeps the whole column.
-export function NewSessionView(props: ComposerProps) {
+// so a session's terminal keeps the whole column. Memoized: App passes stable
+// callbacks, so timeline and terminal events never re-render the composer.
+export const NewSessionView = memo(function NewSessionView(props: ComposerProps) {
   const { project } = props;
   return <div className="new-session-view">
     <div className="new-session-inner">
@@ -15,4 +17,4 @@ export function NewSessionView(props: ComposerProps) {
       <Composer {...props} />
     </div>
   </div>;
-}
+});

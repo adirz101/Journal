@@ -222,15 +222,42 @@ test('agent cards are honest', async () => {
     await expect(cards).not.toContainText('Signed in');
     const cursor = cards.getByRole('radio', { name: 'Cursor', exact: true });
     await expect(cursor).toContainText('Not installed');
-    await expect(cards.getByRole('button', { name: 'Install…', exact: true })).toBeVisible();
+    await expect(cards.getByRole('button', { name: 'Install… Cursor', exact: true })).toBeVisible();
     // Unavailable agents stay selectable, and Start says why it waits.
     await chooseAgent(page, 'cursor');
     await expect(startButton(page)).toBeDisabled();
-    await expect(page.getByRole('status').filter({ hasText: 'Cursor isn’t installed on this computer.' })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: 'Cursor isn’t installed on this computer. Choose Install… on its card.' })).toBeVisible();
     // Arrow keys move the choice (roving tabIndex).
     await cursor.focus(); await page.keyboard.press('Home');
     await expect(cards.getByRole('radio', { name: 'Claude Code', exact: true })).toBeFocused();
     await expect(cards.getByRole('radio', { name: 'Claude Code', exact: true })).toHaveAttribute('aria-checked', 'true');
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('a start refused for a missing agent checks that agent again', async () => {
+  // The Cursor CLI disappears after detection: the start fails with PROVIDER_MISSING, Journal
+  // asks main for a fresh check (instead of marking the card by hand) and the reason beside
+  // Start keeps saying what to do.
+  const f = setup();
+  const cursorCli = `#!${process.execPath}
+const a=process.argv.slice(2);
+if(a[0]==='--version'){console.log('2026.10.01-e373342');process.exit(0)}
+if(a[0]==='--help'){console.log('Start the Cursor Agent\\n  --resume [chatId]\\n  --mode <mode>\\n  login\\n  create-chat');process.exit(0)}
+if(a[0]==='status'){console.log(a.includes('--format')?JSON.stringify({authenticated:true}):'Logged in');process.exit(0)}
+process.exit(1)`;
+  const agent = resolve(f.root, 'bin', 'agent'); writeFileSync(agent, cursorCli); chmodSync(agent, 0o755);
+  const { app, page } = await open(f);
+  try {
+    const cursor = page.getByRole('radiogroup', { name: 'Agent' }).getByRole('radio', { name: 'Cursor', exact: true });
+    await expect(cursor).toContainText('Signed in');
+    await chooseAgent(page, 'cursor');
+    rmSync(agent);
+    await startButton(page).click();
+    await expect(cursor).toContainText('Not installed');
+    const reason = page.getByRole('form', { name: 'Start a session' }).locator('.start-reason');
+    await expect(reason).toHaveText('Cursor isn’t installed on this computer. Choose Install… on its card.');
+    await expect(startButton(page)).toBeDisabled();
+    await expect(page.getByRole('alert')).toHaveCount(0);
   } finally { await closeApp(app); f.cleanup(); }
 });
 

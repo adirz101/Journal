@@ -31,7 +31,7 @@ import journalWordmark from '../../assets/branding/journal-wordmark.png';
 import { storedAppearance, type Appearance } from './theme';
 import { composer, copy, shell } from './copy';
 import { keyLetter } from './keys';
-import { api, errorCode, isLive, PROVIDER_NAMES, type Bootstrap, type CommandId, type FileReference, type InspectorTab, type Memory, type Mode, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
+import { api, errorCode, isLive, PROVIDER_NAMES, type AgentInfo, type Bootstrap, type CommandId, type FileReference, type InspectorTab, type Memory, type Mode, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
 
 const MAX_SESSIONS = 4;
 const latest = (a: string | null | undefined, b: string | null | undefined) => !a ? b : !b ? a : a > b ? a : b;
@@ -279,11 +279,10 @@ export default function App() {
         // Another window or a stale count: all four slots are taken. Catch up and say so plainly.
         const code = errorCode(error);
         if (code === 'SLOTS_FULL') { void reloadSessions().catch(() => {}); if (!resumeFrom) { setStartError({ code, message: composer.slotsFull }); return; } throw new Error(copy.slotsFull(MAX_SESSIONS)); }
-        // The agent went missing since detection: check it again, and say so beside Start.
-        // Cursor is checked again; Claude and Codex have no status check, so their card says Not installed until Journal restarts.
+        // The agent went missing since detection: say so beside Start and check that provider
+        // again now (fresh), so its card follows what is installed instead of staying Not installed.
         if (code === 'PROVIDER_MISSING' && !resumeFrom) {
-          if (provider === 'cursor') void checkCursor();
-          else setBootstrap(current => current ? { ...current, agents: current.agents.map(a => a.provider === provider ? { ...a, available: false, state: 'missing' as const } : a) } : current);
+          void checkProvider(provider, true);
           setStartError({ code, message: error instanceof Error ? error.message : String(error) }); return;
         }
         throw error;
@@ -374,15 +373,35 @@ export default function App() {
     if (after === 'install') return next.available ? `Cursor CLI ${next.version} is installed${next.state === 'login-required' ? '. Sign in to continue.' : '.'}` : next.state === 'not-cursor' ? 'The installer finished, but the agent command Journal finds is not the Cursor CLI.' : 'The installer finished, but Journal cannot find the agent command yet. Check the installer output; if it asks you to update PATH, do so and restart Journal.';
     return next.auth === 'signed-in' ? 'Signed in to Cursor.' : next.auth === 'signed-out' ? 'Cursor still reports that you are not signed in.' : 'Journal could not confirm the sign-in. Try starting a Cursor session.';
   }
-  async function checkCursor() {
+  // Provider rows (Phase 7): check, install, open the install page and sign in, for every provider.
+  async function checkProvider(target: Provider, fresh = false) {
     setCheckingProvider(true);
     try {
-      const next = await api<NonNullable<typeof cursorAgent>>('providerStatus', { provider: 'cursor' });
-      setBootstrap(current => current ? { ...current, agents: current.agents.map(a => a.provider === 'cursor' ? next : a) } : current);
+      const next = await api<AgentInfo>('providerStatus', { provider: target, fresh });
+      setBootstrap(current => current ? { ...current, agents: current.agents.map(a => a.provider === target ? next : a) } : current);
     } catch (error) { failed(error); } finally { setCheckingProvider(false); }
   }
-  async function installCursor() { if (checkingProvider) return; setProviderNote(''); setCheckingProvider(true); try { const result = await api<{ id: string; command: string } | null>('providerInstall', { provider: 'cursor' }); if (result) setProcessView({ id: result.id, command: result.command, title: 'Install Cursor CLI', kind: 'install' }); } catch (error) { failed(error); } finally { setCheckingProvider(false); } }
-  async function loginCursor() { if (checkingProvider) return; setProviderNote(''); setCheckingProvider(true); try { const result = await api<{ id: string }>('providerLogin', { provider: 'cursor' }); setProcessView({ id: result.id, command: 'agent login', title: 'Sign in to Cursor', kind: 'login' }); } catch (error) { failed(error); } finally { setCheckingProvider(false); } }
+  const installTitle = (target: Provider) => target === 'cursor' ? 'Install Cursor CLI' : `Install ${PROVIDER_NAMES[target]}`;
+  async function installProvider(target: Provider) { if (checkingProvider) return; setProviderNote(''); setCheckingProvider(true); try { const result = await api<{ id: string; command: string } | null>('providerInstall', { provider: target }); if (result) setProcessView({ id: result.id, command: result.command, title: installTitle(target), kind: 'install' }); } catch (error) { failed(error); } finally { setCheckingProvider(false); } }
+  async function loginProvider(target: Provider) { if (checkingProvider) return; setProviderNote(''); setCheckingProvider(true); try { const result = await api<{ id: string; command?: string }>('providerLogin', { provider: target }); setProcessView({ id: result.id, command: result.command ?? (target === 'cursor' ? 'agent login' : undefined), title: `Sign in to ${target === 'cursor' ? 'Cursor' : PROVIDER_NAMES[target]}`, kind: 'login' }); } catch (error) { failed(error); } finally { setCheckingProvider(false); } }
+  const openInstallPage = (target: Provider) => void api('openInstallPage', { provider: target }).catch(failed);
+  // The composer's props stay the same object across renders unless their data changes, so
+  // timeline and terminal events re-render App without re-rendering the composer.
+  const composerLatest = useRef({ start, chooseProvider, installProvider, loginProvider, openInstallPage, checkProvider, provider, showInspector: layout.showInspector });
+  composerLatest.current = { start, chooseProvider, installProvider, loginProvider, openInstallPage, checkProvider, provider, showInspector: layout.showInspector };
+  const composerCallbacks = useMemo(() => ({
+    onWorkspace: (id: string) => setWorkspaceId(id), onManageWorkspaces: () => setWorkspaceDialog(true),
+    onRemoveReference: (index: number) => setReferences(current => current.filter((_, i) => i !== index)),
+    onProvider: (next: Provider) => composerLatest.current.chooseProvider(next), onMode: (next: Mode) => { setMode(next); setStartError(null); },
+    onStart: () => void composerLatest.current.start(composerLatest.current.provider),
+    onInspect: (next: Receipt) => { setReceipt(next); setPanel('session'); composerLatest.current.showInspector(); },
+    onChecked: (next: Receipt) => setReceipt(current => current?.state === 'prepared' ? next : current),
+  }), []);
+  const providerActions = useMemo(() => ({
+    onInstall: (target: Provider) => void composerLatest.current.installProvider(target), onInstallPage: (target: Provider) => composerLatest.current.openInstallPage(target),
+    onLogin: (target: Provider) => void composerLatest.current.loginProvider(target), onCheck: (target: Provider) => void composerLatest.current.checkProvider(target),
+  }), []);
+  const providerProps = useMemo(() => ({ checking: checkingProvider, note: providerNote, ...providerActions }), [checkingProvider, providerNote, providerActions]);
   const projectBranchChanged = session && state && !session.workspaceId && session.projectId === state.project.id && isLive(session) && session.branch !== undefined && session.branch !== state.project.branch;
   // One timeline fetch and one changes source per session, shared by the header, status bar and inspector.
   const { events } = useSessionEvents(session?.id ?? null, liveEvents, `${session?.status ?? ''}:${connected}`);
@@ -432,13 +451,10 @@ export default function App() {
       {runtime.warning && <div className="error-banner" role="status"><span>{runtime.warning}</span></div>}
       {error && <div className="error-banner" role="alert"><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
       {!state ? <section className="welcome"><img className="welcome-wordmark" src={journalWordmark} alt="Journal" width={280} height={84} /><span className="eyebrow">A continuous thread</span><h2>Your project, remembered.</h2><p>Work with Claude Code and Codex in their native terminals.<br />Carry the decisions and lessons into the next session.</p><button className="primary" onClick={() => void openProject()} disabled={busy} aria-keyshortcuts={bootstrap?.shortcuts['open-project']?.aria}>Open project</button><div className="welcome-steps"><span>01 <strong>Open a checkout</strong></span><span>02 <strong>Work in a terminal</strong></span><span>03 <strong>Keep what matters</strong></span></div></section>
-        : !session ? <NewSessionView project={state.project} bootstrap={bootstrap} workspaces={workspaces} workspaceId={workspaceId} onWorkspace={setWorkspaceId} onManageWorkspaces={() => setWorkspaceDialog(true)}
-          task={task} onTask={setTask} taskRef={taskRef} references={references} onRemoveReference={index => setReferences(current => current.filter((_, i) => i !== index))}
-          disabled={disabled} onDisabled={setDisabled} provider={provider} onProvider={chooseProvider} mode={mode} onMode={next => { setMode(next); setStartError(null); }}
-          connected={connected} liveCount={liveCount} busy={busy} onStart={() => void start(provider)} startError={startError} knowledgeVersion={knowledgeVersion}
-          onInspect={next => { setReceipt(next); setPanel('session'); layout.showInspector(); }}
-          onChecked={next => setReceipt(current => current?.state === 'prepared' ? next : current)}
-          cursor={{ checking: checkingProvider, note: providerNote, onInstall: () => void installCursor(), onLogin: () => void loginCursor(), onCheck: () => void checkCursor() }} />
+        : !session ? <NewSessionView project={state.project} bootstrap={bootstrap} workspaces={workspaces} workspaceId={workspaceId}
+          task={task} onTask={setTask} taskRef={taskRef} references={references} disabled={disabled} onDisabled={setDisabled} provider={provider} mode={mode}
+          connected={connected} liveCount={liveCount} busy={busy} startError={startError} knowledgeVersion={knowledgeVersion}
+          {...composerCallbacks} providers={providerProps} />
         : <section className="session-view" aria-label="Session">
           <SessionHeader session={session} state={stateFor(session, now, connected)} connected={connected} busy={busy} canStart={canStart} now={now} mac={bootstrap?.platform === 'darwin'}
             projectBranch={session.projectId === state.project.id ? state.project.branch : session.branch ?? null} agentVersion={bootstrap?.agents.find(a => a.provider === session.provider)?.version ?? null}

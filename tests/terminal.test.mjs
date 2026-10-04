@@ -574,7 +574,7 @@ test('error codes: SLOTS_FULL, ID_UNCONFIRMED, CONVERSATION_OPEN, NOT_LIVE and S
 test('cursor errors carry PROVIDER_MISSING and PROVIDER_UNSUPPORTED', async t => {
   const f = multi(t);
   f.manager.cursor = { find: async () => null, createChat: async () => null };
-  await assert.rejects(f.start('cursor'), error => error.code === 'PROVIDER_MISSING' && /Cursor CLI is not installed/.test(error.message));
+  await assert.rejects(f.start('cursor'), error => error.code === 'PROVIDER_MISSING' && /Cursor CLI is not installed. Choose Install… on the Cursor card/.test(error.message));
   f.manager.cursor = { find: async () => ({ path: '/bin/agent', cursor: true, supports: { resume: false, createChat: true } }), createChat: async () => null };
   await assert.rejects(f.start('cursor'), error => error.code === 'PROVIDER_UNSUPPORTED');
 });
