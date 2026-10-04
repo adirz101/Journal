@@ -342,3 +342,8 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 @container wrapup (max-width:760px){.wrap-cards{grid-template-columns:minmax(0,1fr)}.stale-body{grid-template-columns:minmax(0,1fr)}.stale-note{border-right:0;border-bottom:1px solid var(--line)}.wrap-row{grid-template-columns:minmax(0,1fr)}.wrap-row-actions{justify-content:flex-start}.stale-help{margin-left:0}}
 @media(hover:hover) and (pointer:fine){.wrap-up button.ghost:not(:disabled):hover{background:var(--hover)}.wrap-up button.link:not(:disabled):hover{background:transparent;color:var(--tx)}}
 @media(forced-colors:active){.stale-lead{forced-color-adjust:none;border-left-color:Highlight;background:Canvas;color:CanvasText}.stale-lead p{color:CanvasText}}
+
+
+/* === Phase 8: palette and states === */
+
+

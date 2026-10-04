@@ -13,7 +13,7 @@ import { redact } from '../core/validation.mjs';
 import { Observers } from './observers.mjs';
 import { buildId, frame, lineReader, nonce, proof, proofMatches, PROTOCOL, socketPath } from './protocol.mjs';
 
-const METHODS = new Set(['list', 'start', 'attach', 'detach', 'acknowledge', 'write', 'resize', 'interrupt', 'stop', 'terminateSurvivors', 'terminateOrphan', 'confirmNativeId', 'paste', 'release', 'shutdown', 'ping']);
+const METHODS = new Set(['list', 'start', 'attach', 'detach', 'acknowledge', 'write', 'resize', 'interrupt', 'stop', 'terminateSurvivors', 'terminateOrphan', 'confirmNativeId', 'paste', 'release', 'shutdown', 'ping', 'acknowledgeRecovery']);
 
 export function canConnect(path, timeoutMs = 500) {
   return new Promise(resolvePromise => {
@@ -72,6 +72,14 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
   // Trace retention (timelines of long-ended sessions); knowledge is never pruned.
   try { await store.applyRetention?.({ eventDays: 90 }); } catch (error) { log(`retention skipped: ${error.message}`); }
   if (recovered.length) log(`recovered ${recovered.length} session(s) from a previous runtime`);
+  // Phase 8: what this runtime recovered, reported in every hello until the app
+  // acknowledges it. In memory only: the sessions themselves stay recorded as
+  // interrupted or orphaned, so losing this list (an idle exit before any app
+  // connects) loses a convenience, not the record. At most 100 rows, like liveSessions;
+  // total counts every recovered session, which the app shows, so the count stays right
+  // if the list is ever cut (today recover() itself sees at most 100 live sessions).
+  let recovery = recovered.length ? { at: new Date().toISOString(), runtimeId, total: recovered.length,
+    sessions: recovered.slice(0, 100).map(session => ({ id: session.id, status: session.status, identityVerified: session.identityVerified ?? null })) } : null;
   let client = null; let lastClientAt = Date.now(); let closing = null; const ended = new Set();
   manager.on('event', event => {
     if (event.type === 'status' && !['starting', 'running', 'waiting', 'stopping'].includes(event.session.status) && !ended.has(event.session.id)) {
@@ -107,6 +115,8 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
     terminateOrphan: ({ id }) => manager.terminateOrphan(id),
     confirmNativeId: ({ id, nativeId }) => manager.confirmNativeId(id, nativeId),
     release: ({ id }) => manager.release(id),
+    // Clears the recovery only when at names it, so a stale acknowledgement never hides a newer one.
+    acknowledgeRecovery: ({ at } = {}) => { const cleared = !!recovery && typeof at === 'string' && at === recovery.at; if (cleared) recovery = null; return { cleared }; },
     shutdown: ({ stopSessions = true } = {}) => { setImmediate(() => void shutdown({ stopSessions })); return { stopping: manager.liveEntries().length }; },
   };
 
@@ -128,7 +138,8 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
         // One desktop client at a time; a restarted app replaces a stale one.
         if (client) { client.close(); manager.detach(); }
         client = connection; lastClientAt = Date.now();
-        connection.send({ id, value: { runtimeId, build, protocol: PROTOCOL, pid: process.pid, live: manager.liveEntries().length } });
+        // recovery is optional in the hello (no protocol change): older apps ignore it.
+        connection.send({ id, value: { runtimeId, build, protocol: PROTOCOL, pid: process.pid, live: manager.liveEntries().length, recovery } });
         return;
       }
       if (client !== connection) return;

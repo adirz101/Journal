@@ -5,6 +5,10 @@ for (const action of ['sessionSummary', 'staleNotes', 'rememberProposals', 'reaf
 allowed.add('staleNoteDiff');
 for (const action of ['openProjectPath', 'firstRunDrafts', 'rememberDraft', 'skipOrientation']) allowed.add(action);
 allowed.add('openInstallPage');
+// Phase 8: open-file search, crash recovery and Reconnect now.
+allowed.add('searchFiles');
+allowed.add('acknowledgeRecovery');
+allowed.add('reconnectRuntime');
 // contextBridge copies only the message of an Error thrown across it, so the
 // renderer's api() uses settle(), which returns the error code as plain data.
 const settle = async (action, input = {}) => {

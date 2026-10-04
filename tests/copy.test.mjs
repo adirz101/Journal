@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import ts from 'typescript';
-import { composer, copy, excludedReason, memoryState, selectionReason, shell, tip, warningText, wrapUp } from '../src/ui/copy.ts';
+import { composer, copy, excludedReason, memoryState, palette, selectionReason, shell, states, tip, warningText, wrapUp } from '../src/ui/copy.ts';
 
 // Plain-language vocabulary (design board B8). The technical term may stay in a
 // tooltip (the title attribute of an element) but not in visible text or names.
@@ -333,4 +333,15 @@ test('the wrap-up vocabulary avoids the old terms', () => {
   assert.equal(wrapUp.moreSuggestions(2), 'More suggestions from this session');
   assert.equal(wrapUp.moreSuggestionsLabel(1), '1 more suggestion from this session');
   assert.doesNotMatch(wrapUp.notSavedFailed, /was not saved|no longer available/, 'a failed start does not claim it had output');
+});
+
+test('Phase 8: a truncated file search names its reason, and the crash count covers every recovered session', () => {
+  assert.equal(palette.filesTruncated(200000), 'Only the first 200,000 files are searched.');
+  assert.equal(palette.filesTruncated(1234, 'size'), 'Only the first 1,234 files are searched.');
+  assert.equal(palette.filesTruncated(1234, 'timeout'), 'Git took too long to list every file. Only the first 1,234 files are searched.');
+  assert.doesNotMatch(palette.filesTruncated(1234, 'timeout'), /200,000/, 'a timeout is not reported as the file limit');
+  const sessions = Array.from({ length: 100 }, (_, i) => ({ id: String(i) }));
+  assert.equal(states.crashBody({ total: 140, sessions }), '140 sessions were interrupted. Nothing was resent to the agents.');
+  assert.equal(states.crashBody({ sessions: sessions.slice(0, 1) }), '1 session was interrupted. Nothing was resent to the agents.');
+  for (const text of [palette.filesTruncated(5, 'timeout'), states.crashBody({ total: 2, sessions })]) assert.doesNotMatch(text, OLD_TERMS);
 });
