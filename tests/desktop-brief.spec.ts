@@ -35,7 +35,7 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
       await page.getByRole('button', { name: 'Add project summary', exact: true }).click();
       await page.getByLabel('Scope').selectOption('branch');
       await page.getByLabel('Statement', { exact: true }).fill(statement);
-      await page.getByLabel('Source note').fill('Explicit reviewed branch progress for the local fixture');
+      await page.getByLabel('Why (your words)').fill('Explicit reviewed branch progress for the local fixture');
       await page.getByRole('button', { name: 'Save for review' }).click();
       await page.getByRole('button', { name: 'Remember', exact: true }).click();
     };

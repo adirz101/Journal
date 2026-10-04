@@ -45,7 +45,7 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, l
   const preview = receipt?.state === 'prepared';
   const agent = session ? bootstrap?.agents.find(a => a.provider === session.provider) : null;
   const act = async (action: () => Promise<unknown>) => { try { await action(); onChanged(); } catch (error) { onError(error); } };
-  return <div className="panel-content context-content"><div className="section-heading"><div><span className="eyebrow">WHAT THE AGENT RECEIVES</span><h2>{!receipt || preview ? copy.willKnow : copy.whatWasSent}</h2></div></div>
+  return <div className="panel-content context-content"><div className="section-heading"><div><span className="eyebrow">WHAT THE AGENT RECEIVES</span><h2>{!receipt || preview ? copy.willKnow : receipt.state === 'failed' ? copy.wasGoingToSend : copy.whatWasSent}</h2></div></div>
     {!receipt ? <div className="knowledge-empty"><h3>Inspect before you start.</h3><p>Enter an initial task and preview its context.</p></div> : <>
       <div className="receipt-meta"><span>{count(receipt.items.length, 'note')}</span><span>{new TextEncoder().encode(receipt.packet).length} bytes · ≈{receipt.estimatedTokens} tokens</span><span className="receipt-state">{deliveryState(receipt.state)}</span></div>
       <dl className="receipt-facts"><dt>Task</dt><dd>{receipt.query || <em>none (only what {copy.everySession.toLowerCase()})</em>}</dd>
@@ -59,7 +59,7 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, l
         <button className="source-button" aria-expanded={open === item.id} onClick={() => setOpen(open === item.id ? null : item.id)}>{item.source.kind === 'file' ? `↗ ${item.source.path}:${item.source.startLine}` : item.source.kind === 'git' ? '↗ Git history' : '↗ Your statement'}<span>{open === item.id ? '−' : '+'}</span></button>
         {open === item.id && <div className="evidence-details"><pre dir="auto">{item.source.excerpt ?? item.source.note ?? `${item.source.base ?? ''} → ${item.source.head ?? ''}`}</pre></div>}
         <div className="memory-actions">
-          {preview && <button onClick={() => onToggle(item.id)}>Leave out for this task</button>}
+          {preview && <button onClick={() => onToggle(item.id)}>{copy.leaveOut}</button>}
           {item.category !== 'brief' && <button onClick={() => void act(() => api('setPinned', { id: item.id, pinned: !item.pinned }))}>{item.pinned ? 'Unpin' : 'Pin'}</button>}
           <button onClick={() => void act(() => api('markIncorrect', { id: item.id }))}>Mark incorrect</button>
         </div>
@@ -67,7 +67,7 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, l
       {receipt.references?.length ? <References title={`REFERENCED FOR THIS TASK · ${receipt.references.length}`} projectId={(receipt as any).projectId} workspaceId={receipt.workspaceId ?? null} references={receipt.references} /> : null}
       {session && <SessionReferences session={session} live={live} />}
       {preview && disabled.length > 0 && <p className="hint">{count(disabled.length, 'note')} left out for the next start. <button className="text-button" onClick={() => disabled.forEach(onToggle)}>Restore all</button></p>}
-      {receipt.excluded.length > 0 && <details><summary>{receipt.excluded.length} not included</summary>{receipt.excluded.map(x => <p key={x.id + x.reason} className="muted">{x.id.slice(0, 8)} · {excludedReason(x.reason)}{x.reason === 'left-out-for-task' && preview ? <> · <button className="text-button" onClick={() => onToggle(x.id)}>restore</button></> : null}</p>)}</details>}
+      {receipt.excluded.length > 0 && <details><summary>{copy.notIncluded} · {receipt.excluded.length}</summary>{receipt.excluded.map(x => <p key={x.id + x.reason} className="muted">{x.id.slice(0, 8)} · {excludedReason(x.reason)}{x.reason === 'left-out-for-task' && preview ? <> · <button className="text-button" onClick={() => onToggle(x.id)}>restore</button></> : null}</p>)}</details>}
       {receipt.warnings?.map(warning => <p className="hint" key={warning}>{warningText(warning)}</p>)}
       <button className="text-button" aria-expanded={raw} onClick={() => setRaw(!raw)}>{raw ? 'Hide' : 'Show'} exact {receipt.launchPrompt !== undefined ? 'launch text' : 'text'}</button>
       {raw && <pre className="context-packet" data-testid="context-packet" dir="auto">{(receipt.launchPrompt ?? receipt.packet) || 'No Journal text supplied at launch.'}</pre>}

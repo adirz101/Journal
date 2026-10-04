@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, type ProjectDetails } from './types';
+import { copy } from './copy';
 
 // Journal-side project settings. Nothing here renames, moves or deletes files.
 export function ManageProjectDialog({ projectId, onClose, onChanged, onRemoved }: { projectId: string; onClose: () => void; onChanged: () => void; onRemoved: () => void }) {
@@ -31,7 +32,7 @@ export function ManageProjectDialog({ projectId, onClose, onChanged, onRemoved }
         </ul>
         <div className="dialog-actions"><button disabled={busy || details.missing} onClick={() => void act(() => api('addProjectFolder', { id: projectId }))}>Add folder…</button></div>
       </section>
-      <dl className="receipt-facts manage-section"><dt>Memory</dt><dd>{details.counts.knowledge} notes · {details.counts.proposals} open suggestions</dd>
+      <dl className="receipt-facts manage-section"><dt>{copy.memoryTab}</dt><dd>{details.counts.knowledge} notes · {details.counts.proposals} open suggestions</dd>
         <dt>Sessions</dt><dd>{details.counts.sessions} recorded · {details.counts.liveSessions} running · {details.counts.worktrees} Journal worktrees</dd></dl>
       <section className="manage-danger" aria-label="Remove project"><strong>Remove from Journal</strong><p className="muted small-print">Your files will not be deleted. You choose next whether to keep Journal's data for this project (restored if you open the folder again) or delete it.</p>
         <button disabled={busy || details.counts.liveSessions > 0} title={details.counts.liveSessions ? 'Stop running sessions first' : undefined} onClick={() => void act(async () => { const result = await api('removeProject', { id: projectId }); if (result) onRemoved(); else await load(); }, false)}>Remove from Journal…</button></section>

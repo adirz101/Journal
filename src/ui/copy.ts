@@ -7,10 +7,10 @@ export const copy = {
   remember: 'Remember', remembered: 'Remembered', needsReview: 'Needs review', forget: 'Forget…', forgotten: 'Forgotten', suggestions: 'Suggestions',
   aboutProject: 'About this project', branchStands: 'Where this branch stands', projectSummary: 'Project summary',
   outOfDate: 'Out of date', otherBranch: 'Other branch', folderRemoved: 'Folder removed',
-  whatWasSent: 'What was sent', willKnow: 'What the agent will know',
+  whatWasSent: 'What was sent', wasGoingToSend: 'What was going to be sent', willKnow: 'What the agent will know', searchMemory: 'Search project memory',
   continue: 'Continue', stop: 'Stop', readOnly: 'Read-only', plan: 'Plan', separateCopy: 'Separate copy (worktree)',
-  everySession: 'Every session knows', relevant: 'Relevant to your task', notIncluded: 'Not included', checkNeeded: 'Check needed', rule: 'Rule',
-  allBranches: 'All branches', onlyOn: (branch: string | null | undefined) => `Only on ${branch ?? 'this branch'}`,
+  everySession: 'Every session knows', relevant: 'Relevant to your task', notIncluded: 'Not included', leaveOut: 'Leave out for this task', leftOut: 'left out by you', checkNeeded: 'Check needed', rule: 'Rule',
+  sourceNote: 'Why (your words)', allBranches: 'All branches', onlyOn: (branch: string | null | undefined) => `Only on ${branch ?? 'this branch'}`,
 } as const;
 
 // Tooltips keep the precise term.
@@ -60,10 +60,11 @@ export function selectionReason(reason: string | undefined, area?: string | null
   return `${!terms || terms === 'task terms' ? copy.relevant : `Matches ${terms}`}${where ? ` · in ${where}` : ''}`;
 }
 
-// Why core left a note out (excluded[].reason codes).
+// Why core left a note out (excluded[].reason codes). "Not included" heads every
+// reason; "leave out" / "left out" is only the user's own choice for one task.
 const EXCLUDED: Record<string, string> = {
   stale: 'out of date', 'wrong-branch': 'other branch', 'area-not-requested': 'area not in task', duplicate: 'same as a note already included',
-  'brief-limit': 'project summary limit', 'folder-removed': 'its folder was removed from the project', budget: 'size limit', 'category-limit': 'too many of one kind', 'left-out-for-task': 'left out by you',
+  'brief-limit': 'project summary limit', 'folder-removed': 'its folder was removed from the project', budget: 'size limit', 'category-limit': 'too many of one kind', 'left-out-for-task': copy.leftOut,
 };
 export const excludedReason = (code: string) => EXCLUDED[code] ?? code;
 

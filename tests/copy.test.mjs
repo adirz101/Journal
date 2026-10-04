@@ -94,6 +94,7 @@ test('core reasons and warnings are shown in the plain vocabulary; packet text i
   assert.equal(copy.onlyOn(null), 'Only on this branch');
   assert.equal(excludedReason('stale'), 'out of date');
   assert.equal(excludedReason('left-out-for-task'), 'left out by you');
+  assert.match(copy.leaveOut, /^Leave out /, 'the action and its result share one verb');
   assert.equal(excludedReason('something-new'), 'something-new');
   assert.equal(warningText('Claims 1234abcd r2 and 5678ef90 r1 may conflict. Review them in Knowledge.'), 'Notes 1234abcd (revision 2) and 5678ef90 (revision 1) may conflict. Check them in Memory.');
   assert.equal(warningText('An unknown warning.'), 'An unknown warning.');
