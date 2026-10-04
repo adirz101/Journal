@@ -652,6 +652,21 @@ test('echo and resize repaint do not count as output', async t => {
   assert.equal(f.events.length, 2);
 });
 
+test('a resize to the current size is not a repaint window', async t => {
+  const f = await outputting(t);
+  f.data('before'); const first = f.latest();
+  t.mock.timers.tick(20_000);
+  // The PTY starts at 100x30: the same size changes nothing, so output right after it counts.
+  f.manager.resize(f.session.id, 100, 30); t.mock.timers.tick(10); f.data('output');
+  assert.notEqual(f.latest(), first);
+  const second = f.latest(); t.mock.timers.tick(20_000);
+  f.manager.resize(f.session.id, 120, 40); t.mock.timers.tick(10); f.data('repaint');
+  assert.equal(f.latest(), second, 'A changed size is a repaint');
+  t.mock.timers.tick(20_000);
+  f.manager.resize(f.session.id, 120, 40); t.mock.timers.tick(10); f.data('more output');
+  assert.notEqual(f.latest(), second, 'Repeating the size is not');
+});
+
 test('Claude sessions record lastOutputAt but emit no activity events', async t => {
   const f = await outputting(t, 'claude');
   f.data('hello'); t.mock.timers.tick(20_000); f.data('again'); t.mock.timers.tick(20_000);

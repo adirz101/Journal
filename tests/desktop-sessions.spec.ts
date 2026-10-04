@@ -403,11 +403,13 @@ test('Codex shows Running with output time and limited status', async () => {
     const row = sessionButton(page, 'CODEX_STATE');
     await expect(row).toContainText('Running');
     // Output 600 ms after the key is not an echo, so it counts as agent output. Output
-    // right after a resize is a repaint; the layout may still settle just after start.
-    await expect(async () => {
-      await typeLine(page, 'delay');
-      await expect(row).toContainText(/output just now|quiet/, { timeout: 2000 });
-    }).toPass({ timeout: 20000 });
+    // right after a real resize is a repaint (a same-size resize is ignored), so type
+    // once the terminal has reported its size and that repaint window has passed.
+    await expect(page.locator('main.workspace')).not.toHaveAttribute('aria-busy', 'true');
+    await expect.poll(async () => (await page.evaluate(async () => (await (window as any).journal.request('sessions')).live)).find((s: any) => s.title === 'CODEX_STATE')?.terminal).toBeTruthy();
+    await page.waitForTimeout(400);
+    await typeLine(page, 'delay');
+    await expect(row).toContainText(/output just now|quiet/, { timeout: 5000 });
     await expect(row).toHaveAttribute('aria-label', /Running, (output just now|quiet [^,]+), limited status/);
     await expect(row.locator('.session-status')).toHaveAttribute('title', /Journal sees output, not the agent's state/);
     await expect(row.locator('.status-dot')).not.toHaveClass(/waiting/);

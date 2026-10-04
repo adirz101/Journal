@@ -15,6 +15,7 @@ export const ECHO_MS = 300;          // output this soon after input or resize i
 export const QUIET_MS = 10_000;      // output after this much quiet is a resume edge
 export const ACTIVITY_THROTTLE_MS = 5_000;
 export const LIVE_STATES = ['starting', 'running', 'waiting', 'stopping'];
+const PTY_SIZE = Object.freeze({ cols: 100, rows: 30 }); // until the terminal reports its own
 const isLive = status => LIVE_STATES.includes(status);
 // Machine-readable reasons for refused or failed operations. Messages stay
 // human-readable; the renderer branches on `code`.
@@ -165,10 +166,10 @@ export class TerminalManager extends EventEmitter {
       const launch = buildAgentLaunch({ provider, nativeId: session.nativeId, resume: !!prior, prompt, settingsFile, research, plan, executable: cursor?.path });
       const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', JOURNAL_SESSION_ID: session.id };
       delete env.ELECTRON_RUN_AS_NODE;
-      const proc = this.spawn(launch.executable, launch.argv, { cwd: session.cwd, env, name: 'xterm-256color', cols: 100, rows: 30 });
+      const proc = this.spawn(launch.executable, launch.argv, { cwd: session.cwd, env, name: 'xterm-256color', ...PTY_SIZE });
       entry = { session, proc, buffer: new OutputBuffer(), attached: false, sent: 0, acknowledged: 0, inflight: [], tail: '', exited: false,
         stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), tools: new Map(), pending: [], answered: false, lastPersist: 0,
-        lastInputAt: 0, lastResizeAt: 0, lastActivityEmit: 0, activityTimer: null };
+        lastInputAt: 0, lastResizeAt: 0, lastActivityEmit: 0, activityTimer: null, size: { cols: PTY_SIZE.cols, rows: PTY_SIZE.rows } };
       this.entries.set(session.id, entry);
       session.status = 'running'; session.pid = Number.isInteger(proc.pid) ? proc.pid : null;
       // Identity is read asynchronously, and again on first output once the CLI is running.
@@ -308,7 +309,10 @@ export class TerminalManager extends EventEmitter {
   }
   resize(id, cols, rows) {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 2 || cols > 500 || rows > 300) throw new Error('Invalid terminal size');
-    const entry = this.owned(id); entry.proc.resize(cols, rows); entry.lastResizeAt = Date.now(); entry.session.terminal = { cols, rows };
+    const entry = this.owned(id); entry.session.terminal = { cols, rows };
+    // The same size changes nothing (no repaint), so it opens no echo window either.
+    if (entry.size.cols === cols && entry.size.rows === rows) return;
+    entry.proc.resize(cols, rows); entry.size = { cols, rows }; entry.lastResizeAt = Date.now();
   }
   // Goes through write() so Ctrl+C counts as answering an open permission prompt.
   interrupt(id) { this.write(id, '\x03'); this.record(id, 'interrupt', {}); }
