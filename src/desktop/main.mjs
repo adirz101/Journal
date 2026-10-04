@@ -19,6 +19,7 @@ import { isSensitivePath } from '../core/evidence.mjs';
 import { launchTarget, resolveExecutable } from '../core/process.mjs';
 import { RootWatcher } from './watch.mjs';
 import { Updater, updateMode } from './updater.mjs';
+import { checkOutcome, menuTemplate } from './menu.mjs';
 import electronUpdater from 'electron-updater';
 import { dataDirectory, unpackedPath, withGuiPath } from './environment.mjs';
 
@@ -455,6 +456,17 @@ const updates = updateMode({ packaged: app.isPackaged, platform: process.platfor
 const installFailed = () => { if (updatePolicy && closed) app.exit(0); updatePolicy = null; };
 updater = new Updater({ autoUpdater: updates === 'off' ? null : electronUpdater.autoUpdater, mode: updates, version: app.getVersion(), send, enabled: automaticUpdates, onError: installFailed });
 updater.start();
+// Check for Updates… (app menu on macOS, Help elsewhere): reports the result in a dialog.
+async function checkForUpdatesFromMenu() {
+  const outcome = checkOutcome(await updater.check()); if (!outcome) return;
+  const buttons = outcome.kind === 'ready' ? ['Restart Now', 'Later'] : outcome.kind === 'available' ? ['Download', 'Later'] : ['OK'];
+  const options = { type: outcome.kind === 'error' ? 'warning' : 'info', buttons, defaultId: 0, cancelId: buttons.length - 1, message: outcome.message, detail: outcome.detail };
+  const { response } = window && !window.isDestroyed() ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+  if (response !== 0) return;
+  if (outcome.kind === 'ready') await actions.installUpdate().catch(error => dialog.showErrorBox('Could not install the update', error.message));
+  if (outcome.kind === 'available') actions.openUpdateRelease();
+}
+Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate({ platform: process.platform, name: app.name, checkForUpdates: () => void checkForUpdatesFromMenu().catch(() => {}), openUrl: url => void shell.openExternal(url) })));
 // Release smoke checks of builds that cannot be driven by automation (the
 // Windows portable EXE relaunches itself): report basic health, then quit.
 // Packaged builds only; contains no project or user content.
