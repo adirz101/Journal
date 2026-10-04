@@ -66,6 +66,12 @@ test('states: primary hover keeps its text readable, selection survives hover an
   for (const selector of ['.project-link.selected', '.session-select.selected']) assert.ok(rulesFor(selector).some(rule => declares(rule, 'box-shadow', 'inset 2px 0 0 var(--acc)')), selector);
 });
 
+test('borderless tab and link buttons hover by color, not with the generic background patch', () => {
+  // These have no border, no horizontal padding or a zero radius, so a --hover patch looks like a stray block.
+  const family = ['.text-button', '.source-button', '.filter-tabs button:not([aria-pressed=true])', '.error-banner button', '.archived-toggle', '.reference-chips li button'];
+  for (const selector of family) assert.ok(rulesFor(`${selector}:not(:disabled):hover`).some(rule => declares(rule, 'background', 'transparent') && declares(rule, 'color', 'var(--tx)') && rule.at.some(at => /pointer:fine/.test(at))), selector);
+});
+
 test('accent containers keep an accent border', () => {
   for (const selector of ['.memory-actions .approve', '.branch-badge', '.local-tag', '.receipt-meta>span', '.draft-basis', '.explorer-note', '.update-notice', '.reference-chips li', '.proposal-inbox']) {
     const at = styles.indexOf(`${selector}{`); assert.ok(at >= 0, selector);
