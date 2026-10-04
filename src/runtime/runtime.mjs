@@ -7,7 +7,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { appendFileSync, closeSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { TerminalManager } from '../core/terminal.mjs';
+import { providerResolver, TerminalManager } from '../core/terminal.mjs';
 import { isAlive, processIdentity, sameIdentity } from '../core/process.mjs';
 import { redact } from '../core/validation.mjs';
 import { Observers } from './observers.mjs';
@@ -55,7 +55,7 @@ export async function acquireLock(dataDir, path, identify = processIdentity) {
 }
 
 export async function startRuntime({ dataDir, store, spawn, platform = process.platform, identify, table, hookScript, execPath = process.execPath,
-  idleMs = 60_000, log = () => {}, exit = () => {}, observerMs = 300, stopGraceMs }) {
+  idleMs = 60_000, log = () => {}, exit = () => {}, observerMs = 300, stopGraceMs, resolveProvider = null }) {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const path = socketPath(dataDir, platform);
   const releaseLock = await acquireLock(dataDir, path, identify ?? processIdentity);
@@ -67,7 +67,7 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
   const observers = new Observers({ dataDir, hookScript, execPath, platform, ingest: (id, event) => manager.ingest(id, event),
     lost: id => manager.record(id, 'error', { message: 'Activity observation stopped: the hook event file reached its size limit.' }) });
   manager = new TerminalManager({ store, spawn, runtimeId, platform, makeSettings: (session, project) => observers.settings(session, project),
-    ...(identify ? { identify } : {}), ...(table ? { table } : {}), ...(stopGraceMs ? { stopGraceMs } : {}) });
+    ...(identify ? { identify } : {}), ...(table ? { table } : {}), ...(stopGraceMs ? { stopGraceMs } : {}), resolveProvider });
   const recovered = await manager.recover();
   // Trace retention (timelines of long-ended sessions); knowledge is never pruned.
   try { await store.applyRetention?.({ eventDays: 90 }); } catch (error) { log(`retention skipped: ${error.message}`); }
@@ -193,16 +193,19 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   process.on('unhandledRejection', error => { log(`unhandled: ${error?.stack ?? error}`); });
   try {
     const pty = await import('node-pty');
-    const { launchTarget, resolveExecutable } = await import('../core/process.mjs');
+    const { launchTarget, resolveExecutable, testProviderAllowed } = await import('../core/process.mjs');
     // Resolve on PATH (PATHEXT on Windows) and avoid cmd.exe for npm shims.
     const spawn = (executable, argv, options) => {
       const resolved = resolveExecutable(executable, options.env) ?? executable;
+      // Headless test runs: never a provider CLI outside the fixture folder (also checked before the start).
+      if (!testProviderAllowed(resolved, options.env)) throw Object.assign(new Error('Provider CLI outside the test provider folder'), { code: 'PROVIDER_MISSING' });
       const target = launchTarget(resolved, argv, { env: options.env });
       return pty.spawn(target.file, target.args, options);
     };
     const { StoreClient } = await import('../desktop/store-client.mjs');
     const store = new StoreClient(join(dataDir, 'journal.sqlite')); await store.ready;
-    const runtime = await startRuntime({ dataDir, store, spawn, log, hookScript: unpacked(join(here, '../desktop/hook.mjs')),
+    // A missing Claude or Codex CLI is found before the start (PROVIDER_MISSING, nothing sent).
+    const runtime = await startRuntime({ dataDir, store, spawn, log, hookScript: unpacked(join(here, '../desktop/hook.mjs')), resolveProvider: providerResolver(),
       exit: () => setTimeout(() => process.exit(0), 50) });
     process.on('SIGTERM', () => void runtime.shutdown({ stopSessions: true }));
     process.on('SIGINT', () => void runtime.shutdown({ stopSessions: true }));

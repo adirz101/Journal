@@ -232,10 +232,12 @@ export async function listFiles(root) {
 // with a yield between them, and the sensitivity of each folder is decided once
 // (a Map per listing), so an entry only tests its own name.
 // Result: { available, paths, truncated, truncatedBy?: 'timeout' | 'size' | 'limit' }.
-const PARSE_SLICE = 10_000;
+// yieldTo(done): called between slices with the number of entries read so far (tests inject it
+// to check the work per slice; by default it waits for the event loop).
+export const PARSE_SLICE = 10_000;
 const STAGED_ENTRY = /^([0-7]{6}) [0-9a-f]+ \d\t/;
 const yieldToLoop = () => new Promise(resolve => setImmediate(resolve));
-export async function parseListing(input, { cut = null } = {}) {
+export async function parseListing(input, { cut = null, yieldTo = yieldToLoop } = {}) {
   const parts = typeof input === 'string' ? [{ output: input, staged: false, cut }] : input;
   const seen = new Set(); const paths = []; const folders = new Map();
   const sensitiveFolder = folder => { let verdict = folders.get(folder); if (verdict === undefined) { verdict = isSensitivePath(folder); folders.set(folder, verdict); } return verdict; };
@@ -243,7 +245,7 @@ export async function parseListing(input, { cut = null } = {}) {
   outer: for (const { output, staged } of parts) {
     // The text after the final NUL is empty, or a cut-off entry: never used.
     for (let from = 0, end = output.indexOf('\0'); end >= 0; from = end + 1, end = output.indexOf('\0', from)) {
-      if (++count % PARSE_SLICE === 0) await yieldToLoop();
+      if (++count % PARSE_SLICE === 0) await yieldTo(count - 1);
       let path = output.slice(from, end);
       if (staged) { const meta = STAGED_ENTRY.exec(path); if (!meta || meta[1] === '160000') continue; path = path.slice(meta[0].length); }
       if (!path || seen.has(path)) continue;
@@ -432,8 +434,9 @@ export function rankFiles(paths, query, limit = 50) {
 // searchFiles runs in the main process, which also routes every key press: it
 // ranks in slices and yields between them, so a broad query over a large
 // listing never blocks input for more than a few milliseconds at a time.
-const RANK_SLICE = 20_000;
-export async function searchFiles(root, query, { limit = 50, list = listFiles } = {}) {
+// yieldTo(done) as in parseListing, with the number of paths ranked so far.
+export const RANK_SLICE = 20_000;
+export async function searchFiles(root, query, { limit = 50, list = listFiles, yieldTo = yieldToLoop } = {}) {
   const listing = await list(root);
   if (!listing.available) return { available: false, reason: listing.reason === 'not-git' ? 'not-git' : 'failed', hits: [], total: 0, truncated: false };
   const { paths } = listing;
@@ -443,7 +446,7 @@ export async function searchFiles(root, query, { limit = 50, list = listFiles } 
   const state = rankState(paths, query, limit);
   if (!state) return { available: true, hits: [], total: 0, ...truncation };
   for (let from = 0; from < paths.length; from += RANK_SLICE) {
-    if (from) await yieldToLoop();
+    if (from) await yieldTo(from);
     rankRange(state, paths, from, Math.min(paths.length, from + RANK_SLICE));
   }
   return { available: true, ...rankResult(state), ...truncation };

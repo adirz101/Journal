@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { inspectContext, inspectorTab, switchProject } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 test('a Git-drafted branch update is saved only after review and approved before delivery', async () => {
   mkdirSync(resolve('.cache/tmp'), { recursive: true });
@@ -14,7 +15,7 @@ test('a Git-drafted branch update is saved only after review and approved before
   };
   git('init', '-b', 'main'); commit('README.md', 'Fixture ledger for refunds');
   git('switch', '-c', 'feature/refunds'); commit('model.txt', 'REFUND_MODEL_DONE');
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin: resolve(root, 'bin'), extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const app = await electron.launch({ args: ['.'], env });
   try {
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);

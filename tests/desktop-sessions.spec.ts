@@ -1,9 +1,10 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
 import { chooseAgent, filesView, inspectorTab, newSession, sessionStatus, slotsUsed, startButton, startSession } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 // Real Electron, real runtime process and node-pty, controlled fixture CLIs.
 test.skip(process.platform === 'win32', 'POSIX fixture CLIs; native Windows is verified separately');
@@ -42,8 +43,7 @@ c.stdin.end(JSON.stringify({hook_event_name:'PermissionRequest',session_id:a[a.i
 else console.log('ECHO '+command);
 }});`;
   for (const provider of ['claude', 'codex']) { writeFileSync(resolve(bin, provider), fixture); chmodSync(resolve(bin, provider), 0o755); }
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' };
-  delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const launches = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
   const runtimeInfo = () => JSON.parse(readFileSync(resolve(root, 'data/runtime.json'), 'utf8'));
   const cleanup = () => {
@@ -83,7 +83,7 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     // With every slot in use, the New session view still opens; Start waits and says why.
     await newSession(page); await chooseAgent(page, 'claude');
     await expect(startButton(page)).toBeDisabled();
-    await expect(page.getByText('4 sessions are running')).toBeVisible();
+    await expect(page.getByText('4 of 4 running. Stop or finish one to start another.')).toBeVisible();
     await expect(slotsUsed(page, 4)).toBeVisible();
     await sessionButton(page, 'TASK_1').click();
     await expect(page.locator('.terminal-surface')).toContainText('TASK TASK_1');

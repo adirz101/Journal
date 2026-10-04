@@ -3,7 +3,8 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import '@xterm/xterm/css/xterm.css';
-import { api, type OutputSnapshot, type TerminalEvent } from './types';
+import { api, errorCode, type OutputSnapshot, type TerminalEvent } from './types';
+import { modalDialogActive } from './modal';
 import { MONO_FONT, monoFontFamily, terminalThemes, type Appearance } from './theme';
 
 // What a wrap-up can ask of an ended session's terminal (Phase 6): its last lines as text.
@@ -48,11 +49,19 @@ export function TerminalPane({ sessionId, live, appearance, onError, onUnavailab
     terminal.open(host.current);
     terminal.parser.registerOscHandler(52, () => true); // Never accept terminal-originated clipboard writes.
     terminal.parser.registerOscHandler(8, () => true); // No automatic links to external applications.
-    const failed = (error: unknown) => { if (!disposed) errorRef.current(String(error instanceof Error ? error.message : error)); };
+    // NOT_LIVE (attach, write, resize, acknowledge): the runtime no longer holds this terminal,
+    // for example after a runtime crash, whose recovery panel says so. That is "unavailable",
+    // not an error for the app banner: input stops, and onUnavailable (if any) is told.
+    let gone = false;
+    const failed = (error: unknown) => {
+      if (disposed) return;
+      if (errorCode(error) === 'NOT_LIVE') { acceptInput = false; if (!gone) { gone = true; unavailableRef.current?.(); } return; }
+      errorRef.current(String(error instanceof Error ? error.message : error));
+    };
     function handle(event: TerminalEvent) {
       if (disposed) return;
       // A restarted runtime keeps its own buffer: attach again and repaint.
-      if (event.type === 'runtime') { if (event.state === 'connected') { attached = false; acceptInput = false; queued.length = 0; terminal.reset(); attach(); } return; }
+      if (event.type === 'runtime') { if (event.state === 'connected') { attached = false; acceptInput = false; gone = false; queued.length = 0; terminal.reset(); attach(); } return; }
       if ((event.type !== 'output' && event.type !== 'gap') || event.sessionId !== sessionId) return;
       if (!attached) { queued.push(event); return; }
       if (event.type === 'gap') { terminal.write('\r\n\x1b[33m[Output skipped while display was behind]\x1b[0m\r\n'); return; }
@@ -76,7 +85,9 @@ export function TerminalPane({ sessionId, live, appearance, onError, onUnavailab
       });
     }).catch(failed);
     attach();
-    const input = terminal.onData(data => { if (acceptInput && liveRef.current) void api('write', { id: sessionId, data }).catch(failed); });
+    // Keys never reach the agent while a modal dialog is open or about to open (a key typed right
+    // after ⌘K or ⌘P, before the palette has focus, is dropped: modal.ts expectModalDialog).
+    const input = terminal.onData(data => { if (acceptInput && liveRef.current && !modalDialogActive()) void api('write', { id: sessionId, data }).catch(failed); });
     // No session ID: whichever terminal is shown (an overlay returning focus).
     // A read-only preview takes focus only when asked for by its session ID; a hidden one never.
     const focus = (event: Event) => {

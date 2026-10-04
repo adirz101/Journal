@@ -4,10 +4,9 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { performance } from 'node:perf_hooks';
 import { JournalStore } from '../src/core/store.mjs';
 import { isSensitivePath } from '../src/core/evidence.mjs';
-import { listFiles, ListingCache, MAX_LISTED_FILES, parseListing, rankFiles, searchFiles } from '../src/core/files.mjs';
+import { listFiles, ListingCache, MAX_LISTED_FILES, PARSE_SLICE, parseListing, RANK_SLICE, rankFiles, searchFiles } from '../src/core/files.mjs';
 import { gitEnv } from '../src/core/git-env.mjs';
 import { gitStatus } from '../src/core/git-status.mjs';
 import { removeLater } from './support/cleanup.mjs';
@@ -166,34 +165,37 @@ const realisticPaths = count => Array.from({ length: count }, (_, i) => {
   const folder = ['src/components', 'src/hooks', 'src/lib/internal', 'tests/unit', 'assets/icons', 'docs/guides'][i % 6];
   return `${pkg}/${folder}/${['Button', 'useSession', 'formatDate', 'terminal', 'index', 'README'][i % 6]}${i}.${['tsx', 'ts', 'mjs', 'svg', 'md'][i % 5]}`;
 });
-// The longest time the event loop went without running a timer while work ran.
-async function longestBlock(work) {
-  let longest = 0; let last = performance.now(); let running = true;
-  const tick = () => { const now = performance.now(); longest = Math.max(longest, now - last); last = now; if (running) setTimeout(tick, 0); };
-  setTimeout(tick, 0);
-  const started = performance.now(); const value = await work(); const total = performance.now() - started;
-  running = false; longest = Math.max(longest, performance.now() - last);
-  return { value, total, longest };
+// The work done between two yields, from the progress each yield reports (the entries or paths
+// handled so far), up to the end of the run. No wall-clock time is measured: the bound holds on
+// any machine and under any load.
+async function slices(total, work) {
+  const marks = [];
+  const value = await work(async done => { marks.push(done); await new Promise(resolve => setImmediate(resolve)); });
+  const points = [0, ...marks, total];
+  return { value, yields: marks.length, largest: Math.max(...points.slice(1).map((point, i) => point - points[i])) };
 }
 
-test('parsing and ranking 200,000 paths yield to the event loop', async () => {
+test('parsing and ranking 200,000 paths yield to the event loop after a bounded amount of work', async () => {
   const paths = realisticPaths(MAX_LISTED_FILES);
   // Staged entries as ls-files --stage prints them, then untracked ones.
   const staged = `${paths.slice(0, 150_000).map(path => `100644 ${'a'.repeat(40)} 0\t${path}`).join('\0')}\0`;
   const others = `${paths.slice(150_000).join('\0')}\0`;
-  const parse = await longestBlock(() => parseListing([{ output: staged, staged: true }, { output: others, staged: false }]));
+  const parse = await slices(MAX_LISTED_FILES, yieldTo => parseListing([{ output: staged, staged: true }, { output: others, staged: false }], { yieldTo }));
   assert.equal(parse.value.paths.length, MAX_LISTED_FILES); assert.equal(parse.value.truncated, false);
+  assert.ok(parse.largest <= PARSE_SLICE, `parse read ${parse.largest} entries without yielding`);
+  assert.ok(parse.yields >= MAX_LISTED_FILES / PARSE_SLICE - 1, `parse yielded ${parse.yields} times`);
   // A query matching every path (every one starts with "packages/").
   assert.equal(rankFiles(paths, 'pkg').total, MAX_LISTED_FILES);
-  const broad = await longestBlock(() => searchFiles(null, 'pkg', { list: async () => parse.value }));
+  const broad = await slices(MAX_LISTED_FILES, yieldTo => searchFiles(null, 'pkg', { list: async () => parse.value, yieldTo }));
   assert.equal(broad.value.total, MAX_LISTED_FILES);
-  const narrow = await longestBlock(() => searchFiles(null, 'button 1234', { list: async () => parse.value }));
-  console.log(`200,000 paths: parse ${parse.total.toFixed(0)} ms (longest block ${parse.longest.toFixed(1)} ms); `
-    + `rank matching all ${broad.total.toFixed(0)} ms (longest block ${broad.longest.toFixed(1)} ms); `
-    + `rank "button 1234" ${narrow.total.toFixed(0)} ms (longest block ${narrow.longest.toFixed(1)} ms)`);
-  // Generous bounds for slow CI machines: one block was about 435 ms before parsing was sliced.
-  assert.ok(parse.longest < 150, `parse blocked ${parse.longest.toFixed(1)} ms`);
-  assert.ok(broad.longest < 150, `ranking blocked ${broad.longest.toFixed(1)} ms`);
+  assert.ok(broad.largest <= RANK_SLICE, `ranking handled ${broad.largest} paths without yielding`);
+  assert.equal(broad.yields, Math.ceil(MAX_LISTED_FILES / RANK_SLICE) - 1);
+  const narrow = await slices(MAX_LISTED_FILES, yieldTo => searchFiles(null, 'button 1234', { list: async () => parse.value, yieldTo }));
+  assert.ok(narrow.largest <= RANK_SLICE);
+  // The default yield waits for the event loop: a timer set before the search runs before it ends.
+  let ticked = false; setTimeout(() => { ticked = true; }, 0);
+  await searchFiles(null, 'pkg', { list: async () => parse.value });
+  assert.equal(ticked, true);
 });
 
 test('the listing cache runs one listing per root at a time and serves a stale list while it refreshes', async () => {

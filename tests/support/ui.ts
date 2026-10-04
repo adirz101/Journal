@@ -1,4 +1,5 @@
 import { expect, type ElectronApplication, type Locator, type Page } from '@playwright/test';
+import { pressKey } from './keys';
 
 // Selectors that the Phase 3 shell changes, behind one helper each. Specs call
 // these instead of the selectors, so each group rewrites only the bodies of the
@@ -192,3 +193,23 @@ export async function showTerminal(page: Page) {
   if (await button.count()) await button.click();
   await expect(page.locator('.terminal-surface, .wrap-not-saved').first()).toBeVisible();
 }
+
+// ----- Phase 8: the command palette -----
+
+// The open palette dialog ("Command palette", "Open a file" or "Reference a file").
+export const paletteDialog = (page: Page, name: 'Command palette' | 'Open a file' | 'Reference a file' = 'Command palette'): Locator => page.getByRole('dialog', { name, exact: true });
+
+// Opens the palette with its key, delivered as the OS does (⌘K or ⌘P on macOS, Ctrl+Shift+P
+// or Ctrl+Shift+O elsewhere), so it passes the shortcut router even while the terminal has focus.
+export async function openPalette(app: ElectronApplication, page: Page, mode: 'all' | 'files' = 'all') {
+  const mac = await page.evaluate(() => navigator.platform.startsWith('Mac'));
+  const key = mode === 'files' ? (mac ? 'P' : 'O') : (mac ? 'K' : 'P');
+  await pressKey(app, key, mac ? ['meta'] : ['control', 'shift']);
+  await expect(paletteDialog(page, mode === 'files' ? 'Open a file' : 'Command palette')).toBeVisible();
+  await expect(paletteInput(page)).toBeFocused();
+}
+// The palette's input (the select in the composer is a combobox too).
+export const paletteInput = (page: Page): Locator => page.locator('dialog[open] input[role=combobox]');
+
+// The composer's referenced files.
+export const referenceChips = (page: Page): Locator => page.getByRole('list', { name: 'Files referenced for the next task' });
