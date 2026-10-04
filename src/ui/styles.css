@@ -198,8 +198,11 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 /* The sensitive-file badge is a drawn lock, not an emoji (board 12 voice rules). */
 .tree-badge svg{display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 /* Welcome (board 1): centred, at most 560 px wide. Nothing here animates; the drop outline is a class toggle. */
-.welcome{flex:1;overflow-y:auto;display:flex;justify-content:center;align-items:flex-start;padding:clamp(24px,8vh,72px) 24px 40px;outline:2px dashed transparent;outline-offset:-12px;border-radius:16px}
-.welcome.dragging{outline-color:var(--acc)}
+.welcome{flex:1;overflow-y:auto;display:flex;justify-content:center;align-items:flex-start;padding:clamp(24px,8vh,72px) 24px 40px;border-radius:16px}
+/* Drop targets while a folder is dragged over them: no outline otherwise (forced colors would show a transparent one). */
+.welcome.dragging{outline:2px dashed var(--acc);outline-offset:-12px}
+:root[data-drop=sidebar] .sidebar{outline:2px dashed var(--acc);outline-offset:-6px}
+@media(forced-colors:active){.welcome.dragging,:root[data-drop=sidebar] .sidebar{outline-color:Highlight}}
 .welcome-inner{width:100%;max-width:560px;display:flex;flex-direction:column;align-items:center;text-align:center}
 .welcome-mark{display:block;width:64px;height:64px}
 .welcome h1{margin:18px 0 0;font-size:30px;font-weight:650;letter-spacing:-.6px;line-height:1.2;text-wrap:balance}
@@ -239,12 +242,13 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .get-to-know-main{display:flex;flex-direction:column;gap:20px;min-width:0}
 .know-header{display:flex;gap:14px;align-items:center}
 .know-header img{flex:none}
+.know-header h2:focus-visible{outline:none}
 .know-header h2{margin:0;font-size:var(--text-screen);font-weight:600;letter-spacing:-.3px;line-height:1.3}
 .know-header p{margin:4px 0 0;padding:0;font-size:13px;line-height:1.5}
 .draft-card{border:1px solid var(--line);border-radius:10px;background:var(--raised);padding:16px;display:flex;flex-direction:column;gap:12px}
 .draft-card p{margin:0}
 .draft-tags{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--tx3)}
-.draft-title{font-size:12px;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--hover);color:var(--tx)}
+.draft-title{margin:0;line-height:1.5;font-size:12px;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--hover);color:var(--tx)}
 .draft-badge{color:var(--acc);background:var(--accsoft);border-color:var(--accline)}
 .draft-source{margin-left:auto}
 .draft-source.mono{font-family:var(--font-mono);font-size:11px}
@@ -295,6 +299,15 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .first-note p span{color:var(--tx2)}
 .first-note-mark{flex:none;transform-origin:50% 80%;animation:first-note-tilt 280ms var(--ease-out) 40ms both}
 .first-note .text-button{font-size:12px;padding:4px 2px}
+/* At the bottom of a session (the wrap-up), it grows from its lower edge; once entered, a move between places never replays it. */
+.first-note.at-bottom{margin:0 25px 12px;transform-origin:50% 100%}
+.first-note.entered,.first-note.entered .first-note-mark{animation:none}
+/* While firstRunDrafts answers for a project that needs orientation: an empty main column, no motion. */
+.first-run-pending{flex:1}
+/* Agent details are mounted for every agent (their note is a live region); without content they take no space. */
+.provider-status.empty{display:contents}
+.agent-row:focus-visible{outline-offset:-2px;border-radius:8px}
+.know-error{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}.know-error .form-error{margin:0}
 @keyframes first-note-in{from{opacity:0;transform:scale(.96)}}
 @keyframes first-note-tilt{from{transform:rotate(-8deg)}}
 @media(hover:hover) and (pointer:fine){.provider-status .text-button:not(:disabled):hover,.agent-actions .text-button:not(:disabled):hover,.draft-card .text-button:not(:disabled):hover,.first-note .text-button:not(:disabled):hover{background:transparent;color:var(--tx)}}
@@ -312,7 +325,8 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 @container composer-form (max-width:479px){.agent-cards .agent-option{grid-template-columns:minmax(0,1fr);row-gap:4px;padding:10px}.agent-cards .agent-option .provider-mark{grid-row:auto;margin-bottom:2px}}
 /* Stacked cards (Phase 7 merge): the state line wraps instead of hiding "Not installed" behind the
    action, and the action takes its own line at the bottom of the card. */
-@container composer-form (max-width:479px){.agent-cards .agent-option .agent-sub{white-space:normal;overflow-wrap:break-word}.agent-cards .agent-card:has(.agent-action) .agent-option{padding-bottom:30px}.agent-cards .agent-card:has(.agent-action) .agent-sub{padding-right:0}.agent-cards .agent-action{left:10px;right:auto;bottom:9px}}
+/* The card's state line stays on one line: it leads with the state ("Signed in · 2.1.286"), so a cut only hides the version (the tooltip has it). */
+@container composer-form (max-width:479px){.agent-cards .agent-card:has(.agent-action) .agent-option{padding-bottom:30px}.agent-cards .agent-card:has(.agent-action) .agent-sub{padding-right:0}.agent-cards .agent-action{left:10px;right:auto;bottom:9px}}
 /* Task box (board B13): the textarea sits over an aria-hidden mirror. .task-input is the alignment
    contract: both get exactly the same box and text metrics, never copied by script. */
 .task-box{position:relative}.task-field{position:relative}
@@ -343,7 +357,7 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .start-button:not(:disabled):active{transform:scale(.97)}
 @media(prefers-reduced-motion:reduce){.start-button{transition:none}.start-button:not(:disabled):active{transform:none}}
 /* Live regions stay in the tree (display:none would drop them); empty, they collapse out of the flow. */
-.start-reason{font-size:var(--text-meta);color:var(--tx2)}.start-reason:empty,.preview-error:empty{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;margin:0;padding:0}.native-stays{margin-top:-14px}
+.start-reason{font-size:var(--text-meta);color:var(--tx2)}.start-reason:empty,.preview-error:empty,.agent-note:empty{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;margin:0;padding:0}.native-stays{margin-top:-14px}
 /* What the agent will know: replaced in place as replies arrive; bars change width without a transition. */
 .context-preview{grid-column:2;grid-row:1/span 2;display:flex;flex-direction:column;gap:14px;min-width:0;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
 .preview-heading{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;font-size:14px}.preview-live{margin-left:auto;font-size:var(--text-meta);font-weight:400;color:var(--tx3);white-space:nowrap}

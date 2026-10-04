@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
-import { contextPreview, inspectorTab, newSession, skipFirstRun, startSession, taskBox } from './support/ui';
+import { contextPreview, inspectorTab, newSession, openAnotherProject, skipFirstRun, startSession, switchProject, taskBox } from './support/ui';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -135,6 +135,10 @@ test('first-run actions: dropped paths, the headless gate and remembering both d
     await app.evaluate(() => { (globalThis as any).__journalFirstRun = true; });
     const drafts = await request<any>(page, 'firstRunDrafts', { projectId: project.id });
     expect(drafts.overview.basis.facts).toEqual({ readme: 'README.md', folders: 0, commits: 1, counted: true });
+    // Drafts alone mark nothing; the window marks the project once its screen painted.
+    expect(await request(page, 'firstRunDrafts', { projectId: project.id })).not.toBeNull();
+    await expect(request(page, 'firstRunDrafts', { projectId: project.id, again: 'yes' })).rejects.toThrow(/Invalid/);
+    expect(await request(page, 'markOrientationShown', { projectId: project.id })).toBe(true);
     expect(await request(page, 'firstRunDrafts', { projectId: project.id })).toBeNull();
     const fill = (statement: string) => statement.split('\n').filter(line => !/\[describe/.test(line)).join('\n');
     // The window cannot choose its audit label.
@@ -260,13 +264,16 @@ test('a fresh repo shows Getting to know your project; Remember both remembers t
     await expect(knowTitle(page)).toHaveCount(0);
     const moment = page.locator('.first-note');
     await expect(moment).toHaveText(/First note remembered\. Every new session in Journal will know it\./);
-    await expect(moment).toHaveAttribute('role', 'status');
+    // The strip is not a live region; an always-present region announces its text (I5).
+    expect(await moment.getAttribute('role')).toBeNull();
+    await expect(page.locator('main.workspace > p.visually-hidden[role=status]')).toHaveText('First note remembered. Every new session in Journal will know it.');
     // The composer's "Every session knows" lists both notes as just remembered (board 3).
     const always = contextPreview(page).getByRole('region', { name: 'Every session knows' });
     await expect(always.getByRole('listitem')).toHaveCount(2);
     await expect(always.locator('.just-remembered')).toHaveCount(2);
     await expect(always).toContainText('About this project'); await expect(always).toContainText('Where this branch stands');
-    expect(await moment.evaluate(el => getComputedStyle(el).animationName)).toBe('first-note-in');
+    // The entrance played and ended (it never replays: a move between top and bottom shows it without one).
+    await expect(moment).toHaveClass(/\bentered\b/);
     expect(await page.evaluate(() => document.activeElement?.closest('.first-note'))).toBeNull();
     // Both notes are remembered (active), exactly as the cards showed them.
     const memory = await inspectorTab(page, 'Memory');
@@ -303,6 +310,7 @@ test('skip shows nothing again for that project', async () => {
     await expect(knowTitle(page)).toBeVisible();
     await skipFirstRun(page);
     await expect(taskBox(page)).toBeVisible();
+    await expect(taskBox(page)).toBeFocused();
     await skipFirstRun(page); // a no-op once the screen is gone
     expect(audits(f, ['orientation-skipped', 'memory-active']).map(([action]) => action)).toEqual(['orientation-skipped']);
     await app.close();
@@ -343,8 +351,11 @@ test('a detached HEAD shows the overview card only, and Remember saves it', asyn
     await expect(page.getByRole('region', { name: 'About this project' })).toBeVisible();
     await expect(page.getByRole('region', { name: 'Where this branch stands' })).toHaveCount(0);
     await expect(page.getByText('This checkout isn’t on a branch, so I drafted only “About this project”.')).toBeVisible();
-    await page.locator('.know-actions').getByRole('button', { name: 'Remember', exact: true }).click();
+    // Focus is on the screen at once, so the shortcut works without a click; afterwards it is in the task box.
+    await expect(knowTitle(page)).toBeFocused();
+    await page.keyboard.press(`${mod}+Enter`);
     await expect(taskBox(page)).toBeVisible();
+    await expect(taskBox(page)).toBeFocused();
     expect(audits(f, ['memory-active']).length).toBe(1);
   } finally { await app.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
@@ -384,7 +395,7 @@ process.stdin.resume();`);
   try {
     await app.evaluate(() => { (globalThis as any).__journalAuthProbes = true; });
     const codex = agentRows(page).nth(1);
-    await expect(codex).toContainText('Installed · codex-cli 0.40.0');
+    await expect(codex).toContainText('Installed · 0.40.0');
     await codex.getByRole('button', { name: 'Check again: Codex' }).click();
     await expect(codex).toContainText('Sign in needed');
     await codex.getByRole('button', { name: 'Sign in to Codex…' }).click();
@@ -394,14 +405,14 @@ process.stdin.resume();`);
     await expect(dialog.getByRole('status')).toContainText('exit 0');
     await dialog.getByRole('button', { name: 'Done' }).click();
     // Main checks Codex again after the sign-in ends; the row follows without Check again.
-    await expect(codex).toContainText('Installed · codex-cli 0.40.0 · Signed in');
+    await expect(codex).toContainText('Signed in · 0.40.0');
     await expect(codex.getByRole('status')).toHaveText('Signed in to Codex.');
     await expect(codex.getByRole('button')).toHaveCount(0);
     expect(await codex.textContent()).not.toContain('@');
     // The composer's Codex card agrees with the row.
     await openDialogReturns(app, f.project); await page.getByRole('button', { name: 'Open a project…', exact: true }).click();
     const card = page.getByRole('radio', { name: 'Codex', exact: true });
-    await expect(card).toContainText('Installed · codex-cli 0.40.0 · Signed in');
+    await expect(card).toContainText('Signed in · 0.40.0');
     expect(await card.textContent()).not.toContain('@');
   } finally { await app.close(); rmSync(f.root, { recursive: true, force: true }); }
 });
@@ -420,5 +431,176 @@ test('reduced motion shows the first-note text without animation', async () => {
     // Never waits on an animation: under reduced motion there is none to wait for.
     expect(await moment.evaluate(el => [el, ...el.querySelectorAll('*')].flatMap(node => node.getAnimations()).length)).toBe(0);
     expect(await moment.evaluate(el => getComputedStyle(el).animationName)).toBe('none');
+  } finally { await app.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+// Holds every firstRunDrafts reply until release() (main's headless request hook), to reach the in-between states.
+async function holdDrafts(app: ElectronApplication) {
+  await app.evaluate(() => {
+    const g = globalThis as any; g.__heldDrafts = [];
+    g.__journalRequestHook = async (action: string, run: () => Promise<unknown>) => { if (action === 'firstRunDrafts') await new Promise(resolve => g.__heldDrafts.push(resolve)); return run(); };
+  });
+  return {
+    held: (n = 1) => expect.poll(() => app.evaluate(() => (globalThis as any).__heldDrafts.length)).toBeGreaterThanOrEqual(n),
+    release: () => app.evaluate(() => { const g = globalThis as any; delete g.__journalRequestHook; for (const resolve of g.__heldDrafts.splice(0)) resolve(); }),
+  };
+}
+const repo = (f: ReturnType<typeof setup>, name: string, { commit = true } = {}) => {
+  const dir = resolve(f.root, name); mkdirSync(dir);
+  const git = (...args: string[]) => execFileSync('git', ['-C', dir, '-c', 'user.name=a', '-c', 'user.email=a@a', ...args], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main'); writeFileSync(resolve(dir, 'README.md'), `# ${name}\n\nThe ${name} fixture.\n`);
+  if (commit) { git('add', '.'); git('commit', '-qm', 'init'); }
+  return { dir, git };
+};
+
+test('drafts wait for their project: a switch before the reply and New session elsewhere keep them unseen and offered', async () => {
+  const f = setup('first-run-switch-'); plainClis(f);
+  const other = repo(f, 'other');
+  const { app, page } = await launch(f.env);
+  try {
+    await firstRunHook(app);
+    // "other" has a project summary, so it never needs orientation.
+    const otherId = (await request<{ id: string }>(page, 'openProjectPath', { path: other.dir })).id;
+    await request(page, 'proposeMemory', { projectId: otherId, input: { statement: 'Purpose: other\nStructure: README only', category: 'brief', scope: 'checkout', area: '', environment: '', source: { kind: 'user', note: 'mine' } } });
+    await openDialogReturns(app, other.dir); await page.getByRole('button', { name: 'Open a project…', exact: true }).click();
+    await expect(taskBox(page)).toBeVisible();
+    // The fresh project: while its drafts are on their way the main column waits (no composer to type into).
+    const gate = await holdDrafts(app);
+    await openDialogReturns(app, f.project); await openAnotherProject(app, page);
+    await gate.held();
+    await expect(page.locator('.first-run-pending')).toBeVisible();
+    await expect(taskBox(page)).toHaveCount(0); await expect(knowTitle(page)).toHaveCount(0);
+    // (a) Switch away before the reply; the reply arrives for a project that is not current.
+    await switchProject(app, page, 'other');
+    await expect(taskBox(page)).toBeVisible();
+    await gate.release();
+    // (c) New session in the other project keeps them.
+    await page.locator('.sidebar .new-session').click();
+    await expect(taskBox(page)).toBeFocused();
+    const projectId = (await request<{ id: string }>(page, 'openProjectPath', { path: f.project })).id;
+    expect(await request(page, 'firstRunDrafts', { projectId }), 'never painted, so still offered').not.toBeNull();
+    await switchProject(app, page, 'project');
+    await expect(knowTitle(page)).toBeVisible();
+    // Once painted, main marks it shown: never offered again.
+    await expect.poll(() => request(page, 'firstRunDrafts', { projectId })).toBeNull();
+  } finally { await app.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('(d) a reload before the screen painted offers it again', async () => {
+  const f = setup('first-run-reload-'); plainClis(f);
+  const { app, page } = await launch(f.env);
+  try {
+    await firstRunHook(app); const gate = await holdDrafts(app);
+    await openDialogReturns(app, f.project); await page.getByRole('button', { name: 'Open a project…', exact: true }).click();
+    await gate.held();
+    await page.reload(); await page.waitForLoadState('domcontentloaded');
+    await gate.release();
+    await expect(knowTitle(page)).toBeVisible();
+    await expect(knowTitle(page)).toBeFocused();
+  } finally { await app.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('a README without a purpose line asks for it; both cards are remembered', async () => {
+  const f = setup('first-run-purpose-'); plainClis(f);
+  writeFileSync(resolve(f.project, 'README.md'), '# Title only\n');
+  execFileSync('git', ['-C', f.project, '-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qam', 'Bare README'], { stdio: 'pipe' });
+  const { app, page } = await launch(f.env);
+  try {
+    await firstRunHook(app); await openDialogReturns(app, f.project);
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).click();
+    const about = page.getByRole('region', { name: 'About this project' });
+    await expect(about.getByRole('heading', { level: 3, name: 'About this project' })).toBeVisible();
+    await about.getByRole('textbox', { name: 'Purpose', exact: true }).fill('Bills small shops');
+    await expect(page.getByRole('button', { name: /^Remember both/ })).toBeEnabled();
+    await page.keyboard.press(`${mod}+Enter`);
+    await expect(taskBox(page)).toBeFocused();
+    expect(audits(f, ['memory-active']).length).toBe(2);
+    const projectId = (await request<{ id: string }>(page, 'openProjectPath', { path: f.project })).id;
+    const page1 = await request<{ items: { statement: string }[] }>(page, 'memoryPage', { projectId, filter: 'active' });
+    expect(page1.items.map(item => item.statement).join('\n')).toContain('Purpose: Bills small shops');
+  } finally { await app.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('a new commit while the screen is open: Remember is refused and Draft again redrafts in place', async () => {
+  const f = setup('first-run-moved-'); plainClis(f);
+  const { app, page } = await launch(f.env);
+  try {
+    await firstRunHook(app); await openDialogReturns(app, f.project);
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).click();
+    await expect(knowTitle(page)).toBeVisible();
+    await page.getByRole('region', { name: 'Where this branch stands' }).getByRole('textbox', { name: 'Next', exact: true }).fill('Ship alpha 4');
+    writeFileSync(resolve(f.project, 'b.txt'), 'b\n');
+    execFileSync('git', ['-C', f.project, '-c', 'user.name=a', '-c', 'user.email=a@a', 'add', '.'], { stdio: 'pipe' });
+    execFileSync('git', ['-C', f.project, '-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qm', 'Second commit'], { stdio: 'pipe' });
+    await page.getByRole('button', { name: /^Remember both/ }).click();
+    await expect(page.getByRole('alert')).toHaveText('Nothing was remembered. The project has a new commit or branch since these drafts were made.');
+    expect(audits(f, ['memory-active']).length).toBe(0);
+    await page.getByRole('button', { name: 'Draft again', exact: true }).click();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Where this branch stands' })).toContainText('Second commit');
+    await expect(page.getByRole('region', { name: 'Where this branch stands' }).getByRole('textbox', { name: 'Next', exact: true })).toHaveValue('Ship alpha 4');
+    await page.getByRole('button', { name: /^Remember both/ }).click();
+    await expect(taskBox(page)).toBeFocused();
+    expect(audits(f, ['memory-active']).length).toBe(2);
+  } finally { await app.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('an unborn repository is offered Getting to know your project after its first commit, without a restart', async () => {
+  const f = setup('first-run-unborn-'); plainClis(f);
+  const fresh = repo(f, 'fresh', { commit: false });
+  const { app, page } = await launch(f.env);
+  try {
+    await firstRunHook(app); await openDialogReturns(app, fresh.dir);
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).click();
+    await expect(taskBox(page)).toBeVisible();
+    await expect(knowTitle(page)).toHaveCount(0);
+    fresh.git('add', '.'); fresh.git('commit', '-qm', 'First commit');
+    // The checkout poll (3 s) sees HEAD born and asks again.
+    await expect(knowTitle(page)).toBeVisible({ timeout: 15000 });
+  } finally { await app.close(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('Check again says Checking…, keeps focus in the row, and a long version never hides Signed in', async () => {
+  const f = setup('first-run-check-');
+  // A version string as long as the real Claude Code one.
+  f.cli('claude', `if(a[0]==='--version'){console.log('2.1.286 (Claude Code)');process.exit(0)}
+if(a[0]==='--help'){console.log('Usage: claude [options] [command]\\n\\nCommands:\\n  auth   Manage authentication');process.exit(0)}
+if(a.join(' ')==='auth status --json'){console.log(JSON.stringify({loggedIn:true}));process.exit(0)}
+process.stdin.resume();`);
+  f.cli('codex', `if(a[0]==='--version'){console.log('codex-cli 0.159.3');process.exit(0)}\nprocess.stdin.resume();`);
+  const { app, page } = await launch(f.env);
+  try {
+    await app.evaluate(() => {
+      const g = globalThis as any; g.__journalAuthProbes = true;
+      g.__journalRequestHook = async (action: string, run: () => Promise<unknown>) => { if (action === 'providerStatus') await new Promise(r => setTimeout(r, 1200)); return run(); };
+    });
+    const claude = agentRows(page).nth(0).locator('.agent-row');
+    await expect(claude).toContainText('Installed · 2.1.286');
+    await expect(agentRows(page).nth(1)).toContainText('Installed · 0.159.3');
+    const check = claude.getByRole('button', { name: 'Check again: Claude Code' });
+    await check.focus(); await page.keyboard.press('Enter');
+    await expect(claude.getByRole('button', { name: 'Checking Claude Code…' })).toHaveText('Checking…');
+    await expect(claude.getByRole('button', { name: 'Checking Claude Code…' })).toBeFocused();
+    // Signed in: the row has no button left, and focus stays on the row.
+    await expect(claude).toContainText('Signed in · 2.1.286');
+    await expect(claude.getByRole('button')).toHaveCount(0);
+    await expect(claude).toBeFocused();
+    await app.evaluate(() => { delete (globalThis as any).__journalRequestHook; });
+    await openDialogReturns(app, f.project); await page.getByRole('button', { name: 'Open a project…', exact: true }).click();
+    const card = page.getByRole('radio', { name: 'Claude Code', exact: true });
+    await expect(card).toContainText('Signed in · 2.1.286');
+    await expect(card).toHaveAttribute('title', /Version: 2\.1\.286 \(Claude Code\)/);
+    // Rendered, not only in the text: the state line is not cut short.
+    const sub = card.locator('.agent-sub');
+    expect(await sub.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    expect(await sub.evaluate(el => el.textContent)).toMatch(/^Signed in/);
+    // In a small window the version may be cut, never the state: "Signed in" ends inside the line's box.
+    const signedInFits = () => sub.evaluate(el => { const range = document.createRange(); const text = el.lastChild!; range.setStart(text, 0); range.setEnd(text, 'Signed in'.length);
+      return range.getBoundingClientRect().right <= el.getBoundingClientRect().right - parseFloat(getComputedStyle(el).paddingRight) + 0.5; });
+    expect(await signedInFits()).toBe(true);
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(900, 640));
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(900);
+    await expect(card).toBeVisible();
+    expect(await signedInFits()).toBe(true);
   } finally { await app.close(); rmSync(f.root, { recursive: true, force: true }); }
 });

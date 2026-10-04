@@ -30,13 +30,26 @@ test('agentRow never says signed in without a probe', async t => {
     assert.doesNotMatch(row.sub, /Signed in/, `${provider} ${auth}`); assert.notEqual(row.tone, 'ok');
   }
   // Only a parsed probe (or Cursor's own status check) says it.
-  assert.deepEqual(agentRow(agent({ auth: 'signed-in' })), { name: 'Claude Code', sub: 'Installed · 2.1.286 · Signed in', hint: null, tone: 'ok', action: null, quietLogin: false });
+  assert.deepEqual(agentRow(agent({ auth: 'signed-in' })), { name: 'Claude Code', sub: 'Signed in · 2.1.286', hint: null, tone: 'ok', action: null, quietLogin: false });
   // Unknown never warns: a quiet sign-in where the CLI documents one, nothing where it doesn't.
-  assert.deepEqual(agentRow(agent({ auth: 'unknown' })), { name: 'Claude Code', sub: 'Installed · 2.1.286 · Sign-in unknown', hint: null, tone: 'muted', action: 'login', quietLogin: true });
+  assert.deepEqual(agentRow(agent({ auth: 'unknown' })), { name: 'Claude Code', sub: 'Sign-in unknown · 2.1.286', hint: null, tone: 'muted', action: 'login', quietLogin: true });
   assert.deepEqual(agentRow(agent({ auth: 'unchecked' })), { name: 'Claude Code', sub: 'Installed · 2.1.286', hint: null, tone: 'muted', action: 'login', quietLogin: true });
   assert.equal(agentRow(agent({ auth: 'unknown', supports: { login: false } })).action, null);
   // Account details never reach a row: there is no field for them.
   assert.doesNotMatch(JSON.stringify(agentRow(agent({ auth: 'signed-in', email: 'a@b.c' }))), /@/);
+});
+
+test('displayVersion keeps the bare version, and the state comes first', async t => {
+  const { displayVersion, agentRow } = await load(t);
+  assert.equal(displayVersion('2.1.286 (Claude Code)'), '2.1.286');
+  assert.equal(displayVersion('codex-cli 0.159.3'), '0.159.3');
+  assert.equal(displayVersion('2026.10.01-e373342'), '2026.10.01');
+  assert.equal(displayVersion('nightly'), 'nightly'); assert.equal(displayVersion(null), null); assert.equal(displayVersion('  '), null);
+  assert.equal(agentRow(agent({ version: '2.1.286 (Claude Code)', auth: 'signed-in' })).sub, 'Signed in · 2.1.286');
+  assert.equal(agentRow(agent({ provider: 'codex', version: 'codex-cli 0.159.3', auth: 'signed-out' })).sub, 'Sign in needed · 0.159.3');
+  assert.equal(agentRow(agent({ provider: 'cursor', version: '2026.10.01-e373342', state: 'login-required', auth: undefined })).sub, 'Sign in needed · 2026.10.01');
+  assert.equal(agentRow(agent({ version: '2.1.286 (Claude Code)' })).sub, 'Installed · 2.1.286');
+  assert.equal(agentRow(agent({ state: 'checking' })).sub, 'Checking…');
 });
 
 test('agentRow offers install, install page or sign-in per state, one action at most', async t => {
@@ -51,7 +64,7 @@ test('agentRow offers install, install page or sign-in per state, one action at 
   assert.equal(agentRow(missing({ provider: 'codex', commands: commands({ install: null }) })).action, 'install-page');
   assert.equal(agentRow(missing({ commands: commands({ install: null, installPage: null }) })).action, null);
   // Signed out: an amber sign-in; without a documented sign-in, the row says where to sign in instead.
-  assert.deepEqual([agentRow(agent({ provider: 'codex', auth: 'signed-out' })).sub, agentRow(agent({ provider: 'codex', auth: 'signed-out' })).tone, agentRow(agent({ provider: 'codex', auth: 'signed-out' })).action], ['Installed · 2.1.286 · Sign in needed', 'warn', 'login']);
+  assert.deepEqual([agentRow(agent({ provider: 'codex', auth: 'signed-out' })).sub, agentRow(agent({ provider: 'codex', auth: 'signed-out' })).tone, agentRow(agent({ provider: 'codex', auth: 'signed-out' })).action], ['Sign in needed · 2.1.286', 'warn', 'login']);
   assert.deepEqual([agentRow(agent({ auth: 'signed-out', supports: { login: false } })).action, agentRow(agent({ auth: 'signed-out', supports: { login: false } })).hint], [null, 'Run Claude Code in a terminal and sign in there.']);
   // Cursor keeps its states and earlier sentences, and signs in whenever its CLI is found.
   const cursor = fields => agent({ provider: 'cursor', supports: { resume: true, createChat: true, mode: true }, commands: commands({ login: 'agent login', install: 'curl https://cursor.com/install -fsS | bash' }), ...fields });
@@ -59,7 +72,7 @@ test('agentRow offers install, install page or sign-in per state, one action at 
   assert.equal(agentRow(cursor({ auth: 'unknown' })).quietLogin, true);
   assert.deepEqual([agentRow(cursor({ state: 'not-cursor', available: false, impostor: '/bin/agent' })).action, agentRow(cursor({ state: 'not-cursor', available: false, impostor: '/bin/agent' })).hint],
     ['install', 'An agent command at /bin/agent does not identify as the Cursor CLI, so Journal will not run it.']);
-  assert.deepEqual([agentRow(cursor({ state: 'unsupported', available: false })).action, agentRow(cursor({ state: 'unsupported', available: false })).sub], [null, 'Installed · 2.1.286 · Unsupported version']);
+  assert.deepEqual([agentRow(cursor({ state: 'unsupported', available: false })).action, agentRow(cursor({ state: 'unsupported', available: false })).sub], [null, 'Unsupported version · 2.1.286']);
   assert.match(agentRow(cursor({ state: 'unlaunchable', available: false, unlaunchable: { path: 'C:\\x\\agent.cmd', reason: 'a batch file' } })).hint, /cannot start it safely: a batch file/);
   // Action names are unique per provider.
   assert.deepEqual(['install', 'login', 'install-page'].map(action => actionName(action, 'Codex')), ['Install Codex…', 'Sign in to Codex…', 'Open Codex install page']);
@@ -106,8 +119,10 @@ const OVERVIEW = 'Purpose: A fixture project.\nStructure: src (4), tests (2); ke
 const BRANCH = ['Completed (2 commits since branching from main (abc1234); HEAD def5678):', '- Add the welcome screen (def5678)', '- Fix: a: b (aaa1111)',
   'Changed areas: src/ui (3)', 'Uncommitted: none', 'Current work: [describe what this branch is doing now]', 'Next: [describe the next concrete step and any blocker]'].join('\n');
 const CARRIED = BRANCH.replace('Current work: [describe what this branch is doing now]', 'Current work: Windows menus');
+// No README purpose line: Purpose is a field too.
+const NO_PURPOSE = OVERVIEW.replace('Purpose: A fixture project.', 'Purpose: [describe what this repo delivers and for whom]');
 
-test('draftLines finds the three fields and keeps other lines verbatim', async t => {
+test('draftLines finds the four fields and keeps other lines verbatim', async t => {
   const { draftLines } = await load(t);
   assert.deepEqual(draftLines(OVERVIEW), [{ kind: 'text', label: 'Purpose', value: 'A fixture project.' }, { kind: 'text', label: 'Structure', value: 'src (4), tests (2); key files: README.md' }, { kind: 'field', label: 'Constraints', key: 'constraints' }]);
   const lines = draftLines(BRANCH);
@@ -115,20 +130,22 @@ test('draftLines finds the three fields and keeps other lines verbatim', async t
   assert.deepEqual(lines.slice(5).map(line => line.key), ['currentWork', 'next']);
   // A carried line (not a placeholder) is text, never a field.
   assert.deepEqual(draftLines(CARRIED)[5], { kind: 'text', label: 'Current work', value: 'Windows menus' });
+  assert.deepEqual(draftLines(NO_PURPOSE)[0], { kind: 'field', label: 'Purpose', key: 'purpose' });
 });
 
 test('previewStatement equals core fillDraft', async t => {
   const { previewStatement, hasPlaceholder } = await load(t);
   const cases = [[OVERVIEW, {}], [OVERVIEW, { constraints: '  Never force-push main ' }], [BRANCH, { currentWork: 'Menus', next: 'Ship alpha 4' }], [BRANCH, { next: 'Ship' }],
-    [BRANCH, {}], [CARRIED, { currentWork: 'ignored: the line is carried', next: 'Test' }], [`${BRANCH}\nNext: [describe again]`, { next: 'Both' }]];
+    [BRANCH, {}], [CARRIED, { currentWork: 'ignored: the line is carried', next: 'Test' }], [`${BRANCH}\nNext: [describe again]`, { next: 'Both' }],
+    [NO_PURPOSE, {}], [NO_PURPOSE, { purpose: '  Bills small shops ' }], [NO_PURPOSE, { purpose: 'Bills', constraints: 'Keep the API' }], [OVERVIEW, { purpose: 'ignored: the README line is kept' }]];
   for (const [statement, fields] of cases) {
     assert.equal(previewStatement(statement, fields), fillDraft(statement, fields), JSON.stringify(fields));
     assert.equal(hasPlaceholder(previewStatement(statement, fields)), false);
   }
   // Edit keeps an empty field's placeholder, so the form shows the line.
   assert.match(previewStatement(BRANCH, { next: 'Ship' }, { keepEmpty: true }), /^Current work: \[describe/m);
-  // A placeholder that is not a field (no README purpose line) remains: Remember stays off until Edit.
-  assert.equal(hasPlaceholder(previewStatement('Purpose: [describe what this repo delivers and for whom]\nStructure: src', {})), true);
+  // A placeholder that is not one of the fields remains (core refuses to save it).
+  assert.equal(hasPlaceholder(previewStatement('Purpose: A\nStructure: [describe the folders]', {})), true);
 });
 
 test('cardMeta and the facts line', async t => {

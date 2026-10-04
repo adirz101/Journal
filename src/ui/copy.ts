@@ -63,12 +63,12 @@ export const composer = {
   separateCopyHelp: 'Isolated from your other sessions. Journal never stashes, copies or force-removes your work.',
   start: (name: string) => `Start ${name}`, nativeStays: 'Your native login, settings and approvals stay with the CLI.',
   installed: (version: string | null) => version ? `Installed · ${version}` : 'Installed', signedIn: 'Signed in', signInNeeded: 'Sign in needed',
-  notInstalled: 'Not installed', install: 'Install…', installPage: 'Install page…', signIn: 'Sign in…', signInUnknown: 'Sign-in unknown', checking: 'Checking…', unsupported: 'Unsupported version',
+  notInstalled: 'Not installed', signInUnknown: 'Sign-in unknown', checking: 'Checking…', unsupported: 'Unsupported version',
   notCursor: 'Not the Cursor CLI', cantLaunch: 'Can’t launch',
   noPlan: (name: string) => `${name} has no plan mode. Choose Build or Read-only.`, noModes: 'This Cursor version has no modes. Choose Build.',
   slotsFull: '4 sessions are running. Stop one to start another.', runtimeDown: 'The runtime is reconnecting. Start is available again once it connects.',
   // The action names the card's own button, so the reason beside Start says what to do next.
-  agentMissing: (name: string, action?: 'install' | 'install-page' | 'login' | null) => `${name} isn’t installed on this computer.${action === 'install' ? ' Choose Install… on its card.' : action === 'install-page' ? ' Choose Install page… on its card.' : ''}`,
+  agentMissing: (name: string, action?: 'install' | 'install-page' | 'login' | null) => `${name} isn’t installed on this computer.${action === 'install' ? ' Choose Install… on its card.' : action === 'install-page' ? ' Choose Open install page on its card.' : ''}`,
   updatesAsYouType: 'updates as you type', notes: 'Notes', size: 'Size', notChecked: 'Sources are checked when you start', checked: 'Sources checked',
   notesMatch: (n: number) => n === 1 ? '1 note matches' : `${n} notes match`, hoverHint: 'hover an underline',
   notesMatching: (word: string) => `Notes matching “${word}”`, matches: 'matches', leaveOutShort: 'Leave out',
@@ -212,8 +212,10 @@ export const firstRun = {
   draft: 'Draft', edit: 'Edit',
   commitsSince: (n: number, since: string) => `${count(n, 'commit')} since ${since}`,
   recentCommits: (n: number, head: string) => `${count(n, 'recent commit')} · ${head}`,
-  needsEdit: 'Git had no line for this part. Use Edit to write it, then review it in Project memory.',
+  purpose: 'Purpose',
   rememberFailed: (message: string) => `Nothing was remembered. ${message}`,
+  // Remember was refused because the project moved (a new commit or another branch) while the screen was open.
+  moved: 'Nothing was remembered. The project has a new commit or branch since these drafts were made.', draftAgain: 'Draft again',
   justRemembered: 'Just remembered', close: 'Close',
   noSessionsYet: 'No sessions yet.', firstSessionHere: 'Your first session will appear here.',
   emptyTerminalTitle: 'A familiar place to work',
@@ -223,16 +225,14 @@ export const firstRun = {
   dropHere: 'Drop a Git folder to open it',
   noBranch: {
     detached: 'This checkout isn’t on a branch, so I drafted only “About this project”.',
-    unborn: 'This repository has no commits yet. Make a first commit and I’ll draft these notes.',
     failed: 'I couldn’t read this branch’s history from Git, so I drafted only “About this project”.',
   },
   noProject: {
     failed: 'I couldn’t read this project’s files from Git, so I drafted only “Where this branch stands”.',
   },
-  firstNote: 'First note remembered. Every new session in Journal will know it.',
   firstNoteTitle: 'First note remembered.', firstNoteBody: 'Every new session in Journal will know it.',
   draftBranch: 'Draft “Where this branch stands”', draftProject: 'Draft “About this project”', draftUpdate: 'Draft an update',
-  dropNotFolder: 'Drop a folder from Finder or File Explorer.',
+  dropNotFolder: 'Drop a folder from Finder or File Explorer.', dropOne: 'Drop one folder at a time.',
 } as const;
 
 // Phase 7: the agent rows (Welcome, composer cards and Cursor status share them).
@@ -251,11 +251,11 @@ export const providers = {
   notCursorHint: (path: string) => `An agent command at ${path} does not identify as the Cursor CLI, so Journal will not run it.`,
   signInElsewhere: (name: string) => `Run ${name} in a terminal and sign in there.`,
   installName: (name: string) => `Install ${name}…`, signInName: (name: string) => `Sign in to ${name}…`, installPageName: (name: string) => `Open ${name} install page`,
-  checkAgainName: (name: string) => `Check again: ${name}`,
+  checkAgainName: (name: string) => `Check again: ${name}`, checkingName: (name: string) => `Checking ${name}…`,
   signedInTo: (name: string) => `Signed in to ${name}.`, stillSignedOut: (name: string) => `${name} still reports that you are not signed in.`,
   signInUnconfirmed: (name: string) => `Journal could not confirm the sign-in. Try starting a ${name} session.`,
   cursorOffPath: (path: string) => `Journal uses ${path}, which is not on your PATH. To run agent in your own terminal, add its folder to PATH (the installer printed the command).`,
-  cursorInstalled: (version: string | null, signIn: boolean) => `Cursor CLI ${version ?? ''} is installed${signIn ? '. Sign in to continue.' : '.'}`,
+  cursorInstalled: (version: string | null, signIn: boolean) => `Cursor CLI ${version ? `${version} ` : ''}is installed${signIn ? '. Sign in to continue.' : '.'}`,
   cursorImpostor: 'The installer finished, but the agent command Journal finds is not the Cursor CLI.',
   cursorNotFound: 'The installer finished, but Journal cannot find the agent command yet. Check the installer output; if it asks you to update PATH, do so and restart Journal.',
   cursorNoModes: 'This version has no Ask or Plan mode, so Read-only and Plan are unavailable for Cursor. Update with agent update.',

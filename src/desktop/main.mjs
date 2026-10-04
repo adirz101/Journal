@@ -72,6 +72,8 @@ let window; let modalOpen = false; let store; let runtime; let updater; let upda
 const devUrl = process.env.JOURNAL_DEV_URL;
 // Automated tests run without visible windows or a Dock icon.
 const headless = process.env.JOURNAL_HEADLESS === '1';
+// Phase 7: Getting to know your project is offered outside headless runs, and in them only with the test hook.
+const firstRunOn = () => !headless || globalThis.__journalFirstRun === true;
 if (devUrl && !/^http:\/\/127\.0\.0\.1:\d+\/$/.test(devUrl)) throw new Error('Development URL must be local');
 const LIVE = ['starting', 'running', 'waiting', 'stopping'];
 
@@ -326,7 +328,9 @@ const actions = {
   projects: () => store.listProjects(),
   // Cheap branch/HEAD read so the UI notices checkouts switched outside Journal.
   checkout: async ({ projectId }) => { const project = await store.project(projectId); return { branch: project.branch, head: project.head }; },
-  project: async ({ projectId }) => ({ project: await store.project(projectId), sessions: await store.listSessions(projectId, true), receipts: await store.listReceipts(projectId) }),
+  // needsOrientation (Phase 7): the renderer holds the main column until firstRunDrafts answers, so no composer flashes first.
+  project: async ({ projectId }) => ({ project: await store.project(projectId), sessions: await store.listSessions(projectId, true), receipts: await store.listReceipts(projectId),
+    needsOrientation: firstRunOn() && await store.needsOrientation(projectId) }),
   workspaces: ({ projectId }) => store.listWorkspaces(projectId),
   planWorkspace: ({ projectId, branch, base }) => store.planWorkspace(projectId, { branch, base }, join(userData, 'worktrees')),
   createWorkspace: ({ projectId, branch, base, baseCommit, planId }) => store.createWorkspace(projectId, { branch, base, baseCommit, planId }, join(userData, 'worktrees')),
@@ -588,7 +592,14 @@ const actions = {
     return store.openProject(path);
   },
   // Gated in headless runs: many specs open a fresh repository and go straight to Start.
-  firstRunDrafts: ({ projectId }) => !headless || globalThis.__journalFirstRun === true ? store.firstRunDrafts(text(projectId, 'project ID', 100)) : null,
+  // again (Draft again after the project moved) is a strict boolean.
+  firstRunDrafts: async ({ projectId, again }) => {
+    const id = text(projectId, 'project ID', 100);
+    if (again !== undefined && typeof again !== 'boolean') throw new Error('Invalid request');
+    return firstRunOn() ? store.firstRunDrafts(id, { again: again === true }) : null;
+  },
+  // The renderer calls this once the first-run screen has painted (D10: offered once).
+  markOrientationShown: ({ projectId }) => store.markOrientationShown(text(projectId, 'project ID', 100)),
   // via is fixed here; the renderer cannot label its own audit entries.
   rememberDraft: ({ projectId, overview, branch }) => store.rememberDraft(text(projectId, 'project ID', 100), { overview: overview ?? null, branch: branch ?? null }, { via: 'first-run' }),
   skipOrientation: ({ projectId }) => store.skipOrientation(text(projectId, 'project ID', 100)),

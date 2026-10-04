@@ -1,5 +1,5 @@
 import type { AgentInfo, Bootstrap, Provider } from './types';
-import { AgentRow, type ProviderHandlers } from './AgentRow';
+import { AgentRow, type ProviderBusy, type ProviderHandlers } from './AgentRow';
 import { cursorHints } from './ProviderStatus';
 import { firstRun } from './copy';
 
@@ -10,7 +10,7 @@ const ORDER: Provider[] = ['claude', 'codex', 'cursor'];
 // say honestly what is installed and signed in; nothing here starts an agent.
 export function Welcome({ mark, agents, shortcut, busy, providerBusy, notes, dragging, dropError, handlers, onOpen }: {
   mark: string; agents: AgentInfo[] | undefined; shortcut: Bootstrap['shortcuts']['open-project'];
-  busy: boolean; providerBusy: Partial<Record<Provider, boolean>>; notes: Partial<Record<Provider, string>>;
+  busy: boolean; providerBusy: ProviderBusy; notes: Partial<Record<Provider, string>>;
   dragging: boolean; dropError: string; handlers: ProviderHandlers; onOpen(): void;
 }) {
   return <section className={`welcome${dragging ? ' dragging' : ''}`} aria-labelledby="welcome-title">
@@ -27,7 +27,7 @@ export function Welcome({ mark, agents, shortcut, busy, providerBusy, notes, dra
         <div className="agent-list-heading"><h2 id="agents-heading">{firstRun.agentsHeading}</h2><span>{firstRun.agentsHint}</span></div>
         <ul aria-label={firstRun.agentsHeading}>{ORDER.map(provider => {
           const agent = agents?.find(a => a.provider === provider);
-          return <li key={provider}><AgentRow provider={provider} agent={agent} busy={!!providerBusy[provider]} hints={provider === 'cursor' ? cursorHints(agent) : []} note={notes[provider]} handlers={handlers} /></li>;
+          return <li key={provider}><AgentRow provider={provider} agent={agent} busy={!!providerBusy[provider]} rechecking={providerBusy[provider] === 'check'} hints={provider === 'cursor' ? cursorHints(agent) : []} note={notes[provider]} handlers={handlers} /></li>;
         })}</ul>
       </section>
       <p className="welcome-local"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>{firstRun.localOnly}</p>

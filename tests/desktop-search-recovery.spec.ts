@@ -46,7 +46,7 @@ async function open(env: Record<string, string>, project: string): Promise<{ app
   const app = await electron.launch({ args: ['.'], env });
   await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
   const page = await app.firstWindow();
-  await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
   return { app, page };
 }
 const closeApp = async (app: ElectronApplication) => {

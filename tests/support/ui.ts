@@ -126,11 +126,14 @@ export async function ensureWide(app: ElectronApplication, page?: Page) {
 // Leaves "Getting to know your project" with Skip for now (stored: never shown again for
 // that project). A no-op unless the screen is present, so specs that enable
 // __journalFirstRun for other reasons can call it after opening a project.
+// It first waits until the main column has settled: the screen, the composer's task box or a
+// session (while firstRunDrafts is answering, the main column shows none of them).
 export async function skipFirstRun(page: Page) {
-  const skip = page.locator('.get-to-know').getByRole('button', { name: 'Skip for now', exact: true });
-  if (!await skip.count()) return;
-  await skip.click();
-  await expect(page.locator('.get-to-know')).toHaveCount(0);
+  const screen = page.locator('.get-to-know');
+  await expect(screen.or(taskBox(page)).or(page.locator('.session-view')).first()).toBeVisible();
+  if (!await screen.count()) return;
+  await screen.getByRole('button', { name: 'Skip for now', exact: true }).click();
+  await expect(screen).toHaveCount(0);
 }
 
 // ----- Phase 4: the composer -----

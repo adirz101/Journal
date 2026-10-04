@@ -14,6 +14,17 @@ export interface AgentRowView {
   quietLogin: boolean;               // sign-in offered as a text button, without a warning
 }
 
+// The bare version number a CLI reports, without its decorations: "2.1.286 (Claude Code)",
+// "codex-cli 0.159.3" and "2026.10.01-e373342" show as 2.1.286, 0.159.3 and 2026.10.01.
+// Anything without a dotted number is shown as reported. The full string stays in the tooltip.
+export function displayVersion(version: string | null | undefined): string | null {
+  const text = version?.trim(); if (!text) return null;
+  return /\d+(?:\.\d+)+/.exec(text)?.[0] ?? text;
+}
+// The state first, then the version ("Signed in · 2.1.286"), so a narrow card that cuts the
+// line short still shows what matters.
+const withVersion = (state: string, version: string | null | undefined) => { const shown = displayVersion(version); return shown ? `${state} · ${shown}` : state; };
+
 // "Signed in" only from a probe that parsed cleanly (auth === 'signed-in'); unknown or
 // unchecked never warns, and offers a quiet sign-in where the CLI documents one.
 export function agentRow(agent: AgentInfo | undefined, provider = agent?.provider ?? 'claude'): AgentRowView {
@@ -22,38 +33,44 @@ export function agentRow(agent: AgentInfo | undefined, provider = agent?.provide
   if (!agent || agent.state === 'checking') return { ...base, sub: providers.checking, tone: 'muted', action: null };
   if (agent.state === 'unlaunchable') return { ...base, sub: composer.cantLaunch, tone: 'warn', action: null,
     hint: providers.cantStart(agent.unlaunchable?.path ?? name, agent.unlaunchable?.reason ?? '') };
-  if (agent.state === 'unsupported') return { ...base, sub: `${providers.installedAs(agent.version)} · ${composer.unsupported}`, tone: 'warn', action: null, hint: providers.unsupportedHint };
+  if (agent.state === 'unsupported') return { ...base, sub: withVersion(composer.unsupported, agent.version), tone: 'warn', action: null, hint: providers.unsupportedHint };
   if (agent.state === 'not-cursor') return { ...base, sub: composer.notCursor, tone: 'warn', action: 'install', hint: providers.notCursorHint(agent.impostor ?? 'agent') };
   if (!agent.available) {
     const action: AgentAction | null = agent.commands?.install ? 'install' : agent.commands?.installPage ? 'install-page' : null;
     return { ...base, sub: providers.notInstalled, tone: 'muted', action, hint: action === 'install' ? providers.installHint(name) : action === 'install-page' ? providers.installPageHint : null };
   }
-  const installed = providers.installedAs(agent.version);
+  const installed = providers.installedAs(displayVersion(agent.version));
   // Cursor signs in whenever its CLI is found; Claude and Codex only when their help documents it.
   const canLogin = provider === 'cursor' || agent.supports?.login === true;
-  if (agent.auth === 'signed-in') return { ...base, sub: `${installed} · ${providers.signedIn}`, tone: 'ok', action: null };
-  if (agent.auth === 'signed-out' || agent.state === 'login-required') return { ...base, sub: `${installed} · ${providers.signInNeeded}`, tone: 'warn', action: canLogin ? 'login' : null, hint: canLogin ? null : providers.signInElsewhere(name) };
+  if (agent.auth === 'signed-in') return { ...base, sub: withVersion(providers.signedIn, agent.version), tone: 'ok', action: null };
+  if (agent.auth === 'signed-out' || agent.state === 'login-required') return { ...base, sub: withVersion(providers.signInNeeded, agent.version), tone: 'warn', action: canLogin ? 'login' : null, hint: canLogin ? null : providers.signInElsewhere(name) };
   // A probe that ran but could not conclude says so (muted, never a warning); no probe claims nothing.
-  return { ...base, sub: agent.auth === 'unknown' ? `${installed} · ${composer.signInUnknown}` : installed, tone: 'muted', action: canLogin ? 'login' : null, quietLogin: canLogin };
+  return { ...base, sub: agent.auth === 'unknown' ? withVersion(composer.signInUnknown, agent.version) : installed, tone: 'muted', action: canLogin ? 'login' : null, quietLogin: canLogin };
 }
 
-// The accessible name of a row's action, unique per provider.
+// The accessible name of a row's action, unique per provider ("Install Cursor…").
 export function actionName(action: AgentAction, name: string) {
   return action === 'install' ? providers.installName(name) : action === 'login' ? providers.signInName(name) : providers.installPageName(name);
+}
+// The action's visible label ("Install…"). The Welcome rows and the composer's cards both use
+// actionLabel and actionName, so the two never name the same action differently.
+export function actionLabel(action: AgentAction) {
+  return action === 'install' ? providers.install : action === 'login' ? providers.signIn : providers.openInstallPage;
 }
 
 // ----- Getting to know your project (board 2) -----
 
-export type FieldKey = 'currentWork' | 'next' | 'constraints';
-// The labelled lines a card turns into fields (core fillDraft's FIELDS), with their visible labels.
-const FIELDS: [string, FieldKey][] = [['Current work', 'currentWork'], ['Next', 'next'], ['Constraints', 'constraints']];
+export type FieldKey = 'purpose' | 'currentWork' | 'next' | 'constraints';
+// The labelled lines a card turns into fields (core fillDraft's FIELDS, src/core/status.mjs).
+// Purpose is a field only when the README had no purpose line.
+const FIELDS: [string, FieldKey][] = [['Purpose', 'purpose'], ['Current work', 'currentWork'], ['Next', 'next'], ['Constraints', 'constraints']];
 const PLACEHOLDER = /\[describe[^\]]*\]/;
 export const hasPlaceholder = (statement: string) => PLACEHOLDER.test(statement);
 export type DraftLine = { kind: 'text'; label: string | null; value: string } | { kind: 'field'; label: string; key: FieldKey };
 export type Fields = Partial<Record<FieldKey, string>>;
 
 // A draft statement as card rows. A "Label: value" line is a labelled row; a line holding
-// one of the three placeholders becomes a field; every other line (the Completed block,
+// one of the four placeholders becomes a field; every other line (the Completed block,
 // its commit list) is shown verbatim.
 export function draftLines(statement: string): DraftLine[] {
   return statement.split('\n').map(line => {

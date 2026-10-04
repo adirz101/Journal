@@ -373,11 +373,12 @@ test('no exclamation marks or emoji in visible copy', () => {
 
 // First person (the mascot's voice) only in onboarding, empty states and explanations (board 12):
 // [key, why]. Status, errors, buttons and menus stay neutral.
-const FIRST_PERSON = /\b(?:I|me|my)\b/;
+// "I" only as a capital (so "i.e." passes); "me" and "my" in any case, including a sentence-initial "My".
+const FIRST_PERSON = { test: text => /\bI\b/.test(text) || /\b(?:me|my)\b/i.test(text) };
 const FIRST_PERSON_ALLOWED = [
   ['firstRun.knowTitle', 'onboarding: Getting to know your project'],
   ['firstRun.howSteps.1.body', 'onboarding: How Journal remembers'],
-  ['firstRun.noBranch.detached', 'onboarding: why a card is missing'], ['firstRun.noBranch.unborn', 'onboarding: why there are no cards yet'],
+  ['firstRun.noBranch.detached', 'onboarding: why a card is missing'],
   ['firstRun.noBranch.failed', 'onboarding: why a card is missing'], ['firstRun.noProject.failed', 'onboarding: why a card is missing'],
   ['firstRun.didEmpty', 'empty state: the Session tab explains "What it did"'],
   ['composer.relevantEmpty', 'empty state: Relevant to your task'],
@@ -385,12 +386,18 @@ const FIRST_PERSON_ALLOWED = [
   ['shell.notifyApproval', 'the user\'s own voice in a setting ("Notify me…"), not the mascot'],
 ];
 test('first person only where board 12 allows it', () => {
+  for (const text of ['My notes', 'Tell me', 'I’ll list it', 'MY turn']) assert.ok(FIRST_PERSON.test(text), text);
+  for (const text of ['i.e. the menu', 'Mystery', 'Remembered', 'API key']) assert.ok(!FIRST_PERSON.test(text), text);
   const found = copyStrings().filter(([, text]) => FIRST_PERSON.test(text));
   assert.deepEqual([...new Set(found.map(([key]) => key))].filter(key => !FIRST_PERSON_ALLOWED.some(([allowed]) => allowed === key)), []);
   assert.deepEqual(FIRST_PERSON_ALLOWED.filter(([key]) => !found.some(([k]) => k === key)), [], 'remove allow-list entries whose string is gone');
   // Components take first-person text from copy.ts only.
+  // [file, text, why]: the user's own voice in a control, not the mascot's.
+  const USER_VOICE = [['KnowledgeForm.tsx', 'My explicit statement', 'a source option: the user states the note themselves']];
+  const userVoice = ([at, text]) => USER_VOICE.some(([file, t]) => at.startsWith(`${file}:`) && t === text);
   const inline = uiFiles().flatMap(file => visibleStrings(file)).filter(([, text]) => FIRST_PERSON.test(text));
-  assert.deepEqual(inline.map(([at, text]) => `${at}: ${text}`), []);
+  assert.deepEqual(inline.filter(entry => !userVoice(entry)).map(([at, text]) => `${at}: ${text}`), []);
+  assert.deepEqual(USER_VOICE.filter(entry => !inline.some(found => userVoice([found[0], found[1]]) && found[1] === entry[1])), [], 'remove user-voice entries whose string is gone');
 });
 
 test('the first-run vocabulary avoids the old terms', () => {
@@ -401,6 +408,9 @@ test('the first-run vocabulary avoids the old terms', () => {
   assert.equal(firstRun.facts({ readme: null, folders: 1, commits: 1, counted: false }), 'Drafted from Git: 1 top-level entry, 1 commit · no AI call · nothing left this computer');
   assert.equal(firstRun.emptyTerminalBody('Ctrl+N'), 'Start an agent with Ctrl+N. Your logins, settings and approvals stay with the CLI.');
   assert.equal(providers.installName('Claude Code'), 'Install Claude Code…');
+  assert.equal(providers.cursorInstalled(null, false), 'Cursor CLI is installed.');
+  assert.equal(providers.cursorInstalled('2026.10.01', true), 'Cursor CLI 2026.10.01 is installed. Sign in to continue.');
+  for (const [key, text] of copyStrings()) assert.doesNotMatch(text, / {2}/, `${key} has a double space`);
 });
 
 test('Phase 8: a truncated file search names its reason, and the crash count covers every recovered session', () => {

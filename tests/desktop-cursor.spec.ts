@@ -59,7 +59,7 @@ console.log('Installed to ~/.local/bin/agent. Add ~/.local/bin to your PATH.');`
     await chooseAgent(page, 'cursor');
     const card = page.getByRole('radio', { name: 'Cursor', exact: true });
     await expect(card).toContainText('Not installed');
-    const install = page.getByRole('radiogroup', { name: 'Agent' }).getByRole('button', { name: 'Install… Cursor', exact: true });
+    const install = page.getByRole('radiogroup', { name: 'Agent' }).getByRole('button', { name: 'Install Cursor…', exact: true });
     const status = page.getByRole('region', { name: 'Cursor provider status' });
     await expect(status).toContainText('Runs Cursor’s official installer in a visible terminal.');
     await expect(status.getByRole('button', { name: 'Check again: Cursor' })).toBeVisible();
@@ -91,7 +91,7 @@ console.log('Installed to ~/.local/bin/agent. Add ~/.local/bin to your PATH.');`
     await expect(status).toContainText('not on your PATH');
 
     // Sign in through Cursor's own flow, visibly.
-    await page.getByRole('radiogroup', { name: 'Agent' }).getByRole('button', { name: 'Sign in… Cursor', exact: true }).click();
+    await page.getByRole('radiogroup', { name: 'Agent' }).getByRole('button', { name: 'Sign in to Cursor…', exact: true }).click();
     await expect(processDialog).toContainText('Open this URL to sign in');
     await expect(processDialog.getByRole('status')).toContainText('exit 0');
     await processDialog.getByRole('button', { name: 'Done' }).click();

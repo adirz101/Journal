@@ -46,11 +46,13 @@ export function agentCard(agent: AgentInfo | null | undefined, provider: Provide
 }
 
 // The card's tooltip keeps the technical detail the old provider line showed.
+// It also carries the card's whole state line and the version exactly as the CLI reported it.
 export function agentTitle(agent: AgentInfo | null | undefined): string | undefined {
   if (!agent) return undefined;
-  if (!agent.available) return agent.provider === 'cursor' ? undefined : 'Not found on PATH';
+  const sub = agentRow(agent, agent.provider).sub;
+  if (!agent.available) return agent.provider === 'cursor' ? sub : `${sub}\nNot found on PATH`;
   const caps = agent.capabilities;
-  return [agent.path ?? '', caps && `Resume: ${caps.exactResume}`, caps && `Observed: status ${caps.status.join(', ')}; commands ${caps.commands}`, caps?.modes && `Modes: ${caps.modes}`].filter(Boolean).join('\n') || undefined;
+  return [sub, agent.version && `Version: ${agent.version}`, agent.path ?? '', caps && `Resume: ${caps.exactResume}`, caps && `Observed: status ${caps.status.join(', ')}; commands ${caps.commands}`, caps?.modes && `Modes: ${caps.modes}`].filter(Boolean).join('\n') || undefined;
 }
 
 export const isProvider = (value: string | null | undefined): value is Provider => !!value && (AGENT_ORDER as readonly string[]).includes(value);

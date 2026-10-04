@@ -911,7 +911,9 @@ export class JournalStore {
     }));
   }
   // ----- Phase 7: first run. The orientation flag lives in the project body, so it survives
-  // reopening and remove-then-restore. It is set when drafts are produced (D10: once per project).
+  // reopening and remove-then-restore. The renderer sets it (markOrientationShown) once the
+  // screen has painted (D10: once per project, even if the user walks away); drafts that were
+  // produced but never seen (a project switch, a reload) leave the project eligible.
   setOrientation(projectId, state) { const stored = this.storedProject(projectId); return this.saveProject({ ...stored, orientation: { state, at: now() } }); }
   // A current project summary of a scope (and, for a branch, that branch), active or waiting for review.
   currentBrief(projectId, scope, branch) {
@@ -925,9 +927,12 @@ export class JournalStore {
     const stored = this.storedProject(projectId);
     return !stored.orientation && !this.currentBrief(projectId, null, null);
   }
-  // The two first-run drafts (Git only, nothing stored but the flag), or null.
-  firstRunDrafts(projectId) {
-    if (!this.needsOrientation(projectId)) return null;
+  // The two first-run drafts (Git only, nothing stored), or null. again: Draft again on a
+  // screen that was shown (its HEAD or branch moved); never after Remember or Skip.
+  firstRunDrafts(projectId, { again = false } = {}) {
+    const eligible = this.needsOrientation(projectId)
+      || (again === true && this.storedProject(projectId).orientation?.state === 'shown' && !this.currentBrief(projectId, null, null));
+    if (!eligible) return null;
     const project = this.project(projectId);
     // An unborn HEAD is not marked: there is nothing to draft until the first commit.
     if (!project.head) return null;
@@ -938,7 +943,6 @@ export class JournalStore {
     if (!project.branch) branchSkipped = 'detached';
     else { try { branch = this.proposeStatusUpdate(projectId, 'branch'); } catch { branchSkipped = 'failed'; } }
     if (!overview && !branch) return null;
-    this.setOrientation(projectId, 'shown');
     // branchName: the branch the drafts were made on; rememberDraft refuses another one.
     return { projectId, head: project.head, branchName: project.branch ?? null, overview, branch, branchSkipped, overviewSkipped };
   }
@@ -975,6 +979,14 @@ export class JournalStore {
       this.audit('orientation-remembered', { projectId, notes: notes.length });
       return notes;
     });
+  }
+  // The first-run screen has painted: from now on it is not offered again. Only the first
+  // call sets the flag; it never replaces remembered or skipped. Returns whether it was set.
+  markOrientationShown(projectId) {
+    const stored = this.storedProject(projectId);
+    if (stored.orientation) return false;
+    this.setOrientation(projectId, 'shown');
+    return true;
   }
   // Skip for now: only the flag; no note is touched.
   skipOrientation(projectId) {
