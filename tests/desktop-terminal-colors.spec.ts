@@ -1,13 +1,14 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { setTheme, skipFirstRun, startSession } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 // Terminal colour queries (OSC 10/11, DA1) and the COLORFGBG hint, with a fixture
 // "claude" that asks for the background the way Claude Code, Codex and Cursor do.
-// Fully isolated: PATH holds only the fixture and links to node, git, sh and ps,
-// HOME is empty, and nothing from the developer's environment is passed on.
+// Isolated by fixtureEnv (tests/support/env.ts): PATH holds only the fixture and a few
+// system tools, HOME is empty, and no provider variable is passed on.
 test.skip(process.platform === 'win32', 'POSIX fixture CLIs');
 
 const LIGHT_BG = 'rgb:fafa/fafa/fbfb'; const DARK_BG = 'rgb:0b0b/0d0d/1010';
@@ -19,10 +20,8 @@ function setup() {
   for (const dir of [project, bin, home]) mkdirSync(dir);
   // The fixture CLI is CommonJS; the repository's package.json says module.
   writeFileSync(resolve(root, 'package.json'), '{"type":"commonjs"}\n');
-  const tool = (name: string) => execFileSync('/usr/bin/which', [name], { encoding: 'utf8' }).trim();
-  symlinkSync(process.execPath, resolve(bin, 'node'));
-  for (const name of ['git', 'sh', 'ps']) symlinkSync(tool(name), resolve(bin, name));
-  const git = (...args: string[]) => execFileSync(resolve(bin, 'git'), ['-C', project, '-c', 'user.name=a', '-c', 'user.email=a@a', ...args], { stdio: 'pipe', env: { PATH: bin, HOME: home } });
+  const env = fixtureEnv({ root, bin, home, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
+  const git = (...args: string[]) => execFileSync('git', ['-C', project, '-c', 'user.name=a', '-c', 'user.email=a@a', ...args], { stdio: 'pipe', env });
   git('init', '-q', '-b', 'main'); writeFileSync(resolve(project, 'README.md'), '# Colours fixture\n'); git('add', '.'); git('commit', '-qm', 'init');
   const log = resolve(root, 'stdin.jsonl');
   // Records COLORFGBG and every byte it reads; asks for the background (OSC 11, then the
@@ -31,14 +30,12 @@ function setup() {
 const fs=require('node:fs');const a=process.argv.slice(2);
 if(a[0]==='--version'){console.log('2.1.286 (Claude Code)');process.exit(0)}
 const t0=Date.now();const rec=(kind,data)=>fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({kind,data,ms:Date.now()-t0,session:process.env.JOURNAL_SESSION_ID})+'\\n');
-rec('env',process.env.COLORFGBG??'');
+const {env:fixtureEnvironment}=process;rec('env',fixtureEnvironment.COLORFGBG??''); // the fixture's own environment, as Journal set it
 const ask=()=>process.stdout.write('\\x1b]11;?\\x07\\x1b[c');
 process.stdin.setRawMode(true);process.stdin.resume();
 process.stdin.on('data',d=>{const s=d.toString('latin1');rec('stdin',s);if(s.includes('\\x1b[?997;'))ask();});
 process.stdout.write('COLORS_READY\\r\\n\\x1b[?2031h');ask();`);
   chmodSync(resolve(bin, 'claude'), 0o755);
-  const env: Record<string, string> = { PATH: bin, HOME: home, TMPDIR: resolve(root, 'tmp'), LANG: 'en_US.UTF-8', JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop', JOURNAL_HEADLESS: process.env.JOURNAL_HEADLESS ?? '1' };
-  mkdirSync(env.TMPDIR);
   const lines = (): Line[] => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
   // Everything one session (or, without an ID, every session) read on stdin.
   const input = (session?: string) => lines().filter(line => line.kind === 'stdin' && (!session || line.session === session)).map(line => line.data).join('');

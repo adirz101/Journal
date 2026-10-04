@@ -1,8 +1,9 @@
 import { test, expect, _electron as electron, type Page } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { ensureWide, inspectorTab, newSession, openAnotherProject, sessionStatus, startSession, switchProject } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 // Phase 5 (memory trust): note cards show where a note came from, whether its file
 // still matches and how many conversations it was sent to; the Memory tab filters by
@@ -21,7 +22,7 @@ async function launch(name: string) {
   git('init', '-b', 'main'); writeFileSync(resolve(project, 'tests.md'), 'Integration tests start Docker containers.\nClean them up after each run.\n');
   git('add', '.'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'fixture');
   for (const provider of ['claude', 'codex']) { writeFileSync(resolve(bin, provider), fixture); chmodSync(resolve(bin, provider), 0o755); }
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const app = await electron.launch({ args: ['.'], env });
   await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
   const page = await app.firstWindow();

@@ -1,8 +1,9 @@
 import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, existsSync, readFileSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { currentProject, newSession, projectContextMenu, sessionStatus, startSession } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 test.skip(process.platform === 'win32', 'POSIX fixture CLIs');
 
@@ -26,7 +27,7 @@ fs.appendFileSync(${JSON.stringify(ledger)},JSON.stringify({pid:process.pid,argv
 console.log('PTY_READY '+JSON.stringify(process.argv.slice(2,4)));process.stdin.setRawMode(true);process.stdin.resume();`;
   for (const p of ['claude', 'codex']) { writeFileSync(resolve(bin, p), fixture); chmodSync(resolve(bin, p), 0o755); }
   writeFileSync(resolve(root, 'package.json'), '{"type":"commonjs"}\n');
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const launches = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').map(l => JSON.parse(l)) : [];
   const app = await electron.launch({ args: ['.'], env });
   try {

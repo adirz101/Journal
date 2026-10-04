@@ -53,3 +53,31 @@ test('the renderer reads letters by the same rule as the shortcut router', () =>
     assert.equal(keyLetter(key, code) === 'o', routed, `${key} ${code}`);
   }
 });
+
+test('terminal input is held from a palette command until its dialog closes (review I5)', async () => {
+  // A fresh module: the tests above leave a dialog counted.
+  const { expectModalDialog, modalCounter, modalDialogActive, takeReturnFocus, trackModalDialog } = await import('../src/ui/modal.ts?hold');
+  const now = Date.now();
+  assert.equal(modalDialogActive(now), false);
+  // The command arrives: input is held before the dialog exists.
+  expectModalDialog(now);
+  assert.equal(modalDialogActive(now + 10), true);
+  // The dialog opens (the hold becomes the open dialog) and closes.
+  const element = { open: false, showModal() { this.open = true; }, addEventListener() {}, removeEventListener() {} };
+  const release = trackModalDialog(element, modalCounter(() => {}));
+  assert.equal(modalDialogActive(now + 5000), true, 'an open dialog holds input however long it stays');
+  release();
+  assert.equal(modalDialogActive(now + 20), false, 'closing releases at once');
+  // The blurred terminal is handed to the dialog once, to get focus back when it closes.
+  expectModalDialog(now, 'terminal');
+  assert.equal(takeReturnFocus(now + 5), 'terminal'); assert.equal(takeReturnFocus(now + 6), null);
+  expectModalDialog(now, 'terminal'); assert.equal(takeReturnFocus(now + 2000), null, 'a stale target is never used');
+  // A command whose dialog never opens holds input only briefly.
+  expectModalDialog(now);
+  assert.equal(modalDialogActive(now + 999), true); assert.equal(modalDialogActive(now + 1000), false);
+});
+
+test('TerminalPane drops input while a modal dialog is open or opening', () => {
+  const pane = sources.find(([name]) => name === 'TerminalPane.tsx')[1];
+  assert.match(pane, /terminal\.onData\(data => \{ if \(acceptInput && liveRef\.current && !modalDialogActive\(\)\)/);
+});

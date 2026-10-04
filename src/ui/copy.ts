@@ -66,7 +66,7 @@ export const composer = {
   notInstalled: 'Not installed', signInUnknown: 'Sign-in unknown', checking: 'Checking…', unsupported: 'Unsupported version',
   notCursor: 'Not the Cursor CLI', cantLaunch: 'Can’t launch',
   noPlan: (name: string) => `${name} has no plan mode. Choose Build or Read-only.`, noModes: 'This Cursor version has no modes. Choose Build.',
-  slotsFull: '4 sessions are running. Stop one to start another.', runtimeDown: 'The runtime is reconnecting. Start is available again once it connects.',
+  runtimeDown: 'The runtime is reconnecting. Start is available again once it connects.',
   // The action names the card's own button, so the reason beside Start says what to do next.
   agentMissing: (name: string, action?: 'install' | 'install-page' | 'login' | null) => `${name} isn’t installed on this computer.${action === 'install' ? ' Choose Install… on its card.' : action === 'install-page' ? ' Choose Open install page on its card.' : ''}`,
   updatesAsYouType: 'updates as you type', notes: 'Notes', size: 'Size', notChecked: 'Sources are checked when you start', checked: 'Sources checked',
@@ -270,6 +270,7 @@ export const palette = {
   title: 'Command palette', fileTitle: 'Open a file', referenceTitle: 'Reference a file',
   groups: { sessions: 'Sessions', quiet: 'Quiet sessions to check', actions: 'Actions', memory: 'Project memory', files: 'Files' },
   noResults: (q: string) => `No sessions, commands or notes match “${q}”.`, newWithTask: 'New session with this task', addAsNote: 'Add as a note',
+  resultCount: (n: number) => n === 0 ? 'No results' : n === 1 ? '1 result' : `${n} results`,
   searches: 'Searches titles, tasks and notes. Terminal output isn’t saved, so it isn’t searched.',
   move: 'move', open: 'open', commandsOnly: 'Type > for commands only', continueHint: 'Continue',
   fileHint: 'Type part of a file name', notGit: 'File search needs a Git folder. Use the Files tab.',
@@ -287,6 +288,14 @@ export const palette = {
     'tab-memory': 'Show the Memory tab', settings: 'Settings', 'command-palette': 'Command palette', 'open-file': 'Open a file…',
     'manage-workspaces': 'Manage workspaces…', 'new-session-separate-copy': 'New session in a separate copy', 'check-agents': 'Check agents again',
   },
+  // --- Phase 8 Group B ---
+  // Why an action is unavailable: the same guard the matching button or key uses.
+  reasons: { needsProject: 'Open a project first', needsSession: 'Open a session first', noneNeedsYou: 'No session needs you right now', busy: 'Wait for the current action to finish' },
+  noFiles: (q: string) => `No file name matches “${q}”.`, results: 'Results',
+  // The input's description: the footer says the same, but the footer is hidden from screen readers.
+  howTo: 'Up and down arrows move between results, Enter opens one. Type > for commands only.',
+  fileHowTo: 'Up and down arrows move between files, Enter opens one.',
+  addReference: 'Add reference…',
 } as const;
 
 // Phase 8: failure states (board 9): one honest sentence and one next step each.
@@ -295,9 +304,14 @@ export const states = {
   reconnectNow: 'Reconnect now', reconnecting: 'Reconnecting…',
   crashTitle: 'The session runtime stopped unexpectedly',
   // Counts recovery.total: the sessions list stops at 100 rows.
-  crashBody: (recovery: { total?: number; sessions: readonly unknown[] }) => {
-    const n = recovery.total ?? recovery.sessions.length;
-    return `${n === 1 ? '1 session was' : `${n} sessions were`} interrupted. Nothing was resent to the agents.`;
+  // A session still running outside Journal (orphaned) is not interrupted: it is counted apart.
+  // Orphans past the first 100 rows are unknown, so they count as interrupted.
+  crashBody: (recovery: { total?: number; sessions: readonly { status?: string }[] }) => {
+    const running = recovery.sessions.filter(session => session.status === 'orphaned').length;
+    const n = Math.max(0, (recovery.total ?? recovery.sessions.length) - running);
+    const interrupted = n ? `${n === 1 ? '1 session was' : `${n} sessions were`} interrupted. ` : '';
+    const still = running ? `${running === 1 ? '1 session is' : `${running} sessions are`} still running outside Journal. ` : '';
+    return `${interrupted}${still}Nothing was resent to the agents.`;
   },
   crashContinue: 'Continue each one when you’re ready; it reopens the same conversation.',
   needsId: 'Needs the conversation ID before continuing', confirmId: 'Confirm ID…', stillRunning: 'Still running outside Journal',
@@ -305,8 +319,15 @@ export const states = {
   cantStartTitle: (name: string, problem: 'signed-out' | 'missing' | 'unsupported' | 'failed') => problem === 'signed-out' ? `${name} isn’t signed in`
     : problem === 'missing' ? `${name} isn’t installed` : problem === 'unsupported' ? `This ${name} version isn’t supported` : `${name} couldn’t start`,
   signInBody: 'Sign in once in a terminal, then start again. Journal never handles your login.',
-  openTerminal: 'Open terminal', copyCommand: 'Copy command', copyFailed: 'Copy failed', checkAgain: 'Check again', kept: 'Your task text is kept. Nothing was sent.',
+  openTerminal: 'Open terminal', install: 'Install…', copyCommand: 'Copy command', copyFailed: 'Copy failed', checkAgain: 'Check again',
+  // "Nothing was sent" only where nothing can have been (missing, unsupported, signed out); a
+  // failed start may have reached the agent (its receipt can be uncertain).
+  kept: 'Your task text is kept.', nothingSent: 'Nothing was sent.',
   slotsFull: '4 of 4 running. Stop or finish one to start another. You can still write the task now.',
+  // The recovery panel's Continue while every slot is taken.
+  continueSlotsFull: '4 of 4 running. Stop or finish one to continue this session.',
+  // --- Phase 8 Group B ---
+  copied: 'Copied', recoveryLabel: 'Interrupted sessions', unsupportedBody: 'Update it, then check again.', missingBody: 'Install it, then check again.',
 } as const;
 
 const CATEGORIES: Record<string, string> = { constraint: copy.rule, decision: 'Decision', convention: 'Convention', lesson: 'Lesson', issue: 'Known issue' };

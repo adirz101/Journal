@@ -1,9 +1,10 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, symlinkSync, unlinkSync, readFileSync, existsSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
 import { filesView, inspectContext, inspectorTab, inspectorToggle, newSession, openAnotherProject, projectContextMenu, sessionStatus, startSession, switchProject } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 // Real Electron, runtime and node-pty with fixture CLIs. Native menus are
 // driven through the headless menu hook (see desktop-context-menus.spec.ts).
@@ -40,8 +41,7 @@ fs.appendFileSync(${JSON.stringify(ledger)},JSON.stringify({argv:process.argv.sl
 console.log('PTY_READY');process.stdin.setRawMode(true);process.stdin.setEncoding('utf8');process.stdin.on('data',d=>process.stdout.write('IN:'+JSON.stringify(d)+'\\n'));`;
   for (const p of ['claude', 'codex']) { writeFileSync(resolve(bin, p), fixture); chmodSync(resolve(bin, p), 0o755); }
   writeFileSync(resolve(root, 'package.json'), '{"type":"commonjs"}\n');
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' };
-  delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const launches = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').map(l => JSON.parse(l)) : [];
   return { root, project, other, extra, env, launches };
 }

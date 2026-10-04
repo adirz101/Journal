@@ -8,8 +8,10 @@
 import { _electron as electron } from '@playwright/test';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+// Fixture-only environment (no real PATH, HOME or provider variables): see tests/support/env.ts.
+import { fixtureEnv } from '../tests/support/env.ts';
 
 const executable = process.argv[2];
 if (!executable) throw new Error('Usage: smoke-packaged.mjs <Journal executable>');
@@ -32,8 +34,7 @@ for (const name of ['claude', 'codex']) {
     writeFileSync(join(bin, `${name}.cmd`), `@ECHO off\r\nnode "%~dp0\\${name}.js" %*\r\n`);
   } else { writeFileSync(join(bin, name), `#!${process.execPath}\n${script}`); chmodSync(join(bin, name), 0o755); }
 }
-const env = { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: data, JOURNAL_HEADLESS: '1', JOURNAL_QUIT_POLICY: 'stop' };
-delete env.ELECTRON_RUN_AS_NODE;
+const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: data, JOURNAL_HEADLESS: '1', JOURNAL_QUIT_POLICY: 'stop' } });
 
 const step = async (label, action) => { process.stdout.write(`- ${label}… `); await action(); console.log('ok'); };
 // The same selectors as tests/support/ui.ts (currentProject, sessionStatus): the Phase 3 shell.

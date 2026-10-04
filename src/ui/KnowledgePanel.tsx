@@ -18,8 +18,10 @@ type Filters = MemoryFilters; const DEFAULTS = MEMORY_FILTER_DEFAULTS;
 // The last announced Check needed count per project, for this app run: a remounted
 // panel (a tab switch) does not announce the same count again.
 const announcedCounts = new Map<string, number>();
+// Phase 8: the last palette request handled, so a remounted panel (a tab switch) never takes focus again.
+let focusHandled = 0;
 
-export function KnowledgePanel({ project, workspaces = [], version, trustVersion, busy, proposals: shared, sessions = [], filters: heldFilters, onFilters, onOpenSession, onEdit, onPropose, onChanged, onError, onRemembered, justRemembered }: {
+export function KnowledgePanel({ project, workspaces = [], version, trustVersion, busy, proposals: shared, sessions = [], filters: heldFilters, onFilters, onOpenSession, onEdit, onPropose, onChanged, onError, onRemembered, justRemembered, focus }: {
   // proposals: App's window-wide fetch (useProposals); when set, the panel does not fetch its own.
   // trustVersion: bumps with version and when a session starts running (a new delivery).
   // sessions: the loaded sessions; an origin links to its session only when App can select it.
@@ -31,6 +33,8 @@ export function KnowledgePanel({ project, workspaces = [], version, trustVersion
   onPropose: (scope: 'checkout' | 'branch') => void; onChanged: () => void; onError: (error: unknown) => void;
   // Phase 7: a note was remembered here (the first-note moment); notes remembered on the first-run screen this app run.
   onRemembered?: () => void; justRemembered?: ReadonlySet<string>;
+  // Phase 8: a note opened from the palette (seq increases per request).
+  focus?: { id: string; seq: number } | null;
 }) {
   const [ownFilters, setOwnFilters] = useState<{ projectId: string; filters: Filters }>({ projectId: project.id, filters: DEFAULTS });
   const [filtersFor, setFiltersFor] = useState(project.id);
@@ -96,6 +100,34 @@ export function KnowledgePanel({ project, workspaces = [], version, trustVersion
       try { await load(0); } catch (error) { onError(error); }
     } catch (error) { onError(error); } finally { setPending(false); }
   };
+  // === Phase 8: a note opened from the palette ===
+  // It is loaded by ID, shown first when the current list does not include it, scrolled into
+  // view and focused once. The filters stay as the user left them.
+  const [focusNote, setFocusNote] = useState<{ seq: number; note: Memory } | null>(null);
+  const list = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!focus || focus.seq <= focusHandled) return; let current = true;
+    void api<MemoryPage>('memoryPage', { projectId: project.id, ids: [focus.id], filter: 'history', limit: 1, offset: 0 })
+      .then(found => { if (current && found.items[0]) { focusHandled = focus.seq; setFocusNote({ seq: focus.seq, note: found.items[0] }); } }).catch(onError);
+    return () => { current = false; };
+  }, [focus, project.id, onError]);
+  // Edits, reviews and archiving reload the note it shows, so its state and actions stay current.
+  const focusedId = focusNote?.note.id;
+  useEffect(() => {
+    if (!focusedId) return; let current = true;
+    void api<MemoryPage>('memoryPage', { projectId: project.id, ids: [focusedId], filter: 'history', limit: 1, offset: 0 })
+      .then(found => { if (current) setFocusNote(shown => shown && shown.note.id === focusedId ? (found.items[0] ? { ...shown, note: found.items[0] } : null) : shown); }).catch(() => {});
+    return () => { current = false; };
+  }, [version, focusedId, project.id]);
+  const shownItems = focusNote && focusNote.note.projectId === project.id && !items.some(item => item.id === focusNote.note.id) ? [focusNote.note, ...items] : items;
+  // The card is found by its note ID (data-note-id), never by its position in the list.
+  useEffect(() => {
+    if (!focusNote) return;
+    const card = [...(list.current?.querySelectorAll<HTMLElement>('[data-note-id]') ?? [])].find(element => element.dataset.noteId === focusNote.note.id);
+    if (!card) return;
+    card.tabIndex = -1; card.scrollIntoView({ block: 'nearest' }); card.focus({ preventScroll: true });
+  }, [focusNote?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
+  // === End Phase 8 ===
   const counts = page?.counts ?? {}; const byCategory = page?.categoryCounts ?? {};
   // "…" only before the first result; a rescan keeps the last count (and its amber).
   const checkCount = checks.stale.size; const firstScan = !checks.settled;
@@ -118,7 +150,7 @@ export function KnowledgePanel({ project, workspaces = [], version, trustVersion
     <p className="visually-hidden" aria-live="polite">{announced}</p>
     {checks.done && checks.total !== null && checks.checked < checks.total && <p className="hint">{copy.trust.checked(checks.checked, checks.total)}</p>}
     {attention === 'check' && checks.stale.size > MAX_IDS && <p className="hint">{copy.trust.firstOnly(MAX_IDS)}</p>}
-    <div className="memory-list">{items.map(memory => {
+    <div className="memory-list" ref={list}>{shownItems.map(memory => {
       // A note of another branch is never revised here, and is remembered only when a
       // ready copy has that branch checked out (Phase 6 B8, noteActions).
       const allowed = noteActions(memory, project, workspaces);

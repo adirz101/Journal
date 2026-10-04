@@ -1,8 +1,9 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { manageProject, newSession, openSettings, startSession } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 // Approval notifications and the badge, end to end: real Electron, runtime and
 // node-pty, a fixture Claude CLI, and Journal's real observer hook. Electron's
@@ -30,8 +31,7 @@ fs.appendFileSync(${JSON.stringify(ledger)},JSON.stringify({pid:process.pid,argv
 console.log('TASK '+(process.argv.at(-1)||'').split('\\n').at(-1));
 process.stdin.setRawMode(true);process.stdin.resume();`;
   writeFileSync(resolve(bin, 'claude'), fixture); chmodSync(resolve(bin, 'claude'), 0o755);
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' };
-  delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const launches = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
   const cleanup = () => {
     for (const { pid } of launches()) { try { if (execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).includes(root)) process.kill(pid, 'SIGKILL'); } catch {} }
@@ -92,10 +92,10 @@ async function startClaude(page: Page, task: string) {
 }
 
 // Plays one Claude hook event through Journal's own hook script and settings file.
-function hook(root: string, project: string, session: { id: string; nativeId: string }, event: string, fields: Record<string, unknown> = {}) {
+function hook(env: Record<string, string>, root: string, project: string, session: { id: string; nativeId: string }, event: string, fields: Record<string, unknown> = {}) {
   const settings = JSON.parse(readFileSync(resolve(root, 'data/observers', `${session.id}.settings.json`), 'utf8'));
   const command = settings.hooks[event][0].hooks[0].command as string;
-  execFileSync('/bin/sh', ['-c', command], { input: JSON.stringify({ hook_event_name: event, session_id: session.nativeId, cwd: project, ...fields }), env: { ...process.env, JOURNAL_SESSION_ID: session.id }, stdio: ['pipe', 'ignore', 'ignore'] });
+  execFileSync('/bin/sh', ['-c', command], { input: JSON.stringify({ hook_event_name: event, session_id: session.nativeId, cwd: project, ...fields }), env: { ...env, JOURNAL_SESSION_ID: session.id }, stdio: ['pipe', 'ignore', 'ignore'] });
 }
 const bash = (toolUseId: string) => ({ tool_name: 'Bash', tool_use_id: toolUseId, tool_input: { command: COMMAND } });
 
@@ -105,12 +105,12 @@ test('an unfocused window gets one notification per episode, without the command
     await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     const session = await startClaude(page, 'NOTIFY_A');
     expect(session?.nativeId).toBeTruthy();
-    hook(f.root, f.project, session, 'PreToolUse', bash('t1'));
-    hook(f.root, f.project, session, 'PermissionRequest', bash('t1'));
+    hook(f.env, f.root, f.project, session, 'PreToolUse', bash('t1'));
+    hook(f.env, f.root, f.project, session, 'PermissionRequest', bash('t1'));
     await expect.poll(() => badges(app)).toEqual([1]);
     // A second stacked prompt in the same episode.
-    hook(f.root, f.project, session, 'PreToolUse', bash('t2'));
-    hook(f.root, f.project, session, 'PermissionRequest', bash('t2'));
+    hook(f.env, f.root, f.project, session, 'PreToolUse', bash('t2'));
+    hook(f.env, f.root, f.project, session, 'PermissionRequest', bash('t2'));
     await expect.poll(async () => (await notifications(app)).length).toBe(1);
     const [first] = await notifications(app);
     expect(first).toMatchObject({ title: 'Claude needs approval', shown: true, closed: false, silent: false });
@@ -118,8 +118,8 @@ test('an unfocused window gets one notification per episode, without the command
     expect(first.body).not.toContain('npm publish');
     expect(first.body).not.toContain('API_KEY');
 
-    hook(f.root, f.project, session, 'PostToolUse', bash('t1'));
-    hook(f.root, f.project, session, 'PostToolUse', bash('t2'));
+    hook(f.env, f.root, f.project, session, 'PostToolUse', bash('t1'));
+    hook(f.env, f.root, f.project, session, 'PostToolUse', bash('t2'));
     await expect.poll(() => badges(app)).toEqual([1, 0]);
     expect((await notifications(app))[0].closed).toBe(true);
 
@@ -130,22 +130,22 @@ test('an unfocused window gets one notification per episode, without the command
     await expect(settings.getByRole('checkbox', { name: 'Show the command in notifications' })).toBeChecked();
     await expect.poll(() => JSON.parse(readFileSync(resolve(f.root, 'data/preferences.json'), 'utf8'))).toEqual({ notifications: true, notificationCommand: true });
     await settings.getByRole('button', { name: 'Done', exact: true }).click();
-    hook(f.root, f.project, session, 'PreToolUse', bash('t3'));
-    hook(f.root, f.project, session, 'PermissionRequest', bash('t3'));
+    hook(f.env, f.root, f.project, session, 'PreToolUse', bash('t3'));
+    hook(f.env, f.root, f.project, session, 'PermissionRequest', bash('t3'));
     await expect.poll(async () => (await notifications(app)).length).toBe(2);
     const second = (await notifications(app))[1];
     expect(second.body).toContain('npm publish');
     expect(second.body).not.toContain('FIXTURE_SECRET');
 
     // Turning notifications off: the next episode is silent; the badge still counts it.
-    hook(f.root, f.project, session, 'PostToolUse', bash('t3'));
+    hook(f.env, f.root, f.project, session, 'PostToolUse', bash('t3'));
     await openSettings(page, 'notifications');
     await settings.getByRole('checkbox', { name: 'Notify me when Claude needs approval' }).uncheck();
     await expect(settings.getByRole('checkbox', { name: 'Show the command in notifications' })).toBeDisabled();
     await expect.poll(() => JSON.parse(readFileSync(resolve(f.root, 'data/preferences.json'), 'utf8')).notifications).toBe(false);
     await settings.getByRole('button', { name: 'Done', exact: true }).click();
-    hook(f.root, f.project, session, 'PreToolUse', bash('t4'));
-    hook(f.root, f.project, session, 'PermissionRequest', bash('t4'));
+    hook(f.env, f.root, f.project, session, 'PreToolUse', bash('t4'));
+    hook(f.env, f.root, f.project, session, 'PermissionRequest', bash('t4'));
     await expect.poll(() => badges(app)).toEqual([1, 0, 1, 0, 1]);
     expect(await notifications(app)).toHaveLength(2);
     expect(await app.evaluate(() => (globalThis as any).__osCalls)).toEqual([]);
@@ -157,14 +157,14 @@ test('a headless run without test hooks never reaches the OS notification, badge
   try {
     await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
     const session = await startClaude(page, 'HEADLESS_A');
-    hook(f.root, f.project, session, 'PreToolUse', bash('h1'));
-    hook(f.root, f.project, session, 'PermissionRequest', bash('h1'));
+    hook(f.env, f.root, f.project, session, 'PreToolUse', bash('h1'));
+    hook(f.env, f.root, f.project, session, 'PermissionRequest', bash('h1'));
     // The main process updates the notifier before it forwards the status to the renderer.
     await expect.poll(async () => (await page.evaluate(async () => (await (window as any).journal.request('sessions')).live)).find((s: any) => s.id === session.id)?.status).toBe('waiting');
     // Give an (incorrect) notification time to read the session name and show.
     await page.waitForTimeout(1000);
     expect(await app.evaluate(() => (globalThis as any).__osCalls)).toEqual([]);
-    hook(f.root, f.project, session, 'PostToolUse', bash('h1'));
+    hook(f.env, f.root, f.project, session, 'PostToolUse', bash('h1'));
     await expect.poll(async () => (await page.evaluate(async () => (await (window as any).journal.request('sessions')).live)).find((s: any) => s.id === session.id)?.status).not.toBe('waiting');
     expect(await app.evaluate(() => (globalThis as any).__osCalls)).toEqual([]);
   } finally { await closeApp(app); f.cleanup(); }
@@ -177,8 +177,8 @@ test('clicking the notification sends focus-session for its session', async () =
     const first = await startClaude(page, 'CLICK_A');
     await startClaude(page, 'CLICK_B');
     await expect(sessionButton(page, 'CLICK_B')).toHaveAttribute('aria-current', 'true');
-    hook(f.root, f.project, first, 'PreToolUse', bash('c1'));
-    hook(f.root, f.project, first, 'PermissionRequest', bash('c1'));
+    hook(f.env, f.root, f.project, first, 'PreToolUse', bash('c1'));
+    hook(f.env, f.root, f.project, first, 'PermissionRequest', bash('c1'));
     await expect.poll(async () => (await notifications(app)).length).toBe(1);
     await app.evaluate(() => (globalThis as any).__notifications[0].handlers.click());
     await expect.poll(() => app.evaluate(() => (globalThis as any).__focusEvents)).toEqual([{ type: 'focus-session', sessionId: first.id }]);
@@ -194,8 +194,8 @@ test('clicking the notification selects its session in the renderer, but not whi
     const first = await startClaude(page, 'SELECT_A');
     await startClaude(page, 'SELECT_B');
     await expect(sessionButton(page, 'SELECT_B')).toHaveAttribute('aria-current', 'true');
-    hook(f.root, f.project, first, 'PreToolUse', bash('s1'));
-    hook(f.root, f.project, first, 'PermissionRequest', bash('s1'));
+    hook(f.env, f.root, f.project, first, 'PreToolUse', bash('s1'));
+    hook(f.env, f.root, f.project, first, 'PermissionRequest', bash('s1'));
     await expect.poll(async () => (await notifications(app)).length).toBe(1);
     // An open dialog owns the window: the click must not switch the session behind it.
     await manageProject(app, page, 'notify project');

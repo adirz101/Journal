@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
 import { ensureWide, inspectorToggle, setTheme } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 test('both sidebars resize by pointer and keyboard, persist, and leave room for the workspace', async () => {
   mkdirSync(resolve('.cache/tmp'), { recursive: true });
@@ -11,7 +12,7 @@ test('both sidebars resize by pointer and keyboard, persist, and leave room for 
   mkdirSync(project);
   execFileSync('git', ['-C', project, 'init', '-b', 'main'], { stdio: 'pipe' });
   writeFileSync(resolve(project, 'README.md'), 'Local layout fixture.\n');
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), JOURNAL_DATA_DIR: resolve(directory, 'data'), JOURNAL_QUIT_POLICY: 'stop' }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root: directory, bin: resolve(directory, 'bin'), extra: { JOURNAL_DATA_DIR: resolve(directory, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const app = await electron.launch({ args: ['.'], env });
   try {
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);

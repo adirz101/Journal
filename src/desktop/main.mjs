@@ -16,7 +16,7 @@ import { headDiff, listDirectory, ListingCache, locate, previewFile, searchFiles
 import { gitStatus } from '../core/git-status.mjs';
 import { formatReference, referenceEvent } from '../core/references.mjs';
 import { isSensitivePath } from '../core/evidence.mjs';
-import { launchTarget, resolveExecutable } from '../core/process.mjs';
+import { launchTarget, resolveExecutable, testProviderAllowed } from '../core/process.mjs';
 import { RootWatcher } from './watch.mjs';
 import { Updater, updateMode } from './updater.mjs';
 import { checkOutcome, menuTemplate } from './menu.mjs';
@@ -223,8 +223,15 @@ runtime.on('reconnected', hello => {
 // exists, and run asynchronously beside it, one check in flight per provider. Only signed in / signed out / unknown is kept.
 let agents = initialAgents(process.platform, process.env);
 // Headless test runs: fixture CLIs treat any argument but --version as a session (and
-// log it as a launch), so help reads and probes run only when a spec asks for them.
-const probesAllowed = () => !headless || globalThis.__journalAuthProbes === true;
+// log it as a launch), so help reads and probes run only when a spec asks for them
+// (__journalAuthProbes: true for every provider, or a list of providers).
+// Cursor has no --version-only check (a Cursor build is known by its version and help together),
+// so in those runs Cursor is not looked for at all until a spec allows its probes.
+const probesAllowed = provider => {
+  if (!headless) return true;
+  const allowed = globalThis.__journalAuthProbes;
+  return allowed === true || (Array.isArray(allowed) && allowed.includes(provider));
+};
 const checks = new Map();
 const refreshProvider = async (provider, { fresh = false, after = null } = {}) => {
   // After an install or sign-in a running (older) check is waited for and a new
@@ -235,11 +242,13 @@ const refreshProvider = async (provider, { fresh = false, after = null } = {}) =
   const check = (async () => {
     let row;
     if (provider === 'cursor') {
-      row = await detectCursor(process.env);
-      const auth = row.available ? await cursorAuth(row.path, process.env) : 'unchecked';
+      // Detection runs the CLI (version and help) and the sign-in check runs `agent status`:
+      // both only when probes are allowed. Otherwise (headless tests) Cursor stays not found.
+      row = probesAllowed(provider) ? await detectCursor(process.env) : await detectCursor(process.env, { inspect: false });
+      const auth = row.available && probesAllowed(provider) ? await cursorAuth(row.path, process.env) : 'unchecked';
       row = { ...row, auth, state: row.available && auth === 'signed-out' ? 'login-required' : row.state };
     } else {
-      const probes = probesAllowed();
+      const probes = probesAllowed(provider);
       row = await detectProvider(provider, process.env, { probes });
       if (probes) row = { ...row, auth: await probeAuth(row, process.env) };
     }
@@ -570,7 +579,7 @@ const actions = {
     choice(provider, PROVIDERS, 'provider'); const name = PROVIDER_NAMES[provider];
     let path;
     if (provider === 'cursor') {
-      const found = await findCursor(process.env);
+      const found = probesAllowed(provider) ? await findCursor(process.env) : { path: null };
       if (!found.path) throw new Error('Install the Cursor CLI first');
       path = found.path;
     } else {
@@ -579,6 +588,7 @@ const actions = {
       if (row.supports?.login !== true) throw new Error(`${name}${row.version ? ` ${row.version}` : ''} can’t sign in from Journal. Run ${name} in a terminal and sign in there.`);
       path = row.path;
     }
+    if (!testProviderAllowed(path, process.env)) throw new Error(`Install ${name} first`);
     const target = launchTarget(path, [...PROVIDER_COMMANDS[provider].login], { env: process.env });
     return { ...(await processes.start({ provider, kind: 'login' }, { file: target.file, args: target.args, env: runnable(process.env), cwd: homedir() })), command: commandsFor(provider).login };
   },
