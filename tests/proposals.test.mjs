@@ -96,10 +96,19 @@ test('purging detaches open test-command suggestions from the session and its ev
   f.store.acceptProposal(handled.id);
   f.store.purgeSession(s.id);
   const after = f.store.getProposal(open.id);
-  assert.ok(!after.source.note.includes(s.id)); assert.match(after.source.note, /a purged session/);
+  assert.equal(after.source.note, 'Observed command exit status from Claude Code hooks in a purged session.');
   assert.equal(after.evidence.eventId, null); assert.equal(after.evidence.sessionId, null);
   assert.equal(f.store.getProposal(handled.id).evidence.sessionId, s.id, 'Only open proposals are detached');
   assert.equal(f.store.acceptProposal(open.id).status, 'candidate');
+});
+
+test('purging falls back to replacing the bare session id in a note without the session phrase', t => {
+  const f = fixture(t);
+  const s = f.session('Rule: Release tags must be signed before publishing.', { survivors: [] });
+  const [created] = f.store.generateProposals(s.id);
+  f.store.db.prepare(`UPDATE proposals SET body=json_set(body,'$.source.note',?) WHERE id=?`).run(`Seen in ${s.id} and session ${s.id}.`, created.id);
+  f.store.purgeSession(s.id);
+  assert.equal(f.store.getProposal(created.id).source.note, 'Seen in a purged session and a purged session.');
 });
 
 test('a branch suggestion is remembered on the branch it came from, not the checked-out one', t => {
