@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -55,4 +55,24 @@ test('previewSelection is callable through the worker', async t => {
   assert.deepEqual(preview.terms, ['docker', 'tests']); assert.equal(preview.taskNotes, 1);
   assert.ok(preview.bytes > 0); assert.ok(Array.isArray(preview.excluded)); assert.ok(Array.isArray(preview.warnings));
   assert.equal((await store.projectDetails(project.id)).counts.receipts, 0, 'a preview stores nothing');
+});
+
+test('the Phase 6 session-end methods are callable through the worker', async t => {
+  const root = mkdtempSync(resolve(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'storage-worker-'));
+  const git = (...args) => execFileSync('git', ['-C', root, ...args], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main'); writeFileSync(resolve(root, 'a.txt'), 'one\ntwo\n'); git('add', '.'); git('-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qm', 'init');
+  const store = new StoreClient(resolve(root, 'journal.sqlite'));
+  t.after(async () => { await store.close(); removeLater(root); });
+  const project = await store.openProject(root);
+  const receipt = await store.prepareContext(project.id, 'Ship.\nRule: Release tags must be signed by CI.'); const id = randomUUID();
+  await store.saveSession({ id, projectId: project.id, provider: 'claude', status: 'exited', receiptId: receipt.id, createdAt: new Date().toISOString(), endedAt: new Date().toISOString(), branch: 'main', survivors: [] });
+  const [proposal] = await store.generateProposals(id);
+  assert.equal((await store.sessionSummary(id)).suggestions, 1);
+  const [note] = await store.rememberProposals([proposal.id], { via: 'wrap-up' }); assert.equal(note.status, 'active');
+  const file = await store.proposeMemory(project.id, { statement: 'The a file lists two items', category: 'convention', scope: 'checkout', area: '', source: { kind: 'file', path: 'a.txt', startLine: 1, endLine: 2 } });
+  await store.setMemoryStatus(file.id, 'active');
+  writeFileSync(resolve(root, 'a.txt'), 'one\n2\n');
+  // No baseline was recorded, so the live changes count every file against the empty tree.
+  assert.deepEqual((await store.staleNotesForSession(id)).notes.map(item => item.note.id), [file.id]);
+  assert.equal((await store.reaffirmMemory(file.id, {})).revision, 2);
 });

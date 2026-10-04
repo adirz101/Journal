@@ -16,7 +16,7 @@ import { addWorktree, creationNotices, listGitWorktrees, plannedPath, registered
 import { redact } from './validation.mjs';
 import { fingerprintSync, treePath } from './files.mjs';
 import { MAX_REFERENCES, pathFromCwd, referencesBlock } from './references.mjs';
-import { deliveryCounts, memoryChecks, memoryOrigins, noteIds } from './insights.mjs';
+import { deliveryCounts, memoryChecks, memoryOrigins, noteIds, sessionProposals, sessionSummary, staleNotesForSession } from './insights.mjs';
 
 const LIVE = "('starting','running','waiting','stopping')";
 const EVENT_LIMIT = 2000;
@@ -315,6 +315,18 @@ export class JournalStore {
     if (memory.category === 'brief' && memory.scope === 'branch') this.db.prepare(`UPDATE proposals SET body=json_set(body,'$.state','accepted','$.memoryId',?) WHERE project_id=? AND json_extract(body,'$.kind')='branch-status' AND json_extract(body,'$.branch')=? AND json_extract(body,'$.state')='open'`).run(id, memory.projectId, memory.branch);
     this.audit('memory-active', { id, revision: memory.revision, reason, supersedes: memory.supersedes?.id ?? null, ...(via ? { via } : {}) });
   }
+  // Where a note can be checked for approval: the checkout, or for a note on another
+  // branch a ready separate copy (worktree) whose live branch is that branch. Folder
+  // notes are project-level and always use the checkout.
+  approvalView(memory) {
+    const project = this.project(memory.projectId);
+    if (memory.scope !== 'branch' || memory.source?.rootId || project.branch === memory.branch) return project;
+    for (const row of this.db.prepare(`SELECT body FROM workspaces WHERE project_id=? AND json_extract(body,'$.state')='ready' ORDER BY rowid`).all(memory.projectId)) {
+      const workspace = parse(row); if (!existsSync(workspace.path)) continue;
+      try { const view = workspaceView(project, workspace); if (view.branch === memory.branch) return view; } catch { /* not a usable copy */ }
+    }
+    return project;
+  }
   getMemory(id) {
     const row = this.db.prepare('SELECT r.body,m.status,m.pinned FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.id=?').get(text(id, 'memory ID', 100));
     if (!row) throw new Error('Unknown memory');
@@ -396,7 +408,8 @@ export class JournalStore {
   // Git refuses to check out a branch that another worktree has checked out.
   wrongBranch(projectId, branch, verb) {
     const open = this.db.prepare(`SELECT 1 FROM workspaces WHERE project_id=? AND json_extract(body,'$.branch')=? AND json_extract(body,'$.state')='ready'`).get(projectId, branch);
-    return new Error(open ? `This note belongs to branch ${branch}, which is open in a separate copy (worktree); ${verb === 'approve' ? 'remembering' : 'revising'} it from there is not available yet. You can reject it.`
+    // Approval runs in a ready copy on the branch (approvalView); revising from a worktree is not offered yet.
+    return new Error(open && verb !== 'approve' ? `This note belongs to branch ${branch}, which is open in a separate copy (worktree); revising it from there is not available yet. You can reject it.`
       : `This note belongs to branch ${branch}; check out that branch to ${verb === 'approve' ? 'remember' : verb} it`);
   }
   setMemoryStatus(id, status, { reason = null } = {}) {
@@ -405,7 +418,7 @@ export class JournalStore {
     const memory = this.getMemory(id);
     if (status === 'active' && memory.status !== 'candidate') throw new Error('Only a note waiting for review can be remembered');
     if (status === 'active') {
-      const validation = this.validation(this.project(memory.projectId), memory);
+      const validation = this.validation(this.approvalView(memory), memory);
       if (validation === 'wrong-branch') throw this.wrongBranch(memory.projectId, memory.branch, 'approve');
       if (validation !== 'current') throw new Error('Evidence or branch changed; revise the note before remembering it');
       this.transaction(() => this.approveMemory(memory, { reason }));
@@ -820,9 +833,16 @@ export class JournalStore {
     }
     return created;
   }
+  // With sessionId: that session's suggestions and its resume chain's (earlier: true), each with
+  // the remembered notes it may conflict with, so a one-click Remember is offered only without one.
   listProposals(projectId, state = 'open', { sessionId } = {}) {
-    void sessionId; // Phase 6 A0 stub: the session filter arrives in Group A.
     this.project(projectId); choice(state, ['open', 'accepted', 'dismissed'], 'proposal state');
+    if (sessionId !== undefined && sessionId !== null) {
+      const session = this.getSession(sessionId);
+      if (session.projectId !== projectId) throw new Error('Session belongs to another project');
+      return sessionProposals(this, session, state).map(proposal => proposal.kind === 'branch-status' || !proposal.statement ? proposal
+        : { ...proposal, conflicts: this.conflictsWith(projectId, '', { statement: proposal.statement, scope: proposal.scope, branch: proposal.branch ?? null, area: '' }) });
+    }
     return this.db.prepare(`SELECT body FROM proposals WHERE project_id=? AND json_extract(body,'$.state')=? ORDER BY rowid DESC LIMIT 100`).all(projectId, state).map(parse);
   }
   getProposal(id) {
@@ -831,31 +851,84 @@ export class JournalStore {
   }
   // Accepting creates a candidate (still unapproved); status proposals open the helper instead.
   acceptProposal(id) {
-    const proposal = this.getProposal(id);
-    if (proposal.state !== 'open') throw new Error('This suggestion was already handled');
-    if (proposal.kind === 'branch-status') throw new Error('This suggestion updates “Where this branch stands”. Use its own update button instead of Add for review.');
-    if (proposal.scope === 'branch' && !proposal.branch) throw new Error('This suggestion was made without a branch checked out, so Journal cannot tell which branch it belongs to. Dismiss it to clear it from your suggestions.');
-    if (proposal.evidence?.sessionId) this.getSession(proposal.evidence.sessionId);
+    const proposal = this.openProposal(id);
     const memory = this.proposeMemory(proposal.projectId, { statement: proposal.statement, category: proposal.category, scope: proposal.scope, area: '', source: proposal.source },
       proposal.scope === 'branch' ? { branch: proposal.branch } : undefined);
     this.db.prepare('UPDATE proposals SET body=? WHERE id=?').run(JSON.stringify({ ...proposal, state: 'accepted', memoryId: memory.id, handledAt: now() }), id);
     this.audit('proposal-accepted', { id, memoryId: memory.id, kind: proposal.kind });
     return memory;
   }
-  // ----- Phase 6 A0 stubs (replaced in Group A) -----
-  sessionSummary(id) {
-    const session = this.getSession(id);
-    const durationMs = session.endedAt && session.createdAt ? Date.parse(session.endedAt) - Date.parse(session.createdAt) : null;
-    return { status: session.status, exitCode: session.exitCode ?? null, signal: session.signal ?? null, durationMs: Number.isFinite(durationMs) ? durationMs : null,
-      changes: session.changeStats ?? null, tests: null,
-      identity: { nativeId: session.nativeId ?? null, confirmed: !!session.nativeIdConfirmed, source: session.nativeIdSource ?? null, mismatch: !!session.identityMismatch }, suggestions: 0 };
+  // ----- Phase 6: the session wrap-up -----
+  sessionSummary(id) { return sessionSummary(this, id); }
+  staleNotesForSession(sessionId) { return staleNotesForSession(this, sessionId); }
+  // acceptProposal's checks, before anything is written.
+  openProposal(id) {
+    const proposal = this.getProposal(id);
+    if (proposal.state !== 'open') throw new Error('This suggestion was already handled');
+    if (proposal.kind === 'branch-status') throw new Error('This suggestion updates “Where this branch stands”. Use its own update button instead of Add for review.');
+    if (proposal.scope === 'branch' && !proposal.branch) throw new Error('This suggestion was made without a branch checked out, so Journal cannot tell which branch it belongs to. Dismiss it to clear it from your suggestions.');
+    if (proposal.evidence?.sessionId) this.getSession(proposal.evidence.sessionId);
+    return proposal;
   }
-  staleNotesForSession(sessionId) { this.getSession(sessionId); return { available: true, notes: [], truncated: false }; }
+  // One-step Remember (D1): the full statement was on screen. All or nothing. Every
+  // item is checked (Git, evidence) before one transaction writes and remembers them
+  // all; `via` (set by the main process) labels the audit entries.
   rememberProposals(ids, { via } = {}) {
-    void via; if (!Array.isArray(ids) || ids.length < 1 || ids.length > 5) throw new Error('Choose 1 to 5 suggestions');
-    return ids.map(id => this.setMemoryStatus(this.acceptProposal(id).id, 'active'));
+    choice(via, ['wrap-up'], 'remember path');
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > 5 || ids.some(id => typeof id !== 'string' || !id || id.length > 100) || new Set(ids).size !== ids.length) throw new Error('Choose 1 to 5 suggestions');
+    const prepared = ids.map(id => {
+      const proposal = this.openProposal(id);
+      const branch = proposal.scope === 'branch' ? proposal.branch : null;
+      // A branch suggestion is checked in a copy that has its branch checked out.
+      const view = branch ? this.approvalView({ projectId: proposal.projectId, scope: 'branch', branch }) : null;
+      if (branch && view.branch !== branch) throw this.wrongBranch(proposal.projectId, branch, 'approve');
+      const { item, expected } = this.prepareMemory(proposal.projectId, { statement: proposal.statement, category: proposal.category, scope: proposal.scope, area: '', source: proposal.source },
+        branch ? { branch, view } : {});
+      if (item.conflicts.length) throw new Error(`"${proposal.statement.slice(0, 60)}" may conflict with a remembered note. Review it in Memory.`);
+      return { proposal, item, expected };
+    });
+    if (new Set(prepared.map(({ proposal }) => proposal.projectId)).size > 1) throw new Error('Choose suggestions from one project');
+    for (const [index, a] of prepared.entries()) for (const b of prepared.slice(index + 1)) {
+      if (isDuplicate(a.item.statement, b.item.statement)) throw new Error(`"${b.item.statement.slice(0, 60)}" repeats another suggestion; remember only one of them`);
+    }
+    return this.transaction(() => prepared.map(({ proposal, item, expected }) => {
+      // Re-read inside the lock: another window may have handled it meanwhile.
+      const current = this.getProposal(proposal.id);
+      if (current.state !== 'open') throw new Error('This suggestion was already handled');
+      this.writeMemory(item, expected);
+      this.db.prepare('UPDATE proposals SET body=? WHERE id=?').run(JSON.stringify({ ...current, state: 'accepted', memoryId: item.id, handledAt: now() }), proposal.id);
+      this.audit('proposal-accepted', { id: proposal.id, memoryId: item.id, kind: proposal.kind, via });
+      this.approveMemory(this.getMemory(item.id), { via });
+      return this.getMemory(item.id);
+    }));
   }
-  reaffirmMemory() { throw new Error('Not available yet'); }
+  // "Still true": the user checked an out-of-date file note against the change. A new
+  // revision with fresh evidence (the same statement, scope and qualifiers), remembered
+  // at once with via 'reaffirm'. Earlier revisions are never edited; pinning is kept.
+  reaffirmMemory(id, { startLine, endLine, workspaceId = null } = {}) {
+    const memory = this.getMemory(id);
+    if (memory.status !== 'active' || memory.source?.kind !== 'file') throw new Error('Only a remembered note based on a file can be marked still true');
+    if (workspaceId !== null && typeof workspaceId !== 'string') throw new Error('Invalid workspace');
+    let view;
+    if (memory.source.rootId || memory.scope !== 'branch') {
+      // Folder notes are project-level; an all-branches note is checked against the main checkout.
+      if (workspaceId !== null) throw new Error('Check this note from the main checkout');
+      view = this.project(memory.projectId);
+    } else {
+      if (workspaceId?.startsWith('root:')) throw new Error('Check this note from the main checkout');
+      view = this.view(memory.projectId, workspaceId);
+      if (view.branch !== memory.branch) throw this.wrongBranch(memory.projectId, memory.branch, 'approve');
+    }
+    if (this.validation(view, memory) !== 'stale') throw new Error('This note\'s file is unchanged; there is nothing to check');
+    const source = { kind: 'file', ...(memory.source.rootId ? { rootId: memory.source.rootId } : {}), path: memory.source.path,
+      startLine: startLine ?? memory.source.startLine, endLine: endLine ?? memory.source.endLine };
+    // The view is on the note's branch, so a branch note keeps it without a bound branch.
+    const { item, expected } = this.prepareMemory(memory.projectId, { memoryId: id, statement: memory.statement, category: memory.category, scope: memory.scope,
+      area: memory.area, environment: memory.environment, source, ...(memory.promotedFrom ? { promotedFrom: memory.promotedFrom } : {}) }, { view });
+    if (memory.supersedes) item.supersedes = memory.supersedes;
+    this.transaction(() => { this.writeMemory(item, expected); this.approveMemory(this.getMemory(id), { via: 'reaffirm' }); });
+    return { ...this.getMemory(id), validation: 'current' };
+  }
   dismissProposal(id) {
     const proposal = this.getProposal(id);
     this.db.prepare('UPDATE proposals SET body=? WHERE id=?').run(JSON.stringify({ ...proposal, state: 'dismissed', handledAt: now() }), id);
