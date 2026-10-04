@@ -4,7 +4,7 @@ import { ContextPreview, PreviewNote } from './ContextPreview';
 import { CursorStatus } from './ProviderStatus';
 import { ProviderMark } from './ProviderMark';
 import { useContextPreview } from './useContextPreview';
-import { AGENT_ORDER, agentCard, agentTitle, modeBlock, MODES, modeSupport, previewView, startBlock, type PreviewItem } from './composerModel';
+import { AGENT_ORDER, MAX_LIVE, agentCard, agentTitle, modeBlock, MODES, modeSupport, previewView, startBlock, type PreviewItem } from './composerModel';
 import { composer, copy } from './copy';
 import { PROVIDER_NAMES, type Bootstrap, type FileReference, type Mode, type Project, type Provider, type Receipt, type WorkspaceList } from './types';
 
@@ -53,9 +53,12 @@ export function Composer(props: ComposerProps) {
   const referenceInputs = useMemo(() => references.map(ref => ({ projectId: ref.projectId, rootKey: ref.rootKey, path: ref.path, startLine: ref.startLine, endLine: ref.endLine })), [references]);
   const preview = useContextPreview({ projectId: project.id, task, workspaceId: workspaceId || null, branch, disabled, references: referenceInputs, version: props.knowledgeVersion }, props.onChecked);
   const view = useMemo(() => previewView(preview.result, disabled), [preview.result, disabled]);
-  // The selection preview counts the notes a task could match; a full check keeps the last count.
-  const taskNotes = useRef<number | null>(null);
-  if (view?.taskNotes !== null && view?.taskNotes !== undefined) taskNotes.current = view.taskNotes;
+  // The selection preview counts the notes a task could match; a full check keeps the last
+  // count. Another project or workspace starts without one.
+  const scope = `${project.id}\n${workspaceId}`;
+  const taskNotes = useRef<{ scope: string; count: number | null }>({ scope, count: null });
+  if (taskNotes.current.scope !== scope) taskNotes.current = { scope, count: null };
+  if (view?.taskNotes !== null && view?.taskNotes !== undefined) taskNotes.current.count = view.taskNotes;
   const leaveOut = (id: string) => { if (!disabled.includes(id)) props.onDisabled([...disabled, id]); };
   const restore = () => props.onDisabled([]);
   const block = startBlock({ connected: props.connected, liveCount: props.liveCount, busy: props.busy, agent, provider, mode });
@@ -71,7 +74,9 @@ export function Composer(props: ComposerProps) {
     <PreviewNote item={item} project={project} variant="hover" checked={!!view?.checked} onLeaveOut={() => leaveOut(item.id)} /></li>)}</ul>;
   const worktree = !!workspaceId && !workspaceId.startsWith('root:');
   const startKeys = mac ? '⌘↵' : 'Ctrl+Enter';
-  const shown = block ?? (props.startError ? props.startError.message : null);
+  // A refused start is explained while its cause holds: "4 sessions are running" goes once a slot frees.
+  const startError = props.startError && !(props.startError.code === 'SLOTS_FULL' && props.liveCount < MAX_LIVE) ? props.startError : null;
+  const shown = block ?? (startError ? startError.message : null);
 
   return <div className="composer">
     <form className="composer-form" aria-label="Start a session" onSubmit={start} onKeyDown={keys}>
@@ -134,7 +139,7 @@ export function Composer(props: ComposerProps) {
       </div>
       <p className="field-help native-stays">{composer.nativeStays}</p>
     </form>
-    <ContextPreview view={view} error={preview.error} taskNotes={taskNotes.current} project={project} mac={mac}
+    <ContextPreview view={view} error={preview.error} taskNotes={taskNotes.current.count} project={project} mac={mac}
       onLeaveOut={leaveOut} onRestore={restore} onInspect={() => void inspect()} />
   </div>;
 }

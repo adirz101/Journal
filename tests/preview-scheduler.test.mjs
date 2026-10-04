@@ -24,7 +24,7 @@ async function harness(t) {
     request: (kind, input) => new Promise((resolveRequest, reject) => requests.push({ kind, input, resolve: resolveRequest, reject })),
     onResult: outcome => applied.push(outcome),
   });
-  const settle = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+  const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
   const tick = async ms => { mock.timers.tick(ms); await settle(); };
   return { scheduler, requests, applied, tick, settle };
 }
@@ -109,4 +109,20 @@ test('errors stay in the preview', async t => {
   scheduler.update('other project'); await tick(250); scheduler.reset();
   requests.at(-1).resolve('late'); await tick(0);
   assert.ok(!applied.some(a => a.value === 'late'));
+});
+
+test('a request that never answers times out, and previews continue', async t => {
+  const { scheduler, requests, applied, tick } = await harness(t);
+  scheduler.update('stuck'); await tick(1000);
+  assert.deepEqual(requests.map(r => r.kind), ['selection', 'full']);
+  requests[0].resolve('selection'); await tick(0);
+  // The full check never answers: after 20 s it settles as an error instead of blocking later checks.
+  await tick(19_999); assert.notEqual(applied.at(-1).error, 'timed out'); await tick(1);
+  assert.equal(applied.at(-1).error, 'timed out');
+  scheduler.update('stuck again'); await tick(1000);
+  assert.deepEqual(requests.slice(-2).map(r => [r.kind, r.input]), [['selection', 'stuck again'], ['full', 'stuck again']]);
+  // A failed full check does not hide a later selection reply for the same input.
+  requests.at(-1).reject(new Error('no')); await tick(0);
+  requests.at(-2).resolve('late selection'); await tick(0);
+  assert.equal(applied.at(-1).value, 'late selection');
 });

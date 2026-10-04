@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPreviewScheduler, type PreviewOutcome, type PreviewScheduler } from './previewScheduler';
 import { api, type Receipt, type SelectionPreview } from './types';
+import { composer } from './copy';
 
 export interface PreviewInput {
   projectId: string; task: string; workspaceId: string | null; branch: string | null;
@@ -19,12 +20,13 @@ export function useContextPreview(input: PreviewInput | null, onChecked?: (recei
   const checked = useRef(onChecked); checked.current = onChecked;
   const scheduler = useRef<PreviewScheduler<PreviewInput, SelectionPreview, Receipt> | null>(null);
   if (!scheduler.current) scheduler.current = createPreviewScheduler<PreviewInput, SelectionPreview, Receipt>({
-    debounceMs: 250, idleMs: 1000,
+    debounceMs: 250, idleMs: 1000, timeoutMs: 20000, timeoutMessage: composer.previewTimedOut,
     request: (kind, { projectId, task, workspaceId, branch, disabled, references }) => kind === 'selection'
       ? api<SelectionPreview>('previewSelection', { projectId, task, workspaceId, branch, disabled, references })
       : api<Receipt>('prepareContext', { projectId, task, workspaceId, disabled, references }),
     onResult: (outcome: PreviewOutcome<Result>) => {
-      if (outcome.error !== undefined) { setError(outcome.error); return; }
+      // An error replaces the list: notes and underlines of an older task never sit beside it.
+      if (outcome.error !== undefined) { setError(outcome.error); setResult(null); return; }
       setError(null); setResult(outcome.value);
       if (outcome.kind === 'full') checked.current?.(outcome.value as Receipt);
     },

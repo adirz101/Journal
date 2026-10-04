@@ -19,17 +19,19 @@ export function PreviewNote({ item, project, variant, checked, onLeaveOut }: { i
   </NoteCard>;
 }
 
-// A list with one tab stop: arrows move between notes, Backspace or Delete
-// leaves the focused note out and focus moves to the next one.
-function NoteList({ label, items, render, onLeaveOut, onEmpty }: { label: string; items: PreviewItem[]; render(item: PreviewItem): ReactNode; onLeaveOut(id: string): void; onEmpty(): void }) {
+// A list with one tab stop for its rows: arrows move between notes, Backspace or
+// Delete leaves the focused note out. After any leave-out (key or button) focus
+// moves to the next note; onLastLeft hears when the list's last note went.
+function NoteList({ label, items, render, onLeaveOut, onLastLeft }: { label: string; items: PreviewItem[]; render(item: PreviewItem, leaveOut: () => void): ReactNode; onLeaveOut(id: string): void; onLastLeft(): void }) {
   const rows = useRef<(HTMLLIElement | null)[]>([]);
   const [active, setActive] = useState(0); const pending = useRef<number | null>(null);
   const index = Math.min(active, Math.max(0, items.length - 1));
   useLayoutEffect(() => {
     if (pending.current === null) return;
     const next = Math.min(pending.current, items.length - 1); pending.current = null;
-    if (next < 0) onEmpty(); else { setActive(next); rows.current[next]?.focus(); }
+    if (next >= 0) { setActive(next); rows.current[next]?.focus(); }
   });
+  const leave = (at: number) => { pending.current = at; if (items.length === 1) onLastLeft(); onLeaveOut(items[at].id); };
   const move = (to: number) => { const next = Math.max(0, Math.min(items.length - 1, to)); setActive(next); rows.current[next]?.focus(); };
   const keys = (event: KeyboardEvent<HTMLLIElement>, at: number) => {
     if (event.target !== event.currentTarget) return;
@@ -37,10 +39,10 @@ function NoteList({ label, items, render, onLeaveOut, onEmpty }: { label: string
     else if (event.key === 'ArrowUp') { event.preventDefault(); move(at - 1); }
     else if (event.key === 'Home') { event.preventDefault(); move(0); }
     else if (event.key === 'End') { event.preventDefault(); move(items.length - 1); }
-    else if (event.key === 'Backspace' || event.key === 'Delete') { event.preventDefault(); pending.current = at; onLeaveOut(items[at].id); }
+    else if (event.key === 'Backspace' || event.key === 'Delete') { event.preventDefault(); leave(at); }
   };
   return <ul className="preview-list" aria-label={label}>{items.map((item, at) =>
-    <li key={item.id} ref={el => { rows.current[at] = el; }} tabIndex={at === index ? 0 : -1} onFocus={() => setActive(at)} onKeyDown={event => keys(event, at)}>{render(item)}</li>)}</ul>;
+    <li key={item.id} ref={el => { rows.current[at] = el; }} tabIndex={at === index ? 0 : -1} onFocus={() => setActive(at)} onKeyDown={event => keys(event, at)}>{render(item, () => leave(at))}</li>)}</ul>;
 }
 
 function Meter({ label, value, max, text }: { label: string; value: number; max: number; text: string }) {
@@ -57,7 +59,10 @@ export function ContextPreview({ view, error, taskNotes, project, mac, onLeaveOu
 }) {
   const aside = useRef<HTMLElement>(null);
   const checked = !!view?.checked;
-  const note = (variant: 'preview') => (item: PreviewItem) => <PreviewNote item={item} project={project} variant={variant} checked={checked} onLeaveOut={() => onLeaveOut(item.id)} />;
+  const note = (item: PreviewItem, leaveOut: () => void) => <PreviewNote item={item} project={project} variant="preview" checked={checked} onLeaveOut={leaveOut} />;
+  // A group's last note left out: its list goes, so focus stays in the preview instead of falling to the page.
+  const lastLeft = useRef(false);
+  useLayoutEffect(() => { if (lastLeft.current) { lastLeft.current = false; aside.current?.focus(); } });
   const meter = view ? meterText(view) : null;
   const relevantEmpty = taskNotes === 0;
   return <aside ref={aside} className="context-preview" aria-label="Context preview" tabIndex={-1}>
@@ -71,11 +76,11 @@ export function ContextPreview({ view, error, taskNotes, project, mac, onLeaveOu
       <p className={`preview-checked ${checked ? 'is-checked' : ''}`}>{checked ? composer.checked : composer.notChecked}</p>
       {view.always.length > 0 && <section className="preview-group" aria-label={copy.everySession}>
         <h3>{copy.everySession}</h3>
-        <NoteList label={copy.everySession} items={view.always} render={note('preview')} onLeaveOut={onLeaveOut} onEmpty={() => aside.current?.focus()} />
+        <NoteList label={copy.everySession} items={view.always} render={note} onLeaveOut={onLeaveOut} onLastLeft={() => { lastLeft.current = true; }} />
       </section>}
       <section className="preview-group" aria-label={copy.relevant}>
         <h3>{copy.relevant}</h3>
-        {view.relevant.length > 0 ? <NoteList label={copy.relevant} items={view.relevant} render={note('preview')} onLeaveOut={onLeaveOut} onEmpty={() => aside.current?.focus()} />
+        {view.relevant.length > 0 ? <NoteList label={copy.relevant} items={view.relevant} render={note} onLeaveOut={onLeaveOut} onLastLeft={() => { lastLeft.current = true; }} />
           : relevantEmpty ? <p className="preview-empty">{composer.relevantEmpty}</p>
           : <p className="muted preview-none">{composer.relevantNone}</p>}
       </section>

@@ -34,7 +34,7 @@ export const TaskField = forwardRef<HTMLTextAreaElement, {
   const fine = useFinePointer();
   const [card, setCard] = useState<Card | null>(null);
   // IME: keep the last segments while a composition is open, so nothing flickers under it.
-  const composing = useRef(false); const last = useRef<Segment[]>([]);
+  const composing = useRef(false); const last = useRef<Segment[]>([]); const [, setComposed] = useState(0);
   const current = useMemo(() => segments(value, queryTermSpans(value), matched), [value, matched]);
   if (!composing.current) last.current = current;
   const shown = composing.current ? last.current : current;
@@ -55,8 +55,10 @@ export const TaskField = forwardRef<HTMLTextAreaElement, {
     const el = textarea.current; if (!el) return;
     const style = getComputedStyle(el); const line = parseFloat(style.lineHeight) || 20;
     const chrome = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+    const top = el.scrollTop;
     el.style.height = 'auto';
     el.style.height = `${Math.min(Math.max(el.scrollHeight + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth), line * MIN_ROWS + chrome), line * MAX_ROWS + chrome)}px`;
+    el.scrollTop = top;
     if (mirror.current) mirror.current.scrollTop = el.scrollTop;
     rects.current = null;
   }, []);
@@ -86,7 +88,7 @@ export const TaskField = forwardRef<HTMLTextAreaElement, {
     closeTimer.current = window.setTimeout(() => { closeTimer.current = null; setCard(open => open?.source === 'hover' ? null : open); }, CLOSE_GRACE);
   };
   const onPointerMove = (event: PointerEvent<HTMLTextAreaElement>) => {
-    if (!fine || event.pointerType !== 'mouse') return;
+    if (!fine || event.pointerType !== 'mouse' || card?.source === 'button') return;
     const hit = marks().find(({ rect }) => event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom);
     if (!hit) { cancelOpen(); if (card?.source === 'hover') scheduleClose(); return; }
     cancelClose();
@@ -98,12 +100,22 @@ export const TaskField = forwardRef<HTMLTextAreaElement, {
   };
   const onPointerLeave = () => { cancelOpen(); if (card?.source === 'hover') scheduleClose(); };
 
-  // A card whose word no longer matches closes; so does one with nothing left to list.
-  useEffect(() => { if (card && (card.term ? !matched.has(card.term) : !matchCount)) setCard(null); }, [card, matched, matchCount]);
+  // Focus inside the card: a Leave out removes its own button, so focus returns to the
+  // card (Esc keeps working). A card whose word no longer matches, or with nothing left
+  // to list, closes and gives focus back to the button or the task box.
+  const inCard = useRef(false);
+  useLayoutEffect(() => {
+    if (card && inCard.current && (!document.activeElement || document.activeElement === document.body)) dialog.current?.focus();
+  });
+  useEffect(() => {
+    if (!card || (card.term ? matched.has(card.term) : matchCount)) return;
+    setCard(null);
+    if (inCard.current) { inCard.current = false; (button.current?.isConnected ? button.current : textarea.current)?.focus(); }
+  }, [card, matched, matchCount]);
   // Clicking outside closes it.
   useEffect(() => {
     if (!card) return;
-    const outside = (event: globalThis.PointerEvent) => { const target = event.target as Node; if (!dialog.current?.contains(target) && !button.current?.contains(target)) setCard(null); };
+    const outside = (event: globalThis.PointerEvent) => { const target = event.target as Node; if (!dialog.current?.contains(target) && !button.current?.contains(target)) { inCard.current = false; setCard(null); } };
     document.addEventListener('pointerdown', outside); return () => document.removeEventListener('pointerdown', outside);
   }, [card]);
   // Opened from the button, the card takes focus so Esc reaches it.
@@ -112,7 +124,7 @@ export const TaskField = forwardRef<HTMLTextAreaElement, {
   const onCardKey = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Escape') return;
     event.preventDefault(); event.stopPropagation();
-    const from = card?.source; setCard(null);
+    const from = card?.source; setCard(null); inCard.current = false;
     (from === 'button' && button.current ? button.current : textarea.current)?.focus();
   };
 
@@ -124,7 +136,7 @@ export const TaskField = forwardRef<HTMLTextAreaElement, {
       <textarea ref={textarea} id="task" className="task-input" value={value} maxLength={4000} dir="auto" rows={MIN_ROWS} spellCheck
         placeholder={composer.taskPlaceholder} aria-describedby={matchCount > 0 ? 'task-hint task-matches' : 'task-hint'}
         onChange={event => onChange(event.target.value)} onScroll={event => { if (mirror.current) mirror.current.scrollTop = event.currentTarget.scrollTop; rects.current = null; }}
-        onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
+        onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; setComposed(n => n + 1); }}
         onPointerMove={onPointerMove} onPointerLeave={onPointerLeave} />
     </div>
     {(footer || matchCount > 0) && <div className="task-footer">
@@ -135,6 +147,7 @@ export const TaskField = forwardRef<HTMLTextAreaElement, {
     </div>}
     {card && <div ref={dialog} id="task-card" className="task-card" role="dialog" tabIndex={-1} aria-label={card.term ? composer.notesMatching(card.term) : composer.notesMatchingTask}
       style={{ left: card.left, top: card.top }} onKeyDown={onCardKey}
+      onFocus={() => { inCard.current = true; }} onBlur={event => { if (event.relatedTarget && !dialog.current?.contains(event.relatedTarget as Node)) inCard.current = false; }}
       onPointerEnter={cancelClose} onPointerLeave={() => { if (card.source === 'hover') scheduleClose(); }}>
       {cardNotes(card.term)}
     </div>}

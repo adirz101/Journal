@@ -74,7 +74,7 @@ export const composer = {
   leaveOutTip: (mac: boolean) => `Tip: press ${mac ? '⌫' : 'Delete'} on a note to leave it out of this session only.`,
   inspectAll: 'Inspect all', restore: 'Restore', relevantNone: 'No remembered note matches this task yet.',
   relevantEmpty: 'Nothing here yet. After this session, I’ll suggest rules and lessons worth keeping. The ones you remember show up here when they match your task.',
-  previewFailed: (message: string) => `Preview unavailable: ${message}`,
+  previewFailed: (message: string) => `Preview unavailable: ${message}`, previewTimedOut: 'it took more than 20 seconds. Keep typing to try again.',
   // Group B: the renderer's own words.
   notesMatchingTask: 'Notes matching your task', pinned: 'Pinned', current: 'Current', checkedWhenYouStart: 'Checked when you start',
   referencesHint: 'Paths and lines only; the agent reads the files itself.', referencesLabel: 'Files referenced for the next task',

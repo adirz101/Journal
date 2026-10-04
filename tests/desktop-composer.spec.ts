@@ -142,6 +142,11 @@ test('N notes match is keyboard reachable', async () => {
     await page.keyboard.press('Escape');
     await expect(card).toHaveCount(0);
     await expect(matches).toBeFocused();
+    // Leaving out the only match from the keyboard closes the card and returns focus to the task box.
+    await page.keyboard.press('Enter'); await expect(card).toBeVisible();
+    await card.getByRole('button', { name: 'Leave out', exact: true }).focus(); await page.keyboard.press('Enter');
+    await expect(card).toHaveCount(0);
+    await expect(taskBox(page)).toBeFocused();
   } finally { await closeApp(app); f.cleanup(); }
 });
 
@@ -199,8 +204,12 @@ test('Backspace on a focused preview note leaves it out', async () => {
     await expect(rows).toHaveCount(1);
     await expect(relevant(page)).not.toContainText(second.includes('prefix') ? 'prefix' : 'keeps the branch');
     await expect(contextPreview(page)).toContainText('1 left out by you');
-    // Focus moves to the remaining note, so the next Backspace keeps working.
+    // Focus moves to the remaining note, so the next Backspace keeps working; after the last
+    // one, focus stays in the preview instead of falling to the page.
     await expect(rows.first()).toBeFocused();
+    await page.keyboard.press('Delete');
+    await expect(contextPreview(page)).toContainText('2 left out by you');
+    await expect(contextPreview(page)).toBeFocused();
   } finally { await closeApp(app); f.cleanup(); }
 });
 

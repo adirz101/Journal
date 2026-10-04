@@ -26,7 +26,7 @@ import { StatusBar } from './StatusBar';
 import { useSessionChanges, useSessionEvents } from './useSessionData';
 import { diffSummary } from './sessionView';
 import { showMenu } from './menu';
-import { defaultProvider, modeFlags } from './composerModel';
+import { defaultProvider, isProvider, modeFlags } from './composerModel';
 import journalWordmark from '../../assets/branding/journal-wordmark.png';
 import { storedAppearance, type Appearance } from './theme';
 import { composer, copy, shell } from './copy';
@@ -59,7 +59,7 @@ export default function App() {
   // The agent choice is remembered on this computer; the mode starts at Build and is never changed for the user.
   const [mode, setMode] = useState<Mode>('build'); const [startError, setStartError] = useState<{ code?: string; message: string } | null>(null);
   const rememberedAgent = useRef<string | null | undefined>(undefined);
-  if (rememberedAgent.current === undefined) rememberedAgent.current = (() => { try { return localStorage.getItem('journal-agent'); } catch { return null; } })();
+  if (rememberedAgent.current === undefined) rememberedAgent.current = (() => { try { const value = localStorage.getItem('journal-agent'); return isProvider(value) ? value : null; } catch { return null; } })();
   const [provider, setProviderState] = useState<Provider>(() => defaultProvider(undefined, rememberedAgent.current ?? null));
   const chooseProvider = (next: Provider) => { setProviderState(next); setStartError(null); rememberedAgent.current = next; try { localStorage.setItem('journal-agent', next); } catch { /* optional */ } };
   // === End Phase 4: composer state ===
@@ -72,8 +72,8 @@ export default function App() {
   // The Files tab's view: the user's last choice for this app run, else Changed while the session changed something.
   const [filesChoice, setFilesChoice] = useState<'changed' | 'all' | null>(null); const [packetRequest, setPacketRequest] = useState<number | null>(null);
   const [references, setReferences] = useState<FileReference[]>([]); const [evidenceSource, setEvidenceSource] = useState<{ kind: 'file'; path: string; startLine: number; endLine: number; rootId?: string } | null>(null);
-  // References belong to the project they were chosen in; switching projects drops them.
-  useEffect(() => { setReferences([]); setEvidenceSource(null); }, [state?.project.id]);
+  // References belong to the project they were chosen in; switching projects drops them (and a refused start's note).
+  useEffect(() => { setReferences([]); setEvidenceSource(null); setStartError(null); }, [state?.project.id]);
   const referenceInputs = references.map(ref => ({ projectId: ref.projectId, rootKey: ref.rootKey, path: ref.path, startLine: ref.startLine, endLine: ref.endLine }));
   const [resumeDraft, setResumeDraft] = useState<{ sessionId: string; value: string } | null>(null);
   const session = selectedId ? sessions[selectedId] ?? null : null;
@@ -259,7 +259,12 @@ export default function App() {
         const code = errorCode(error);
         if (code === 'SLOTS_FULL') { void reloadSessions().catch(() => {}); if (!resumeFrom) { setStartError({ code, message: composer.slotsFull }); return; } throw new Error(copy.slotsFull(MAX_SESSIONS)); }
         // The agent went missing since detection: check it again, and say so beside Start.
-        if (code === 'PROVIDER_MISSING' && !resumeFrom) { if (provider === 'cursor') void checkCursor(); setStartError({ code, message: error instanceof Error ? error.message : String(error) }); return; }
+        // Cursor is checked again; Claude and Codex have no status check, so their card says Not installed until Journal restarts.
+        if (code === 'PROVIDER_MISSING' && !resumeFrom) {
+          if (provider === 'cursor') void checkCursor();
+          else setBootstrap(current => current ? { ...current, agents: current.agents.map(a => a.provider === provider ? { ...a, available: false, state: 'missing' as const } : a) } : current);
+          setStartError({ code, message: error instanceof Error ? error.message : String(error) }); return;
+        }
         throw error;
       }
     });

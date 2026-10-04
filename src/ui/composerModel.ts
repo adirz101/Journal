@@ -7,6 +7,8 @@ export const MODES: readonly Mode[] = ['build', 'plan', 'read-only'];
 export const AGENT_ORDER: readonly Provider[] = ['claude', 'codex', 'cursor'];
 // Packet budget (src/core/store.mjs assemblePacket): 12 notes or 6000 bytes.
 export const NOTE_LIMIT = 12; export const BYTE_LIMIT = 6000;
+// Live sessions at once (the runtime's four slots).
+export const MAX_LIVE = 4;
 
 // The launch inputs stay exactly as before the composer: plan and research.
 export function modeFlags(mode: Mode): { plan: boolean; research: boolean } {
@@ -51,9 +53,10 @@ export function agentTitle(agent: AgentInfo | null | undefined): string | undefi
   return [agent.path ?? '', caps && `Resume: ${caps.exactResume}`, caps && `Observed: status ${caps.status.join(', ')}; commands ${caps.commands}`, caps?.modes && `Modes: ${caps.modes}`].filter(Boolean).join('\n') || undefined;
 }
 
+export const isProvider = (value: string | null | undefined): value is Provider => !!value && (AGENT_ORDER as readonly string[]).includes(value);
 // The first available agent in the order Claude, Codex, Cursor; a remembered choice wins.
 export function defaultProvider(agents: AgentInfo[] | undefined, remembered: string | null): Provider {
-  if (remembered && (AGENT_ORDER as readonly string[]).includes(remembered)) return remembered as Provider;
+  if (isProvider(remembered)) return remembered;
   return AGENT_ORDER.find(provider => agentReady(agents?.find(a => a.provider === provider))) ?? 'claude';
 }
 
@@ -61,7 +64,7 @@ export function defaultProvider(agents: AgentInfo[] | undefined, remembered: str
 export function startBlock({ connected, liveCount, busy, agent, provider, mode }: { connected: boolean; liveCount: number; busy: boolean; agent: AgentInfo | null | undefined; provider: Provider; mode: Mode }): string | null {
   if (busy) return '';
   if (!connected) return composer.runtimeDown;
-  if (liveCount >= 4) return composer.slotsFull;
+  if (liveCount >= MAX_LIVE) return composer.slotsFull;
   if (!agentReady(agent)) return !agent || agent.state === 'missing' || (!agent.available && !agent.state) ? composer.agentMissing(PROVIDER_NAMES[provider]) : `${PROVIDER_NAMES[provider]}: ${agentCard(agent).sub}`;
   return modeBlock(provider, agent, mode);
 }
