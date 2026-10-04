@@ -128,10 +128,15 @@ require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(c.pid));conso
     for (const file of [pidFile, join(dir, 'loud-grandchild')]) { try { const pid = Number(readFileSync(file, 'utf8')); if (pid) process.kill(pid, 'SIGKILL'); } catch { /* not started or already gone */ } }
     removeLater(dir);
   });
+  // The timeout leaves the fixture ample time to start Node, spawn the grandchild and print
+  // "started" even on a loaded machine (300 ms failed about 1 run in 6). The run still settles
+  // only through the hard deadline (2.5 s after the kill), which the elapsed bounds pin down.
+  const timeout = 2000;
   const started = Date.now();
-  await assert.rejects(runFile(cli, [], process.env, { timeout: 300 }), error => error.timedOut === true && error.killed === true && error.stdout === 'started\n');
+  await assert.rejects(runFile(cli, [], process.env, { timeout }), error => error.timedOut === true && error.killed === true && error.stdout === 'started\n');
   const elapsed = Date.now() - started;
-  assert.ok(elapsed < 5000, `settled after ${elapsed} ms`);
+  assert.ok(elapsed >= timeout + 2400, `settled after ${elapsed} ms, before the hard deadline`);
+  assert.ok(elapsed < timeout + 2500 + 3000, `settled after ${elapsed} ms`);
   assert.equal(isAlive(Number(readFileSync(pidFile, 'utf8'))), true, 'the grandchild escaped the group, so only the deadline could settle the run');
 
   // The overflow path uses the same deadline.
