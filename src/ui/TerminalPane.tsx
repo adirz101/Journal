@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import '@xterm/xterm/css/xterm.css';
 import { api, type OutputSnapshot, type TerminalEvent } from './types';
-import { MONO_FONT, terminalThemes, type Appearance } from './theme';
+import { MONO_FONT, monoFontFamily, terminalThemes, type Appearance } from './theme';
 
 export function TerminalPane({ sessionId, live, appearance, onError }: { sessionId: string; live: boolean; appearance: Appearance; onError: (message: string) => void }) {
   const host = useRef<HTMLDivElement>(null); const liveRef = useRef(live); const errorRef = useRef(onError);
@@ -14,9 +14,11 @@ export function TerminalPane({ sessionId, live, appearance, onError }: { session
   useEffect(() => {
     if (!host.current) return;
     let disposed = false; let attached = false; let acceptInput = false; let last = 0; const queued: TerminalEvent[] = [];
+    // A late bundled font switches the family, so xterm re-measures and the terminal refits.
+    const font = monoFontFamily(document.fonts, () => { if (disposed) return; terminal.options.fontFamily = MONO_FONT; resize(); });
     // Bounded scrollback per visible terminal; the runtime keeps 256 KiB per session.
     const terminal = new Terminal({ cursorBlink: false, fontSize: 13, lineHeight: 1.35, scrollback: 4000, allowProposedApi: true,
-      fontFamily: MONO_FONT, fontWeight: 400, fontWeightBold: 600,
+      fontFamily: font.family, fontWeight: 400, fontWeightBold: 600,
       theme: terminalThemes[appearanceRef.current] });
     terminalRef.current = terminal;
     const fit = new FitAddon(); terminal.loadAddon(fit);
@@ -64,7 +66,7 @@ export function TerminalPane({ sessionId, live, appearance, onError }: { session
     };
     const observer = new ResizeObserver(resize); observer.observe(host.current); resize();
     const unfocus = () => window.removeEventListener('journal:focus-terminal', focus);
-    return () => { unfocus(); disposed = true; void api('detach', { id: sessionId }).catch(() => {}); cancelAnimationFrame(resizeFrame); observer.disconnect(); removeListener?.(); input.dispose(); terminalRef.current = null; terminal.dispose(); };
+    return () => { unfocus(); font.stop(); disposed = true; void api('detach', { id: sessionId }).catch(() => {}); cancelAnimationFrame(resizeFrame); observer.disconnect(); removeListener?.(); input.dispose(); terminalRef.current = null; terminal.dispose(); };
   }, [sessionId]);
   useEffect(() => { if (terminalRef.current) terminalRef.current.options.theme = terminalThemes[appearance]; }, [appearance]);
   return <div ref={host} className="terminal-surface" aria-label="Agent terminal" />;

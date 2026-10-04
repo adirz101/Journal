@@ -168,6 +168,24 @@ test('the terminal font stack is the --font-mono token', async () => {
   assert.match(stack, /^"JetBrains Mono",/);
 });
 
+test('a terminal opened before the bundled font loads switches to it once it has loaded', async () => {
+  const { MONO_FONT, MONO_FALLBACK, monoFontFamily } = await import('../src/ui/theme.ts');
+  assert.equal(MONO_FONT, `"JetBrains Mono", ${MONO_FALLBACK}`);
+  const fakeFonts = loaded => Object.assign(new EventTarget(), { loaded, check(font) { assert.match(font, /^(?:400|600) 13px "JetBrains Mono"$/); return this.loaded.has(font.split(' ')[0]); } });
+  // Already loaded: the full stack at once, nothing to watch.
+  let calls = 0; const ready = fakeFonts(new Set(['400', '600']));
+  const now = monoFontFamily(ready, () => calls++);
+  assert.equal(now.family, MONO_FONT); ready.dispatchEvent(new Event('loadingdone')); assert.equal(calls, 0); now.stop();
+  // Late: the fallback first, then one switch after both weights have loaded.
+  const late = fakeFonts(new Set()); const watched = monoFontFamily(late, () => calls++);
+  assert.equal(watched.family, MONO_FALLBACK);
+  late.loaded.add('400'); late.dispatchEvent(new Event('loadingdone')); assert.equal(calls, 0, 'waits for the bold weight too');
+  late.loaded.add('600'); late.dispatchEvent(new Event('loadingdone')); late.dispatchEvent(new Event('loadingdone')); assert.equal(calls, 1);
+  // Unmounted before the font loads: no switch afterwards.
+  const gone = fakeFonts(new Set()); monoFontFamily(gone, () => calls++).stop();
+  gone.loaded.add('400'); gone.loaded.add('600'); gone.dispatchEvent(new Event('loadingdone')); assert.equal(calls, 1);
+});
+
 test('fonts: italic faces are bundled and ligatures are off for the terminal and the editor', () => {
   const fonts = readFileSync(new URL('../src/ui/fonts.css', import.meta.url), 'utf8');
   for (const weight of [400, 600]) for (const subset of ['latin', 'latin-ext']) assert.ok(fonts.includes(`jetbrains-mono-${subset}-${weight}-italic.woff2`), `${subset} ${weight} italic`);

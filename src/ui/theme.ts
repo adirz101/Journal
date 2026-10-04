@@ -8,7 +8,24 @@ export function storedAppearance(): Appearance {
 }
 
 // The --font-mono stack from src/ui/tokens.css (xterm measures glyphs on a canvas).
-export const MONO_FONT = '"JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace';
+export const MONO_FALLBACK = '"SF Mono", ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace';
+export const MONO_FONT = `"JetBrains Mono", ${MONO_FALLBACK}`;
+
+type FontSet = Pick<FontFaceSet, 'check' | 'addEventListener' | 'removeEventListener'>;
+const MONO_FACES = ['400 13px "JetBrains Mono"', '600 13px "JetBrains Mono"'];
+
+// xterm measures its cell size once per font family. main.tsx waits at most
+// 1.5 s for the bundled font; if it is still loading, a terminal starts on the
+// fallback stack and onLoaded runs once both weights have loaded, so the caller
+// can switch to MONO_FONT (a real option change, which makes xterm re-measure).
+export function monoFontFamily(fonts: FontSet, onLoaded: () => void): { family: string; stop: () => void } {
+  const loaded = () => MONO_FACES.every(face => { try { return fonts.check(face); } catch { return false; } });
+  if (loaded()) return { family: MONO_FONT, stop: () => {} };
+  const stop = () => fonts.removeEventListener('loadingdone', done);
+  function done() { if (!loaded()) return; stop(); onLoaded(); }
+  fonts.addEventListener('loadingdone', done);
+  return { family: MONO_FALLBACK, stop };
+}
 
 // xterm cannot read CSS variables: these repeat src/ui/tokens.css (--term, --tx,
 // --acc, --scroll-thumb, --tx3); tests/tokens.test.mjs keeps the two in step.
