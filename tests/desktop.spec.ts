@@ -83,13 +83,18 @@ process.stdin.on('data',data=>{
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(900, 640));
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-    await expect(page.locator('.terminal-surface')).toContainText('ECHO hello-terminal');
-    // A small viewport shows only recent rows. Verify earlier output by scrolling
-    // through retained history, rather than requiring it to remain on screen.
-    for (let i = 0; i < 8; i++) await page.locator('.xterm-helper-textarea').press('Shift+PageUp');
-    await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
-    for (let i = 0; i < 8; i++) await page.locator('.xterm-helper-textarea').press('Shift+PageDown');
-    await expect(page.locator('.terminal-surface')).toContainText('ECHO hello-terminal');
+    // A small viewport with widened sidebars shows only the last few rows (three at
+    // the 11 px type floor). Verify retained history by scrolling through it, a page
+    // at a time, rather than requiring earlier output to remain on screen.
+    const surface = page.locator('.terminal-surface');
+    const scrollTo = async (key: string, text: string) => {
+      for (let i = 0; i < 60 && !(await surface.textContent())?.includes(text); i++) await page.locator('.xterm-helper-textarea').press(key);
+      await expect(surface).toContainText(text);
+    };
+    await expect(surface).toContainText('ECHO after-theme');
+    await scrollTo('Shift+PageUp', 'PTY_READY true');
+    await scrollTo('Shift+PageDown', 'ECHO hello-terminal');
+    await scrollTo('Shift+PageDown', 'ECHO after-theme');
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused();
     await page.locator('.xterm-helper-textarea').pressSequentially('response-count');
     await page.locator('.xterm-helper-textarea').press('Enter');

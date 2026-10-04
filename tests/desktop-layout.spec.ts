@@ -18,6 +18,10 @@ test('both sidebars resize by pointer and keyboard, persist, and leave room for 
     const left = page.getByRole('separator', { name: 'Resize project sidebar', exact: true });
     const right = page.getByRole('separator', { name: 'Resize knowledge sidebar', exact: true });
     await expect(left).toBeVisible(); await expect(right).toBeVisible();
+    // Type floor (design board B8): nothing outside the terminal renders below 11 px.
+    expect(await page.evaluate(() => [...document.querySelectorAll('body *')]
+      .filter(element => !element.closest('.xterm') && element.getClientRects().length && parseFloat(getComputedStyle(element).fontSize) < 11)
+      .map(element => `${element.tagName.toLowerCase()}.${element.className}`))).toEqual([]);
     const width = (selector: string) => page.locator(selector).evaluate(element => element.getBoundingClientRect().width);
     const drag = async (handle: typeof left, distance: number) => {
       const box = await handle.boundingBox(); expect(box).not.toBeNull();

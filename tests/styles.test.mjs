@@ -42,3 +42,21 @@ test('accent containers keep an accent border', () => {
     assert.match(styles.slice(at, styles.indexOf('}', at)), /border(?:-color)?:[^;}]*var\(--accline\)/, selector);
   }
 });
+
+test('type floor: nothing below 11 px', () => {
+  const sizes = [...styles.matchAll(/font(?:-size)?:[^;}]*?(\d+(?:\.\d+)?)px/g)].map(match => Number(match[1]));
+  assert.deepEqual(sizes.filter(size => size < 11), []);
+});
+
+test('motion and hover: no transition on everything, hover only for fine pointers', () => {
+  assert.doesNotMatch(styles, /transition\s*:\s*all\b/);
+  const hovers = []; let depth = 0; let hoverBlock = false;
+  for (const [, head, open] of styles.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]*)([{}])/g)) {
+    if (open === '}') { depth--; if (depth === 0) hoverBlock = false; continue; }
+    const selector = head.replace(/^[\s\S]*;/, '').trim();
+    if (depth === 0 && selector.startsWith('@media')) hoverBlock = /hover:\s*hover/.test(selector) && /pointer:\s*fine/.test(selector);
+    else if (selector.includes(':hover') && !hoverBlock && !selector.includes('::-webkit-scrollbar')) hovers.push(selector);
+    depth++;
+  }
+  assert.deepEqual(hovers, []);
+});
