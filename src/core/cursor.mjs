@@ -2,7 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
-import { launchTarget, resolveExecutable } from './process.mjs';
+import { childEnv, launchTarget, resolveExecutable, runFile } from './process.mjs';
 
 // Cursor Agent CLI ("agent", legacy alias "cursor-agent") as a native provider.
 // Only documented commands and flags are used:
@@ -38,15 +38,8 @@ export function knownLocations(platform = process.platform, env = process.env, h
   return [posix.join(home, '.local', 'bin', 'agent'), posix.join(home, '.local', 'bin', 'cursor-agent')];
 }
 
-// Child processes never inherit Electron's Node mode, and never open a browser.
-const childEnv = env => { const next = { ...env, NO_OPEN_BROWSER: '1' }; delete next.ELECTRON_RUN_AS_NODE; return next; };
-// Asynchronous, so detection never stalls the runtime's terminals or the UI.
-const run = (path, args, env, { platform = process.platform, cwd, timeout = 8000 } = {}) => new Promise((resolve, reject) => {
-  let target;
-  try { target = launchTarget(path, args, { env, platform }); } catch (error) { error.unlaunchable = true; reject(error); return; }
-  execFile(target.file, target.args, { cwd, timeout, encoding: 'utf8', windowsHide: true, maxBuffer: 256 * 1024, env: childEnv(env) },
-    (error, stdout, stderr) => error ? reject(Object.assign(error, { stdout, stderr })) : resolve(`${stdout}`));
-});
+// Asynchronous, so detection never stalls the runtime's terminals or the UI (src/core/process.mjs).
+const run = runFile;
 
 // What one executable is: Cursor (and which documented features it has) or not.
 // Any program called "agent" could be on PATH, so a Cursor build version and

@@ -3,14 +3,15 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { buildAgentLaunch, detectAgents } from '../src/core/agents.mjs';
+import { buildAgentLaunch, detectProvider } from '../src/core/agents.mjs';
 
 // Startup only: no task, input, trust acceptance, login or paid inference.
 mkdirSync('.cache/tmp', { recursive: true });
 const root = mkdtempSync(resolve('.cache/tmp', 'native-smoke-'));
 execFileSync('git', ['init', '-b', 'main', root], { stdio: 'pipe' });
 const results = [];
-for (const agent of detectAgents()) {
+// Version only: no help reads or sign-in probes in the startup smoke.
+for (const agent of await Promise.all(['claude', 'codex'].map(provider => detectProvider(provider, process.env, { probes: false })))) {
   if (!agent.available) { results.push(agent); continue; }
   const launch = buildAgentLaunch({ provider: agent.provider, nativeId: agent.provider === 'claude' ? randomUUID() : undefined });
   const env = { ...process.env, TERM: 'xterm-256color' }; delete env.ELECTRON_RUN_AS_NODE;
