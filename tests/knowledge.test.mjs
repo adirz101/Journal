@@ -187,3 +187,16 @@ test('an evidence file replaced by a symlink between validation and Git lookup i
   const oldPath = process.env.PATH; process.env.PATH = `${shimDir}${delimiter}${oldPath}`; t.after(() => { process.env.PATH = oldPath; });
   assert.throws(() => f.propose(), /changed|symlink|source/i);
 });
+
+test('a context preview is not stored as a receipt; a launch receipt still is', t => {
+  const f = fixture(t); const memory = f.propose(); f.store.setMemoryStatus(memory.id, 'active');
+  const before = f.store.listReceipts(f.project.id).length;
+  const preview = f.store.prepareContext(f.project.id, 'Docker', { persist: false });
+  assert.equal(preview.items.length, 1);
+  assert.equal(preview.preview, true);
+  assert.equal(preview.state, 'prepared', 'The UI keeps treating it as a prepared packet');
+  assert.equal(f.store.listReceipts(f.project.id).length, before, 'A preview writes nothing');
+  assert.throws(() => f.store.getReceipt(preview.id), /Unknown receipt/);
+  f.store.prepareContext(f.project.id, 'Docker');
+  assert.equal(f.store.listReceipts(f.project.id).length, before + 1, 'The default still stores');
+});

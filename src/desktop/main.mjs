@@ -208,7 +208,7 @@ const actions = {
   setMemoryStatus: ({ id, status }) => store.setMemoryStatus(id, status, { reason: status === 'archived' ? 'withdrawn' : null }),
   proposeStatusUpdate: ({ projectId, scope }) => store.proposeStatusUpdate(projectId, scope),
   memoryHistory: ({ id }) => store.memoryHistory(id),
-  prepareContext: ({ projectId, task, workspaceId, disabled, references }) => store.prepareContext(projectId, task, { workspaceId: workspaceId ?? null, disabled: disabled ?? [], references: references ?? [] }),
+  prepareContext: ({ projectId, task, workspaceId, disabled, references }) => store.prepareContext(projectId, task, { workspaceId: workspaceId ?? null, disabled: disabled ?? [], references: references ?? [], persist: false }),
   // ----- Explorer (read-only). Roots resolve from Journal's records; the
   // renderer only names a root key and a relative path. -----
   fileRoots: ({ projectId }) => store.fileRoots(text(projectId, 'project ID', 100)),

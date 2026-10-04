@@ -331,7 +331,7 @@ export class JournalStore {
     return this.proposeMemory(memory.projectId, { statement: memory.statement, category: memory.category, scope: 'checkout', area: memory.area, environment: memory.environment, source,
       promotedFrom: { id: memory.id, revision: memory.revision, branch: memory.branch } });
   }
-  prepareContext(projectId, query, { workspaceId = null, disabled = [], references = [] } = {}) {
+  prepareContext(projectId, query, { workspaceId = null, disabled = [], references = [], persist = true } = {}) {
     query = text(query, 'task', 4000, true); refuseCredentials(query);
     if (!Array.isArray(disabled) || disabled.length > 100 || disabled.some(x => typeof x !== 'string')) throw new Error('Invalid disabled claims');
     const project = this.view(projectId, workspaceId);
@@ -443,6 +443,8 @@ export class JournalStore {
     // References carry paths, ranges and hashes, never contents.
     packet += referencesBlock(referenced);
     const receipt = { id, projectId, query, packet, items, excluded, warnings, disabled: [...disabledSet], workspaceId, references: referenced, checkout: { root: project.root, branch: project.branch, head: project.head }, state: 'prepared', estimatedTokens: Math.ceil(Buffer.byteLength(packet) / 3), createdAt: now() };
+    // Previews show what would be sent; only a launch keeps an immutable receipt.
+    if (!persist) return { ...receipt, preview: true };
     this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(id, projectId, JSON.stringify(receipt));
     return receipt;
   }
