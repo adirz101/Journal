@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ProviderMark } from './ProviderMark';
 import { api, PROVIDER_NAMES, type Bootstrap, type FileReference, type Receipt, type Session, type TimelineEvent } from './types';
-import { category, copy, count, deliveryState, excludedReason, selectionReason, shell, warningText } from './copy';
+import { category, composer, copy, count, deliveryState, excludedReason, selectionReason, shell, warningText } from './copy';
 import { relativeTime } from './sidebarModel';
 
 // Files the user referenced, with whether each still matches what was referenced.
@@ -56,14 +56,14 @@ export function ContextPanel({ receipt, session, bootstrap, history, disabled, e
   const agent = session ? bootstrap?.agents.find(a => a.provider === session.provider) : null;
   const act = async (action: () => Promise<unknown>) => { try { await action(); onChanged(); } catch (error) { onError(error); } };
   return <div className="panel-content context-content"><div className="section-heading"><div><span className="eyebrow">What the agent receives</span><h2 ref={heading} tabIndex={-1}>{title}</h2>{own && receipt?.state === 'submitted' && <small className="muted">{shell.atLaunch(relativeTime(receipt.createdAt, now))}</small>}</div></div>
-    {!receipt ? <div className="knowledge-empty"><h3>Inspect before you start.</h3><p>Enter an initial task and preview its context.</p></div> : <>
+    {!receipt ? <div className="knowledge-empty"><p>{composer.inspectEmpty}</p></div> : <>
       <div className="receipt-meta"><span>{count(receipt.items.length, 'note')}</span><span>{new TextEncoder().encode(receipt.packet).length} bytes · ≈{receipt.estimatedTokens} tokens</span><span className="receipt-state">{deliveryState(receipt.state)}</span></div>
       <dl className="receipt-facts"><dt>Task</dt><dd>{receipt.query || <em>none (only what {copy.everySession.toLowerCase()})</em>}</dd>
         <dt>Checkout</dt><dd>⑂ {(receipt as any).checkout?.branch ?? 'detached'} @ {String((receipt as any).checkout?.head ?? '').slice(0, 7) || 'unborn'}{receipt.workspaceId ? ' · worktree' : ''}</dd>
         {session && <><dt>Route</dt><dd><ProviderMark provider={session.provider} size={16} />{PROVIDER_NAMES[session.provider]} {agent?.version ?? ''} · initial CLI prompt{session.plan ? ' · plan mode' : ''}{session.research ? ' · read-only mode' : ''}</dd>
           <dt>Not observable</dt><dd>{session.provider === 'claude' ? 'Whether the model read or used each note; tool output; hidden reasoning.' : 'Whether the model read or used each note; commands and test results; tool output; hidden reasoning.'}</dd></>}</dl>
       <ol className="receipt-items">{receipt.items.map(item => <li key={item.id}>
-        <div className="memory-meta"><span>{category(item.category, item.scope)}{item.pinned ? ' · pinned' : ''}</span><span>{selectionReason(item.selection?.reason, item.area)} · {item.selection?.bytes ?? 0} B</span></div>
+        <div className="memory-meta"><span>{category(item.category, item.scope)}{item.pinned ? ' · pinned' : ''}</span><span>{item.selection?.terms?.length ? composer.matchesTerms(item.selection.terms) : selectionReason(item.selection?.reason, item.area)} · {item.selection?.bytes ?? 0} B</span></div>
         <p dir="auto">{item.statement}</p>
         <small className="memory-scope">{item.scope === 'branch' ? `⑂ ${copy.onlyOn(item.branch)}` : copy.allBranches}{item.area ? ` · ${item.area}` : ''}{item.environment ? ` · applies when: ${item.environment}` : ''} · r{item.revision}</small>
         <button className="source-button" aria-expanded={open === item.id} onClick={() => setOpen(open === item.id ? null : item.id)}>{item.source.kind === 'file' ? `↗ ${item.source.path}:${item.source.startLine}` : item.source.kind === 'git' ? '↗ Git history' : '↗ Your statement'}<span>{open === item.id ? '−' : '+'}</span></button>

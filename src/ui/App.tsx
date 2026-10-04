@@ -11,7 +11,6 @@ import { ChangesPanel } from './ChangesPanel';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import { ContextPanel } from './ContextPanel';
 import { ExplorerPanel } from './ExplorerPanel';
-import { CursorStatus } from './ProviderStatus';
 import { ProcessDialog } from './ProcessDialog';
 import { UpdateNotice, useUpdateState } from './UpdateNotice';
 import { SettingsDialog } from './SettingsDialog';
@@ -27,21 +26,18 @@ import { StatusBar } from './StatusBar';
 import { useSessionChanges, useSessionEvents } from './useSessionData';
 import { diffSummary } from './sessionView';
 import { showMenu } from './menu';
-import { ProviderMark } from './ProviderMark';
-import journalMarkWhite from '../../assets/branding/journal-mark-white.png';
-import journalMarkDark from '../../assets/branding/journal-mark.png';
+import { defaultProvider, modeFlags } from './composerModel';
 import journalWordmark from '../../assets/branding/journal-wordmark.png';
 import { storedAppearance, type Appearance } from './theme';
-import { copy, shell, tip } from './copy';
+import { composer, copy, shell } from './copy';
 import { keyLetter } from './keys';
-import { api, errorCode, isLive, PROVIDER_NAMES, type Bootstrap, type CommandId, type FileReference, type InspectorTab, type Memory, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
+import { api, errorCode, isLive, PROVIDER_NAMES, type Bootstrap, type CommandId, type FileReference, type InspectorTab, type Memory, type Mode, type Project, type ProjectState, type Provider, type Receipt, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
 
 const MAX_SESSIONS = 4;
 const latest = (a: string | null | undefined, b: string | null | undefined) => !a ? b : !b ? a : a > b ? a : b;
 
 export default function App() {
   const [appearance, setAppearance] = useState<Appearance>(storedAppearance);
-  const journalMark = appearance === 'light' ? journalMarkDark : journalMarkWhite;
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = appearance;
     try { localStorage.setItem('journal-theme', appearance); } catch { /* Keep the toggle usable if storage is unavailable. */ }
@@ -58,7 +54,15 @@ export default function App() {
   // File and command-end events per session, counted as they arrive: liveEvents is capped, so its length stops changing.
   const [fileEventCounts, setFileEventCounts] = useState<Record<string, number>>({});
   const [now, setNow] = useState(Date.now());
-  const [workspaces, setWorkspaces] = useState<WorkspaceList | null>(null); const [workspaceId, setWorkspaceId] = useState<string>(''); const [research, setResearch] = useState(false); const [plan, setPlan] = useState(false);
+  const [workspaces, setWorkspaces] = useState<WorkspaceList | null>(null); const [workspaceId, setWorkspaceId] = useState<string>('');
+  // === Phase 4: composer state ===
+  // The agent choice is remembered on this computer; the mode starts at Build and is never changed for the user.
+  const [mode, setMode] = useState<Mode>('build'); const [startError, setStartError] = useState<{ code?: string; message: string } | null>(null);
+  const rememberedAgent = useRef<string | null | undefined>(undefined);
+  if (rememberedAgent.current === undefined) rememberedAgent.current = (() => { try { return localStorage.getItem('journal-agent'); } catch { return null; } })();
+  const [provider, setProviderState] = useState<Provider>(() => defaultProvider(undefined, rememberedAgent.current ?? null));
+  const chooseProvider = (next: Provider) => { setProviderState(next); setStartError(null); rememberedAgent.current = next; try { localStorage.setItem('journal-agent', next); } catch { /* optional */ } };
+  // === End Phase 4: composer state ===
   const [processView, setProcessView] = useState<{ id: string; title: string; command?: string; kind: 'install' | 'login' } | null>(null); const [providerNote, setProviderNote] = useState(''); const [checkingProvider, setCheckingProvider] = useState(false);
   const [workspaceDialog, setWorkspaceDialog] = useState(false); const [disabled, setDisabled] = useState<string[]>([]); const [settingsOpen, setSettingsOpen] = useState(false); const [manageId, setManageId] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ kind: 'project'; project: Project } | { kind: 'session'; session: Session } | null>(null);
@@ -136,7 +140,7 @@ export default function App() {
   }, [merge]);
   useEffect(() => {
     void api<Bootstrap>('bootstrap').then(async data => {
-      setBootstrap(data); setProjects(data.projects); setRuntime(data.runtime); merge([...data.active, ...data.live]);
+      setBootstrap(data); setProjects(data.projects); if (!rememberedAgent.current) setProviderState(defaultProvider(data.agents, null)); setRuntime(data.runtime); merge([...data.active, ...data.live]);
       const remembered = (() => { try { return localStorage.getItem('journal-project'); } catch { return null; } })();
       const firstLive = slotOrder([...data.active, ...data.live]).find(isLive);
       const selected = data.projects.find(p => p.id === (firstLive?.projectId ?? remembered));
@@ -246,12 +250,16 @@ export default function App() {
     const submitted = resumeFrom ? '' : task; if (!resumeFrom) setTask('');
     await run(async () => {
       try {
-        const result = await api<{ session: Session; receipt: Receipt }>('start', { projectId, provider, task: submitted, resumeId: resumeFrom?.id, ...(resumeFrom ? {} : { workspaceId: workspaceId || null, research, plan: plan && !research, disabled, references: referenceInputs }) });
+        if (!resumeFrom) setStartError(null);
+        const result = await api<{ session: Session; receipt: Receipt }>('start', { projectId, provider, task: submitted, resumeId: resumeFrom?.id, ...(resumeFrom ? {} : { workspaceId: workspaceId || null, ...modeFlags(mode), disabled, references: referenceInputs }) });
         merge([result.session]); setSelectedId(result.session.id); setReceipt(result.receipt); setDisabled([]); if (!resumeFrom) setReferences([]); setPanel('session'); await refresh(projectId);
       } catch (error) {
         if (submitted) setTask(current => current || submitted);
         // Another window or a stale count: all four slots are taken. Catch up and say so plainly.
-        if (errorCode(error) === 'SLOTS_FULL') { void reloadSessions().catch(() => {}); throw new Error(copy.slotsFull(MAX_SESSIONS)); }
+        const code = errorCode(error);
+        if (code === 'SLOTS_FULL') { void reloadSessions().catch(() => {}); if (!resumeFrom) { setStartError({ code, message: composer.slotsFull }); return; } throw new Error(copy.slotsFull(MAX_SESSIONS)); }
+        // The agent went missing since detection: check it again, and say so beside Start.
+        if (code === 'PROVIDER_MISSING' && !resumeFrom) { if (provider === 'cursor') void checkCursor(); setStartError({ code, message: error instanceof Error ? error.message : String(error) }); return; }
         throw error;
       }
     });
@@ -335,7 +343,6 @@ export default function App() {
     if (!state) return;
     await run(async () => { setForm({ draft: await api<StatusDraft>('proposeStatusUpdate', { projectId: state.project.id, scope }) }); });
   }
-  const available = (provider: Provider) => bootstrap?.agents.some(a => a.provider === provider && a.available && (a.state ?? 'ready') === 'ready');
   const cursorAgent = bootstrap?.agents.find(a => a.provider === 'cursor');
   async function checkCursor(after?: string) {
     setCheckingProvider(true);
@@ -394,25 +401,13 @@ export default function App() {
       {runtime.warning && <div className="error-banner" role="status"><span>{runtime.warning}</span></div>}
       {error && <div className="error-banner" role="alert"><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
       {!state ? <section className="welcome"><img className="welcome-wordmark" src={journalWordmark} alt="Journal" width={280} height={84} /><span className="eyebrow">A continuous thread</span><h2>Your project, remembered.</h2><p>Work with Claude Code and Codex in their native terminals.<br />Carry the decisions and lessons into the next session.</p><button className="primary" onClick={() => void openProject()} disabled={busy} aria-keyshortcuts={bootstrap?.shortcuts['open-project']?.aria}>Open project</button><div className="welcome-steps"><span>01 <strong>Open a checkout</strong></span><span>02 <strong>Work in a terminal</strong></span><span>03 <strong>Keep what matters</strong></span></div></section>
-        : !session ? <NewSessionView mark={journalMark}>
-          <section className="launch-bar" aria-label="Start an agent terminal"><label htmlFor="initial-task">Initial task <span className="optional">optional · picks relevant notes</span></label><textarea ref={taskRef} id="initial-task" value={task} onChange={e => setTask(e.target.value)} maxLength={4000} rows={2} placeholder="What are you working on? Mention a module or path to include notes about it." />
-            {references.length > 0 && <ul className="reference-chips" aria-label="Files referenced for the next task">{references.map((ref, index) => <li key={`${ref.rootKey}:${ref.path}:${ref.startLine}`}>
-              <span title={`${ref.rootLabel ?? ''} · ${ref.path}${ref.contentHash ? ` · sha256 ${ref.contentHash.slice(0, 12)}` : ''}`}>{ref.kind === 'folder' ? '▸ ' : ''}{ref.display ?? ref.path}{ref.startLine ? `:${ref.startLine}${ref.endLine !== ref.startLine ? `-${ref.endLine}` : ''}` : ''}</span>
-              <button aria-label={`Remove ${ref.path} from the next task`} onClick={() => setReferences(current => current.filter((_, i) => i !== index))}>×</button></li>)}
-              <li className="muted">Paths and lines only; the agent reads the files itself.</li></ul>}
-            <div className="launch-actions"><div><button className="primary" disabled={busy || !canStart || !available('claude')} onClick={() => void start('claude')}>Start Claude</button><button disabled={busy || !canStart || !available('codex') || (plan && !research)} title={plan && !research ? 'Codex has no plan mode' : undefined} onClick={() => void start('codex')}>Start Codex</button><button disabled={busy || !canStart || !available('cursor') || ((research || plan) && !cursorAgent?.supports?.mode)} onClick={() => void start('cursor')}>Start Cursor</button>{liveCount >= MAX_SESSIONS && <span className="hint inline">{copy.slotsFull(MAX_SESSIONS)}</span>}</div><button className="text-button" disabled={busy} onClick={() => void run(async () => { setReceipt(await api<Receipt>('prepareContext', { projectId: state.project.id, task, workspaceId: workspaceId || null, disabled, references: referenceInputs })); setPanel('session'); layout.showInspector(); })}>Preview context ↗</button></div>
-            <div className="launch-options"><label className="inline-label">Workspace<select value={workspaceId} onChange={e => setWorkspaceId(e.target.value)} aria-label="Workspace">
-              <option value="">Current checkout · {state.project.branch ?? 'detached HEAD'}</option>
-              {workspaces?.workspaces.filter(w => w.state === 'ready').map(w => <option key={w.id} value={w.id!}>{w.kind === 'managed' ? copy.separateCopy : 'Existing worktree'} · {w.branch ?? 'detached'}</option>)}
-              {state.project.roots?.map(root => <option key={root.id} value={`root:${root.id}`}>Folder · {root.name}</option>)}
-            </select></label><button className="text-button" onClick={() => setWorkspaceDialog(true)}>Workspaces…</button>
-              <label className="inline-check" title={tip.readOnly}><input type="checkbox" checked={research} onChange={e => { setResearch(e.target.checked); if (e.target.checked) setPlan(false); }} /> {copy.readOnly}</label>
-              <label className="inline-check" title={tip.plan}><input type="checkbox" checked={plan} onChange={e => { setPlan(e.target.checked); if (e.target.checked) setResearch(false); }} /> {copy.plan}</label></div>
-            <p className="provider-line">{bootstrap?.agents.map(a => <span key={a.provider} title={a.available ? `${a.path ?? ''}\nResume: ${a.capabilities?.exactResume}\nObserved: status ${a.capabilities?.status.join(', ')}; commands ${a.capabilities?.commands}${a.capabilities?.modes ? `\nModes: ${a.capabilities.modes}` : ''}` : 'Not found on PATH'}><ProviderMark provider={a.provider} size={16} />{PROVIDER_NAMES[a.provider]} {a.available ? `${a.version ?? ''}${a.state === 'login-required' ? ' · login required' : ''}` : a.state === 'unsupported' ? '· unsupported version' : a.state === 'not-cursor' ? '· not the Cursor CLI' : '· not found'}</span>)}</p>
-            <CursorStatus agent={cursorAgent} checking={checkingProvider} note={providerNote} onInstall={() => void installCursor()} onLogin={() => void loginCursor()} onCheck={() => void checkCursor()} />
-            {bootstrap?.agents.some(a => !a.available && a.provider !== 'cursor') && <p className="hint">{bootstrap.agents.filter(a => !a.available && a.provider !== 'cursor').map(a => PROVIDER_NAMES[a.provider]).join(', ')} not found on PATH. Install the native CLI, then reopen Journal.</p>}
-          </section>
-        </NewSessionView>
+        : !session ? <NewSessionView project={state.project} bootstrap={bootstrap} workspaces={workspaces} workspaceId={workspaceId} onWorkspace={setWorkspaceId} onManageWorkspaces={() => setWorkspaceDialog(true)}
+          task={task} onTask={setTask} taskRef={taskRef} references={references} onRemoveReference={index => setReferences(current => current.filter((_, i) => i !== index))}
+          disabled={disabled} onDisabled={setDisabled} provider={provider} onProvider={chooseProvider} mode={mode} onMode={next => { setMode(next); setStartError(null); }}
+          connected={connected} liveCount={liveCount} busy={busy} onStart={() => void start(provider)} startError={startError} knowledgeVersion={knowledgeVersion}
+          onInspect={next => { setReceipt(next); setPanel('session'); layout.showInspector(); }}
+          onChecked={next => setReceipt(current => current?.state === 'prepared' ? next : current)}
+          cursor={{ checking: checkingProvider, note: providerNote, onInstall: () => void installCursor(), onLogin: () => void loginCursor(), onCheck: () => void checkCursor() }} />
         : <section className="session-view" aria-label="Session">
           <SessionHeader session={session} state={stateFor(session, now, connected)} connected={connected} busy={busy} canStart={canStart} now={now} mac={bootstrap?.platform === 'darwin'}
             projectBranch={session.projectId === state.project.id ? state.project.branch : session.branch ?? null} agentVersion={bootstrap?.agents.find(a => a.provider === session.provider)?.version ?? null}

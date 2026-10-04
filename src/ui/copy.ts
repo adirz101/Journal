@@ -59,6 +59,12 @@ export const composer = {
   inspectAll: 'Inspect all', restore: 'Restore', relevantNone: 'No remembered note matches this task yet.',
   relevantEmpty: 'Nothing here yet. After this session, I’ll suggest rules and lessons worth keeping. The ones you remember show up here when they match your task.',
   previewFailed: (message: string) => `Preview unavailable: ${message}`,
+  // Group B: the renderer's own words.
+  notesMatchingTask: 'Notes matching your task', pinned: 'Pinned', current: 'Current', checkedWhenYouStart: 'Checked when you start',
+  referencesHint: 'Paths and lines only; the agent reads the files itself.', referencesLabel: 'Files referenced for the next task',
+  matchesTerms: (terms: string[]) => `Matches ${terms.join(', ')}`, notIncludedChip: (n: number, reason: string) => `${n} ${reason}`,
+  inspectEmpty: 'Type a task in New session to see what the agent will know.', manageWorkspacesSuffix: ' workspaces', // visually hidden after "Manage": the button reads "Manage workspaces"
+  currentCheckout: (branch: string) => `Current checkout · ${branch}`, existingWorktree: (branch: string) => `Existing worktree · ${branch}`, folder: (name: string) => `Folder · ${name}`,
 } as const;
 
 export const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;

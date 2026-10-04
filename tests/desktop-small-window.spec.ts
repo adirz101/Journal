@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:f
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
+import { startSession } from './support/ui';
 
 // Boards B10 and B11: smaller windows fold the side panes into rails and
 // overlays without refitting the terminal. Real Electron, runtime and node-pty with a fixture CLI.
@@ -50,8 +51,7 @@ const closeApp = async (app: ElectronApplication) => {
   try { if (pid) { process.kill(pid, 0); process.kill(pid, 'SIGKILL'); } } catch { /* already gone */ }
 };
 async function start(page: Page, task: string) {
-  await page.getByLabel('Initial task').fill(task);
-  await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+  await startSession(page, 'claude', { task: task });
   await expect(page.locator('.terminal-surface')).toContainText(`TASK ${task}`);
 }
 const terminal = (page: Page) => page.locator('.xterm-helper-textarea');

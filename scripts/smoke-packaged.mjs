@@ -51,10 +51,11 @@ async function run(first) {
     if (first) {
       await step(`launch ${info.name} ${info.version} (packaged)`, async () => {});
       await step('open a project', async () => { await page.getByRole('button', { name: 'Open project', exact: true }).first().click(); await expectText(page.locator('.project-link'), 'smoke project'); });
-      await step('provider detection (Claude, Codex, Cursor rows)', async () => { await expectText(page.locator('.provider-line'), 'Claude Code fixture 1.0'); await expectText(page.locator('.provider-line'), 'Codex fixture 1.0'); await expectText(page.locator('.provider-line'), 'Cursor'); });
+      await step('provider detection (Claude, Codex, Cursor rows)', async () => { const cards = page.getByRole('radiogroup', { name: 'Agent' }); await expectText(cards.getByRole('radio', { name: 'Claude Code', exact: true }), 'Installed · fixture 1.0'); await expectText(cards.getByRole('radio', { name: 'Codex', exact: true }), 'Installed · fixture 1.0'); await expectText(cards.getByRole('radio', { name: 'Cursor', exact: true }), 'Cursor'); });
       await step('terminal session through the runtime and node-pty', async () => {
-        await page.getByLabel('Initial task').fill('SMOKE_TASK');
-        await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+        await page.getByRole('radio', { name: 'Claude Code', exact: true }).click();
+        await page.getByLabel('Task', { exact: true }).fill('SMOKE_TASK');
+        await page.getByRole('button', { name: /^Start Claude Code/ }).click();
         await expectText(page.locator('.terminal-surface'), 'PTY_READY true');
         await expectText(page.locator('.terminal-surface'), 'SMOKE_TASK');
         await page.getByRole('button', { name: 'Stop', exact: true }).click();

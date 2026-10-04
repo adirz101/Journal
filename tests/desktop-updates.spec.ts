@@ -2,7 +2,7 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { newSession, openSettings, statusBar } from './support/ui';
+import { newSession, openSettings, startSession, statusBar } from './support/ui';
 
 // Development and test builds never contact GitHub; the update UI is driven by
 // sending the window the same events the updater sends.
@@ -64,12 +64,12 @@ test('update notices: progress, restart only for a downloaded update, settings i
     execFileSync('git', ['init', '-q', '-b', 'main', project]);
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    await expect(page.getByLabel('Initial task')).toBeVisible();
+    await expect(page.getByLabel('Task', { exact: true })).toBeVisible();
     await emit({ status: 'ready', version: '0.2.0-alpha.4', percent: 100 });
     await expect(page.locator('.sidebar-footer .update-notice')).toContainText('Journal 0.2.0-alpha.4 is ready.');
     // With a session shown, it moves to the right of the session's status bar.
     if (process.platform !== 'win32') {
-      await newSession(page); await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+      await startSession(page, 'claude');
       await expect(page.locator('.terminal-surface')).toContainText('PTY_READY');
       await expect(statusBar(page).locator('.update-notice')).toContainText('Journal 0.2.0-alpha.4 is ready.');
       await expect(page.locator('.sidebar-footer .update-notice')).toHaveCount(0);

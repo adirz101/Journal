@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:f
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
-import { filesView, inspectorTab, newSession, sessionStatus, statusBar } from './support/ui';
+import { filesView, inspectorTab, newSession, sessionStatus, startSession, statusBar } from './support/ui';
 
 // The Phase 3 session view: header, attention banner, status bar and the
 // three-tab inspector. Real Electron, runtime and node-pty with fixture CLIs.
@@ -58,9 +58,7 @@ const closeApp = async (app: ElectronApplication) => {
   try { if (pid) { process.kill(pid, 0); process.kill(pid, 'SIGKILL'); } } catch { /* already gone */ }
 };
 async function start(page: Page, task: string, provider: 'Claude' | 'Codex' = 'Claude') {
-  await newSession(page);
-  await page.getByLabel('Initial task').fill(task);
-  await page.getByRole('button', { name: `Start ${provider}`, exact: true }).click();
+  await startSession(page, provider === 'Claude' ? 'claude' : 'codex', { task });
   await expect(page.locator('.terminal-surface')).toContainText(`TASK ${task}`);
 }
 const typeLine = async (page: Page, text: string) => { await page.locator('.xterm-helper-textarea').pressSequentially(text); await page.locator('.xterm-helper-textarea').press('Enter'); };
