@@ -75,4 +75,7 @@ Final required local checks are reported in [implementation status](IMPLEMENTATI
 
 ## To verify
 
-After approving a Bash permission in authenticated Claude Code, Journal shows Working, not Needs approval, while the command runs.
+- After approving a Bash permission in authenticated Claude Code, Journal shows Working, not Needs approval, while the command runs.
+- Whether the `PermissionRequest` payload includes `tool_use_id` and `tool_input`. Journal matches an id-less request to the in-flight tool by name, command and file path, and otherwise falls back to the last tool of that kind completing.
+- Which hook events follow a denial with feedback. Journal clears the prompt when a new tool starts while only the pending tool is in flight.
+- Whether subagent hooks share the parent `session_id`. If they do, a sibling tool must not hide an open approval.

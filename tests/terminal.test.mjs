@@ -214,3 +214,91 @@ test('an approved tool ends the waiting state when it completes', async t => {
   assert.equal(after.status, 'running');
   assert.equal(after.activity, 'working');
 });
+
+// Hook-order scenarios for the approval prompt: only its own tool may clear it.
+async function hooked(t) {
+  const f = runtime(t);
+  const { session } = await f.manager.start({ projectId: f.project.id, provider: 'claude', task: 'x' });
+  const send = (event, extra = {}) => f.manager.ingest(session.id, { event, nativeId: session.nativeId, ...extra });
+  const state = () => { const s = f.store.getSession(session.id); return `${s.status}/${s.activity}`; };
+  return { send, state };
+}
+
+test('the real hook order (PreToolUse before an id-less PermissionRequest) clears on that tool completing', async t => {
+  const { send, state } = await hooked(t);
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'npm test' });
+  send('PermissionRequest', { tool: 'Bash' });
+  assert.equal(state(), 'waiting/permission');
+  send('PostToolUse', { tool: 'Bash', toolUseId: 'b1' });
+  assert.equal(state(), 'running/working');
+});
+
+test('a sibling tool finishing does not hide an open approval', async t => {
+  const { send, state } = await hooked(t);
+  send('PreToolUse', { tool: 'Read', toolUseId: 'r1' });
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'ls' });
+  send('PermissionRequest', { tool: 'Bash' });
+  send('PostToolUse', { tool: 'Read', toolUseId: 'r1' });
+  assert.equal(state(), 'waiting/permission');
+  send('PostToolUse', { tool: 'Bash', toolUseId: 'b1' });
+  assert.equal(state(), 'running/working');
+});
+
+test('a PermissionRequest carrying its tool id is cleared only by that tool', async t => {
+  const { send, state } = await hooked(t);
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'a' });
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'b2', command: 'b' });
+  send('PermissionRequest', { tool: 'Bash', toolUseId: 'b2' });
+  send('PostToolUse', { tool: 'Bash', toolUseId: 'b1' });
+  assert.equal(state(), 'waiting/permission');
+  send('PostToolUse', { tool: 'Bash', toolUseId: 'b2' });
+  assert.equal(state(), 'running/working');
+});
+
+test('an ambiguous request clears only when the last tool of its kind completes', async t => {
+  const { send, state } = await hooked(t);
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'a' });
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'b2', command: 'b' });
+  send('PermissionRequest', { tool: 'Bash' });
+  send('PostToolUse', { tool: 'Bash', toolUseId: 'b1' });
+  assert.equal(state(), 'waiting/permission');
+  send('PostToolUse', { tool: 'Bash', toolUseId: 'b2' });
+  assert.equal(state(), 'running/working');
+});
+
+test('a sibling tool starting keeps the approval; the pending tool alone can be followed by a new one', async t => {
+  const { send, state } = await hooked(t);
+  send('PreToolUse', { tool: 'Read', toolUseId: 'r1' });
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'ls' });
+  send('PermissionRequest', { tool: 'Bash' });
+  send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
+  assert.equal(state(), 'waiting/permission');
+  // Deny with feedback: with only the pending tool in flight, a new tool means the prompt was answered.
+  const second = await hooked(t);
+  second.send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'ls' });
+  second.send('PermissionRequest', { tool: 'Bash' });
+  second.send('PreToolUse', { tool: 'Edit', toolUseId: 'e1', filePath: 'a.txt' });
+  assert.equal(second.state(), 'running/working');
+});
+
+test('an auto-approved sibling failing does not hide an open approval', async t => {
+  const { send, state } = await hooked(t);
+  send('PreToolUse', { tool: 'Edit', toolUseId: 'e1', filePath: 'a.txt' });
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'ls' });
+  send('PermissionRequest', { tool: 'Bash' });
+  send('PostToolUseFailure', { tool: 'Edit', toolUseId: 'e1' });
+  assert.equal(state(), 'waiting/permission');
+});
+
+test('turn boundaries reset approval tracking and unknown completions are harmless', async t => {
+  const { send, state } = await hooked(t);
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'ls' });
+  send('PermissionRequest', { tool: 'Bash' });
+  send('Stop');
+  send('PostToolUse', { tool: 'Bash', toolUseId: 'ghost' });
+  assert.equal(state(), 'running/idle');
+  send('PermissionRequest', { tool: 'Bash' });
+  send('UserPromptSubmit');
+  send('PostToolUse', { tool: 'Bash', toolUseId: 'ghost2' });
+  assert.equal(state(), 'running/working');
+});

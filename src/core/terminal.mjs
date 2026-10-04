@@ -129,7 +129,7 @@ export class TerminalManager extends EventEmitter {
       delete env.ELECTRON_RUN_AS_NODE;
       const proc = this.spawn(launch.executable, launch.argv, { cwd: session.cwd, env, name: 'xterm-256color', cols: 100, rows: 30 });
       entry = { session, proc, buffer: new OutputBuffer(), attached: false, sent: 0, acknowledged: 0, inflight: [], tail: '', exited: false,
-        stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), lastPersist: 0 };
+        stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), tools: new Map(), pending: null, lastPersist: 0 };
       this.entries.set(session.id, entry);
       session.status = 'running'; session.pid = Number.isInteger(proc.pid) ? proc.pid : null;
       // Identity is read asynchronously, and again on first output once the CLI is running.
@@ -303,6 +303,22 @@ export class TerminalManager extends EventEmitter {
     if (activity !== undefined) { if (activity !== session.activity) entry.activitySince = Date.now(); session.activity = activity; }
     this.persist(session, true); this.emitStatus(session);
   }
+  // The open approval prompt ends only when its own tool, or the last in-flight
+  // tool of its kind, moves on; a sibling or subagent tool must not hide it.
+  clearPending(id, nativeId) { const entry = this.entries.get(id); if (entry) entry.pending = null; this.observe(id, nativeId, 'running', 'working'); }
+  // A tool is starting: the prompt is settled when nothing but the pending tool is still in flight.
+  permissionSettled(entry, toolUseId) {
+    const { pending } = entry;
+    return !pending || [...entry.tools.keys()].every(key => key === toolUseId || key === pending.toolUseId);
+  }
+  // A tool finished (already removed from entry.tools): was it the one that asked?
+  permissionResolvedBy(entry, toolUseId, known) {
+    const { pending } = entry;
+    if (!pending) return true;
+    if (pending.toolUseId && known) return pending.toolUseId === toolUseId;
+    if (pending.toolUseId === toolUseId && toolUseId) return true;
+    return ![...entry.tools.values()].some(tool => tool.tool === pending.tool);
+  }
   // Claude hook observations: lifecycle, Bash commands with exit status when
   // the CLI reports it, and file edits. Command text is redacted and bounded;
   // no tool output or prompt text is kept.
@@ -311,12 +327,21 @@ export class TerminalManager extends EventEmitter {
     const { session } = entry;
     session.lastActivityAt = new Date().toISOString();
     switch (event.event) {
-      case 'SessionStart': this.observe(id, event.nativeId, 'running', 'idle'); break;
-      case 'UserPromptSubmit': this.observe(id, event.nativeId, 'running', 'working'); this.record(id, 'prompt', {}); break;
-      case 'PermissionRequest': this.observe(id, event.nativeId, 'waiting', 'permission'); this.record(id, 'permission', { tool: event.tool ?? null }); break;
-      case 'Stop': this.observe(id, event.nativeId, 'running', 'idle'); this.record(id, 'turn-end', {}); break;
+      case 'SessionStart': entry.pending = null; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'idle'); break;
+      case 'UserPromptSubmit': entry.pending = null; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'working'); this.record(id, 'prompt', {}); break;
+      case 'PermissionRequest': {
+        // The request may not carry a tool id: match it to the in-flight tool that asked, if exactly one fits.
+        const candidates = [...entry.tools].filter(([, tool]) => !tool.asked && tool.tool === event.tool
+          && (!event.command || tool.command === event.command) && (!event.filePath || tool.filePath === event.filePath));
+        const toolUseId = event.toolUseId ?? (candidates.length === 1 ? candidates[0][0] : null);
+        if (toolUseId && entry.tools.has(toolUseId)) entry.tools.get(toolUseId).asked = true;
+        entry.pending = { toolUseId, tool: event.tool ?? null };
+        this.observe(id, event.nativeId, 'waiting', 'permission'); this.record(id, 'permission', { tool: event.tool ?? null }); break;
+      }
+      case 'Stop': entry.pending = null; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'idle'); this.record(id, 'turn-end', {}); break;
       case 'PreToolUse':
-        if (session.status === 'waiting') this.observe(id, event.nativeId, 'running', 'working');
+        if (event.toolUseId && entry.tools.size < 500) entry.tools.set(event.toolUseId, { tool: event.tool, command: event.command ?? null, filePath: event.filePath ?? null });
+        if (session.status === 'waiting' && this.permissionSettled(entry, event.toolUseId)) this.clearPending(id, event.nativeId);
         if (event.tool === 'Bash' && event.toolUseId && entry.commands.size < 500) {
           const command = redact(event.command ?? '', 300);
           entry.commands.set(event.toolUseId, true);
@@ -328,7 +353,8 @@ export class TerminalManager extends EventEmitter {
         break;
       case 'PostToolUse': case 'PostToolUseFailure': {
         // The tool ran, so any permission prompt for it was answered, even if no further PreToolUse arrives.
-        if (session.status === 'waiting') this.observe(id, event.nativeId, 'running', 'working');
+        const known = entry.tools.delete(event.toolUseId);
+        if (session.status === 'waiting' && this.permissionResolvedBy(entry, event.toolUseId, known)) this.clearPending(id, event.nativeId);
         if (event.tool === 'Bash' && entry.commands.delete(event.toolUseId)) {
           // Exit 0 only when Claude reported completion of a foreground command.
           const status = event.interrupted ? 'interrupted' : event.background ? 'unknown' : event.event === 'PostToolUse' ? 'succeeded' : Number.isInteger(event.exit) ? 'failed' : 'unknown';
