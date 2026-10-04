@@ -20,8 +20,9 @@ import { launchTarget, resolveExecutable } from '../core/process.mjs';
 import { RootWatcher } from './watch.mjs';
 import { Updater, updateMode } from './updater.mjs';
 import { checkOutcome, menuTemplate } from './menu.mjs';
-import { APP_USER_MODEL_ID, createNotifier, readPreferences, writePreferences } from './notify.mjs';
+import { APP_USER_MODEL_ID, createNotifier, readPreferences, systemSurface, writePreferences } from './notify.mjs';
 import { matchShortcut, shortcutKeys, shouldDispatch } from './shortcuts.mjs';
+import { settledError } from './ipc-error.mjs';
 import electronUpdater from 'electron-updater';
 import { dataDirectory, unpackedPath, withGuiPath } from './environment.mjs';
 import { WINDOW_BACKGROUND } from './window-colors.mjs';
@@ -113,7 +114,7 @@ function createWindow() {
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   window.on('closed', () => { window = null; });
   // Windows and Linux flash the taskbar while something waits; looking at Journal stops it.
-  window.on('focus', () => { if (process.platform !== 'darwin') window?.flashFrame(false); });
+  window.on('focus', () => { if (process.platform !== 'darwin' && !headless) window?.flashFrame(false); });
   if (devUrl) window.loadURL(devUrl); else window.loadFile(resolve(root, 'dist/index.html'));
 }
 
@@ -128,25 +129,22 @@ runtime = new RuntimeClient({ dataDir: userData, launch: launchRuntime });
 // The runtime's in-memory sessions carry status only: names, pins, archive and
 // removal belong to the store, so its copies of those fields never reach the UI.
 const fromRuntime = session => { const status = { ...session }; for (const field of SESSION_USER_FIELDS) delete status[field]; return status; };
-// Approval notifications and the badge. Headless test runs replace the OS
-// notification, badge and focus through globals; nothing else can.
+// Approval notifications and the badge. Headless test runs never reach the OS:
+// a test replaces the notification, badge and focus through globals, and
+// without those they do nothing (systemSurface in notify.mjs).
 const testHook = name => headless && typeof globalThis[name] === 'function' ? globalThis[name] : null;
+const surface = systemSurface({ headless, hook: testHook, Notification,
+  isFocused: () => !!window && !window.isDestroyed() && window.isFocused(),
+  setBadgeCount: count => app.setBadgeCount(count),
+  // macOS: Dock badge. Windows has no badge count (setBadgeCount returns false), so the taskbar flashes instead; Linux gets both where its launcher supports a count.
+  flashFrame: count => { if (process.platform !== 'darwin' && window && !window.isDestroyed()) window.flashFrame(count > 0 && !window.isFocused()); } });
 const notifier = createNotifier({
-  // Constructing through a plain function lets a test install its stand-in after launch.
-  Notification: function JournalNotification(options) { return new (testHook('__journalNotification') ?? Notification)(options); },
-  isSupported: () => !!testHook('__journalNotification') || Notification.isSupported(),
-  isFocused: () => { const focused = testHook('__journalFocused'); return focused ? !!focused() : !!window && !window.isDestroyed() && window.isFocused(); },
+  ...surface,
   onClick: sessionId => {
     if (!window || window.isDestroyed()) return;
     // Hidden test windows stay hidden.
     if (!headless) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); }
     send({ type: 'focus-session', sessionId });
-  },
-  // macOS: Dock badge. Windows has no badge count (setBadgeCount returns false), so the taskbar flashes instead; Linux gets both where its launcher supports a count.
-  setBadge: count => {
-    const hook = testHook('__journalBadge'); if (hook) { hook(count); return; }
-    app.setBadgeCount(count);
-    if (process.platform !== 'darwin' && window && !window.isDestroyed()) window.flashFrame(count > 0 && !window.isFocused());
   },
   // The user's name for the session lives in the store, not in the runtime's copy.
   titleFor: session => store.getSession(session.id).then(row => row.displayName || row.title, () => session.title),
@@ -516,7 +514,7 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
     if (!Object.hasOwn(actions, action) || !input || typeof input !== 'object' || Array.isArray(input) || JSON.stringify(input).length > 100000) throw new Error('Invalid desktop request');
     if (ROOT_CHANGES.has(action)) rootCache.clear();
     try { return { ok: true, value: await actions[action](input) }; } finally { if (ROOT_CHANGES.has(action)) rootCache.clear(); }
-  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Operation failed', ...(error?.code ? { code: error.code } : {}) }; }
+  } catch (error) { return settledError(error); }
 });
 try { await runtime.connect(); runtimeState = 'connected'; await seedNotifier(); }
 catch (error) { runtimeState = 'disconnected'; console.error('Journal runtime unavailable:', error.message); void runtime.reconnect(); }

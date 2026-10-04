@@ -199,9 +199,10 @@ export default function App() {
     else if (id === 'tab-memory') { setCollapsed(false); setPanel('memory'); }
   };
   // === End region: command handler ===
-  // A notification click (main sends focus-session) selects its session like a click, busy or not.
+  // A notification click (main sends focus-session) selects its session like a click, busy or not,
+  // except while a dialog is open: like commands, it must not switch the session behind it.
   const focusSession = useRef<(id: string) => void>(() => {});
-  focusSession.current = id => { const target = sessions[id]; if (target) void selectSession(target); };
+  focusSession.current = id => { if (document.querySelector('dialog[open]')) return; const target = sessions[id]; if (target) void selectSession(target); };
   useEffect(() => window.journal?.onEvent(event => {
     if (event.type === 'command') command.current(event.id);
     else if (event.type === 'focus-session') focusSession.current(event.sessionId);
@@ -325,7 +326,7 @@ export default function App() {
     {/* === End region A: sidebar === */}
 
     {/* === Region B: main column (session view) === */}
-    <main className="workspace">
+    <main className="workspace" aria-busy={busy || undefined}>
       <header className="workspace-heading"><div><span className="eyebrow">Workspace</span><h1>{state?.project.name ?? 'Welcome to Journal'}</h1></div>{state && <span className="branch-badge">⑂ {state.project.branch ?? 'detached HEAD'} <span>{state.project.head?.slice(0, 7)}</span></span>}</header>
       {runtime.state === 'disconnected' && <div className="error-banner" role="status"><span>The Journal runtime is not connected. Reconnecting… Running sessions are shown as disconnected until their state is known; nothing is resent.</span></div>}
       {runtime.warning && <div className="error-banner" role="status"><span>{runtime.warning}</span></div>}

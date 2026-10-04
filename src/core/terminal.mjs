@@ -15,6 +15,7 @@ export const ECHO_MS = 300;          // output this soon after input or resize i
 export const QUIET_MS = 10_000;      // output after this much quiet is a resume edge
 export const ACTIVITY_THROTTLE_MS = 5_000;
 export const LIVE_STATES = ['starting', 'running', 'waiting', 'stopping'];
+const PTY_SIZE = Object.freeze({ cols: 100, rows: 30 }); // until the terminal reports its own
 const isLive = status => LIVE_STATES.includes(status);
 // Machine-readable reasons for refused or failed operations. Messages stay
 // human-readable; the renderer branches on `code`.
@@ -30,6 +31,9 @@ export const ERROR_CODES = Object.freeze({
   NOT_LIVE: 'NOT_LIVE',                     // owned(): terminal not active
 });
 const CODES = new Set(Object.values(ERROR_CODES));
+// The code of the error event sent when a hook reports another native session ID
+// (src/ui/types.ts shares it by name).
+export const IDENTITY_CHANGED = 'IDENTITY_CHANGED';
 const fail = (code, message) => Object.assign(new Error(message), { code });
 const TEST_COMMAND = /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|node\s+--test|npx\s+(?:jest|vitest|playwright\s+test|mocha)|pytest|jest|vitest|go\s+test|cargo\s+test|playwright\s+test|mocha|rspec|dotnet\s+test|gradle\w*\s+test|mvn\s+test)\b/;
 // Resolve the nearest existing ancestor so deleted or not-yet-created files
@@ -41,6 +45,9 @@ function canonical(path) {
   }
 }
 export const isTestCommand = command => TEST_COMMAND.test(command ?? '');
+// Terminal input that types text (not only keys such as arrows, Esc, Enter or Ctrl+C).
+const KEY_SEQUENCES = /\x1b(?:\[200~|\[201~|\[[0-9;?]*[ -\/]*[@-~]|O.|.)?/g;
+const printable = data => /[^\x00-\x1f\x7f]/.test(data.replace(KEY_SEQUENCES, ''));
 
 export class OutputBuffer {
   constructor(limit = 256 * 1024) { this.limit = limit; this.bytes = 0; this.chunks = []; this.sequence = 0; }
@@ -77,7 +84,7 @@ export class TerminalManager extends EventEmitter {
     super(); this.cursor = cursor; this.store = store; this.spawn = spawn; this.makeSettings = makeSettings; this.runtimeId = runtimeId; this.platform = platform;
     this.identify = identify; this.table = table; this.verifiedSignal = verifiedSignal; this.alive = alive; this.stopGraceMs = stopGraceMs;
     // Slots 1-4 are reserved synchronously at start so concurrent starts never share one.
-    this.entries = new Map(); this.reservedSlots = new Set(); this.pending = 0; this.flushPending = false; this.disposed = false;
+    this.entries = new Map(); this.reservedSlots = new Set(); this.flushPending = false; this.disposed = false;
     this.tracker = trackMs ? setInterval(() => { void this.trackDescendants().catch(() => {}); void this.recheckOrphans().catch(() => {}); }, trackMs) : null; this.tracker?.unref?.();
   }
   entry(id) { return this.entries.get(id) ?? null; }
@@ -92,10 +99,12 @@ export class TerminalManager extends EventEmitter {
   }
   async start(request) {
     if (this.disposed) throw fail(ERROR_CODES.SHUTTING_DOWN, 'Journal is shutting down');
-    const slot = this.liveEntries().length + this.pending >= MAX_SESSIONS ? null : this.freeSlot();
+    // Live sessions and starts in progress (reserved) each hold one slot; a start
+    // whose process already runs is in both sets but counts once.
+    const slot = this.freeSlot();
     if (!slot) throw fail(ERROR_CODES.SLOTS_FULL, `Journal runs up to ${MAX_SESSIONS} sessions at once. Stop one before starting another.`);
-    this.reservedSlots.add(slot); this.pending++;
-    try { return await this.launch({ ...request, slot }); } finally { this.pending--; this.reservedSlots.delete(slot); }
+    this.reservedSlots.add(slot);
+    try { return await this.launch({ ...request, slot }); } finally { this.reservedSlots.delete(slot); }
   }
   async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, plan = false, disabled = [], references = [], slot = null }) {
     if (!PROVIDERS.includes(provider)) throw new Error('Unknown agent provider');
@@ -157,10 +166,10 @@ export class TerminalManager extends EventEmitter {
       const launch = buildAgentLaunch({ provider, nativeId: session.nativeId, resume: !!prior, prompt, settingsFile, research, plan, executable: cursor?.path });
       const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', JOURNAL_SESSION_ID: session.id };
       delete env.ELECTRON_RUN_AS_NODE;
-      const proc = this.spawn(launch.executable, launch.argv, { cwd: session.cwd, env, name: 'xterm-256color', cols: 100, rows: 30 });
+      const proc = this.spawn(launch.executable, launch.argv, { cwd: session.cwd, env, name: 'xterm-256color', ...PTY_SIZE });
       entry = { session, proc, buffer: new OutputBuffer(), attached: false, sent: 0, acknowledged: 0, inflight: [], tail: '', exited: false,
         stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), tools: new Map(), pending: [], answered: false, lastPersist: 0,
-        lastInputAt: 0, lastResizeAt: 0, lastActivityEmit: 0, activityTimer: null };
+        lastInputAt: 0, lastResizeAt: 0, lastActivityEmit: 0, activityTimer: null, size: { cols: PTY_SIZE.cols, rows: PTY_SIZE.rows } };
       this.entries.set(session.id, entry);
       session.status = 'running'; session.pid = Number.isInteger(proc.pid) ? proc.pid : null;
       // Identity is read asynchronously, and again on first output once the CLI is running.
@@ -182,7 +191,9 @@ export class TerminalManager extends EventEmitter {
       await this.store.updateReceiptState(receipt.id, current.state === 'prepared' && !spawned ? 'failed' : 'uncertain', session.id, prompt);
       this.record(session.id, 'error', { message: redact(error.message, 300) });
       this.emitStatus(session);
-      const code = CODES.has(error.code) ? error.code : error.code === 'ENOENT' ? ERROR_CODES.PROVIDER_MISSING : ERROR_CODES.START_FAILED;
+      // ENOENT means a missing executable only when spawning failed; later it is some other file.
+      const code = CODES.has(error.code) ? error.code : error.code === 'ENOENT' && !spawned ? ERROR_CODES.PROVIDER_MISSING : ERROR_CODES.START_FAILED;
+      if (code === ERROR_CODES.SHUTTING_DOWN) throw fail(code, error.message);
       throw fail(code, `Could not start ${provider}. Check that its CLI is installed and available on PATH. ${error.message}`);
     }
   }
@@ -266,12 +277,14 @@ export class TerminalManager extends EventEmitter {
     const dismiss = data === '\x1b' || data === '\x03';
     if (entry.pending.length && !data.startsWith('\x1b[200~') && (data.includes('\r') || dismiss || /^[1-9]$/.test(data))) entry.answered = true;
     entry.proc.write(data); entry.lastInputAt = Date.now();
+    if (printable(data)) entry.typedThisTurn = true;
     const { session } = entry;
     if (entry.answered && entry.pending.length === 1 && session.status === 'waiting') {
       // Esc or Ctrl+C rejects the tool and interrupts the turn, which no hook reports: Claude is back at its input box.
       entry.pending = []; entry.answered = false; this.syncPending(entry); this.observe(id, session.nativeId, 'running', dismiss ? 'idle' : 'working');
-    } else if (dismiss && !entry.pending.length && session.provider === 'claude' && session.status === 'running' && session.activity === 'working') {
+    } else if (dismiss && !entry.pending.length && session.provider === 'claude' && session.status === 'running' && session.activity === 'working' && !entry.typedThisTurn) {
       // "esc to interrupt": Stop does not fire on a user interrupt. A later tool event corrects this if the turn went on.
+      // Not after typing during the turn: the key may only close an autocomplete menu or leave vim insert mode.
       this.observe(id, session.nativeId, 'running', 'idle');
     }
   }
@@ -296,7 +309,10 @@ export class TerminalManager extends EventEmitter {
   }
   resize(id, cols, rows) {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 2 || cols > 500 || rows > 300) throw new Error('Invalid terminal size');
-    const entry = this.owned(id); entry.proc.resize(cols, rows); entry.lastResizeAt = Date.now(); entry.session.terminal = { cols, rows };
+    const entry = this.owned(id); entry.session.terminal = { cols, rows };
+    // The same size changes nothing (no repaint), so it opens no echo window either.
+    if (entry.size.cols === cols && entry.size.rows === rows) return;
+    entry.proc.resize(cols, rows); entry.size = { cols, rows }; entry.lastResizeAt = Date.now();
   }
   // Goes through write() so Ctrl+C counts as answering an open permission prompt.
   interrupt(id) { this.write(id, '\x03'); this.record(id, 'interrupt', {}); }
@@ -364,13 +380,13 @@ export class TerminalManager extends EventEmitter {
     // onto a confirmed parent or silently restore confidence on a later hook.
     if (nativeId !== session.nativeId && !entry.identityAmbiguous) {
       entry.identityAmbiguous = true; session.identityMismatch = true;
-      this.emit('event', { type: 'error', sessionId: id, code: 'IDENTITY_CHANGED', message: 'Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.' });
+      this.emit('event', { type: 'error', sessionId: id, code: IDENTITY_CHANGED, message: 'Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.' });
     }
     // The preassigned ID is now seen in Claude's own hook.
     if (nativeId === session.nativeId && !entry.identityAmbiguous && session.nativeIdSource === 'preassigned') session.nativeIdSource = 'preassigned-observed';
     session.nativeIdConfirmed = !entry.identityAmbiguous;
     if (!entry.stopping && status) session.status = status;
-    if (activity !== undefined) { if (activity !== session.activity) entry.activitySince = Date.now(); session.activity = activity; }
+    if (activity !== undefined) { if (activity !== session.activity) { entry.activitySince = Date.now(); entry.typedThisTurn = false; } session.activity = activity; }
     this.persist(session, true); this.emitStatus(session);
   }
   // Open approval prompts end when their own tool (or the last in-flight tool of its kind)

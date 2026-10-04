@@ -40,10 +40,19 @@ process.stdin.setRawMode(true);process.stdin.resume();`;
   return { root, project, env, cleanup };
 }
 
-async function open(env: Record<string, string>, project: string): Promise<{ app: ElectronApplication; page: Page }> {
+async function open(env: Record<string, string>, project: string, { hooks = true } = {}): Promise<{ app: ElectronApplication; page: Page }> {
   const app = await electron.launch({ args: ['.'], env });
   await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
+  // Spies on the real OS calls: they record (and swallow) anything that would reach the OS.
+  await app.evaluate(({ app: electronApp, Notification, BrowserWindow }) => {
+    const g = globalThis as any; g.__osCalls = [];
+    Notification.prototype.show = function () { g.__osCalls.push('notification.show'); };
+    electronApp.setBadgeCount = (count: number) => { g.__osCalls.push(`setBadgeCount:${count}`); return true; };
+    if (electronApp.dock) electronApp.dock.setBadge = (text: string) => { g.__osCalls.push(`dock.setBadge:${text}`); };
+    BrowserWindow.prototype.flashFrame = function (flag: boolean) { g.__osCalls.push(`flashFrame:${flag}`); };
+  });
   const page = await app.firstWindow();
+  if (!hooks) return { app, page };
   // Capture notifications, the badge and focus-session events; report the window as unfocused.
   await app.evaluate(({ BrowserWindow }) => {
     const g = globalThis as any;
@@ -76,7 +85,10 @@ async function startClaude(page: Page, task: string) {
   await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
   await expect(page.locator('.terminal-surface')).toContainText(`TASK ${task}`);
   const live = await page.evaluate(async () => (await (window as any).journal.request('sessions')).live);
-  return live.find((session: any) => session.task === task || session.title === task || JSON.stringify(session).includes(task));
+  // Exactly one live session carries this task as its title.
+  const matches = live.filter((session: any) => session.title === task);
+  expect(matches).toHaveLength(1);
+  return matches[0];
 }
 
 // Plays one Claude hook event through Journal's own hook script and settings file.
@@ -130,6 +142,25 @@ test('an unfocused window gets one notification per episode, without the command
     hook(f.root, f.project, session, 'PermissionRequest', bash('t4'));
     await expect.poll(() => badges(app)).toEqual([1, 0, 1, 0, 1]);
     expect(await notifications(app)).toHaveLength(2);
+    expect(await app.evaluate(() => (globalThis as any).__osCalls)).toEqual([]);
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
+test('a headless run without test hooks never reaches the OS notification, badge or taskbar', async () => {
+  const f = setup('notify-headless'); const { app, page } = await open(f.env, f.project, { hooks: false });
+  try {
+    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
+    const session = await startClaude(page, 'HEADLESS_A');
+    hook(f.root, f.project, session, 'PreToolUse', bash('h1'));
+    hook(f.root, f.project, session, 'PermissionRequest', bash('h1'));
+    // The main process updates the notifier before it forwards the status to the renderer.
+    await expect.poll(async () => (await page.evaluate(async () => (await (window as any).journal.request('sessions')).live)).find((s: any) => s.id === session.id)?.status).toBe('waiting');
+    // Give an (incorrect) notification time to read the session name and show.
+    await page.waitForTimeout(1000);
+    expect(await app.evaluate(() => (globalThis as any).__osCalls)).toEqual([]);
+    hook(f.root, f.project, session, 'PostToolUse', bash('h1'));
+    await expect.poll(async () => (await page.evaluate(async () => (await (window as any).journal.request('sessions')).live)).find((s: any) => s.id === session.id)?.status).not.toBe('waiting');
+    expect(await app.evaluate(() => (globalThis as any).__osCalls)).toEqual([]);
   } finally { await closeApp(app); f.cleanup(); }
 });
 
@@ -150,11 +181,7 @@ test('clicking the notification sends focus-session for its session', async () =
   } finally { await closeApp(app); f.cleanup(); }
 });
 
-// The renderer half (Group B) selects the session on focus-session. Until that
-// handler is merged this test is skipped; it enables itself afterwards.
-const rendererHandlesFocus = readFileSync(resolve('src/ui/App.tsx'), 'utf8').includes('focus-session');
-test('clicking the notification selects its session in the renderer', async () => {
-  test.skip(!rendererHandlesFocus, 'Needs the renderer focus-session handler (Phase 2 Group B)');
+test('clicking the notification selects its session in the renderer, but not while a dialog is open', async () => {
   const f = setup('notify-select'); const { app, page } = await open(f.env, f.project);
   try {
     await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
@@ -164,6 +191,15 @@ test('clicking the notification selects its session in the renderer', async () =
     hook(f.root, f.project, first, 'PreToolUse', bash('s1'));
     hook(f.root, f.project, first, 'PermissionRequest', bash('s1'));
     await expect.poll(async () => (await notifications(app)).length).toBe(1);
+    // An open dialog owns the window: the click must not switch the session behind it.
+    await page.getByRole('button', { name: /^Manage / }).click();
+    await expect(page.locator('dialog[open]')).toHaveCount(1);
+    await app.evaluate(() => (globalThis as any).__notifications[0].handlers.click());
+    await expect.poll(() => app.evaluate(() => (globalThis as any).__focusEvents.length)).toBe(1);
+    await page.waitForTimeout(300);
+    await expect(sessionButton(page, 'SELECT_B')).toHaveAttribute('aria-current', 'true');
+    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(page.locator('dialog[open]')).toHaveCount(0);
     await app.evaluate(() => (globalThis as any).__notifications[0].handlers.click());
     await expect(sessionButton(page, 'SELECT_A')).toHaveAttribute('aria-current', 'true');
   } finally { await closeApp(app); f.cleanup(); }
