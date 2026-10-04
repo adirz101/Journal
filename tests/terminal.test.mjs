@@ -221,7 +221,8 @@ async function hooked(t) {
   const { session } = await f.manager.start({ projectId: f.project.id, provider: 'claude', task: 'x' });
   const send = (event, extra = {}) => f.manager.ingest(session.id, { event, nativeId: session.nativeId, ...extra });
   const state = () => { const s = f.store.getSession(session.id); return `${s.status}/${s.activity}`; };
-  return { send, state };
+  const write = data => f.manager.write(session.id, data);
+  return { send, state, write };
 }
 
 test('the real hook order (PreToolUse before an id-less PermissionRequest) clears on that tool completing', async t => {
@@ -266,19 +267,52 @@ test('an ambiguous request clears only when the last tool of its kind completes'
   assert.equal(state(), 'running/working');
 });
 
-test('a sibling tool starting keeps the approval; the pending tool alone can be followed by a new one', async t => {
+test('a sibling tool starting keeps the approval unless the user answered the prompt', async t => {
   const { send, state } = await hooked(t);
-  send('PreToolUse', { tool: 'Read', toolUseId: 'r1' });
   send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'ls' });
   send('PermissionRequest', { tool: 'Bash' });
   send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
   assert.equal(state(), 'waiting/permission');
-  // Deny with feedback: with only the pending tool in flight, a new tool means the prompt was answered.
-  const second = await hooked(t);
-  second.send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'ls' });
-  second.send('PermissionRequest', { tool: 'Bash' });
-  second.send('PreToolUse', { tool: 'Edit', toolUseId: 'e1', filePath: 'a.txt' });
-  assert.equal(second.state(), 'running/working');
+});
+
+test('deny with feedback: the typed answer lets the next tool clear the approval', async t => {
+  const { send, state, write } = await hooked(t);
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'grep -r x .' });
+  send('PermissionRequest', { tool: 'Bash' });
+  write('3'); write('use rg instead\r');
+  send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
+  assert.equal(state(), 'running/working');
+});
+
+test('arrow keys and ordinary typing do not count as answering the prompt', async t => {
+  const { send, state, write } = await hooked(t);
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'ls' });
+  send('PermissionRequest', { tool: 'Bash' });
+  write('\x1b[B'); write('abc');
+  send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
+  assert.equal(state(), 'waiting/permission');
+});
+
+test('approving with a digit lets a sibling completion clear the approval', async t => {
+  const { send, state, write } = await hooked(t);
+  send('PreToolUse', { tool: 'Read', toolUseId: 'r1' });
+  send('PreToolUse', { tool: 'Bash', toolUseId: 'b1', command: 'ls' });
+  send('PermissionRequest', { tool: 'Bash' });
+  write('1');
+  send('PostToolUse', { tool: 'Read', toolUseId: 'r1' });
+  assert.equal(state(), 'running/working');
+});
+
+test('a lone Esc answers (denies) the prompt; a new request resets the answer', async t => {
+  const { send, state, write } = await hooked(t);
+  send('PermissionRequest', { tool: 'Bash' });
+  write('\x1b');
+  send('PermissionRequest', { tool: 'Edit' });
+  send('PreToolUse', { tool: 'Grep', toolUseId: 'g1' });
+  assert.equal(state(), 'waiting/permission');
+  write('\x1b');
+  send('PreToolUse', { tool: 'Grep', toolUseId: 'g2' });
+  assert.equal(state(), 'running/working');
 });
 
 test('an auto-approved sibling failing does not hide an open approval', async t => {

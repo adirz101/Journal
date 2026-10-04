@@ -129,7 +129,7 @@ export class TerminalManager extends EventEmitter {
       delete env.ELECTRON_RUN_AS_NODE;
       const proc = this.spawn(launch.executable, launch.argv, { cwd: session.cwd, env, name: 'xterm-256color', cols: 100, rows: 30 });
       entry = { session, proc, buffer: new OutputBuffer(), attached: false, sent: 0, acknowledged: 0, inflight: [], tail: '', exited: false,
-        stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), tools: new Map(), pending: null, lastPersist: 0 };
+        stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), tools: new Map(), pending: null, answered: false, lastPersist: 0 };
       this.entries.set(session.id, entry);
       session.status = 'running'; session.pid = Number.isInteger(proc.pid) ? proc.pid : null;
       // Identity is read asynchronously, and again on first output once the CLI is running.
@@ -207,7 +207,10 @@ export class TerminalManager extends EventEmitter {
   }
   write(id, data) {
     if (typeof data !== 'string' || Buffer.byteLength(data) > 64 * 1024) throw new Error('Terminal input is too large');
-    this.owned(id).proc.write(data);
+    const entry = this.owned(id);
+    // Claude's prompt answer keys: a digit selects, Enter confirms, Esc denies (deny with feedback ends with Enter).
+    if (entry.pending && (data.includes('\r') || data === '\x1b' || /^[1-9]$/.test(data))) entry.answered = true;
+    entry.proc.write(data);
   }
   // Types a file reference into the agent's input without submitting it, only
   // when Claude's hooks report it idle at its prompt (never while working or
@@ -303,14 +306,9 @@ export class TerminalManager extends EventEmitter {
     if (activity !== undefined) { if (activity !== session.activity) entry.activitySince = Date.now(); session.activity = activity; }
     this.persist(session, true); this.emitStatus(session);
   }
-  // The open approval prompt ends only when its own tool, or the last in-flight
-  // tool of its kind, moves on; a sibling or subagent tool must not hide it.
-  clearPending(id, nativeId) { const entry = this.entries.get(id); if (entry) entry.pending = null; this.observe(id, nativeId, 'running', 'working'); }
-  // A tool is starting: the prompt is settled when nothing but the pending tool is still in flight.
-  permissionSettled(entry, toolUseId) {
-    const { pending } = entry;
-    return !pending || [...entry.tools.keys()].every(key => key === toolUseId || key === pending.toolUseId);
-  }
+  // The open approval prompt ends when its own tool (or the last in-flight tool of its kind)
+  // completes, or when the user has answered it; a sibling or subagent event alone must not hide it.
+  clearPending(id, nativeId) { const entry = this.entries.get(id); if (entry) { entry.pending = null; entry.answered = false; } this.observe(id, nativeId, 'running', 'working'); }
   // A tool finished (already removed from entry.tools): was it the one that asked?
   permissionResolvedBy(entry, toolUseId, known) {
     const { pending } = entry;
@@ -327,21 +325,21 @@ export class TerminalManager extends EventEmitter {
     const { session } = entry;
     session.lastActivityAt = new Date().toISOString();
     switch (event.event) {
-      case 'SessionStart': entry.pending = null; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'idle'); break;
-      case 'UserPromptSubmit': entry.pending = null; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'working'); this.record(id, 'prompt', {}); break;
+      case 'SessionStart': entry.pending = null; entry.answered = false; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'idle'); break;
+      case 'UserPromptSubmit': entry.pending = null; entry.answered = false; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'working'); this.record(id, 'prompt', {}); break;
       case 'PermissionRequest': {
         // The request may not carry a tool id: match it to the in-flight tool that asked, if exactly one fits.
         const candidates = [...entry.tools].filter(([, tool]) => !tool.asked && tool.tool === event.tool
           && (!event.command || tool.command === event.command) && (!event.filePath || tool.filePath === event.filePath));
         const toolUseId = event.toolUseId ?? (candidates.length === 1 ? candidates[0][0] : null);
         if (toolUseId && entry.tools.has(toolUseId)) entry.tools.get(toolUseId).asked = true;
-        entry.pending = { toolUseId, tool: event.tool ?? null };
+        entry.pending = { toolUseId, tool: event.tool ?? null }; entry.answered = false;
         this.observe(id, event.nativeId, 'waiting', 'permission'); this.record(id, 'permission', { tool: event.tool ?? null }); break;
       }
-      case 'Stop': entry.pending = null; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'idle'); this.record(id, 'turn-end', {}); break;
+      case 'Stop': entry.pending = null; entry.answered = false; entry.tools.clear(); this.observe(id, event.nativeId, 'running', 'idle'); this.record(id, 'turn-end', {}); break;
       case 'PreToolUse':
         if (event.toolUseId && entry.tools.size < 500) entry.tools.set(event.toolUseId, { tool: event.tool, command: event.command ?? null, filePath: event.filePath ?? null });
-        if (session.status === 'waiting' && this.permissionSettled(entry, event.toolUseId)) this.clearPending(id, event.nativeId);
+        if (session.status === 'waiting' && (!entry.pending || entry.answered)) this.clearPending(id, event.nativeId);
         if (event.tool === 'Bash' && event.toolUseId && entry.commands.size < 500) {
           const command = redact(event.command ?? '', 300);
           entry.commands.set(event.toolUseId, true);
@@ -354,7 +352,7 @@ export class TerminalManager extends EventEmitter {
       case 'PostToolUse': case 'PostToolUseFailure': {
         // The tool ran, so any permission prompt for it was answered, even if no further PreToolUse arrives.
         const known = entry.tools.delete(event.toolUseId);
-        if (session.status === 'waiting' && this.permissionResolvedBy(entry, event.toolUseId, known)) this.clearPending(id, event.nativeId);
+        if (session.status === 'waiting' && (entry.answered || this.permissionResolvedBy(entry, event.toolUseId, known))) this.clearPending(id, event.nativeId);
         if (event.tool === 'Bash' && entry.commands.delete(event.toolUseId)) {
           // Exit 0 only when Claude reported completion of a foreground command.
           const status = event.interrupted ? 'interrupted' : event.background ? 'unknown' : event.event === 'PostToolUse' ? 'succeeded' : Number.isInteger(event.exit) ? 'failed' : 'unknown';
