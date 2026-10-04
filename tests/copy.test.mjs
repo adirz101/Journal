@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import ts from 'typescript';
-import { copy, excludedReason, memoryState, selectionReason, tip, warningText } from '../src/ui/copy.ts';
+import { composer, copy, excludedReason, memoryState, selectionReason, tip, warningText } from '../src/ui/copy.ts';
 
 // Plain-language vocabulary (design board B8). The technical term may stay in a
 // tooltip (the title attribute of an element) but not in visible text or names.
@@ -95,6 +95,14 @@ test('an allowed code value does not exempt the same word shown elsewhere in the
 
 test('the vocabulary itself avoids the old terms, except in tooltips', () => {
   for (const [key, value] of Object.entries(copy)) if (typeof value === 'string') assert.doesNotMatch(value, OLD_TERMS, key);
+  // The composer's strings, nested help and functions called with sample arguments.
+  const samples = { checkoutLine: ['Journal', 'main', 'abc1234'], start: ['Claude Code'], installed: ['2.1.0'], noPlan: ['Codex'], agentMissing: ['Codex'],
+    notesMatch: [2], notesMatching: ['retry'], leaveOutTip: [true], previewFailed: ['the task looks like a credential'] };
+  const values = Object.entries(composer).flatMap(([key, value]) => typeof value === 'function' ? [[key, value(...(samples[key] ?? []))]]
+    : typeof value === 'object' ? Object.entries(value).map(([inner, text]) => [`${key}.${inner}`, text]) : [[key, value]]);
+  assert.ok(Object.entries(composer).filter(([, value]) => typeof value === 'function').every(([key]) => key in samples), 'every function has sample arguments');
+  for (const [key, value] of values) { assert.equal(typeof value, 'string', key); assert.doesNotMatch(value, OLD_TERMS, key); }
+  assert.equal(composer.installed(null), 'Installed'); assert.equal(composer.notesMatch(1), '1 note matches'); assert.equal(composer.leaveOutTip(false), 'Tip: press Delete on a note to leave it out of this session only.');
 });
 
 test('core reasons and warnings are shown in the plain vocabulary; packet text is not touched', () => {

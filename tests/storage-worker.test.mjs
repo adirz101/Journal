@@ -35,3 +35,21 @@ test('a failed storage worker rejects further requests instead of leaving caller
   await store.worker.terminate();
   await assert.rejects(store.listProjects(), /stopped unexpectedly/);
 });
+
+test('previewSelection is callable through the worker', async t => {
+  const root = mkdtempSync(resolve(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'storage-worker-'));
+  execFileSync('git', ['init', '-b', 'main', root], { stdio: 'pipe' });
+  const store = new StoreClient(resolve(root, 'journal.sqlite'));
+  t.after(async () => { await store.close(); removeLater(root); });
+  const project = await store.openProject(root);
+  const memory = await store.proposeMemory(project.id, { statement: 'Docker tests require a local engine', category: 'constraint', scope: 'checkout',
+    source: { kind: 'user', note: 'Fixture owner explicitly requires it' } });
+  await store.setMemoryStatus(memory.id, 'active');
+  const preview = await store.previewSelection(project.id, 'Docker tests', { branch: 'main' });
+  assert.equal(preview.kind, 'selection'); assert.equal(preview.checked, false); assert.equal(preview.query, 'Docker tests'); assert.equal(preview.branch, 'main');
+  assert.deepEqual(preview.items.map(item => item.id), [memory.id]);
+  assert.deepEqual(preview.items[0].selection.terms, ['docker', 'tests']);
+  assert.deepEqual(preview.terms, ['docker', 'tests']); assert.equal(preview.taskNotes, 1);
+  assert.ok(preview.bytes > 0); assert.ok(Array.isArray(preview.excluded)); assert.ok(Array.isArray(preview.warnings));
+  assert.equal((await store.projectDetails(project.id)).counts.receipts, 0, 'a preview stores nothing');
+});

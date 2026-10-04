@@ -472,6 +472,24 @@ export class JournalStore {
     this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(id, projectId, JSON.stringify(receipt));
     return receipt;
   }
+  // A0 stub: replaced by the SQL-only selection (Phase 4 A3). It runs Git and reads evidence.
+  previewSelection(projectId, task, { workspaceId = null, branch = null, disabled = [], references = [] } = {}) {
+    const receipt = this.prepareContext(projectId, task, { workspaceId, disabled, references, persist: false });
+    const terms = queryTerms([receipt.query, ...(receipt.references ?? []).map(ref => ref.path)].join(' '));
+    const hint = branch ?? receipt.checkout.branch;
+    const items = receipt.items.map(item => {
+      const lower = `${item.statement} ${aliasesFor(item)}`.toLocaleLowerCase();
+      return { ...item, selection: { ...item.selection, terms: item.category === 'brief' ? [] : terms.filter(term => lower.includes(term.slice(0, Math.max(4, term.length - 2)))) } };
+    });
+    return { kind: 'selection', checked: false, query: receipt.query, branch: hint, items, excluded: receipt.excluded, warnings: receipt.warnings,
+      bytes: Buffer.byteLength(receipt.packet), terms, taskNotes: this.taskNotes(projectId, hint) };
+  }
+  // Remembered notes a task could match on this branch: active, not briefs, checkout-wide or on the branch.
+  taskNotes(projectId, branch) {
+    return this.db.prepare(`SELECT count(*) AS n FROM memories m JOIN revisions r ON r.id=m.current_revision
+      WHERE m.project_id=? AND m.status='active' AND json_extract(r.body,'$.category')!='brief'
+      AND (json_extract(r.body,'$.scope')='checkout' OR json_extract(r.body,'$.branch')=?)`).get(projectId, branch).n;
+  }
   // Files and folders the user chose for the next task, recorded with what
   // they were at selection time. A primary-repository path must come from the
   // same checkout or worktree the session runs in, so the agent never edits
