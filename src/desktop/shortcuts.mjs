@@ -20,6 +20,7 @@ const MAC = [
   { id: 'add-note', meta: true, shift: true, key: 'k', label: '⇧⌘K', aria: 'Meta+Shift+K' },
   { id: 'focus-terminal', meta: true, key: 'e', label: '⌘E', aria: 'Meta+E' },
   { id: 'toggle-inspector', meta: true, key: 'i', label: '⌘I', aria: 'Meta+I' },
+  { id: 'toggle-sidebar', meta: true, code: 'Backslash', label: '⌘\\', aria: 'Meta+\\' },
   ...[1, 2, 3, 4].map(n => ({ id: `slot-${n}`, meta: true, code: digit(n), label: `⌘${n}`, aria: `Meta+${n}` })),
   { id: 'next-needs-you', meta: true, key: 'j', label: '⌘J', aria: 'Meta+J' },
   ...['session', 'files', 'memory'].map((tab, i) => ({ id: `tab-${tab}`, meta: true, alt: true, code: digit(i + 1), label: `⌥⌘${i + 1}`, aria: `Alt+Meta+${i + 1}` })),
@@ -32,6 +33,8 @@ const OTHER = [
   { id: 'focus-terminal', control: true, shift: true, key: 'e', label: 'Ctrl+Shift+E', aria: 'Control+Shift+E' },
   // Ctrl+Shift+I opens developer tools in development builds.
   { id: 'toggle-inspector', control: true, shift: true, key: 'b', label: 'Ctrl+Shift+B', aria: 'Control+Shift+B' },
+  // Ctrl+\ without Shift sends SIGQUIT and stays with the terminal.
+  { id: 'toggle-sidebar', control: true, shift: true, code: 'Backslash', label: 'Ctrl+Shift+\\', aria: 'Control+Shift+\\' },
   ...[1, 2, 3, 4].map(n => ({ id: `slot-${n}`, alt: true, code: digit(n), label: `Alt+${n}`, aria: `Alt+${n}` })),
   // Ctrl+J without Shift is a newline in shells and stays with the terminal.
   { id: 'next-needs-you', control: true, shift: true, key: 'j', label: 'Ctrl+Shift+J', aria: 'Control+Shift+J' },
