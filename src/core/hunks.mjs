@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { gitEnv } from './git-env.mjs';
 
 // What changed under a remembered note's cited lines (the out-of-date catch).
 // Pure parsing plus two bounded, read-only Git readers. Line numbers on the old
@@ -7,8 +8,7 @@ import { execFileSync } from 'node:child_process';
 
 const MAX_BLOB = 1024 * 1024; const MAX_DIFF = 200 * 1024;
 const MAX_HUNKS = 3; const MAX_LINES = 40; const MAX_TEXT = 300; const MAX_RANGE = 30;
-const env = () => ({ ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1' });
-const run = (root, args, maxBuffer, encoding) => execFileSync('git', ['-C', root, ...args], { encoding, timeout: 8000, maxBuffer, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], env: env() });
+const run = (root, args, maxBuffer, encoding) => execFileSync('git', ['-C', root, ...args], { encoding, timeout: 8000, maxBuffer, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], env: gitEnv() });
 
 // Whether the file at `commit` is exactly the content the note was saved from.
 // The path is relative to `root` (./ keeps it relative inside a nested folder).
