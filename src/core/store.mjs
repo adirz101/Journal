@@ -527,7 +527,11 @@ export class JournalStore {
   }
   listReceipts(projectId) {
     this.project(projectId);
-    return this.db.prepare('SELECT body FROM receipts WHERE project_id=? ORDER BY rowid DESC LIMIT 50').all(projectId).map(parse);
+    // Older versions stored every preview as a prepared receipt without a session. Receipts are immutable,
+    // so those stay stored but unlisted. A launch receipt is prepared until delivery records its session id,
+    // but its session row names it from before the agent starts.
+    return this.db.prepare(`SELECT r.body FROM receipts r WHERE r.project_id=? AND NOT (json_extract(r.body,'$.state')='prepared' AND json_extract(r.body,'$.sessionId') IS NULL
+      AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.project_id=r.project_id AND json_extract(s.body,'$.receiptId')=r.id)) ORDER BY r.rowid DESC LIMIT 50`).all(projectId).map(parse);
   }
   updateReceiptState(id, state, sessionId, launchPrompt) {
     choice(state, ['submitted', 'failed', 'uncertain'], 'delivery state');

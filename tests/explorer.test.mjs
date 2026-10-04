@@ -190,7 +190,8 @@ test('next-task references are recorded in the receipt as paths and hashes, neve
   assert.equal(inWorktree.references[0].display, 'README.md');
   assert.equal(f.store.describeReference(f.project.id, null, { rootKey: 'checkout', path: 'README.md' }).kind, 'file');
   assert.throws(() => f.store.prepareContext(f.project.id, 'x', { references: [{ projectId: 'another-project', rootKey: 'checkout', path: 'README.md' }] }), /another project/);
-  assert.equal(f.store.listReceipts(f.project.id).filter(r => r.references?.length).length, 2, 'Describing a reference records nothing');
+  // Counted in storage: receipts without a session are not listed.
+  assert.equal(f.store.db.prepare(`SELECT count(*) AS n FROM receipts WHERE json_array_length(body,'$.references')>0`).get().n, 2, 'Describing a reference records nothing');
   // Referenced folders select area-scoped knowledge.
   const claim = f.store.proposeMemory(f.project.id, { statement: 'Billing amounts are integer cents', category: 'convention', scope: 'checkout', area: 'src', source: { kind: 'user', note: 'team rule' } });
   f.store.setMemoryStatus(claim.id, 'active');

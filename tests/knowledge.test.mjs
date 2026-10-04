@@ -197,6 +197,22 @@ test('a context preview is not stored as a receipt; a launch receipt still is', 
   assert.equal(preview.state, 'prepared', 'The UI keeps treating it as a prepared packet');
   assert.equal(f.store.listReceipts(f.project.id).length, before, 'A preview writes nothing');
   assert.throws(() => f.store.getReceipt(preview.id), /Unknown receipt/);
-  f.store.prepareContext(f.project.id, 'Docker');
-  assert.equal(f.store.listReceipts(f.project.id).length, before + 1, 'The default still stores');
+  const stored = f.store.prepareContext(f.project.id, 'Docker');
+  assert.equal(f.store.getReceipt(stored.id).state, 'prepared', 'The default still stores');
+});
+
+test('stored previews from older versions are kept but not listed; a launch receipt is listed before delivery', t => {
+  const f = fixture(t);
+  // Before previews stopped being stored, each one left a prepared receipt that no session refers to.
+  const legacy = f.store.prepareContext(f.project.id, 'Docker');
+  const listed = () => f.store.listReceipts(f.project.id).map(r => r.id);
+  assert.deepEqual(listed(), []);
+  assert.equal(f.store.getReceipt(legacy.id).id, legacy.id, 'Receipts are immutable: it is not deleted');
+  // A launch saves its session (which names the receipt) before delivery records the session id.
+  const launch = f.store.prepareContext(f.project.id, 'Docker');
+  f.store.saveSession({ id: 's1', projectId: f.project.id, provider: 'claude', status: 'starting', receiptId: launch.id, createdAt: new Date().toISOString() });
+  assert.deepEqual(listed(), [launch.id]);
+  f.store.updateReceiptState(launch.id, 'submitted', 's1', 'Docker');
+  const failed = f.store.prepareContext(f.project.id, 'Docker'); f.store.updateReceiptState(failed.id, 'failed', null);
+  assert.deepEqual(listed(), [failed.id, launch.id]);
 });
