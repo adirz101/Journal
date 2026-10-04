@@ -3,6 +3,7 @@ const allowed = new Set(['bootstrap', 'openProject', 'project', 'checkout', 'pro
 for (const action of ['memoryOrigins', 'deliveryCounts', 'memoryChecks', 'previewSelection']) allowed.add(action);
 for (const action of ['sessionSummary', 'staleNotes', 'rememberProposals', 'reaffirmMemory']) allowed.add(action);
 for (const action of ['openProjectPath', 'firstRunDrafts', 'rememberDraft', 'skipOrientation']) allowed.add(action);
+allowed.add('openInstallPage');
 // contextBridge copies only the message of an Error thrown across it, so the
 // renderer's api() uses settle(), which returns the error code as plain data.
 const settle = async (action, input = {}) => {
