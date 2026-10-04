@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:f
 import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { currentProject, taskBox } from './support/ui';
+import { fixtureEnv } from './support/fixture-env';
 
 test.skip(process.platform === 'win32', 'POSIX fixture CLIs');
 
@@ -16,9 +17,7 @@ function setup() {
   git('init', '-q', '-b', 'main'); writeFileSync(resolve(project, 'README.md'), '# Reload fixture\n'); git('add', '.'); git('commit', '-qm', 'init');
   const fixture = `#!${process.execPath}\nif(process.argv.includes('--version')){console.log('fixture 1.0');process.exit(0)}\nprocess.stdin.resume();`;
   for (const p of ['claude', 'codex']) { writeFileSync(resolve(bin, p), fixture); chmodSync(resolve(bin, p), 0o755); }
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)),
-    PATH: `${bin}${delimiter}/usr/bin${delimiter}/bin${delimiter}${resolve(process.execPath, '..')}`, HOME: home, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' };
-  delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv(root, bin, { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' });
   return { root, project, env };
 }
 
