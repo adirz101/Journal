@@ -56,7 +56,7 @@ Download the latest build from [GitHub Releases](https://github.com/adirz101/Jou
 
 Journal keeps its data per user (macOS `~/Library/Application Support/journal-desktop`, Windows `%APPDATA%\journal-desktop`), also for the portable build; uninstalling keeps it. Verify a download against the release's `SHA256SUMS.txt` (macOS: `shasum -a 256 -c SHA256SUMS.txt --ignore-missing`; Windows: `Get-FileHash <file> -Algorithm SHA256`). Intel Macs are not built yet. See [releasing](docs/RELEASING.md) for signing status.
 
-**Updates.** From 0.2.0-alpha.2, installed builds check GitHub Releases in the background, download new versions and show **Restart to update** in the sidebar; Journal never restarts on its own, and asks what to do with running sessions first (on Windows they are stopped for the update). Automatic checks can be switched off under **Data and backups**. The Windows portable build shows when a new version is available and links to it.
+**Updates.** From 0.2.0-alpha.2, installed builds check GitHub Releases in the background, download new versions and show **Restart to update** in the sidebar; Journal never restarts on its own, and asks what to do with running sessions first (on Windows they are stopped for the update). Check any time with **Check for Updates…** (the Journal menu on macOS, Help on Windows); automatic checks can be switched off under **Data and backups**. The Windows portable build shows when a new version is available and links to it.
 
 ## Current limitations
 

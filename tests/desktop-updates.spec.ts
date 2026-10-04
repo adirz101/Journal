@@ -19,6 +19,16 @@ test('update notices: progress, restart only for a downloaded update, settings i
     await expect(page.getByText(/Updates are available in installed builds only/)).toBeVisible();
     await page.getByRole('button', { name: 'Done' }).click();
 
+    // Check for Updates… in the application menu reports the result in a dialog.
+    const menuDialog = await app.evaluate(async ({ dialog, Menu }) => {
+      let shown: { message?: string } | null = null;
+      dialog.showMessageBox = (async (...args: unknown[]) => { shown = args.at(-1) as { message?: string }; return { response: 0, checkboxChecked: false }; }) as typeof dialog.showMessageBox;
+      Menu.getApplicationMenu()?.getMenuItemById('check-for-updates')?.click();
+      for (let i = 0; i < 50 && !shown; i++) await new Promise(resolve => setTimeout(resolve, 50));
+      return (shown as { message?: string } | null)?.message ?? null;
+    });
+    expect(menuDialog).toBe('Updates are available in installed builds only.');
+
     const emit = (state: object) => app.evaluate(({ BrowserWindow }, update) => {
       BrowserWindow.getAllWindows()[0].webContents.send('journal:event', { type: 'update', state: { mode: 'auto', current: '0.2.0-alpha.2', message: null, automatic: true, installing: false, ...update } });
     }, state);
