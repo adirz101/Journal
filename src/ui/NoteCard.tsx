@@ -29,7 +29,7 @@ export const NoteCard = memo(function NoteCard({ note, project, variant, trust, 
   receiptState?: Receipt['state'];           // receipt: a failed launch says when its sources were checked
   unchecked?: boolean;                       // sources not checked yet (composer typing preview): "checked when you start"
   tabbable?: boolean;                        // false: the card's own buttons leave the Tab order (a roving list row that is not active)
-  badge?: string;                            // a chip after the category (the composer's "Just remembered")
+  badge?: string;                            // a chip on its own line under the meta row (the composer's "Just remembered"), never clipped
 }) {
   const compact = compactProp ?? variant === 'hover';
   const shown = shownNote(note, checkNeeded, variant);
@@ -45,7 +45,8 @@ export const NoteCard = memo(function NoteCard({ note, project, variant, trust, 
   const side = variant === 'memory' ? <span className={`memory-state ${stateClass(shown)}`}>{memoryState(shown)}</span>
     : variant === 'hover' ? null : <span>{selectionReason(note.selection?.reason, note.area)}{note.selection ? ` · ${note.selection.bytes} B` : ''}</span>;
   return <article className={`note-card ${variant}${variant === 'memory' ? ' memory-card' : ''}${compact ? ' compact' : ''}`} aria-label={`${label}: ${note.statement.slice(0, 80)}`}>
-    <div className="memory-meta note-meta"><span>{label}{badge && <span className="chip just-remembered">{badge}</span>}{matched?.length ? ` · ${composer.matches} ${matched.join(' ')}` : ''}{note.pinned ? ' · pinned' : ''}</span>{side}</div>
+    <div className="memory-meta note-meta"><span>{label}{matched?.length ? ` · ${composer.matches} ${matched.join(' ')}` : ''}{note.pinned ? ' · pinned' : ''}</span>{side}</div>
+    {badge && <div className="note-badge"><span className="chip just-remembered">{badge}</span></div>}
     <p className="note-statement" dir="auto" title={full(note.statement)}>{note.statement}</p>
     <div className="memory-scope note-scope" title={full(scope)}>{scope}</div>
     {origin && <div className="note-line note-origin" title={full(origin.text)}>{origin.sessionId && onOpenSession
