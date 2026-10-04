@@ -20,7 +20,7 @@ export const terminalThemes: Record<Appearance, ITheme> = {
     brightBlack: '#7C8594', brightRed: '#F49A88', brightGreen: '#7DD39A', brightYellow: '#F2C46B', brightBlue: '#7FB2FF', brightMagenta: '#BBA9FF', brightCyan: '#7FD8B8', brightWhite: '#ECEEF2',
   },
   light: {
-    background: '#FAFAFB', foreground: '#14171C', cursor: '#1A5FD8', cursorAccent: '#FAFAFB', selectionBackground: '#C8DCFA', selectionForeground: '#14171C',
+    background: '#FAFAFB', foreground: '#14171C', cursor: '#195BCF', cursorAccent: '#FAFAFB', selectionBackground: '#C8DCFA', selectionForeground: '#14171C',
     scrollbarSliderBackground: '#CDD3DB', scrollbarSliderHoverBackground: '#5E6776', scrollbarSliderActiveBackground: '#5E6776',
     black: '#14171C', red: '#AE321E', green: '#17713A', yellow: '#8A5300', blue: '#1A5FD8', magenta: '#5B40C9', cyan: '#0F6B52', white: '#454D5A',
     brightBlack: '#6B7380', brightRed: '#AE321E', brightGreen: '#17713A', brightYellow: '#8A5300', brightBlue: '#1A5FD8', brightMagenta: '#5B40C9', brightCyan: '#0F6B52', brightWhite: '#14171C',
