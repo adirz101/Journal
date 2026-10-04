@@ -54,10 +54,9 @@ test('the light theme comes from tokens; the few light-only rules change no colo
 });
 
 test('states: primary hover keeps its text readable, selection survives hover and has a non-color cue', () => {
-  const rule = selector => { const at = styles.indexOf(`${selector}{`); assert.ok(at >= 0, selector); return styles.slice(at + selector.length + 1, styles.indexOf('}', at)); };
   // A brightness filter dropped white text below 4.5:1 and gave the button its own compositing layer.
   assert.doesNotMatch(styles, /filter:brightness\(1/);
-  assert.match(rule('button.primary:not(:disabled):hover'), /background:var\(--accbtn-hover\)/);
+  assert.ok(rulesFor('button.primary:not(:disabled):hover').some(rule => declares(rule, 'background', 'var(--accbtn-hover)')));
   const selectedHover = RULES.filter(rule => declares(rule, 'background', 'var(--sel-hover)')).flatMap(rule => rule.selectors);
   for (const selector of ['.project-link.selected:not(:disabled):hover', '.session-select.selected:not(:disabled):hover', '.explorer-tools button[aria-pressed=true]:not(:disabled):hover', '.segmented button[aria-pressed=true]:not(:disabled):hover'])
     assert.ok(selectedHover.includes(selector), `${selector} uses --sel-hover`);
@@ -80,6 +79,9 @@ test('borderless tab and link buttons hover by color, not with the generic backg
   // These have no border, no horizontal padding or a zero radius, so a --hover patch looks like a stray block.
   const family = ['.text-button', '.source-button', '.filter-tabs button:not([aria-pressed=true])', '.error-banner button', '.archived-toggle', '.reference-chips li button'];
   for (const selector of family) assert.ok(rulesFor(`${selector}:not(:disabled):hover`).some(rule => declares(rule, 'background', 'transparent') && declares(rule, 'color', 'var(--tx)') && rule.at.some(at => /pointer:fine/.test(at))), selector);
+  // The pressed filter tab keeps its accent text and gets no patch either.
+  const pressed = '.filter-tabs button[aria-pressed=true]:not(:disabled):hover';
+  assert.ok(rulesFor(pressed).some(rule => declares(rule, 'background', 'transparent') && !declares(rule, 'color') && rule.at.some(at => /pointer:fine/.test(at))), pressed);
 });
 
 test('accent badges share one fill', () => {
@@ -102,8 +104,7 @@ test('focus rings inside scroll and clipping containers are drawn where they can
 
 test('accent containers keep an accent border', () => {
   for (const selector of ['.memory-actions .approve', '.branch-badge', '.local-tag', '.receipt-meta>span', '.draft-basis', '.explorer-note', '.update-notice', '.reference-chips li', '.proposal-inbox']) {
-    const at = styles.indexOf(`${selector}{`); assert.ok(at >= 0, selector);
-    assert.match(styles.slice(at, styles.indexOf('}', at)), /border(?:-color)?:[^;}]*var\(--accline\)/, selector);
+    assert.ok(rulesFor(selector).some(rule => /(?:^|;)\s*border(?:-color)?\s*:[^;]*var\(--accline\)/.test(rule.body)), selector);
   }
 });
 
@@ -132,6 +133,5 @@ test('scrollbar thumbs use their token and darken on hover and while dragged', (
 });
 
 test('inputs, text areas and selects use the stronger field border (WCAG 1.4.11)', () => {
-  const at = styles.indexOf('input,textarea,select{color'); assert.ok(at >= 0);
-  assert.match(styles.slice(at, styles.indexOf('}', at)), /border:1px solid var\(--line-field\)/);
+  for (const selector of ['input', 'textarea', 'select']) assert.ok(rulesFor(selector).some(rule => declares(rule, 'border', '1px solid var(--line-field)')), selector);
 });
