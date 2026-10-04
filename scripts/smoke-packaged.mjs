@@ -57,7 +57,7 @@ async function run(first) {
         await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
         await expectText(page.locator('.terminal-surface'), 'PTY_READY true');
         await expectText(page.locator('.terminal-surface'), 'SMOKE_TASK');
-        await page.getByRole('button', { name: 'Stop terminal' }).click();
+        await page.getByRole('button', { name: 'Stop', exact: true }).click();
         await expectText(page.locator('.terminal-label'), 'stopped');
       });
       await step('file explorer', async () => { await page.getByRole('tab', { name: 'Files' }).click(); await page.getByRole('treeitem', { name: /^README\.md/ }).waitFor({ timeout: 15000 }); });
