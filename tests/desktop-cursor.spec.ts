@@ -114,7 +114,7 @@ console.log('Installed to ~/.local/bin/agent. Add ~/.local/bin to your PATH.');`
     await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('.terminal-surface'))).toBe(true);
 
     // Stop and resume the exact chat.
-    await page.getByRole('button', { name: 'Stop', exact: true }).click(); await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await page.getByRole('button', { name: 'Stop', exact: true }).click(); await expect(page.locator('.terminal-label')).toContainText('Stopped');
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await expect.poll(() => launches().filter(l => l.bin === 'agent').length).toBe(2);
     expect(launches().filter(l => l.bin === 'agent')[1].argv.slice(0, 2)).toEqual([`--resume=${CHAT}`, '--mode=ask']);

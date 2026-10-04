@@ -95,9 +95,10 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     const mac = process.platform === 'darwin'; const slot = [mac ? 'meta' : 'alt'] as const;
     await expect(sessionButton(page, 'TASK_2')).toHaveAttribute('aria-current', 'true');
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused();
-    await pressKey(app, '4', [...slot]); // Active sessions are newest first: slot 4 is TASK_0.
+    await pressKey(app, '1', [...slot]); // Stable slots in start order: slot 1 is TASK_0.
     await expect(sessionButton(page, 'TASK_0')).toHaveAttribute('aria-current', 'true');
     await expect(page.locator('.terminal-surface')).toContainText('TASK TASK_0');
+    await expect(sessionButton(page, 'TASK_3')).toHaveAttribute('aria-keyshortcuts', mac ? 'Meta+4' : 'Alt+4');
     // Keys that are not app shortcuts still reach the CLI.
     await expect(page.locator('.xterm-helper-textarea')).toBeFocused();
     await pressKey(app, 'C', ['control']);
@@ -108,15 +109,15 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     await pressKey(app, 'K', mac ? ['meta', 'shift'] : ['control', 'shift']);
     await expect(page.getByRole('dialog')).toBeVisible();
     await expect(async () => {
-      await pressKey(app, '1', [...slot]);
-      expect(await page.evaluate(() => (window as any).__keys)).toContain('1');
+      await pressKey(app, '2', [...slot]);
+      expect(await page.evaluate(() => (window as any).__keys)).toContain('2');
     }).toPass();
     await expect(sessionButton(page, 'TASK_0')).toHaveAttribute('aria-current', 'true');
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     // Closing the dialog gives the shortcuts back.
     await expect(async () => {
-      await pressKey(app, '3', [...slot]);
+      await pressKey(app, '2', [...slot]);
       await expect(sessionButton(page, 'TASK_1')).toHaveAttribute('aria-current', 'true', { timeout: 1000 });
     }).toPass();
     await page.reload();
@@ -127,7 +128,7 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
     await expect(page.locator('.terminal-surface')).toContainText('ECHO after-reload');
     expect(f.launches()).toHaveLength(4);
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await expect(page.locator('.terminal-label')).toContainText('Stopped');
     await expect(page.getByRole('button', { name: 'Start Claude', exact: true })).toBeEnabled();
   } finally { await closeApp(app); f.cleanup(); }
 });
@@ -222,7 +223,7 @@ test('a runtime crash is reported, recovered as interrupted, and never resends t
     await expect.poll(() => { try { return f.runtimeInfo().runtimeId !== before.runtimeId; } catch { return false; } }, { timeout: 20000 }).toBe(true);
     await expect(page.getByText('Runtime connected')).toBeVisible({ timeout: 20000 });
     // The fixture dies with its PTY, so it must be interrupted, not orphaned.
-    await expect(page.locator('.terminal-label')).toContainText('interrupted');
+    await expect(page.locator('.terminal-label')).toContainText('Interrupted');
     expect(f.launches()).toHaveLength(1);
     await page.getByRole('tab', { name: 'Activity' }).click();
     await expect(page.getByText(/Recovered after the runtime stopped/)).toBeVisible();
@@ -253,7 +254,7 @@ test('keep-running quit is rediscovered; stopping reports and cleans detached le
     const daemon = JSON.parse(readFileSync(f.daemonRecord, 'utf8')).pid;
     // Descendants are sampled every 5 s and immediately before stop.
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await expect(page.locator('.terminal-label')).toContainText('Stopped');
     expect(alive(daemon)).toBe(true);
     await page.getByRole('button', { name: /End 1 leftover process/ }).click();
     await expect.poll(() => alive(daemon)).toBe(false);
@@ -287,7 +288,7 @@ test('a managed worktree is created from the dialog, hosts a research session an
     await expect(page.getByText(/still running in it/)).toBeVisible();
     await page.getByRole('button', { name: 'Done' }).click();
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await expect(page.locator('.terminal-label')).toContainText('Stopped');
     await page.getByRole('button', { name: 'Workspaces…' }).click();
     await page.getByRole('button', { name: 'Remove worktree' }).click();
     await expect(page.getByRole('list', { name: 'Workspaces' })).not.toContainText('journal/isolated');
