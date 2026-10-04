@@ -232,12 +232,21 @@ export class JournalStore {
   }
   // The internal `branch` option (never reachable from the renderer) binds branch-scoped knowledge to the
   // branch a suggestion came from instead of the checked-out one. Briefs always follow the checkout.
-  proposeMemory(projectId, input, { branch: boundBranch = null } = {}) {
-    const project = this.project(projectId);
+  proposeMemory(projectId, input, options = {}) {
+    const { item, expected } = this.prepareMemory(projectId, input, options);
+    this.transaction(() => this.writeMemory(item, expected));
+    return { ...item, status: 'candidate', validation: 'current' };
+  }
+  // Every check, Git query and evidence read of a new revision, with no writes, so
+  // Git and file I/O never run inside BEGIN IMMEDIATE. `view` (internal) is the copy
+  // the evidence is read from: a ready worktree on the note's branch, or the checkout.
+  // expected: the revision the note had when it was checked (null for a new note).
+  prepareMemory(projectId, input, { branch: boundBranch = null, view = null } = {}) {
+    const project = this.project(projectId); const seen = view ?? project;
     const statement = text(input.statement, 'statement'); refuseCredentials(statement);
     const category = choice(input.category, categories, 'category');
     const scope = choice(input.scope, ['checkout', 'branch'], 'scope');
-    const target = scope === 'branch' ? boundBranch ?? project.branch : null;
+    const target = scope === 'branch' ? boundBranch ?? seen.branch : null;
     if (scope === 'branch' && !target) throw new Error('Branch scope requires a named branch');
     if (input.source?.rootId && scope === 'branch') throw new Error('Notes on one branch must come from the primary repository; choose All branches for notes from additional folders');
     if (scope === 'branch' && boundBranch) {
@@ -260,32 +269,51 @@ export class JournalStore {
     if (supersedes && (supersedes.id === input.memoryId || (supersedes.status !== 'active' && !carried))) throw new Error('Only another remembered note can be replaced; revise a note to change it');
     if (category === 'brief' && area) throw new Error('A project summary applies to the whole project; leave the area empty');
     if (input.source?.kind === 'git' && PLACEHOLDER.test(statement)) throw new Error('Replace the bracketed placeholders before saving the update');
-    const source = captureEvidence(project, input.source);
+    const source = captureEvidence(seen, input.source);
     let previous = null;
     if (input.memoryId) {
       previous = this.getMemory(input.memoryId);
       if (previous.projectId !== projectId) throw new Error('Memory belongs to another project');
-      if (previous.scope === 'branch' && scope === 'branch' && !boundBranch && previous.branch !== project.branch) throw this.wrongBranch(projectId, previous.branch, 'revise');
+      if (previous.scope === 'branch' && scope === 'branch' && !boundBranch && previous.branch !== seen.branch) throw this.wrongBranch(projectId, previous.branch, 'revise');
     }
     const id = previous?.id ?? randomUUID();
     const revision = (previous?.revision ?? 0) + 1;
     const branch = target;
     // Flag, never block: the reviewer decides whether two claims really conflict.
-    const conflicts = this.db.prepare(`SELECT r.body FROM memories m JOIN revisions r ON r.id=m.current_revision
-      WHERE m.project_id=? AND m.status='active' AND m.id<>? LIMIT 500`).all(projectId, id).map(parse)
-      .filter(other => (other.scope === 'checkout' || scope === 'checkout' || other.branch === branch) && (!other.area || !area || other.area.startsWith(area) || area.startsWith(other.area)))
-      .filter(other => possibleConflict(statement, other.statement)).slice(0, 5)
-      .map(other => ({ id: other.id, revision: other.revision, statement: other.statement.slice(0, 160) }));
+    const conflicts = this.conflictsWith(projectId, id, { statement, scope, branch, area });
     const item = { id, projectId, revisionId: randomUUID(), revision, statement, category, scope, area,
       branch, source, conflicts, createdAt: now(), ...(environment ? { environment } : {}),
       ...(supersedes ? { supersedes: { id: supersedes.id, revision: supersedes.revision } } : {}),
       ...(input.promotedFrom ? { promotedFrom: input.promotedFrom } : {}) };
-    this.transaction(() => {
-      this.db.prepare('INSERT INTO memories(id,project_id,current_revision,status) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET current_revision=excluded.current_revision,status=excluded.status').run(id, projectId, item.revisionId, 'candidate');
-      this.db.prepare('INSERT INTO revisions VALUES(?,?,?,?)').run(item.revisionId, id, revision, JSON.stringify(item));
-      this.db.prepare('INSERT INTO memory_fts(revision_id,statement,aliases) VALUES(?,?,?)').run(item.revisionId, statement, aliasesFor(item));
-    });
-    return { ...item, status: 'candidate', validation: 'current' };
+    return { item, expected: previous?.revisionId ?? null };
+  }
+  // Remembered notes a statement may contradict (at most 5), from SQLite alone.
+  conflictsWith(projectId, id, { statement, scope, branch, area }) {
+    return this.db.prepare(`SELECT r.body FROM memories m JOIN revisions r ON r.id=m.current_revision
+      WHERE m.project_id=? AND m.status='active' AND m.id<>? LIMIT 500`).all(projectId, id).map(parse)
+      .filter(other => (other.scope === 'checkout' || scope === 'checkout' || other.branch === branch) && (!other.area || !area || other.area.startsWith(area) || area.startsWith(other.area)))
+      .filter(other => possibleConflict(statement, other.statement)).slice(0, 5)
+      .map(other => ({ id: other.id, revision: other.revision, statement: other.statement.slice(0, 160) }));
+  }
+  // The writes of a prepared revision, without a transaction of its own: the caller
+  // holds one. The note must still be at the revision prepareMemory saw.
+  writeMemory(item, expected) {
+    const row = this.db.prepare('SELECT current_revision FROM memories WHERE id=?').get(item.id);
+    if ((row?.current_revision ?? null) !== expected) throw new Error('This note changed while you were checking it; try again');
+    this.db.prepare('INSERT INTO memories(id,project_id,current_revision,status) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET current_revision=excluded.current_revision,status=excluded.status').run(item.id, item.projectId, item.revisionId, 'candidate');
+    this.db.prepare('INSERT INTO revisions VALUES(?,?,?,?)').run(item.revisionId, item.id, item.revision, JSON.stringify(item));
+    this.db.prepare('INSERT INTO memory_fts(revision_id,statement,aliases) VALUES(?,?,?)').run(item.revisionId, item.statement, aliasesFor(item));
+  }
+  // Remembering a checked candidate, without a transaction of its own. via (internal,
+  // set by the main process or core) labels a one-step path in the audit log.
+  approveMemory(memory, { via = null, reason = null } = {}) {
+    const { id } = memory;
+    this.db.prepare(`UPDATE memories SET status='active' WHERE id=?`).run(id);
+    this.db.prepare('UPDATE memories SET approved_at=?, approved_revision=? WHERE id=?').run(now(), memory.revision, id);
+    // Approving a replacement retires the claim it supersedes.
+    if (memory.supersedes) this.db.prepare(`UPDATE memories SET status='archived', pinned=0 WHERE id=? AND status='active'`).run(memory.supersedes.id);
+    if (memory.category === 'brief' && memory.scope === 'branch') this.db.prepare(`UPDATE proposals SET body=json_set(body,'$.state','accepted','$.memoryId',?) WHERE project_id=? AND json_extract(body,'$.kind')='branch-status' AND json_extract(body,'$.branch')=? AND json_extract(body,'$.state')='open'`).run(id, memory.projectId, memory.branch);
+    this.audit('memory-active', { id, revision: memory.revision, reason, supersedes: memory.supersedes?.id ?? null, ...(via ? { via } : {}) });
   }
   getMemory(id) {
     const row = this.db.prepare('SELECT r.body,m.status,m.pinned FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.id=?').get(text(id, 'memory ID', 100));
@@ -380,15 +408,13 @@ export class JournalStore {
       const validation = this.validation(this.project(memory.projectId), memory);
       if (validation === 'wrong-branch') throw this.wrongBranch(memory.projectId, memory.branch, 'approve');
       if (validation !== 'current') throw new Error('Evidence or branch changed; revise the note before remembering it');
+      this.transaction(() => this.approveMemory(memory, { reason }));
+      return this.getMemory(id);
     }
     this.transaction(() => {
-      this.db.prepare('UPDATE memories SET status=?, pinned=CASE WHEN ?=\'active\' THEN pinned ELSE 0 END WHERE id=?').run(status, status, id);
-      // Archive and reject keep these: an archived note still says when it was remembered.
-      if (status === 'active') this.db.prepare('UPDATE memories SET approved_at=?, approved_revision=? WHERE id=?').run(now(), memory.revision, id);
-      // Approving a replacement retires the claim it supersedes.
-      if (status === 'active' && memory.supersedes) this.db.prepare(`UPDATE memories SET status='archived', pinned=0 WHERE id=? AND status='active'`).run(memory.supersedes.id);
-      if (status === 'active' && memory.category === 'brief' && memory.scope === 'branch') this.db.prepare(`UPDATE proposals SET body=json_set(body,'$.state','accepted','$.memoryId',?) WHERE project_id=? AND json_extract(body,'$.kind')='branch-status' AND json_extract(body,'$.branch')=? AND json_extract(body,'$.state')='open'`).run(id, memory.projectId, memory.branch);
-      this.audit(`memory-${status}`, { id, revision: memory.revision, reason, supersedes: status === 'active' ? memory.supersedes?.id ?? null : null });
+      // Archive and reject keep approved_at: an archived note still says when it was remembered.
+      this.db.prepare('UPDATE memories SET status=?, pinned=0 WHERE id=?').run(status, id);
+      this.audit(`memory-${status}`, { id, revision: memory.revision, reason, supersedes: null });
     });
     return this.getMemory(id);
   }
