@@ -554,3 +554,75 @@ test('nativeIdSource transitions', async t => {
   const cursor = await f.start('cursor');
   assert.equal(cursor.nativeIdSource, 'create-chat'); assert.equal(cursor.identityMismatch, false);
 });
+
+// Phase 2: output activity. Mocked clock; enabled after start so launch runs on real timers.
+async function outputting(t, provider = 'codex') {
+  const f = multi(t); const session = await f.start(provider);
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  const events = []; f.manager.on('event', e => { if (e.type === 'activity') events.push(e); });
+  const data = text => f.procs[0].callbacks.data(text);
+  const latest = () => f.manager.entry(session.id).session.lastOutputAt;
+  return { ...f, session, events, data, latest };
+}
+
+test('a flood of output emits one activity event per throttle window', async t => {
+  const f = await outputting(t);
+  assert.equal(f.session.lastOutputAt, null);
+  for (let i = 0; i < 1000; i++) f.data('x');
+  assert.equal(f.events.length, 1);
+  assert.deepEqual(f.events[0], { type: 'activity', sessionId: f.session.id, lastOutputAt: f.latest() });
+  for (let i = 0; i < 5; i++) { t.mock.timers.tick(999); f.data('y'); }
+  assert.equal(f.events.length, 1, 'Still inside the first throttle window');
+  t.mock.timers.tick(5);
+  assert.equal(f.events.length, 2, 'The trailing heartbeat fires once');
+  assert.equal(f.events[1].lastOutputAt, f.latest());
+  assert.equal(Date.parse(f.events[1].lastOutputAt), Date.parse(f.events[0].lastOutputAt) + 4995);
+  t.mock.timers.tick(60_000);
+  assert.equal(f.events.length, 2, 'No output, no further events');
+});
+
+test('output after ten seconds of quiet emits at once', async t => {
+  const f = await outputting(t);
+  f.data('first'); t.mock.timers.tick(11_000);
+  assert.equal(f.events.length, 1);
+  f.data('again');
+  assert.equal(f.events.length, 2);
+  assert.equal(f.events[1].lastOutputAt, f.latest());
+});
+
+test('echo and resize repaint do not count as output', async t => {
+  const f = await outputting(t);
+  f.data('before'); const first = f.latest();
+  t.mock.timers.tick(20_000);
+  f.manager.write(f.session.id, 'a'); t.mock.timers.tick(299); f.data('a');
+  assert.equal(f.latest(), first, 'Echo within 300 ms is not activity');
+  t.mock.timers.tick(20_000);
+  f.manager.resize(f.session.id, 120, 40); t.mock.timers.tick(299); f.data('repaint');
+  assert.equal(f.latest(), first, 'A resize repaint is not activity');
+  t.mock.timers.tick(2); f.data('real output');
+  assert.notEqual(f.latest(), first);
+  assert.equal(f.events.length, 2);
+});
+
+test('Claude sessions record lastOutputAt but emit no activity events', async t => {
+  const f = await outputting(t, 'claude');
+  f.data('hello'); t.mock.timers.tick(20_000); f.data('again'); t.mock.timers.tick(20_000);
+  assert.ok(f.latest()); assert.equal(f.events.length, 0);
+});
+
+test('lastOutputAt is persisted with the five-second metadata save', async t => {
+  const f = await outputting(t);
+  f.data('one'); t.mock.timers.tick(5001); f.data('two');
+  assert.ok(f.latest());
+  assert.equal(f.store.getSession(f.session.id).lastOutputAt, f.latest());
+});
+
+test('exit clears the pending heartbeat', async t => {
+  const f = await outputting(t);
+  f.data('one'); t.mock.timers.tick(100); f.data('two');
+  assert.ok(f.manager.entry(f.session.id).activityTimer);
+  f.procs[0].callbacks.exit({ exitCode: 0 });
+  assert.equal(f.manager.entry(f.session.id).activityTimer, null);
+  t.mock.timers.tick(10_000);
+  assert.equal(f.events.length, 1);
+});

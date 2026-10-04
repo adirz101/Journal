@@ -11,6 +11,9 @@ import { realPath } from './paths.mjs';
 
 export const MAX_SESSIONS = 4;
 export const IDLE_SETTLE_MS = 750;
+export const ECHO_MS = 300;          // output this soon after input or resize is not "activity"
+export const QUIET_MS = 10_000;      // output after this much quiet is a resume edge
+export const ACTIVITY_THROTTLE_MS = 5_000;
 export const LIVE_STATES = ['starting', 'running', 'waiting', 'stopping'];
 const isLive = status => LIVE_STATES.includes(status);
 // Machine-readable reasons for refused or failed operations. Messages stay
@@ -138,7 +141,7 @@ export class TerminalManager extends EventEmitter {
       status: 'starting', receiptId: receipt.id, resumedFrom: prior?.id ?? null, createdAt: now, lastActivityAt: now,
       // An additional-folder session runs in that folder with its own Git identity (if any).
       branch: project.cwd ? project.cwdBranch ?? null : project.branch, head: project.cwd ? project.cwdHead ?? null : project.head, cwd, workspaceId, research, plan, baseline, runtimeId: this.runtimeId, activity: null,
-      slot, nativeIdSource, identityMismatch: false };
+      slot, nativeIdSource, identityMismatch: false, lastOutputAt: null };
     let prompt = task;
     if (receipt.packet || (prior && (oldReceipt?.hadKnowledge || oldReceipt?.items.length))) {
       const withdrawn = oldReceipt?.items.filter(item => !receipt.items.some(current => current.revisionId === item.revisionId)) ?? [];
@@ -156,7 +159,8 @@ export class TerminalManager extends EventEmitter {
       delete env.ELECTRON_RUN_AS_NODE;
       const proc = this.spawn(launch.executable, launch.argv, { cwd: session.cwd, env, name: 'xterm-256color', cols: 100, rows: 30 });
       entry = { session, proc, buffer: new OutputBuffer(), attached: false, sent: 0, acknowledged: 0, inflight: [], tail: '', exited: false,
-        stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), tools: new Map(), pending: [], answered: false, lastPersist: 0 };
+        stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), tools: new Map(), pending: [], answered: false, lastPersist: 0,
+        lastInputAt: 0, lastResizeAt: 0, lastActivityEmit: 0, activityTimer: null };
       this.entries.set(session.id, entry);
       session.status = 'running'; session.pid = Number.isInteger(proc.pid) ? proc.pid : null;
       // Identity is read asynchronously, and again on first output once the CLI is running.
@@ -192,6 +196,9 @@ export class TerminalManager extends EventEmitter {
     const { session } = entry;
     if (!entry.sawOutput) { entry.sawOutput = true; void this.refreshIdentity(entry); }
     entry.buffer.append(data); entry.tail = (entry.tail + data).slice(-8192);
+    const now = Date.now();
+    // Echo of typed input and full-screen repaints after a resize are not agent output.
+    if (now - Math.max(entry.lastInputAt, entry.lastResizeAt) >= ECHO_MS) this.noteOutput(entry, now);
     // Whether the CLI enabled bracketed paste (DECSET 2004), for inserted references.
     const on = entry.tail.lastIndexOf('\x1b[?2004h'); const off = entry.tail.lastIndexOf('\x1b[?2004l');
     if (on >= 0 || off >= 0) entry.bracketedPaste = on > off;
@@ -209,9 +216,27 @@ export class TerminalManager extends EventEmitter {
     if (Date.now() - entry.lastPersist > 5000) this.persist(session);
     this.scheduleFlush();
   }
+  // Only the time of output is kept, never its content. Codex and Cursor have no
+  // state hooks, so they report output: at once after a quiet period, then at
+  // most one trailing event per throttle window carrying the latest time.
+  noteOutput(entry, now) {
+    const { session } = entry;
+    const previous = session.lastOutputAt ? Date.parse(session.lastOutputAt) : -Infinity;
+    session.lastOutputAt = new Date(now).toISOString();
+    if (session.provider !== 'codex' && session.provider !== 'cursor') return;
+    const emit = () => { if (!this.disposed && !entry.exited) this.emit('event', { type: 'activity', sessionId: session.id, lastOutputAt: session.lastOutputAt }); };
+    if (now - previous >= QUIET_MS) {
+      clearTimeout(entry.activityTimer); entry.activityTimer = null;
+      entry.lastActivityEmit = now; emit(); return;
+    }
+    if (entry.activityTimer) return;
+    entry.activityTimer = setTimeout(() => { entry.activityTimer = null; entry.lastActivityEmit = Date.now(); emit(); },
+      Math.max(0, entry.lastActivityEmit + ACTIVITY_THROTTLE_MS - now));
+    entry.activityTimer.unref?.();
+  }
   exited(entry, exitCode, signal) {
     if (this.disposed || entry.exited) return;
-    entry.exited = true; entry.tools.clear(); entry.commands.clear(); entry.pending = []; entry.answered = false; clearTimeout(entry.forceTimer); for (const resolve of entry.waiters.splice(0)) resolve();
+    entry.exited = true; entry.tools.clear(); entry.commands.clear(); entry.pending = []; entry.answered = false; clearTimeout(entry.forceTimer); clearTimeout(entry.activityTimer); entry.activityTimer = null; for (const resolve of entry.waiters.splice(0)) resolve();
     const { session } = entry;
     session.status = entry.stopping ? 'stopped' : 'exited'; session.exitCode = exitCode; session.signal = signal ?? null;
     session.endedAt = new Date().toISOString(); session.activity = null; session.slot = null;
@@ -239,7 +264,7 @@ export class TerminalManager extends EventEmitter {
     // Claude's prompt answer keys: a digit selects, Enter confirms, Esc or Ctrl+C dismisses (deny with feedback ends with Enter).
     // Pasted text never counts. The only open prompt settles at once; with several, the next tool event settles one.
     if (entry.pending.length && !data.startsWith('\x1b[200~') && (data.includes('\r') || data === '\x1b' || data === '\x03' || /^[1-9]$/.test(data))) entry.answered = true;
-    entry.proc.write(data);
+    entry.proc.write(data); entry.lastInputAt = Date.now();
     if (entry.answered && entry.pending.length === 1 && entry.session.status === 'waiting') {
       entry.pending = []; entry.answered = false; this.observe(id, entry.session.nativeId, 'running', 'working');
     }
@@ -259,13 +284,13 @@ export class TerminalManager extends EventEmitter {
       // only a turn that has been idle for a moment counts as ready.
       : session.activity !== 'idle' || Date.now() - (entry.activitySince ?? 0) < IDLE_SETTLE_MS ? 'Journal does not know yet whether the agent is ready for input' : null;
     if (reason) return { inserted: false, reason };
-    entry.proc.write(entry.bracketedPaste ? `\x1b[200~${text} \x1b[201~` : `${text} `);
+    entry.proc.write(entry.bracketedPaste ? `\x1b[200~${text} \x1b[201~` : `${text} `); entry.lastInputAt = Date.now();
     this.record(id, 'reference', referenceEvent(reference, 'inserted'));
     return { inserted: true };
   }
   resize(id, cols, rows) {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 2 || cols > 500 || rows > 300) throw new Error('Invalid terminal size');
-    const entry = this.owned(id); entry.proc.resize(cols, rows); entry.session.terminal = { cols, rows };
+    const entry = this.owned(id); entry.proc.resize(cols, rows); entry.lastResizeAt = Date.now(); entry.session.terminal = { cols, rows };
   }
   // Goes through write() so Ctrl+C counts as answering an open permission prompt.
   interrupt(id) { this.write(id, '\x03'); this.record(id, 'interrupt', {}); }
@@ -534,6 +559,7 @@ export class TerminalManager extends EventEmitter {
       await Promise.all(live.map(entry => entry.survivorScan).filter(Boolean));
     }
     this.disposed = true; this.detach();
+    for (const entry of this.entries.values()) { clearTimeout(entry.activityTimer); entry.activityTimer = null; }
     for (const entry of this.liveEntries()) {
       try {
         await this.store.saveSession({ ...entry.session, status: 'interrupted', slot: null, pending: null, endedAt: new Date().toISOString() });
