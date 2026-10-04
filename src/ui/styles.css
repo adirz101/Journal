@@ -139,7 +139,7 @@ input::placeholder,textarea::placeholder{color:var(--tx3);opacity:1}
 
 /* === Phase 3 B: session view and inspector === */
 /* Main column: the New session view, or a session's header, terminal and status bar (board B4). */
-.workspace{container-type:inline-size;container-name:workspace}.new-session-view{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column}.session-view{flex:1;min-height:0;display:flex;flex-direction:column}
+.workspace{container-type:inline-size;container-name:workspace}.new-session-view{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;container-type:inline-size;container-name:composer-view}.session-view{flex:1;min-height:0;display:flex;flex-direction:column}
 .session-header{display:flex;flex-direction:column;gap:6px;padding:14px 20px 11px;border-bottom:1px solid var(--line)}.session-header-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}.session-header .session-title{font-size:16px;font-weight:600;letter-spacing:-.2px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.session-actions{display:flex;gap:6px;flex-shrink:0}.session-actions button{font-size:12px;padding:5px 10px;background:transparent}.session-actions .danger-ghost{color:var(--red)}
 .session-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font-size:12px;color:var(--tx3);min-width:0}.meta-provider{display:inline-flex;align-items:center;gap:6px;color:var(--tx2)}.chip{display:inline-block;font-size:11px;line-height:1.5;padding:0 6px;border:1px solid var(--line2);border-radius:4px;color:var(--tx2);white-space:nowrap}
 .attention-banner{display:flex;gap:10px;align-items:flex-start;margin:10px 20px 0;padding:9px 12px;background:var(--ambsoft);border:1px solid var(--ambline);border-radius:6px;color:var(--tx);font-size:12px;line-height:1.5}.attention-icon{color:var(--amb);font-weight:700;flex-shrink:0}.attention-banner code{font-size:11px;overflow-wrap:anywhere}
@@ -197,15 +197,14 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 @media(hover:hover) and (pointer:fine){.category-chips button:not([aria-pressed=true]):not(:disabled):hover{background:var(--hover);color:var(--tx)}.category-chips button[aria-pressed=true]:not(:disabled):hover{background:var(--accsoft-hover)}.filter-tabs .attention-toggle.amber:not(:disabled):hover{color:var(--amb)}.note-origin button.link:not(:disabled):hover{color:var(--tx)}}
 
 /* === Phase 4: composer === */
-/* New session (board B5): the form beside the live preview; the main column scrolls. Below 760 px the preview stacks under the form. */
-.new-session-inner{width:100%;max-width:1080px;margin:0 auto;padding:32px 40px 40px;display:grid;grid-template-columns:minmax(0,1fr) 360px;grid-template-rows:auto 1fr;column-gap:32px;row-gap:22px;align-items:start}
-.new-session-header{grid-column:1;min-width:0}.new-session-header h1{font-size:var(--text-screen);letter-spacing:-.3px}.new-session-header p{margin-top:6px;font-size:var(--text-body);color:var(--tx3);overflow-wrap:anywhere}
+/* New session (board B5): the form beside the live preview; the main column scrolls. The columns
+   follow the composer's own width (see the end of this section), never the window's. */
+.new-session-inner{width:100%;max-width:1080px;margin:0 auto;padding:32px 40px 40px;display:grid;grid-template-columns:minmax(420px,1fr) minmax(280px,360px);grid-template-rows:auto 1fr;column-gap:32px;row-gap:22px;align-items:start}
+.new-session-header{grid-column:1;min-width:0}.new-session-header h1{font-size:var(--text-screen);letter-spacing:-.3px}.new-session-header p{margin-top:6px;font-size:var(--text-body);color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .composer{display:contents}.composer-form{grid-column:1;display:flex;flex-direction:column;gap:22px;min-width:0}
 .composer-field{display:flex;flex-direction:column;gap:8px;min-width:0}
-.field-label{display:flex;align-items:baseline;gap:6px;font-size:var(--text-body);font-weight:600;color:var(--tx)}.field-label label{font-size:inherit;font-weight:inherit}#task-hint{font-weight:400;font-size:var(--text-meta);color:var(--tx3)}
+.field-label{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px;font-size:var(--text-body);font-weight:600;color:var(--tx)}.field-label label{font-size:inherit;font-weight:inherit}#task-hint{font-weight:400;font-size:var(--text-meta);color:var(--tx3)}
 .field-help{font-size:var(--text-meta);line-height:1.5;color:var(--tx3)}
-@container workspace (max-width:1000px){.new-session-inner{grid-template-columns:minmax(0,1fr) 320px;column-gap:24px;padding:28px 24px 32px}}
-@container workspace (max-width:759px){.new-session-inner{grid-template-columns:minmax(0,1fr);padding:24px 20px 32px}.context-preview{grid-column:1;grid-row:auto}}
 .composer-form{container-type:inline-size;container-name:composer-form}
 @container composer-form (max-width:479px){.agent-cards .agent-option{grid-template-columns:minmax(0,1fr);row-gap:4px;padding:10px}.agent-cards .agent-option .provider-mark{grid-row:auto;margin-bottom:2px}}
 /* Task box (board B13): the textarea sits over an aria-hidden mirror. .task-input is the alignment
@@ -274,6 +273,14 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
   .task-matches:not(:disabled):hover{background:var(--hover);color:var(--tx)}
   .preview-list>li:not(:hover):not(:focus-within) .memory-actions{opacity:0}
 }
+/* Composer columns, measured on the scrolling view itself (its content box, so a classic scrollbar
+   counts) rather than the window: stored sidebar and inspector widths can leave a narrow main column
+   in a wide window. Beside the preview the form keeps at least 420 px (the preview gives way first,
+   down to 280 px); below 764 px both no longer fit and the preview stacks under the form. These come
+   after .context-preview so they win the cascade: a preview left in column 2 of a one-column grid
+   opens an implicit column beside the form, which is what squeezed the form before. */
+@container composer-view (max-width:1000px){.new-session-inner{column-gap:24px;padding:28px 20px 32px}}
+@container composer-view (max-width:763px){.new-session-inner{grid-template-columns:minmax(0,1fr);grid-template-rows:none;padding:24px 20px 32px}.context-preview{grid-column:1;grid-row:auto}}
 /* === Phase 6: session end === */
 /* The wrap-up (boards 6, 14, States 5) replaces an ended session's terminal. No entrance
    animation for the view, its cards or resolved rows: it appears several times a day,

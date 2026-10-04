@@ -8,11 +8,13 @@ import { composer } from './copy';
 // callbacks, so timeline and terminal events never re-render the composer.
 export const NewSessionView = memo(function NewSessionView(props: ComposerProps) {
   const { project } = props;
+  // One line that truncates; the title keeps the full path and branch.
+  const checkout = composer.checkoutLine(project.name, project.branch ?? 'detached HEAD', project.head?.slice(0, 7) ?? 'unborn');
   return <div className="new-session-view">
     <div className="new-session-inner">
       <header className="new-session-header">
         <h1>{composer.newSession}</h1>
-        <p>{composer.checkoutLine(project.name, project.branch ?? 'detached HEAD', project.head?.slice(0, 7) ?? 'unborn')}</p>
+        <p title={checkout}>{checkout}</p>
       </header>
       <Composer {...props} />
     </div>
