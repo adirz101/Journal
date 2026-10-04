@@ -68,13 +68,28 @@ Verification uses local checks on the user's Mac and fixture-only GitHub Actions
 - CONTRIBUTING, SECURITY, templates, [ARCHITECTURE](ARCHITECTURE.md), [PROVIDERS](PROVIDERS.md) and the [Windows audit](WINDOWS.md).
 - Benchmark harness with frozen suites, conditions A–D, Wilson intervals and GO/MODIFY criteria ([BENCHMARK](BENCHMARK.md)).
 
+## UX redesign - Phase 0 (bug fixes)
+
+Branch `claude/ux-redesign`; the plan is [docs/superpowers/plans/2026-10-04-ux-redesign.md](superpowers/plans/2026-10-04-ux-redesign.md). Phase 0 fixes six bugs before any redesign work:
+
+- Previewing context no longer writes a receipt; the panel hides the receipt ID and immutability note for previews.
+- Repo overview drafts survive very large repositories: a top-level listing without counts and a note replace the full scan, non-ASCII names are listed correctly, and dot-directories come last.
+- Suggestions from a purged session can still be accepted. Purge detaches open suggestions and scrubs the session ID from their notes and event link; notes remembered before a purge keep their original text because revisions are immutable.
+- Claude's Needs approval state clears only when the prompt was actually answered: the pending tool completes, or the user typed an answer key (digit, Enter, Esc, Ctrl+C) or used Journal's Interrupt. Parallel tools and subagents no longer hide an open prompt, and several pending prompts are tracked.
+- Released builds have no Reload or DevTools in the View menu; `JOURNAL_DEVTOOLS=1` restores DevTools for support.
+- Branch suggestions are remembered on the branch they came from (including worktree sessions) and refused if that branch was deleted or the suggestion has no branch. Revising or approving a branch note from another branch is refused with a message naming the branch.
+
+Native checks still open (fixtures only so far; see [NATIVE-VALIDATION](NATIVE-VALIDATION.md) "To verify"): Working after approving a Bash permission in authenticated Claude Code; whether `PermissionRequest` carries `tool_use_id` and `tool_input`; hook events after a denial with feedback; whether subagent hooks share the parent `session_id`; whether Claude shows a second permission prompt before the first is answered; whether Esc or Ctrl+C on a permission fires a hook.
+
+Known follow-up (Phase 6): branch notes for a worktree's branch cannot yet be approved from the main checkout.
+
 ## Observed validation (local macOS)
 
 | Check | Result |
 | --- | --- |
-| `npm test` | 164 passed |
+| `npm test` | 216 passed |
 | `npm run check`, `npm run build` | Passed (the existing ~545 KiB chunk warning remains) |
-| `npm run test:desktop` | 16 passed (headless): real Electron, runtime and node-pty with fixture CLIs, covering four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches, project management, right-click menus, the file explorer and the Cursor provider (install, sign-in, launch, resume) |
+| `npm run test:desktop` | 17 passed (headless): real Electron, runtime and node-pty with fixture CLIs, covering four sessions, reload, app and runtime crash, keep-running quit, leftover cleanup, worktree creation, research mode, Unicode and ANSI, leaving a claim out, the status helper, external branch switches, project management, right-click menus, the file explorer and the Cursor provider (install, sign-in, launch, resume) |
 | `npm run dist:dir` | Unsigned app builds; packaged runtime starts; notices bundled |
 | GitHub Actions | BLOCKED (workflow scope) |
 
