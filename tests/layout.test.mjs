@@ -48,9 +48,5 @@ test('automatic rails never write the stored preferences', async t => {
   const { paneStates, layoutMode } = await load(t);
   for (const width of [1600, 1300, 1000, 1300, 1600]) paneStates(layoutMode(width), { sidebarCollapsed: false, inspectorCollapsed: false }, { sidebar: false, inspector: false }, true);
   assert.deepEqual(writes, []);
-  // Only the hook's explicit toggles write, and only these two keys.
-  const source = readFileSync(new URL('../src/ui/useShellLayout.ts', import.meta.url), 'utf8');
-  assert.deepEqual([...source.matchAll(/localStorage\.setItem\(/g)].length, 1, 'one write site');
-  assert.match(source, /const prefer = useCallback\(\(key: keyof LayoutPrefs, value: boolean\) => \{ setPrefs\(current => \(\{ \.\.\.current, \[key\]: value \}\)\); write\(/);
-  assert.doesNotMatch(source.slice(source.indexOf('// A mode change closes'), source.indexOf('const prefer')), /write\(|prefer\(/, 'a mode change writes nothing');
+  // Resizing across the breakpoints in the real window writes nothing either: desktop-layout.spec.ts checks localStorage.
 });

@@ -54,6 +54,8 @@ process.stdin.on('data',data=>{
     // The session view replaces the form; the next New session starts with an empty task.
     await expect(page.getByLabel('Initial task')).toHaveCount(0);
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
+    await newSession(page); await expect(page.getByLabel('Initial task')).toHaveValue('');
+    await page.getByRole('button', { name: /^Claude Code: Review Docker tests\./ }).click();
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
     // The provider mark sits next to the name; the session row's accessible name is unchanged.
     await expect(page.locator('.session-header .provider-mark.claude svg')).toBeVisible();
@@ -127,7 +129,8 @@ process.stdin.on('data',data=>{
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect(sessionStatus(page)).toContainText('Stopped');
     // Reviewed knowledge is provider-neutral; Codex needs an explicitly confirmed UUID.
-    await newSession(page); await page.getByLabel('Initial task').fill('Docker tests');
+    await newSession(page); await expect(page.getByLabel('Initial task')).toHaveValue('');
+    await page.getByLabel('Initial task').fill('Docker tests');
     await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
     await expect(page.locator('.terminal-surface')).toContainText('Fixture tests require Docker');
     // Codex shows the OpenAI mark in its heading and in its session row, hidden from assistive technology.
