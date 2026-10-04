@@ -76,7 +76,7 @@ export interface StaleCatch { available: boolean; notes: StaleNote[]; truncated:
 export interface PendingApproval { tool: string | null; command: string | null; path: string | null; at: string; inferred?: boolean; }
 export interface TimelineEvent { id?: number; sessionId?: string; at: string; kind: string; body: Record<string, unknown>; }
 export type TerminalEvent = { type: 'output'; sessionId: string; sequence: number; data: string } | { type: 'gap'; sessionId: string } | { type: 'status'; session: Session } | { type: 'error'; message: string; sessionId?: string; code?: typeof IDENTITY_CHANGED }
-  | { type: 'timeline'; event: TimelineEvent } | { type: 'proposals'; projectId: string; count: number; sessionId?: string } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; recovered?: boolean }
+  | { type: 'timeline'; event: TimelineEvent } | { type: 'proposals'; projectId: string; count: number; sessionId?: string; failed?: boolean } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; recovered?: boolean }
   | { type: 'files'; key: string; folders: string[]; overflow: boolean; stopped?: boolean }
   | { type: 'update'; state: UpdateState } | { type: 'providers'; agents: AgentInfo[] } | { type: 'command'; id: CommandId }
   // Codex and Cursor output times, at most one per session every 5 s; main asks to show a session (notification click).

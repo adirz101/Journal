@@ -275,7 +275,7 @@ export class TerminalManager extends EventEmitter {
       try { session.changeStats = summarizeChanges(await this.store.sessionChanges(session.id), at); }
       catch (error) { session.changeStats = summarizeChanges({ available: false, reason: error?.message ?? 'Changes could not be counted' }, at); }
       this.persist(session, true); if (!this.disposed) this.emitStatus(session);
-    })().catch(() => {}).finally(() => { entry.snapshotPending = false; this.settling.delete(entry.changeSnapshot); });
+    })().catch(() => {}).finally(() => { entry.snapshotPending = false; this.settling.delete(entry.changeSnapshot); if (!this.disposed) this.trimExited(); });
     this.settling.add(entry.changeSnapshot);
     const event = survivors => this.record(session.id, entry.stopping ? 'stop' : 'exit', { exitCode, signal: signal ?? null, survivors });
     if (!recorded.length) { event(0); this.trimExited(); return; }
@@ -286,12 +286,13 @@ export class TerminalManager extends EventEmitter {
       session.survivors = remaining === null ? null : remaining.map(row => ({ pid: row.pid, started: row.started, command: redact(row.command, 120) }));
       event(session.survivors?.length ?? null);
       if (this.disposed) this.persist(session, true); else this.emitStatus(session);
-    })().catch(() => {}).finally(() => { entry.scanPending = false; this.settling.delete(entry.survivorScan); });
+    })().catch(() => {}).finally(() => { entry.scanPending = false; this.settling.delete(entry.survivorScan); if (!this.disposed) this.trimExited(); });
     this.settling.add(entry.survivorScan);
     this.trimExited();
   }
   // Keeps at most RETAINED_EXITED exited buffers, dropping the oldest first. One being
-  // viewed (attached) or still being scanned or counted is kept; it is trimmed on a later exit.
+  // viewed (attached) or still being scanned or counted is kept; it is trimmed when it is
+  // detached or its scan and count finish (or on a later exit).
   trimExited() {
     const exited = [...this.entries.values()].filter(entry => entry.exited)
       .sort((a, b) => String(a.session.endedAt ?? '').localeCompare(String(b.session.endedAt ?? '')));
@@ -537,7 +538,10 @@ export class TerminalManager extends EventEmitter {
     entry.attached = true; entry.sent = snapshot.lastSequence; entry.acknowledged = snapshot.lastSequence; entry.inflight = [];
     return snapshot;
   }
-  detach(id) { for (const entry of this.entries.values()) if (!id || entry.session.id === id) entry.attached = false; }
+  detach(id) {
+    for (const entry of this.entries.values()) if (!id || entry.session.id === id) entry.attached = false;
+    if (!this.disposed) this.trimExited();
+  }
   acknowledge(id, sequence) {
     const entry = this.entries.get(id);
     if (!entry || !Number.isInteger(sequence) || sequence <= entry.acknowledged || sequence > entry.sent) return;
