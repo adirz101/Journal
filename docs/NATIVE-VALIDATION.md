@@ -90,3 +90,7 @@ Final required local checks are reported in [implementation status](IMPLEMENTATI
 - Idle Codex and Cursor sessions: check whether their idle screens repaint on their own (a clock, spinner or cursor redraw) without any input or resize. Such output counts as agent output and keeps "output just now" lit while the agent is actually idle; note which versions do it and how often.
 - The Claude attention banner shows the command or path from a real `PermissionRequest` (depends on the `tool_input` check above).
 - Windows: Ctrl+, and Ctrl+Shift+\ reach Journal's shortcut router (Ctrl+\ still reaches the CLI), the File menu's Settings… item opens Settings, and at the default window size the layout is medium (sidebar docked, inspector rail).
+- Composer modes with real CLIs: Build, Plan and Read-only start the same native modes as before the composer (Claude plan mode for Plan and Read-only, the Codex read-only sandbox, Cursor Plan and Ask). The launch argv is unchanged; the fixture argv tests pin it, not the CLIs' behaviour.
+- The Cursor card's "Signed in" / "Sign in needed" matches `cursor-agent status` (the card reads Journal's existing Cursor check).
+- Windows: Ctrl+Enter starts from the task box, and Delete on a focused note in "What the agent will know" leaves it out.
+- Windows: the task box's underlines line up with the typed text under ClearType at 100 %, 125 % and 150 % scaling, including after the box scrolls.
