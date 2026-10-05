@@ -293,7 +293,7 @@ export const palette = {
     'slot-1': 'Go to session 1', 'slot-2': 'Go to session 2', 'slot-3': 'Go to session 3', 'slot-4': 'Go to session 4',
     'next-needs-you': 'Jump to the next session that needs you', 'tab-session': 'Show the Session tab', 'tab-files': 'Show the Files tab',
     'tab-memory': 'Show the Memory tab', settings: 'Settings', 'command-palette': 'Command palette', 'open-file': 'Open a file…',
-    'manage-workspaces': 'Manage workspaces…', 'new-session-separate-copy': 'New session in a separate copy', 'check-agents': 'Check agents again',
+    'manage-workspaces': 'Manage workspaces…', 'new-session-separate-copy': 'New session in a separate copy', 'check-agents': 'Check agents again', 'switch-branch': 'Switch branch…',
   },
   // --- Phase 8 Group B ---
   // Why an action is unavailable: the same guard the matching button or key uses.
@@ -303,6 +303,29 @@ export const palette = {
   howTo: 'Up and down arrows move between results, Enter opens one. Type > for commands only.',
   fileHowTo: 'Up and down arrows move between files, Enter opens one.',
   addReference: 'Add reference…',
+} as const;
+
+// The branch picker (Files tab, session header, palette): one repository at a time, named in its title.
+export const branches = {
+  title: (repo: string) => `Switch branch of ${repo}`, heading: 'Switch branch', repository: 'Repository',
+  placeholder: 'Search branches…', localGroup: 'Local branches', remoteGroup: 'Remote branches', list: 'Branches',
+  current: 'current', detached: 'detached HEAD', upstreamGone: 'upstream gone',
+  inWorktree: (label: string | null) => label ? `Checked out in ${label}. Choose it in the root picker.` : 'Checked out in another worktree',
+  localExists: (name: string) => `A local branch ${name} already exists`, unknownRemote: 'Remote not recognized',
+  blockedShort: 'A session is running here',
+  loading: 'Loading branches…', none: (q: string) => `No branch matches “${q}”.`, empty: 'This repository has no branches yet.',
+  truncated: (n: number) => `Showing the ${n.toLocaleString('en-US')} most recent branches of each kind. Search to narrow them down.`,
+  switching: (name: string) => `Switching to ${name}…`,
+  confirmTitle: 'Create a local branch?',
+  confirmBody: (local: string, remote: string, repo: string) => `Journal will create the local branch ${local} tracking ${remote}, and switch ${repo} to it.`,
+  confirm: 'Create and switch', cancel: 'Cancel',
+  move: 'move', choose: 'switch', repoKey: 'repository',
+  howTo: 'Up and down arrows move between branches, Enter switches to one. Tab reaches the repository list.',
+  resultCount: (n: number) => n === 0 ? 'No branches' : n === 1 ? '1 branch' : `${n} branches`,
+  trigger: (repo: string, branch: string | null) => `Branch of ${repo}: ${branch ?? 'detached HEAD'}. Switch branch…`,
+  menu: 'Switch Branch…',
+  switched: (repo: string, branch: string | null, from: string | null) => `${repo} is now on ${branch ?? 'a detached HEAD'}${from ? `, a new local branch tracking ${from}` : ''}.`,
+  minutesAgo: (n: number) => `${n}m ago`, hoursAgo: (n: number) => `${n}h ago`, daysAgo: (n: number) => `${n}d ago`, monthsAgo: (n: number) => `${n}mo ago`,
 } as const;
 
 // Phase 8: failure states (board 9): one honest sentence and one next step each.

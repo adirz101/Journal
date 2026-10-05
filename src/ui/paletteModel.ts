@@ -6,7 +6,7 @@ import { endedTime, relativeTime, sessionName } from './sidebarModel';
 import { category, palette as words } from './copy';
 
 // Actions only the palette offers (no key of their own).
-export type ExtraAction = 'manage-workspaces' | 'check-agents';
+export type ExtraAction = 'manage-workspaces' | 'check-agents' | 'switch-branch';
 export type PaletteActionId = CommandId | ExtraAction;
 export type Span = [number, number];
 
@@ -22,7 +22,7 @@ export interface PaletteGroup { id: GroupId; label: string; items: PaletteItem[]
 // Every routed command except the slots (the Sessions group covers them) and the
 // palette's own two, in the order the Actions group lists them; then the extras.
 export const PALETTE_COMMANDS: readonly CommandId[] = ['new-session', 'next-needs-you', 'open-project', 'add-note', 'focus-terminal', 'toggle-inspector', 'toggle-sidebar', 'tab-session', 'tab-files', 'tab-memory', 'settings'];
-export const EXTRA_ACTIONS: readonly ExtraAction[] = ['manage-workspaces', 'check-agents'];
+export const EXTRA_ACTIONS: readonly ExtraAction[] = ['manage-workspaces', 'switch-branch', 'check-agents'];
 export const PALETTE_ACTIONS: readonly PaletteActionId[] = [...PALETTE_COMMANDS, ...EXTRA_ACTIONS];
 export const MAX_SESSIONS_SHOWN = 6;
 export const QUIET_MS = 120_000;

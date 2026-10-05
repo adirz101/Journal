@@ -15,6 +15,8 @@ import { ruleProposals, statusProposal, testCommandProposals } from './proposals
 import { addWorktree, creationNotices, listGitWorktrees, plannedPath, registered, removalBlockers, removeWorktree, resolveBase, validateBranchName, workspaceView } from './workspaces.mjs';
 import { redact } from './validation.mjs';
 import { fingerprintSync, treePath } from './files.mjs';
+import { inside, listBranches, switchBranch } from './branches.mjs';
+import { realPath } from './paths.mjs';
 import { MAX_REFERENCES, pathFromCwd, referencesBlock } from './references.mjs';
 import { deliveryCounts, memoryChecks, memoryOrigins, noteIds, sessionProposals, sessionSummary, staleNoteDiff, staleNotesForSession } from './insights.mjs';
 
@@ -1170,6 +1172,68 @@ export class JournalStore {
     if (workspace.state !== 'ready' || !existsSync(workspace.path)) throw new Error('This worktree is not available');
     const view = workspaceView(project, workspace);
     return { key, family: 'primary', label: `${project.name} (worktree ${view.branch ?? basename(workspace.path)})`, path: view.root, gitRoot: view.root, prefix: '', head: view.head, git: true };
+  }
+  // Branches of one repository root (the checkout, a worktree or an added Git folder), by root key.
+  branchRoot(projectId, key) {
+    const root = this.fileRoot(projectId, key);
+    if (!root.git || !root.gitRoot) throw new Error(`${root.label} is not a Git repository, so it has no branches`);
+    return root;
+  }
+  // The working tree a session runs in, from Journal's records (no Git).
+  sessionTree(session) {
+    try {
+      const stored = this.storedProject(session.projectId);
+      if (!session.workspaceId) return stored.root;
+      if (session.workspaceId.startsWith('root:')) { const root = (stored.roots ?? []).find(entry => `root:${entry.id}` === session.workspaceId); return root ? root.gitRoot ?? root.path : null; }
+      return this.getWorkspace(session.workspaceId).path;
+    } catch { return null; }
+  }
+  // Sessions (of any project) starting, running, waiting, stopping or orphaned in the working tree at gitRoot.
+  sessionsIn(gitRoot) {
+    const canon = path => { try { return realPath(path); } catch { return path; } };
+    const target = canon(gitRoot);
+    return this.activeSessions().filter(session => {
+      const tree = this.sessionTree(session); if (tree && canon(tree) === target) return true;
+      if (typeof session.cwd !== 'string' || !inside(target, canon(session.cwd))) return false;
+      // A cwd below the tree may belong to a nested repository of its own.
+      try { return canon(git(session.cwd, ['rev-parse', '--show-toplevel'])) === target; } catch { return false; }
+    });
+  }
+  switchBlocker(root) {
+    const running = this.sessionsIn(root.gitRoot); if (!running.length) return null;
+    const name = running[0].displayName || running[0].title || 'A session';
+    return `${running.length === 1 ? `“${name}” is` : `${running.length} sessions are`} running in ${root.label}. Stop ${running.length === 1 ? 'it' : 'them'} before switching branches: switching changes the files an agent is working on.`;
+  }
+  // Each working tree Journal knows for this project, by path: the root key the Files tab shows it as.
+  worktreeKeys(projectId) {
+    const project = this.project(projectId); const keys = new Map([[project.root, { key: 'checkout', label: `${project.name} (checkout)` }]]);
+    for (const row of this.db.prepare(`SELECT body FROM workspaces WHERE project_id=? AND json_extract(body,'$.state')='ready'`).all(projectId)) { const w = parse(row); keys.set(w.path, { key: w.id, label: `${project.name} (worktree ${w.branch ?? basename(w.path)})` }); }
+    for (const root of project.roots ?? []) if (root.kind === 'git') keys.set(root.gitRoot ?? root.path, { key: `root:${root.id}`, label: root.name });
+    return keys;
+  }
+  listBranches(projectId, key) {
+    const root = this.branchRoot(projectId, key); const result = listBranches(root.gitRoot); const keys = this.worktreeKeys(projectId);
+    const local = result.local.map(row => row.worktree ? { ...row, worktreeKey: keys.get(row.worktree)?.key ?? null, worktreeLabel: keys.get(row.worktree)?.label ?? null } : row);
+    return { key, label: root.label, family: root.family, ...result, local, blocked: this.switchBlocker(root) };
+  }
+  // Refuses while a session runs in that working tree; Git refuses (and changes nothing) when
+  // uncommitted changes would be overwritten. Never forces, stashes, resets or cleans.
+  switchBranch(projectId, key, request) {
+    const root = this.branchRoot(projectId, key);
+    const blocked = this.switchBlocker(root); if (blocked) throw new Error(`Not switched: ${blocked}`);
+    let result;
+    try { result = switchBranch(root.gitRoot, request); }
+    catch (error) {
+      const other = error.worktree ? this.worktreeKeys(projectId).get(error.worktree) : null;
+      if (other) throw new Error(`Not switched: ${request.name} is checked out in ${other.label}. Choose it in the Files tab's root picker to work there.`);
+      throw error;
+    }
+    if (root.family === 'primary') {
+      this.reconcileWorkspaces(projectId);
+      if (key === 'checkout') this.saveProject({ ...this.storedProject(projectId), branch: result.branch, head: result.head });
+    }
+    if (!result.unchanged) this.audit('branch-switched', { projectId, root: key, from: result.previous, to: result.branch, created: result.created, ...(result.from ? { remote: result.from } : {}) });
+    return { ...result, key, label: this.fileRoot(projectId, key).label };
   }
   // The project as seen from a workspace (or its own checkout when null).
   view(projectId, workspaceId = null) {

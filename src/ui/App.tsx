@@ -17,6 +17,8 @@ import { SettingsDialog } from './SettingsDialog';
 import { ManageProjectDialog } from './ManageProjectDialog';
 import { RenameDialog } from './RenameDialog';
 import { CommandPalette } from './CommandPalette';
+import { BranchPicker } from './BranchPicker';
+import type { SwitchResult } from './branchModel';
 import { RuntimeBanner } from './RuntimeBanner'; // Phase 8
 import { RecoveryPanel } from './RecoveryPanel'; // Phase 8
 import { recoveryView } from './statesModel'; // Phase 8
@@ -37,7 +39,7 @@ import { showMenu } from './menu';
 import journalMarkWhite from '../../assets/branding/journal-mark-white.png';
 import journalMarkDark from '../../assets/branding/journal-mark.png';
 import { storedAppearance, type Appearance } from './theme';
-import { composer, copy, firstRun, palette as paletteCopy, providers, shell, states as statesCopy, wrapUp as wrapUpCopy } from './copy';
+import { branches as branchesCopy, composer, copy, firstRun, palette as paletteCopy, providers, shell, states as statesCopy, wrapUp as wrapUpCopy } from './copy';
 // Phase 7: first run (Welcome, Getting to know your project, the first-note moment).
 import { Welcome } from './Welcome';
 import { DraftsMoved, GettingToKnow, type DraftParts } from './GettingToKnow';
@@ -141,6 +143,8 @@ export default function App() {
   // The command palette (null when closed); purpose reference: the composer's Add reference….
   // lead: the action listed (and active) first; open-file without a project leads with Open project….
   const [palette, setPalette] = useState<{ mode: 'all' | 'files'; purpose: 'open' | 'reference'; lead?: PaletteActionId } | null>(null);
+  // The branch picker, open on one repository root of the shown project; branchVersion reloads the Files tab's roots after a switch.
+  const [branchPicker, setBranchPicker] = useState<{ projectId: string; rootKey: string } | null>(null); const [branchVersion, setBranchVersion] = useState(0); const [branchNote, setBranchNote] = useState('');
   // A note or file opened from the palette (seq: one request each).
   const [memoryFocus, setMemoryFocus] = useState<{ id: string; seq: number } | null>(null);
   // The Files tab's shown root while it is mounted (null after it unmounts: it then follows the session again).
@@ -674,6 +678,14 @@ export default function App() {
   // show: the selected session's separate copy, else the checkout. Its additional folders too.
   const followRoot = session && session.projectId === state?.project.id && session.workspaceId && !session.workspaceId.startsWith('root:') ? session.workspaceId : 'checkout';
   const filesRoot = explorerRoot && explorerRoot.projectId === state?.project.id ? explorerRoot.rootKey : followRoot;
+  // The branch picker opens on a root of the shown project; after a switch, what shows the branch
+  // or HEAD reloads: the project (header, composer), its workspaces, the Files tab roots and notes.
+  const openBranchPicker = useCallback((rootKey: string) => { const projectId = projectRef.current?.id; if (projectId && !document.querySelector('dialog[open]')) setBranchPicker({ projectId, rootKey }); }, []);
+  const branchSwitched = useCallback((result: SwitchResult) => {
+    setBranchVersion(v => v + 1); setKnowledgeVersion(v => v + 1);
+    void refresh().catch(failed);
+    setBranchNote(result.unchanged ? '' : branchesCopy.switched(result.label, result.branch, result.created ? result.from ?? null : null));
+  }, [refresh, failed]);
   // The palette's callbacks and blocks keep their identity (callbacks read the newest App state
   // through a ref), so the open palette re-renders only when its own props change: the session
   // list, the clock, the connection or the root, not on terminal output.
@@ -689,6 +701,7 @@ export default function App() {
         // The guard is checked again: the state may have changed since the palette listed it.
         if (latest.commandBlock(id) !== null) return;
         if (id === 'manage-workspaces') setWorkspaceDialog(true);
+        else if (id === 'switch-branch') { if (latest.projectId) setBranchPicker({ projectId: latest.projectId, rootKey: latest.filesRoot }); }
         else if (id === 'check-agents') for (const provider of ['claude', 'codex', 'cursor'] as const) void latest.checkProvider(provider).catch(latest.failed);
         else latest.runCommand.current(id);
       });
@@ -760,7 +773,7 @@ export default function App() {
         onSelectReceipt={setReceipt} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />} />}
       {panel === 'files' && <FilesTab hasSession={!!session} view={filesView} onView={setFilesChoice} changed={changed} focusSignal={explorerFocus} onFocusHandled={() => setExplorerFocus(0)}
         changes={session && <ChangesPanel session={session} changes={sessionChanges.changes} loading={sessionChanges.loading} error={sessionChanges.error} refresh={sessionChanges.refresh} />}
-        files={<ExplorerPanel key={state.project.id} project={state.project} session={session} onRoot={onExplorerRoot} rootsVersion={workspaces?.workspaces.map(w => `${w.id}:${w.state}`).join(',') ?? ''} revealLabel={`Reveal in ${revealLabel}`} focusSignal={explorerFocus} onFocusHandled={() => setExplorerFocus(0)} onPreviewing={setPreviewing} onError={failed}
+        files={<ExplorerPanel key={state.project.id} project={state.project} session={session} onRoot={onExplorerRoot} rootsVersion={`${workspaces?.workspaces.map(w => `${w.id}:${w.state}`).join(',') ?? ''}#${branchVersion}`} onSwitchBranch={openBranchPicker} revealLabel={`Reveal in ${revealLabel}`} focusSignal={explorerFocus} onFocusHandled={() => setExplorerFocus(0)} onPreviewing={setPreviewing} onError={failed}
         onAddReference={addReference} reveal={filesReveal}
         onSaveEvidence={source => setEvidenceSource({ kind: 'file', path: source.path, startLine: source.startLine, endLine: source.endLine, ...(source.rootKey.startsWith('root:') ? { rootId: source.rootKey.slice(5) } : {}) })} />} />}
       {panel === 'memory' && <MemoryTab><KnowledgePanel project={state.project} workspaces={workspaces?.workspaces} version={knowledgeVersion} trustVersion={trustVersion} sessions={ordered} filters={memoryFilters} onFilters={setMemoryFilters} focus={memoryFocus} onOpenSession={openSession} busy={busy} proposals={proposals} onEdit={setForm} onPropose={scope => void proposeUpdate(scope)} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} onRemembered={noteRemembered} justRemembered={justRemembered} /></MemoryTab>}
@@ -806,6 +819,7 @@ export default function App() {
         : <section className="session-view" aria-label="Session">
           <SessionHeader session={session} state={stateFor(session, now, connected)} connected={connected} busy={busy} canStart={canStart} now={now} mac={bootstrap?.platform === 'darwin'}
             projectBranch={session.projectId === state.project.id ? state.project.branch : session.branch ?? null} agentVersion={bootstrap?.agents.find(a => a.provider === session.provider)?.version ?? null}
+            onSwitchBranch={session.projectId === state.project.id && !session.workspaceId?.startsWith('root:') ? () => openBranchPicker(session.workspaceId ?? 'checkout') : undefined}
             onInterrupt={() => void sessionAction('interrupt')} onStop={() => void sessionAction('stop')} onContinue={() => void start(session.provider, session)} hideContinue={wrapUpShown}
             onArchiveToggle={() => void (session.archived ? sessionActions.unarchive(session) : sessionActions.archive(session))}
             onEndOrphan={() => void sessionAction('terminateOrphan')} onEndSurvivors={() => void sessionAction('terminateSurvivors')} onMenu={position => void sessionMenu(session, position)} />
@@ -846,6 +860,9 @@ export default function App() {
     {processView && <ProcessDialog id={processView.id} title={processView.title} command={processView.command} appearance={appearance} onClose={() => setProcessView(null)} onExit={() => {}} />}
     {palette && <CommandPalette mode={palette.mode} purpose={palette.purpose} lead={palette.lead} projectId={state?.project.id ?? null} rootKey={filesRoot} projectName={state?.project.name ?? null}
       sessions={ordered} now={now} connected={connected} mac={bootstrap?.platform === 'darwin'} keys={bootstrap?.shortcuts ?? NO_KEYS} blocks={paletteBlocks} {...paletteCallbacks} />}
+    {/* A finished branch switch, announced once (the branch labels change in place). */}
+    <p className="visually-hidden branch-live" role="status">{branchNote}</p>
+    {branchPicker && state?.project.id === branchPicker.projectId && <BranchPicker projectId={branchPicker.projectId} rootKey={branchPicker.rootKey} onClose={() => setBranchPicker(null)} onSwitched={branchSwitched} />}
     {settingsOpen && <SettingsDialog appearance={appearance} onAppearance={setAppearance} update={update} project={state?.project ?? null} onClose={() => setSettingsOpen(false)} onDataChanged={() => { setKnowledgeVersion(v => v + 1); void refresh().catch(() => {}); }} />}
     {state && workspaceDialog && <WorkspaceDialog project={state.project} onClose={() => setWorkspaceDialog(false)} onChanged={() => void refresh().catch(failed)} />}
     {state && evidenceSource && <KnowledgeForm project={state.project} initialSource={evidenceSource} onClose={() => setEvidenceSource(null)} onSaved={() => { setEvidenceSource(null); setPanel('memory'); setKnowledgeVersion(v => v + 1); }} />}

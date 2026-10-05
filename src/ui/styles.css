@@ -568,3 +568,25 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .cursor-hooks-label{font-size:var(--text-meta);font-weight:600;color:var(--tx2)}
 .cursor-hooks-text{margin:0;max-height:180px;overflow:auto;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--term);font-size:var(--text-meta);line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--tx)}
 .sidebar-menu{display:flex;flex-direction:column;gap:2px;padding-bottom:12px;margin-bottom:12px;border-bottom:1px solid var(--line)}.sidebar-menu>button{display:flex;align-items:center;gap:10px;width:100%;min-height:34px;text-align:left;font-size:var(--text-body);padding:6px 8px;margin:0;background:transparent;border-color:transparent;color:var(--tx2)}.sidebar-menu kbd{margin-left:auto}.side-icon{width:20px;height:20px;display:grid;place-items:center;flex:none;color:var(--tx3)}.side-icon.plus{border-radius:5px;background:var(--hover);color:var(--tx)}@media (hover:hover) and (pointer:fine){.sidebar-menu>button:hover:not(:disabled){background:var(--hover);color:var(--tx)}}
+/* === Branch picker: the command palette's box and list, one repository at a time === */
+.branch-trigger{display:inline-flex;align-items:center;gap:5px;flex:0 1 auto;min-width:0;max-width:45%;padding:5px 8px;font-size:var(--text-caption);color:var(--tx2);background:transparent;border-color:var(--line-field)}
+.branch-trigger-name{min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-mono)}
+.branch-trigger-chevron{color:var(--tx3)}
+.meta-branch{border:0;background:transparent;padding:0 2px;margin:0 -2px;border-radius:3px;color:inherit;font-size:inherit;text-decoration:underline dotted;text-decoration-color:var(--line2);text-underline-offset:3px}
+.branch-head{display:flex;align-items:center;gap:12px;padding:10px 16px;flex:none;border-bottom:1px solid var(--line)}
+.branch-title{flex:none;font-size:var(--text-body);font-weight:600;letter-spacing:0}
+.branch-repo{flex:1;min-width:0;display:flex;justify-content:flex-end}
+.branch-repo select{margin:0;width:auto;max-width:100%;padding:5px 8px;font-size:var(--text-meta)}
+.branch-repo-name{flex:1;min-width:0;text-align:right;font-size:var(--text-meta);color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.branch-name{font-family:var(--font-mono);font-size:var(--text-meta)}
+.branch-option.current .branch-name{font-weight:600}
+.branch-option.current .palette-glyph{color:var(--acc)}
+.branch-blocked{margin:8px 8px 0;padding:8px 10px;border:1px solid var(--ambline);border-radius:8px;background:var(--ambsoft);color:var(--tx);font-size:var(--text-meta);line-height:1.5}
+.branch-detached{padding:8px 18px 0;font-size:var(--text-meta);color:var(--tx3);font-family:var(--font-mono)}
+.palette-note.branch-failure{color:var(--red);background:var(--redsoft)}
+.branch-confirm{display:flex;flex-direction:column;gap:8px;padding:16px;font-size:var(--text-body);line-height:1.5}
+.branch-confirm-title{font-weight:600}
+.branch-confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+.branch-confirm-actions button{font-size:var(--text-meta);padding:6px 12px}
+@media(hover:hover) and (pointer:fine){.branch-trigger:not(:disabled):hover{background:var(--hover);color:var(--tx)}.meta-branch:hover{color:var(--tx);text-decoration-color:currentColor}}
+@media(forced-colors:active){.branch-blocked{border-color:CanvasText}}
