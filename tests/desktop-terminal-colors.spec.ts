@@ -14,7 +14,8 @@ test.skip(process.platform === 'win32', 'POSIX fixture CLIs');
 const LIGHT_BG = 'rgb:fafa/fafa/fbfb'; const DARK_BG = 'rgb:0b0b/0d0d/1010';
 type Line = { kind: string; data: string; ms: number; session: string };
 
-function setup() {
+// held: the fixture prints COLORS_READY and asks only once the spec creates the file `go`.
+function setup({ held = false } = {}) {
   mkdirSync(resolve('.cache/tmp'), { recursive: true });
   const root = mkdtempSync(resolve('.cache/tmp', 'colors-')); const project = resolve(root, 'project'); const bin = resolve(root, 'bin'); const home = resolve(root, 'home');
   for (const dir of [project, bin, home]) mkdirSync(dir);
@@ -34,12 +35,13 @@ const {env:fixtureEnvironment}=process;rec('env',fixtureEnvironment.COLORFGBG??'
 const ask=()=>process.stdout.write('\\x1b]11;?\\x07\\x1b[c');
 process.stdin.setRawMode(true);process.stdin.resume();
 process.stdin.on('data',d=>{const s=d.toString('latin1');rec('stdin',s);if(s.includes('\\x1b[?997;'))ask();});
-process.stdout.write('COLORS_READY\\r\\n\\x1b[?2031h');ask();`);
+process.stdout.write('COLORS_READY\\r\\n\\x1b[?2031h');${held ? `const go=()=>fs.existsSync(${JSON.stringify(resolve(root, 'go'))})?ask():setTimeout(go,25);go();` : 'ask();'}`);
   chmodSync(resolve(bin, 'claude'), 0o755);
   const lines = (): Line[] => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
   // Everything one session (or, without an ID, every session) read on stdin.
   const input = (session?: string) => lines().filter(line => line.kind === 'stdin' && (!session || line.session === session)).map(line => line.data).join('');
-  return { root, project, env, lines, input, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  const go = () => writeFileSync(resolve(root, 'go'), '');
+  return { root, project, env, lines, input, go, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
 async function open(f: ReturnType<typeof setup>, theme: 'dark' | 'light') {
@@ -138,7 +140,10 @@ test('a session that no window shows still gets its background and DA1 answers, 
 });
 
 test('with a runtime that does not answer colour queries, the window still does', async () => {
-  const f = setup(); const { app, page } = await open(f, 'light');
+  // The fixture asks once the window shows its output: a query the window first sees in the attach
+  // replay is never answered by it (a late reply would be typed into the agent), and how soon a
+  // window attaches after the start is not what this test is about.
+  const f = setup({ held: true }); const { app, page } = await open(f, 'light');
   try {
     // An earlier build's runtime: its attach has no colors flag. (This runtime still answers too, with
     // the fixture's BEL terminator; the window's terminal always answers with ST.)
@@ -147,6 +152,7 @@ test('with a runtime that does not answer colour queries, the window still does'
     }; });
     await startSession(page, 'claude');
     await ready(page);
+    f.go();
     await expect.poll(() => f.input()).toContain(`\x1b]11;${LIGHT_BG}\x1b\\`);
     expect(f.input()).toContain(`\x1b]11;${LIGHT_BG}\x07`);
   } finally { await closeApp(app); f.cleanup(); }
