@@ -375,6 +375,54 @@ test('catch: Update and Forget leave focus on the resolved line, not the page', 
   } finally { await closeApp(app); f.cleanup(); }
 });
 
+test('catch: Undo gives focus to the card heading when Still true can no longer be pressed', async () => {
+  // Part 1 (review M2): Undo returns focus to Still true, or to the card's heading when Still true is
+  // gone or disabled again. Fixture data reaches that state: while Still true is staged on card A,
+  // the catch reloads (card B's whole change comes from a newer file) and now says A's note cannot be
+  // marked still true here (wrong-branch, as after a branch switch). The file and its hash are
+  // unchanged, so card A keeps its staged choice and its Undo.
+  const f = setup('kbd-catch-undo'); const { app, page } = await launch(f);
+  try {
+    await press(app, 'openProject'); await expect(taskBox(page)).toBeVisible();
+    const a = await seedFileNote(page, 'Stop waits 3 s before it kills the process');
+    const b = await seedFileNote(page, 'Other code reads the grace period from a.js');
+    await app.evaluate((_electron, ids) => {
+      const g = globalThis as any; g.__catchReloaded = false;
+      g.__journalRequestHook = async (action: string, run: () => Promise<any>) => {
+        const value = await run();
+        if (action === 'staleNotes' && value?.notes) for (const item of value.notes) {
+          if (item.note.id === ids.b) item.truncated = true; // B offers Show the whole change
+          if (g.__catchReloaded && item.note.id === ids.a) item.reaffirm = { allowed: false, reason: 'wrong-branch' };
+        }
+        if (action === 'staleNoteDiff' && g.__catchReloaded) return { ...value, available: true, reason: null, text: '+ newer', contentHash: 'a-newer-file' };
+        return value;
+      };
+    }, { a, b });
+    await reachCatch(app, page, 'Raise the grace again', 7000);
+    const cards = page.locator('.stale-catch');
+    await expect(cards).toHaveCount(2);
+    const cardA = cards.filter({ hasText: 'Stop waits 3 s before it kills the process' });
+    const cardB = cards.filter({ hasText: 'Other code reads the grace period from a.js' });
+    await tabTo(page, cardA.getByRole('button', { name: 'Still true', exact: true })); await page.keyboard.press('Enter');
+    const resolved = page.locator('.wrap-resolved').filter({ hasText: 'Marked still true.' });
+    const undo = resolved.getByRole('button', { name: 'Undo', exact: true });
+    await expect(undo).toBeFocused();
+
+    // Card B's whole change is from a newer file: the catch reloads with A's note now not allowed.
+    await app.evaluate(() => { (globalThis as any).__catchReloaded = true; });
+    await tabTo(page, cardB.getByRole('button', { name: 'Show the whole change', exact: true })); await page.keyboard.press('Enter');
+    await expect(cardB).toContainText('The file changed again');
+    await expect(undo).toBeVisible(); // A kept its staged choice across the reload
+
+    await tabTo(page, undo, { back: true }); await page.keyboard.press('Enter');
+    await expect(cardA.getByRole('button', { name: 'Still true', exact: true })).toHaveCount(0);
+    await expect(cardA.getByRole('heading')).toBeFocused();
+    await expectVisibleFocus(page);
+    // Nothing was marked: the note is still at its first revision.
+    await expect.poll(async () => (await request(page, 'getMemory', { id: a }) as any).revision).toBe(1);
+  } finally { await closeApp(app); f.cleanup(); }
+});
+
 test('inspector keys: ⌥⌘1 keeps the terminal; ⌥⌘2 focuses Changed; a pending Files focus never steals the terminal', async () => {
   const f = setup('kbd-files'); const { app, page } = await launch(f);
   try {
