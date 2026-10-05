@@ -8,6 +8,7 @@ import { redact, text } from './validation.mjs';
 import { generateTitle } from './sessions.mjs';
 import { referenceEvent } from './references.mjs';
 import { realPath } from './paths.mjs';
+import { REPO_ENV } from './git-env.mjs';
 import { agentTerminalEnv, APPEARANCES, QueryResponder, themeReport } from './terminal-queries.mjs';
 
 export const MAX_SESSIONS = 4;
@@ -201,6 +202,8 @@ export class TerminalManager extends EventEmitter {
       // Journal, and COLORFGBG (read by Claude Code in theme Auto and by Cursor) is Journal's appearance.
       const env = { ...agentTerminalEnv(process.env, { appearance: this.appearance, version: this.appVersion }), JOURNAL_SESSION_ID: session.id };
       delete env.ELECTRON_RUN_AS_NODE; delete env.JOURNAL_APP_VERSION;
+      // The agent works in session.cwd: Git variables that point at another repository are not passed on (git-env.mjs).
+      for (const name of Object.keys(env)) if (REPO_ENV.has(name.toUpperCase())) delete env[name];
       const proc = this.spawn(launch.executable, launch.argv, { cwd: session.cwd, env, name: 'xterm-256color', ...PTY_SIZE });
       entry = { session, proc, buffer: new OutputBuffer(), attached: 0, sent: 0, acknowledged: 0, inflight: [], tail: '', exited: false,
         stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), tools: new Map(), pending: [], answered: false, lastPersist: 0,

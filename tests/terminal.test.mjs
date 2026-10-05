@@ -986,3 +986,26 @@ test('an identity mismatch survives a runtime restart (BUG-9)', async t => {
   assert.equal(stored.identityMismatch, true); assert.equal(stored.nativeIdConfirmed, false);
   await assert.rejects(next.start({ projectId: f.project.id, provider: 'claude', resumeId: started.session.id }), error => error.code === 'ID_UNCONFIRMED');
 });
+
+// Phase 9 review M4: the agent runs in session.cwd; an inherited GIT_DIR, GIT_WORK_TREE or
+// GIT_INDEX_FILE (Journal started from a Git hook) must not point its Git at another repository.
+test('the agent launch environment drops repository-redirecting Git variables and keeps the rest', async t => {
+  const root = mkdtempSync(resolve(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'terminal-env-'));
+  execFileSync('git', ['init', '-b', 'main', root], { stdio: 'pipe' });
+  const store = new JournalStore(':memory:'); const project = store.openProject(root); const launches = [];
+  const manager = new TerminalManager({ store, trackMs: 0, identify: () => null, table: () => null, spawn: (executable, argv, options) => {
+    launches.push({ executable, argv, options });
+    return { onData() {}, onExit() {}, write() {}, resize() {}, kill() {} };
+  }});
+  t.after(() => { store.close(); removeLater(root); });
+  const names = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_AUTHOR_NAME'];
+  const saved = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  Object.assign(process.env, { GIT_DIR: '/elsewhere/.git', GIT_WORK_TREE: '/elsewhere', GIT_INDEX_FILE: '/elsewhere/.git/index', GIT_COMMON_DIR: '/elsewhere/.git', GIT_AUTHOR_NAME: 'Kept' });
+  try { await manager.start({ projectId: project.id, provider: 'claude', task: 'Env check' }); }
+  finally { for (const [name, value] of Object.entries(saved)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; } }
+  const { env, cwd } = launches[0].options;
+  for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) assert.equal(env[name], undefined, name);
+  assert.equal(env.GIT_AUTHOR_NAME, 'Kept'); assert.equal(env.TERM, 'xterm-256color'); assert.equal(env.TERM_PROGRAM, 'Journal'); assert.ok(env.JOURNAL_SESSION_ID);
+  assert.equal(cwd, project.root);
+  await manager.dispose();
+});

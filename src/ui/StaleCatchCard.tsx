@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api, type DiffLine, type Memory, type NoteTrust, type Project, type StaleNote } from './types';
 import { copy, tip, wrapUp } from './copy';
 import { NoteCard } from './NoteCard';
@@ -37,9 +37,27 @@ export function StaleCatchCard({ item, sessionId, project, sameFile, trust, stag
   // Announced once per choice (staged, updated, forgotten); the commit of a staged check is not news.
   useEffect(() => { if (resolution && resolution !== 'checked') onAnnounce(resolvedText(resolution)); }, [resolution]); // eslint-disable-line react-hooks/exhaustive-deps
   const message = (failure: unknown) => failure instanceof Error ? failure.message : String(failure);
+  // Focus follows the card: the button that was pressed is replaced by the resolved line (focus
+  // moves to its Undo, or to the line itself), and Undo brings back the card with Still true focused.
+  const resolvedRef = useRef<HTMLDivElement>(null); const stillTrueRef = useRef<HTMLButtonElement>(null); const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusAfter = useRef<'resolved' | 'card' | null>(null);
+  const orphaned = () => !document.activeElement || document.activeElement === document.body;
+  useLayoutEffect(() => {
+    const target = focusAfter.current; focusAfter.current = null;
+    const toResolved = () => (resolvedRef.current?.querySelector<HTMLElement>('button') ?? resolvedRef.current)?.focus();
+    // Update note… resolves while its form is still open: wait until the dialog has gone (and
+    // given focus back to the removed button, which leaves it on the page), then take it.
+    if (target === 'resolved' && document.activeElement?.closest('dialog')) {
+      let tries = 0; const wait = () => { if (document.querySelector('dialog[open]') && tries++ < 60) requestAnimationFrame(wait); else if (orphaned()) toResolved(); };
+      requestAnimationFrame(wait);
+    } else if (target === 'resolved' && orphaned()) toResolved();
+    // Still true can be disabled again (a cut change not shown yet): the card's heading takes focus then.
+    if (target === 'card' && orphaned()) { const button = stillTrueRef.current; if (button && !button.disabled) button.focus(); else headingRef.current?.focus(); }
+  }, [resolution]);
+  useEffect(() => { if (resolution === 'checked' && orphaned()) resolvedRef.current?.focus(); }, [resolution]);
 
   function stage(lines: { startLine: number; endLine: number }) {
-    setError(''); setRange(null); setResolution('staged'); if (notice) onRefused('');
+    setError(''); setRange(null); focusAfter.current = 'resolved'; setResolution('staged'); if (notice) onRefused('');
     staged.stage(key, () => {
       // Dropped before the write, so a wrap-up opened meanwhile reads the catch again.
       forgetStaleCatch(sessionId);
@@ -64,16 +82,16 @@ export function StaleCatchCard({ item, sessionId, project, sameFile, trust, stag
   }
   async function forget() {
     setError('');
-    try { const result = await api('setMemoryStatus', { id: note.id, status: 'archived' }); if (result === null) return; forgetStaleCatch(sessionId); setResolution('forgotten'); onChanged(); }
+    try { const result = await api('setMemoryStatus', { id: note.id, status: 'archived' }); if (result === null) return; forgetStaleCatch(sessionId); focusAfter.current = 'resolved'; setResolution('forgotten'); onChanged(); }
     catch (failure) { setError(message(failure)); }
   }
-  const update = () => onUpdate({ ...note, source: { ...source, ...(item.suggestedRange ?? saved) } }, () => { forgetStaleCatch(sessionId); setResolution('updated'); onChanged(); });
+  const update = () => onUpdate({ ...note, source: { ...source, ...(item.suggestedRange ?? saved) } }, () => { forgetStaleCatch(sessionId); focusAfter.current = 'resolved'; setResolution('updated'); onChanged(); });
 
   if (resolution) {
     const text = resolvedText(resolution);
-    return <div className={`wrap-resolved${resolution === 'forgotten' ? '' : ' ok'}`}>
+    return <div ref={resolvedRef} tabIndex={-1} className={`wrap-resolved${resolution === 'forgotten' ? '' : ' ok'}`}>
       <span>{text}</span>
-      {resolution === 'staged' && <button type="button" className="wrap-small" onClick={() => { if (staged.undo(key)) setResolution(null); }}>{wrapUp.undo}</button>}
+      {resolution === 'staged' && <button type="button" className="wrap-small" onClick={() => { if (staged.undo(key)) { focusAfter.current = 'card'; setResolution(null); } }}>{wrapUp.undo}</button>}
     </div>;
   }
   const shownName = fileName(item.path); const counts = hunkCounts(item.hunks);
@@ -81,7 +99,7 @@ export function StaleCatchCard({ item, sessionId, project, sameFile, trust, stag
   const headingId = `catch-${note.id}`;
   return <section className="stale-catch" aria-labelledby={headingId}>
     <div className="stale-lead">
-      <h3 id={headingId}>{wrapUp.staleHead(shownName, sameFile)}</h3>
+      <h3 id={headingId} ref={headingRef} tabIndex={-1}>{wrapUp.staleHead(shownName, sameFile)}</h3>
       <p>{wrapUp.staleBody}</p>
     </div>
     <div className="stale-body">
@@ -115,7 +133,7 @@ export function StaleCatchCard({ item, sessionId, project, sameFile, trust, stag
     {(error || notice) && <p className="form-error stale-error" role="alert">{error || notice}</p>}
     <div className="stale-actions">
       <button type="button" className="primary" onClick={update}>{wrapUp.updateNote}</button>
-      {item.reaffirm.allowed ? <button type="button" disabled={!canCheck || !!range} onClick={() => suggested ? setRange({ ...suggested }) : stage(saved)}>{wrapUp.stillTrue}</button>
+      {item.reaffirm.allowed ? <button ref={stillTrueRef} type="button" disabled={!canCheck || !!range} onClick={() => suggested ? setRange({ ...suggested }) : stage(saved)}>{wrapUp.stillTrue}</button>
         : <span className="stale-reason">{item.reaffirm.reason === 'separate-copy' ? wrapUp.separateCopyOnly : item.reaffirm.reason === 'file-missing' ? wrapUp.fileMissing : copy.otherBranch}</span>}
       <button type="button" className="ghost" title={tip.forget} onClick={() => void forget()}>{copy.forget}</button>
       {item.reaffirm.allowed && <span className="stale-help">{wrapUp.stillTrueHelp}</span>}

@@ -267,9 +267,35 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
     const observer = new ResizeObserver(() => setHeight(node.clientHeight)); observer.observe(node); return () => observer.disconnect();
   }, [preview, filter]);
   // One-shot: App clears the signal once handled, so a remount (a tab switch) never takes focus.
-  useEffect(() => { if (focusSignal) { onFocusHandled?.(); if (preview) closePreview(); else requestAnimationFrame(() => { const focused = tree.getFocusedItem?.(); (focused?.getElement() ?? scroller.current?.querySelector<HTMLElement>('[role=treeitem]'))?.focus(); }); } }, [focusSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+  // When the tree has not loaded yet (the panel was just mounted), focus waits for its first row
+  // instead of staying behind (in the terminal, for example). The wait ends, without taking focus,
+  // when the user goes on elsewhere: focus moving outside the inspector, a key pressed outside it,
+  // ⌘E / Ctrl+Shift+E (journal:focus-terminal), or 2 s. When the rows arrive, the tree takes focus
+  // only if focus is still where it was when the key was pressed, on the page, or in the inspector.
+  const focusPending = useRef<{ at: number; from: Element | null } | null>(null);
+  const inInspector = (node: EventTarget | Element | null) => node instanceof Element && !!node.closest('.inspector-root');
+  // The request is recorded at once (a frame callback can run late in a hidden or busy window,
+  // after the user has moved on); each attempt checks it is still wanted.
+  const focusTree = () => {
+    const pending = focusPending.current; if (!pending) return;
+    const active = document.activeElement;
+    if (Date.now() - pending.at > 2000 || !(active === pending.from || !active || active === document.body || inInspector(active))) { focusPending.current = null; return; }
+    const focused = tree.getFocusedItem?.(); const row = focused?.getElement() ?? scroller.current?.querySelector<HTMLElement>('[role=treeitem]');
+    if (row) { focusPending.current = null; row.focus(); }
+  };
+  useEffect(() => {
+    if (!focusSignal) return; onFocusHandled?.();
+    if (preview) closePreview(); else { focusPending.current = { at: Date.now(), from: document.activeElement }; requestAnimationFrame(focusTree); }
+  }, [focusSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const cancel = (event: Event) => { if (focusPending.current && !inInspector(event.target)) focusPending.current = null; };
+    const cancelAlways = () => { focusPending.current = null; };
+    document.addEventListener('focusin', cancel); document.addEventListener('keydown', cancel, true); window.addEventListener('journal:focus-terminal', cancelAlways);
+    return () => { document.removeEventListener('focusin', cancel); document.removeEventListener('keydown', cancel, true); window.removeEventListener('journal:focus-terminal', cancelAlways); };
+  }, []);
 
   const rows = tree.getItems();
+  useEffect(() => { if (focusPending.current && rows.length) requestAnimationFrame(focusTree); }, [rows.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const first = Math.max(0, Math.floor(top / ROW) - 8); const last = Math.min(rows.length, Math.ceil((top + height) / ROW) + 8);
   const selectedId = preview ? idOf(preview.rootKey, preview.path) : null;
 

@@ -9,7 +9,7 @@ Journal runs the user's installed `claude`, `codex` and Cursor `agent` CLIs in a
 | Codex CLI | 0.154.0 (macOS) | `PATH` lookup, `codex --version`; Windows npm shims run their Node script directly |
 | Cursor Agent CLI | 2026.10.01-e373342 (macOS): authenticated launch, first turn and exact resume checked (3 October 2026); the rest of the manual list below remains | `agent`, then `cursor-agent`, on `PATH`, then the installers' locations (`~/.local/bin`, `%LOCALAPPDATA%\cursor-agent`). Accepted only when `--version` is a Cursor build (`YYYY.MM.DD-hash`) and `--help` names Cursor; builds without `create-chat` and `--resume` are unsupported |
 
-Other versions may work. The launch bar shows the detected version and what Journal can observe.
+Other versions may work. The Welcome screen's agent rows and the New session agent cards show the detected version, the sign-in state and what Journal can observe.
 
 ## Capabilities
 | | Claude Code | Codex | Cursor |
@@ -17,7 +17,7 @@ Other versions may work. The launch bar shows the detected version and what Jour
 | Launch | `claude --session-id <UUID> [--settings <per-launch hooks>] -- <prompt>` | `codex -- <prompt>` | `agent create-chat` in the session folder, then `agent --resume=<UUID> [--mode=ask\|plan] -- <prompt>` |
 | Exact resume | `--resume <UUID>`; ID known at launch | `codex resume <UUID>` after the user confirms the exit-banner hint | `--resume=<UUID>`; ID known at launch. If the chat cannot be created first, the exit hint `To resume this session: agent --resume=<UUID>` needs confirmation. Never `resume`, `--continue` or `ls` |
 | Research mode (starting mode, not enforcement) | `--permission-mode plan`; can be left in-session | `--sandbox read-only`; approvals may escalate under approval-capable profiles | `--mode=ask` (Ask: read-only exploration); Plan uses `--mode=plan`. Builds without `--mode` cannot start in these modes |
-| Status | Working, idle, waiting for permission (hooks) | Running or exited | Running or exited |
+| Status | *Working*, *Needs approval* (naming what it asks) and *Your turn*, from hooks | *Running · output just now* or *quiet Nm*, marked *Limited status* | Same as Codex |
 | Commands | Bash command text (redacted), working directory, exit code, duration for foreground commands; background commands report unknown | Unknown | Unknown |
 | File edits | Edit, Write, MultiEdit, NotebookEdit paths | Unknown (the Changes view shows Git state) | Unknown (the Changes view shows Git state) |
 | Tests | Exit status of recognized test commands; no report parsing | Unknown | Unknown |
@@ -44,6 +44,12 @@ Hooks are added per launch through `--settings`; existing user and project hooks
 | Cursor | `curl https://cursor.com/install -fsS \| bash` | `irm 'https://cursor.com/install?win32=true' \| iex` | https://cursor.com/docs/cli/installation |
 
   Without `curl` on `PATH` the Claude and Codex rows offer the install page instead. Claude Code and Codex installed outside `PATH` are not looked up in known locations (Cursor's are); the row says so after an install.
+
+## Session state and the pending command (Phase 2, redesign)
+- **Claude Code.** Hooks report the state: *Working* after a prompt, *Your turn* when a turn ends, and *Needs approval* when Claude asks for permission (`PermissionRequest`). The request names the tool and the command (Bash) or the file path (edits); when the request leaves them out, Journal takes them from the one in-flight tool that asked, and marks that as inferred ("Inferred from the last command Claude started"). The command is redacted (credential-like values become `[redacted]`) and cut at 300 characters; paths are shown relative to the session's folder. Up to 100 open prompts are tracked; one clears only when the asking tool completes or the user answers in Journal's terminal with an answer key (a digit, Enter, Esc, Ctrl+C) or **Interrupt**. Pasted text never counts as an answer.
+- **Where it shows.** The session's row says *Needs approval* with the command, and its name says it needs attention; the session view shows a banner, *Claude is waiting for your approval · Bash: `<command>`. Answer in the terminal.*, inside a status region so screen readers announce it; ⌘J / Ctrl+Shift+J jumps to the next waiting session. Journal never answers a prompt itself.
+- **Notifications.** While the window is unfocused, one OS notification per waiting episode, Claude only, with the session name; the command is included only when **Show the command in notifications** is on in Settings (off by default, for lock-screen privacy). The macOS Dock badge and the Windows taskbar flash count waiting sessions.
+- **Codex and Cursor.** They expose no state or prompts to Journal. Their sessions show *Running* with the time of their last output (*output just now*, *quiet 2m*), marked *Limited status*: Journal sees output, not whether the agent is thinking or waiting. Output activity reaches the window at most once per 5 s per session; a resize repaint or an echo of the user's own typing within 300 ms is not activity. Their approvals happen in the terminal without a banner, notification or ⌘J stop.
 
 ## Terminal colours (light and dark)
 Each CLI draws its own interface colours; Journal never edits a provider's settings or theme. Journal's part is to describe its terminal correctly, and the runtime does it for every session, whether or not a window shows it:

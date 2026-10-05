@@ -354,8 +354,8 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 /* One Start: the only motion here is its press, and none with reduced motion. */
 .start-row{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding-top:4px}
 .start-button{display:inline-flex;align-items:center;gap:10px;height:38px;padding:0 18px;font-size:14px;transition:transform 120ms ease-out}.start-button kbd{color:var(--on-acc);border-color:transparent;padding:0}
-.start-button:not(:disabled):active{transform:scale(.97)}
-@media(prefers-reduced-motion:reduce){.start-button{transition:none}.start-button:not(:disabled):active{transform:none}}
+.start-button:not(:disabled):active:not(:focus-visible){transform:scale(.97)}
+@media(prefers-reduced-motion:reduce){.start-button{transition:none}.start-button:not(:disabled):active:not(:focus-visible){transform:none}}
 /* Live regions stay in the tree (display:none would drop them); empty, they collapse out of the flow. */
 .start-reason{font-size:var(--text-meta);color:var(--tx2)}.start-reason:empty,.preview-error:empty,.agent-note:empty{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;margin:0;padding:0}.native-stays{margin-top:-14px}
 /* What the agent will know: replaced in place as replies arrive; bars change width without a transition. */

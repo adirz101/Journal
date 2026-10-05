@@ -71,7 +71,9 @@ test('the banner names the pending command and clears after approval', async () 
     await typeLine(page, 'perm npm run test:desktop');
     await expect(page.locator('.terminal-surface')).toContainText('ASKED');
     const banner = page.locator('.attention-banner');
-    await expect(banner).toHaveAttribute('role', 'status');
+    // Phase 9: the status region stays mounted around the banner, so its text is announced when it appears.
+    await expect(page.locator('.attention-live')).toHaveAttribute('role', 'status');
+    await expect(page.locator('.attention-live > .attention-banner')).toHaveCount(1);
     await expect(banner).toContainText('Claude is waiting for your approval');
     await expect(banner).toContainText('Bash:');
     await expect(banner.locator('code')).toHaveText('npm run test:desktop');

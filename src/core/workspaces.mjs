@@ -4,6 +4,7 @@ import { basename, join, resolve } from 'node:path';
 import { inspectProject } from './project.mjs';
 import { text } from './validation.mjs';
 import { realPath } from './paths.mjs';
+import { gitEnv } from './git-env.mjs';
 
 // Workspaces: the project's own checkout, Journal-managed Git worktrees, and
 // imported existing worktrees. Rules:
@@ -15,7 +16,7 @@ import { realPath } from './paths.mjs';
 const run = (cwd, args, { timeout = 30000, allowFail = false } = {}) => {
   try {
     return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout, maxBuffer: 8 * 1024 * 1024, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1' } });
+      env: gitEnv() });
   } catch (error) { if (allowFail) return null; throw new Error(String(error.stderr || error.message).trim().split('\n').slice(-2).join(' ').slice(0, 400)); }
 };
 const canonical = path => { try { return realPath(path); } catch { return resolve(path); } };

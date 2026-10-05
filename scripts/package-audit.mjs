@@ -4,7 +4,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, relative, sep } from 'node:path';
-import { auditEntries, LEAKS, productionPackages } from './release-lib.mjs';
+import { auditEntries, isProfilingBundle, LEAKS, productionPackages } from './release-lib.mjs';
 
 const require = createRequire(import.meta.url);
 const asar = require('@electron/asar');
@@ -26,6 +26,7 @@ const problems = auditEntries([...new Set([...packed, ...unpacked])], packages);
 for (const entry of packed.filter(name => /\.(?:mjs|cjs|js|json|html|css|md)$/.test(name))) {
   const text = asar.extractFile(archive, native(entry)).toString('utf8');
   for (const leak of LEAKS) if (leak.test(text)) problems.push(`leak (${leak}): ${entry}`);
+  if (entry.startsWith('dist/') && entry.endsWith('.js') && isProfilingBundle(text)) problems.push(`React profiling build (react-dom/profiling): ${entry}`);
 }
 if (problems.length) { console.error(problems.join('\n')); process.exit(1); }
 console.log(`Package audit passed: ${packed.length} packed and ${unpacked.length} unpacked files, all on the allow-list.`);

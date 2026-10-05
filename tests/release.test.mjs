@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { auditEntries, checkTag, checksumLines, configArtifacts, expectedArtifacts, LEAKS, loadConfig, productionPackages, readVersion, tagFor, UPDATE_FILES } from '../scripts/release-lib.mjs';
+import { auditEntries, isProfilingBundle, checkTag, checksumLines, configArtifacts, expectedArtifacts, LEAKS, loadConfig, productionPackages, readVersion, tagFor, UPDATE_FILES } from '../scripts/release-lib.mjs';
 import { dataDirectory, guiPathEntries, isNetworkPath, unpackedPath, withGuiPath } from '../src/desktop/environment.mjs';
 import { removeLater } from './support/cleanup.mjs';
 import { APP_USER_MODEL_ID } from '../src/desktop/notify.mjs';
@@ -139,4 +139,11 @@ test('a dropped Windows network path (UNC) is refused before any file system cal
   // POSIX has no UNC paths: // is the root there.
   for (const path of ['/Users/me/repo', '//Users/me/repo']) assert.equal(isNetworkPath(path, 'darwin'), false, path);
   assert.equal(isNetworkPath(undefined, 'win32'), false);
+});
+
+test('the package audit recognizes a React profiling build, and the production build is not one', () => {
+  assert.equal(isProfilingBundle('function x(e){e.actualDuration=0;e.treeBaseDuration=0}'), true);
+  assert.equal(isProfilingBundle('function x(e){e.actualDuration=0}'), false);
+  const assets = new URL('../dist/assets/', import.meta.url);
+  if (existsSync(assets)) for (const name of readdirSync(assets).filter(file => file.endsWith('.js'))) assert.equal(isProfilingBundle(readFileSync(new URL(name, assets), 'utf8')), false, name);
 });

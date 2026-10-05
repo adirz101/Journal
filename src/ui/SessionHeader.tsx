@@ -47,12 +47,14 @@ export function SessionHeader({ session, state, connected, busy, canStart, now, 
 
 // Claude's open permission prompt (board B4). Journal names what it asks and
 // never answers it: the user answers in the terminal. Codex and Cursor report no prompts.
+// The status region stays mounted while a session is shown, so the banner's text is
+// announced when it appears (a live region inserted with its text often is not).
 export function AttentionBanner({ session }: { session: Session }) {
-  if (session.provider !== 'claude' || session.status !== 'waiting') return null;
+  const shown = session.provider === 'claude' && session.status === 'waiting';
   const pending = session.pending; const target = pending?.command ?? pending?.path;
-  return <div className="attention-banner" role="status">
+  return <div className="attention-live" role="status">{shown && <div className="attention-banner">
     <span className="attention-icon" aria-hidden="true">!</span>
     <p><b>{shell.approvalTitle}</b>{target && <> · {pending?.tool ? `${pending.tool}: ` : ''}<code title={pending?.inferred ? 'Inferred from the last command Claude started' : undefined}>{target}</code></>}
       {' '}{shell.answerInTerminal}<span className="banner-extra"> {shell.neverApproves}</span></p>
-  </div>;
+  </div>}</div>;
 }
