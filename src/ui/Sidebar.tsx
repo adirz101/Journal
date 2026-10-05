@@ -73,11 +73,12 @@ export function Sidebar({ pane, inOverlay = false, projects, project, sessions, 
 
   if (pane === 'rail') {
     return <aside className="sidebar sidebar-rail" id="project-sidebar" aria-label="Sidebar">
+      <button className="rail-tile" aria-label={withKeys(shell.newSession, shortcuts?.['new-session'])} title={withKeys(shell.newSession, shortcuts?.['new-session'])} aria-keyshortcuts={shortcuts?.['new-session']?.aria} disabled={!canCompose} onClick={onNew}><Icon d={ICONS.plus} /></button>
+      {onSearch && <button className="rail-tile" aria-label={withKeys(shell.search, shortcuts?.['command-palette'])} title={withKeys(shell.search, shortcuts?.['command-palette'])} aria-keyshortcuts={shortcuts?.['command-palette']?.aria} onClick={onSearch}><Icon d={ICONS.search} /></button>}
+      <span className="rsep" aria-hidden="true" />
       <button className="rail-tile rail-project" aria-label={switcherName} aria-haspopup={hasMenu} title={project?.name ?? shell.noProject}
         onClick={event => switchProject(event.currentTarget)} onContextMenu={event => { if (!project) return; event.preventDefault(); onProjectMenu(menuPosition(event)); }}>
         <img className="brand-icon" src={mark} alt="" width={26} height={26} /></button>
-      <button className="rail-tile" aria-label={withKeys(shell.newSession, shortcuts?.['new-session'])} title={withKeys(shell.newSession, shortcuts?.['new-session'])} aria-keyshortcuts={shortcuts?.['new-session']?.aria} disabled={!canCompose} onClick={onNew}><Icon d={ICONS.plus} /></button>
-      {onSearch && <button className="rail-tile" aria-label={withKeys(shell.search, shortcuts?.['command-palette'])} title={withKeys(shell.search, shortcuts?.['command-palette'])} aria-keyshortcuts={shortcuts?.['command-palette']?.aria} onClick={onSearch}><Icon d={ICONS.search} /></button>}
       <span className="rsep" aria-hidden="true" />
       {active.filter(s => isLive(s) && s.slot).map(session => {
         const state = stateFor(session, now, connected); const attention = needsYou(session) || state.tone === 'attention'; const slot = slotKeys(session, shortcuts);
@@ -96,6 +97,12 @@ export function Sidebar({ pane, inOverlay = false, projects, project, sessions, 
   }
 
   return <aside className="sidebar" id={inOverlay ? undefined : 'project-sidebar'} aria-label="Sidebar">
+    <div className="sidebar-menu">
+      <button className="new-session" onClick={onNew} disabled={!canCompose} aria-keyshortcuts={shortcuts?.['new-session']?.aria} title={withKeys(shell.newSession, shortcuts?.['new-session'])}>
+        <span className="side-icon plus" aria-hidden="true"><Icon d={ICONS.plus} size={14} /></span>{shell.newSession}{shortcuts?.['new-session'] && <kbd aria-hidden="true">{shortcuts['new-session'].label}</kbd>}</button>
+      {onSearch && <button className="sidebar-search" onClick={onSearch} aria-keyshortcuts={shortcuts?.['command-palette']?.aria} title={withKeys(shell.searchHint, shortcuts?.['command-palette'])}>
+        <span className="side-icon" aria-hidden="true"><Icon d={ICONS.search} size={17} /></span>{shell.search}{shortcuts?.['command-palette'] && <kbd aria-hidden="true">{shortcuts['command-palette'].label}</kbd>}</button>}
+    </div>
     <button className="project-switcher" aria-label={switcherName} aria-haspopup={hasMenu} title={project?.root}
       onClick={event => switchProject(event.currentTarget)} onContextMenu={event => { if (!project) return; event.preventDefault(); onProjectMenu(menuPosition(event)); }}>
       <img className="brand-icon" src={mark} alt="" width={32} height={32} />
@@ -103,10 +110,6 @@ export function Sidebar({ pane, inOverlay = false, projects, project, sessions, 
         {project && <span className="project-sub"><span className="project-path">{shortPath(project.root)}</span><span className="branch-badge">⑂ {project.branch ?? 'detached HEAD'}</span></span>}</span>
       <span className="switcher-chevron" aria-hidden="true"><Icon d={ICONS.updown} size={16} /></span>
     </button>
-    <button className="new-session" onClick={onNew} disabled={!canCompose} aria-keyshortcuts={shortcuts?.['new-session']?.aria} title={withKeys(shell.newSession, shortcuts?.['new-session'])}>
-      <span aria-hidden="true">＋</span> {shell.newSession}{shortcuts?.['new-session'] && <kbd aria-hidden="true">{shortcuts['new-session'].label}</kbd>}</button>
-    {onSearch && <button className="sidebar-search" onClick={onSearch} aria-keyshortcuts={shortcuts?.['command-palette']?.aria} title={withKeys(shell.searchHint, shortcuts?.['command-palette'])}>
-      <Icon d={ICONS.search} size={16} /> {shell.search}{shortcuts?.['command-palette'] && <kbd aria-hidden="true">{shortcuts['command-palette'].label}</kbd>}</button>}
     <nav aria-label="Sessions" className="session-nav">
       <div className="side-heading"><span>{shell.active}</span><span className="slots-used">{shell.slotsUsed(used)}<span className="slot-meter" aria-hidden="true">{[1, 2, 3, 4].map(n => <span key={n} className={n <= used ? 'on' : ''} />)}</span></span></div>
       {active.length > 0 && <div className="session-group" role="group" aria-label="Active sessions">{active.map(row)}</div>}
