@@ -49,9 +49,10 @@ also need `npm run test:desktop` with Electron-native node-pty. Distinguish fixt
 acceptance from authenticated native provider behavior. Preserve native settings,
 permissions, exact-ID resume, reviewed evidence and immutable receipts.
 
-Fixture-based GitHub Actions CI (macOS, Linux and experimental Windows) was requested by
+Fixture-based GitHub Actions CI (macOS and experimental Windows) was requested by
 the user on 2 October 2026 and is active in `.github/workflows/` since the user granted the
-`workflow` token scope on 4 October 2026. CI never uses
+`workflow` token scope on 4 October 2026. Linux was dropped from CI on 5 October 2026 because
+the product targets only macOS and Windows. CI never uses
 real provider logins, provider requests or secrets; authenticated native trials and the
 usefulness trial stay manual and local on the user's computer. Do not add nightly or
 scheduled jobs. The release workflow (requested by the user) builds unsigned artifacts and, for a

@@ -30,7 +30,7 @@ No provider argv, native setting or permission, exact-ID resume, reviewed eviden
 - the open brand item D9a (the OpenAI mark used for Codex comes from an older Simple Icons release);
 - reviewing and merging `claude/ux-redesign` into `main`, which has moved on since (for example PR #19's licence change).
 
-Verification uses local checks on the user's Mac and fixture-only GitHub Actions (CI on macOS, Linux and experimental Windows; packaging and smoke tests on macOS and Windows). CI never uses provider logins. Authenticated native trials and usefulness benchmarks are manual and local.
+Verification uses local checks on the user's Mac and fixture-only GitHub Actions (CI on macOS and experimental Windows, Linux dropped on 5 October 2026; packaging and smoke tests on macOS and Windows). CI never uses provider logins. Authenticated native trials and usefulness benchmarks are manual and local.
 
 ## Implemented before the redesign
 
@@ -230,7 +230,7 @@ Branch `claude/ux-redesign-p9b`. Fixture acceptance only; no contract above chan
 | `npm run check`, `npm run build` | Passed (the build's large-chunk warning remains) |
 | `npx playwright test` | 144 passed, 1 skipped (the Windows/Linux-only Ctrl+O check), exit 0, twice in a row (7.3 minutes each), headless, after the review fixes (before them: 139 passed and 1 skipped, twice). Earlier full runs in this part: one failed the first-run keyboard walkthrough (the default-agent race, fixed above), one failed a first-run spec on a selector the recovery announcement collided with (fixed by making it a `div`) |
 | `npm run dist:dir`, `release:audit`, `smoke:packaged` | Passed in Phase 9 part 1 (5 October 2026) with `DEVELOPER_DIR` set to Xcode 26 (305 packed and 59 unpacked files); not rerun in part 2 |
-| GitHub Actions | Fixture CI on macOS, Linux and experimental Windows; results per GitHub Actions |
+| GitHub Actions | Fixture CI on macOS and experimental Windows (Linux dropped on 5 October 2026); desktop suite sharded; results per GitHub Actions |
 
 Each phase's final results were taken twice in a row before merging. Timing-sensitive tests that once failed under heavy load (`tests/process.test.mjs` hard deadline, `tests/files-search.test.mjs` slices) were rewritten to assert structure (`settledBy`, units of work between yields) instead of wall-clock time.
 
