@@ -446,6 +446,14 @@ const sizeWindow = async (app: ElectronApplication, page: Page, width: number, h
   await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
 };
 
+// After a reload the app may reopen the shown project on its own, replacing Welcome while a click
+// is on its way: open the project only while Welcome is still there, until the composer shows.
+const openAfterReload = (page: Page) => expect.poll(async () => {
+  if (await taskBox(page).isVisible()) return true;
+  await page.locator('.welcome-primary').click({ timeout: 1000 }).catch(() => {});
+  return taskBox(page).isVisible();
+}, { timeout: 20000 }).toBe(true);
+
 test('the composer lays out sanely with a wide stored inspector and sidebar (regression)', async () => {
   const f = setup();
   execFileSync('git', ['-C', f.project, 'checkout', '-qb', 'feat/editor-core-workbench-chat-f141044']);
@@ -456,9 +464,7 @@ test('the composer lays out sanely with a wide stored inspector and sidebar (reg
     await sizeWindow(app, page, 1440, 900);
     // The user's layout: a 340 px sidebar and a 525 px inspector, stored by earlier drags.
     await page.evaluate(() => localStorage.setItem('journal-panel-widths', JSON.stringify({ project: 340, knowledge: 525 })));
-    await page.reload();
-    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
-    await expect(taskBox(page)).toBeVisible();
+    await page.reload(); await openAfterReload(page);
     await expect(page.locator('.knowledge-panel')).toBeVisible();
     const g = await expectSaneComposer(page, '1440 with stored widths');
     expect(g.main).toBeLessThan(760);
@@ -468,9 +474,7 @@ test('the composer lays out sanely with a wide stored inspector and sidebar (reg
     expect(await line.evaluate(el => { const s = getComputedStyle(el); return [s.whiteSpace, s.textOverflow]; })).toEqual(['nowrap', 'ellipsis']);
     // The defaults at 1440, 1024 and 900×640.
     await page.evaluate(() => localStorage.removeItem('journal-panel-widths'));
-    await page.reload(); await expect(page.locator('.new-session-view, .welcome, main').first()).toBeVisible();
-    if (!await taskBox(page).count()) await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
-    await expect(taskBox(page)).toBeVisible();
+    await page.reload(); await openAfterReload(page);
     await expectSaneComposer(page, '1440 default');
     await sizeWindow(app, page, 1024, 768);
     await expectSaneComposer(page, '1024 default');

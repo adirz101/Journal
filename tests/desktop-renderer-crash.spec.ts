@@ -104,7 +104,7 @@ for (const theme of ['dark', 'light'] as const) {
       // One next step, focused, with a visible ring; names and contrast pass; the page uses the
       // chosen appearance (--bg) and nothing on it animates.
       expect(await inWindow(app, '[...document.querySelectorAll("button,a,input")].map(b => b.textContent)')).toEqual(['Reload']);
-      expect(await focusedText(app)).toBe('Reload');
+      await expect.poll(() => focusedText(app)).toBe('Reload');
       await expectVisibleFocus(windowPage(app));
       await expectAccessible(windowPage(app), 'Renderer crash page');
       expect(await inWindow(app, 'getComputedStyle(document.body).backgroundColor')).toBe(theme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(15, 17, 21)');
@@ -140,7 +140,7 @@ test('every crash shows the page again, and the crash page navigates nowhere els
     for (let round = 0; round < 2; round++) {
       await crashRenderer(app);
       await showsCrashPage(app);
-      expect(await focusedText(app)).toBe('Reload');
+      await expect.poll(() => focusedText(app)).toBe('Reload');
       await pressEnter(app);
       await showsApp(app);
     }
