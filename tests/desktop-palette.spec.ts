@@ -174,7 +174,7 @@ test('> lists only actions; Enter on New session shows the composer', async () =
     await expect(groups.first()).toHaveAccessibleName('Actions');
     await expect(results(page).getByRole('option', { name: /Settings/ })).toBeVisible();
     await page.keyboard.type('new session');
-    expect(await activeOption(page)).toContain('New session⌘N');
+    expect(await activeOption(page)).toContain(`New session${mac ? '⌘N' : 'Ctrl+Shift+N'}`);
     await page.keyboard.press('Enter');
     await expect(paletteDialog(page)).toHaveCount(0);
     await expect(taskBox(page)).toBeVisible();

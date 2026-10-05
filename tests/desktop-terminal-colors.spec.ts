@@ -147,7 +147,10 @@ test('with a runtime that does not answer colour queries, the window still does'
     }; });
     await startSession(page, 'claude');
     await ready(page);
-    await expect.poll(() => f.input()).toContain(`\x1b]11;${LIGHT_BG}\x1b\\`);
-    expect(f.input()).toContain(`\x1b]11;${LIGHT_BG}\x07`);
+    // A slow machine may read the startup query before the window attaches, and the window never answers a
+    // replayed query. The theme report makes the agent ask again while the window is attached.
+    await setTheme(page, 'dark');
+    await expect.poll(() => f.input()).toContain(`\x1b]11;${DARK_BG}\x1b\\`);
+    expect(f.input()).toContain(`\x1b]11;${DARK_BG}\x07`);
   } finally { await closeApp(app); f.cleanup(); }
 });

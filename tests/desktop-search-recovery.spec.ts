@@ -114,6 +114,7 @@ test('the palette keys and View menu items send their commands', async () => {
 });
 
 test('after a forced runtime kill, bootstrap and the runtime event carry the recovery until it is acknowledged', async () => {
+  test.slow(); // two launches and, on Linux, up to two 15 s closes
   // keep: quitting leaves the (idle) runtime running, so a restarted app reconnects to the same one.
   const f = setup('recovery'); const env = { ...f.env, JOURNAL_QUIT_POLICY: 'keep' }; let { app, page } = await open(env, f.project);
   try {

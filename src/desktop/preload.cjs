@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('journal', {
     return result.value;
   },
   settle,
+  // Known before bootstrap, so the renderer's Ctrl+O works from the first frame.
+  platform: process.platform,
   onEvent: callback => {
     const listener = (_event, data) => callback(data);
     ipcRenderer.on('journal:event', listener);

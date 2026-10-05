@@ -445,15 +445,16 @@ export default function App() {
     else if (event.type === 'focus-session') focusSession.current(event.sessionId);
   }), []);
   // Windows and Linux: Ctrl+O is not routed, because the CLI owns it while the
-  // terminal has focus (xterm stops the event there). Elsewhere it opens a project.
+  // terminal has focus (xterm stops the event there). Elsewhere it opens a project,
+  // from the first frame: bootstrap can take seconds while the store and runtime start.
   useEffect(() => {
-    if (!bootstrap || bootstrap.platform === 'darwin') return;
+    if (!window.journal || window.journal.platform === 'darwin') return;
     const open = (event: KeyboardEvent) => {
       if (event.repeat || event.isComposing || !event.ctrlKey || event.shiftKey || event.altKey || event.metaKey || keyLetter(event.key, event.code) !== 'o') return;
       event.preventDefault(); command.current('open-project');
     };
     window.addEventListener('keydown', open); return () => window.removeEventListener('keydown', open);
-  }, [bootstrap]);
+  }, []);
   async function start(provider: Provider, resumeFrom?: Session) {
     const projectId = resumeFrom?.projectId ?? state?.project.id; if (!projectId) return;
     // Take the task now so text typed while this start finishes is never cleared.

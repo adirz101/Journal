@@ -150,7 +150,7 @@ export interface Recovery { at: string; runtimeId: string; total?: number; sessi
 export interface StatusDraft { scope: 'checkout' | 'branch'; memoryId: string | null; previousRevision: number | null; previousStatement: string | null; statement: string; source: { kind: 'git'; base: string | null };
   basis: { label: string; base: string | null; head: string; commitCount?: number; changedFiles?: number; uncommitted?: number; carried?: string[]; structureChanges?: string[]; unchanged?: boolean; notes: string[]; facts?: DraftFacts }; }
 declare global {
-  interface Window { journal?: { request: (action: string, input?: object) => Promise<unknown>; settle: (action: string, input?: object) => Promise<Settled>;
+  interface Window { journal?: { request: (action: string, input?: object) => Promise<unknown>; settle: (action: string, input?: object) => Promise<Settled>; platform: string;
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;
     // The OS path of a dropped file or folder (Electron webUtils.getPathForFile); '' when it did not come from the OS.
     pathForFile: (file: File) => string }; }

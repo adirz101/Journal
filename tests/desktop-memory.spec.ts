@@ -241,7 +241,7 @@ test('Check needed: scans never overlap across remounts; counts follow the proje
       (globalThis as any).__journalRequestHook = async (action: string, run: () => Promise<unknown>) => {
         if (action !== 'memoryChecks') return run();
         spy.calls++; spy.inFlight++; spy.max = Math.max(spy.max, spy.inFlight);
-        try { await new Promise(resolve => setTimeout(resolve, 250)); return await run(); } finally { spy.inFlight--; }
+        try { await (globalThis as any).__checksGate; await new Promise(resolve => setTimeout(resolve, 250)); return await run(); } finally { spy.inFlight--; }
       };
     });
     const spy = () => app.evaluate(() => ({ ...(globalThis as any).__checksSpy }) as { calls: number; inFlight: number; max: number });
@@ -269,8 +269,11 @@ test('Check needed: scans never overlap across remounts; counts follow the proje
     await expect.poll(async () => (await spy()).inFlight, { timeout: 20_000 }).toBe(0);
     await page.waitForTimeout(500);
     const before = (await spy()).calls;
+    // Hold every chunk while switching, so each unmount cancels its scan whatever the machine's speed.
+    await app.evaluate(() => { const g = globalThis as any; g.__checksGate = new Promise<void>(open => { g.__checksOpen = () => { delete g.__checksGate; open(); }; }); });
     for (let round = 0; round < 5; round++) { await inspectorTab(page, 'Memory'); await inspectorTab(page, 'Session'); }
     await inspectorTab(page, 'Memory');
+    await app.evaluate(() => (globalThis as any).__checksOpen());
     await expect(toggle(page, 'Check needed')).toHaveText('Check needed 1');
     await expect.poll(async () => (await spy()).inFlight, { timeout: 20_000 }).toBe(0);
     await page.waitForTimeout(600);

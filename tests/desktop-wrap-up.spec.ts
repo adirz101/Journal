@@ -431,6 +431,7 @@ test('an error exit leads with the last output; Copy output copies it', async ()
 });
 
 test('a released buffer says it was not saved', async () => {
+  test.slow(); // nine starts and exits: about 6 s each on the Linux runner
   const f = setup('wrap-released'); const { app, page } = await open(f.env, f.project);
   try {
     for (let n = 1; n <= 9; n++) {

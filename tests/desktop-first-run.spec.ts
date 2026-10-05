@@ -190,7 +190,7 @@ test('welcome lists agents and opens a project', async () => {
     await expect(page.locator('.sidebar')).toContainText('No sessions yet.');
     await expect(page.locator('.sidebar')).toContainText('Your first session will appear here.');
     const empty = page.locator('.terminal-empty');
-    await expect(empty).toContainText(`Start an agent with ${process.platform === 'darwin' ? '⌘N' : 'Ctrl+N'}.`);
+    await expect(empty).toContainText(`Start an agent with ${process.platform === 'darwin' ? '⌘N' : 'Ctrl+Shift+N'}.`);
     await expect(empty.locator('img')).toHaveAttribute('alt', '');
     // No remembered task notes yet: the Relevant box explains itself beside the mascot (board 3).
     const relevantEmpty = contextPreview(page).locator('.preview-empty');

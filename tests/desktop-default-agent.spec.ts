@@ -9,7 +9,7 @@ import { chooseAgent, startButton, taskBox } from './support/ui';
 // remembered choice) picks one, the default follows detection in agent order, and an agent still
 // being checked holds its place: a slow Claude Code check must not hand the default to Codex, and a
 // later providers event must never switch the agent under the user. The Claude fixture answers
-// --version after a delay while the file `slow` exists. Hidden windows, fixture CLIs only.
+// --version only once the test removes the file `slow` (at most 3.5 s, under the 4 s check timeout). Hidden windows, fixture CLIs only.
 test.skip(process.platform === 'win32', 'POSIX fixture CLIs; native Windows is verified separately');
 
 function setup(name: string, { slow = true } = {}) {
@@ -25,7 +25,7 @@ function setup(name: string, { slow = true } = {}) {
   // Prints its task; the typed line `exit` ends it with code 0.
   const fixture = (provider: string) => `#!${process.execPath}
 const fs=require('node:fs');
-if(process.argv.includes('--version')){const done=()=>{console.log('fixture 1.0');process.exit(0)};${provider === 'claude' ? `if(fs.existsSync(${JSON.stringify(slowFlag)}))setTimeout(done,2500);else done();` : 'done();'}}
+if(process.argv.includes('--version')){const done=()=>{console.log('fixture 1.0');process.exit(0)};${provider === 'claude' ? `const t0=Date.now();const wait=()=>fs.existsSync(${JSON.stringify(slowFlag)})&&Date.now()-t0<3500?setTimeout(wait,50):done();wait();` : 'done();'}}
 else{fs.appendFileSync(${JSON.stringify(ledger)},JSON.stringify({provider:${JSON.stringify(provider)},argv:process.argv.slice(2)})+'\\n');
 console.log('TASK '+(process.argv.at(-1)||'').split('\\n').at(-1));process.stdin.setRawMode(true);let line='';
 process.stdin.on('data',d=>{for(const c of d.toString()){if(c==='\\r'){if(line==='exit')process.exit(0);line=''}else line+=c}})}`;
@@ -75,6 +75,7 @@ test('a slow Claude Code check keeps the default on Claude Code; the label never
     await expect(card(page, 'Claude Code')).toContainText('Checking');
     expect(await page.evaluate(() => document.querySelector('[role=radio][aria-checked=true]')?.getAttribute('aria-label'))).toBe('Claude Code');
     await taskBox(page).pressSequentially('A task for Claude');
+    rmSync(f.slowFlag, { force: true }); // release the held check
     await expect(card(page, 'Claude Code')).not.toContainText('Checking', { timeout: 15000 });
     await expect(startButton(page)).toBeEnabled();
     expect(new Set(await startLabels(page))).toEqual(new Set(['Start Claude Code']));
@@ -88,6 +89,7 @@ test('a card the user chose, a hand-off and a remembered agent are never changed
     // The user picks Codex while Claude Code is still being checked; Claude's answer changes nothing.
     await expect(card(page, 'Claude Code')).toContainText('Checking');
     await chooseAgent(page, 'codex');
+    rmSync(f.slowFlag, { force: true }); // release the held check
     await expect(card(page, 'Claude Code')).not.toContainText('Checking', { timeout: 15000 });
     await recheckClaude(page);
     await expect(checked(page)).toHaveAccessibleName('Codex');
