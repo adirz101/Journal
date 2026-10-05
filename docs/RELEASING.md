@@ -3,7 +3,7 @@
 Status, 4 October 2026: packaging and the release pipeline are implemented and active (`.github/workflows/release.yml`; pull requests that change packaging also run it, without releasing). macOS release builds are signed with the Developer ID of Adir Zak (team N859VCGPS7) and notarized; Windows builds are unsigned.
 
 ## Version: one source
-- `version` in `package.json` (for example `0.2.0-alpha`) is the only version. Electron reports it as the app version (`CFBundleShortVersionString` on macOS, file and product version on Windows), artifact names come from it, and the release tag must be exactly `v<version>`.
+- `version` in `package.json` (for example `0.1.0-alpha`) is the only version. Electron reports it as the app version (`CFBundleShortVersionString` on macOS, file and product version on Windows), artifact names come from it, and the release tag must be exactly `v<version>`.
 - `scripts/release-check.mjs` fails a release when the tag, `package.json` and the packaging configuration's artifact names disagree, or when a platform produced missing or unexpected installers.
 
 ## Artifacts
@@ -46,7 +46,7 @@ Windows packages are built on a Windows machine or runner with `npm run dist:win
 4. The `Release` workflow verifies, packages, smoke-tests and creates a **draft** release with the six assets. Review the notes (from `.github/release-notes-template.md`), download and check the assets, then publish by hand. Workflow artifacts are kept for three days only; GitHub Releases is the download location.
 
 ## Automatic updates
-Journal updates itself with [electron-updater](https://www.electron.build/auto-update) (MIT) from GitHub Releases, starting with 0.2.0-alpha.2; earlier builds must be replaced by hand once.
+Journal updates itself with [electron-updater](https://www.electron.build/auto-update) (MIT) from GitHub Releases, starting with 0.1.0-alpha (the first published release). The earlier 0.2.0-alpha test builds compare as newer, so they never update to 0.1.0-alpha: install it by hand once.
 - The release workflow uploads the update feed with the installers: `latest-mac.yml` (macOS, pointing at the ZIP), `latest.yml` (Windows installer) and the `.blockmap` files for differential downloads. `release-check --artifacts` fails if a feed file is missing. Builds never upload anything themselves (`--publish never`); the `publish` entry in `electron-builder.config.cjs` only writes the feed location into the app.
 - Drafts are invisible to the updater: nothing reaches users until a maintainer publishes the release. Publishing is the release decision.
 - Installed builds check 30 seconds after launch and every six hours (switchable in **Data and backups**; a manual check is in Data and backups and in the menu: **Journal → Check for Updates…** on macOS, **Help → Check for Updates…** on Windows), download in the background and show **Restart to update** at the right of the terminal's bottom bar (in the sidebar while no project is open). Journal never restarts on its own; installing asks what to do with running sessions, as quitting does, shuts down normally, and only then starts the installer. On Windows sessions are always stopped for an update: the NSIS installer ends every process started from the install folder, including the runtime.
