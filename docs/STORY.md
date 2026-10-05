@@ -35,11 +35,11 @@ When one command line contains several commands, it is described by its most sig
 | --- | --- |
 | noise (hidden, kept in Details) | `cd`, `pwd`, `echo`, `printf`, `true`, `sleep`, `export`, assignments, `for`/`while`/`if` headers, function definitions |
 | explore | `cat`, `head`, `tail`, `sed` (without `-i`), `ls`, `wc`, `awk`, `jq`, `diff`, Read |
-| search | `grep`, `rg`, `ag`, `find`, `fd`, Grep, Glob |
+| search | `grep`, `rg`, `ag`, `find` (without `-delete`), `fd`, Grep, Glob |
 | git-inspect | `git status/diff/log/show/branch/blame/rev-parse/remote/ls-files/...`, `gh pr view/list/diff` |
 | edit | a file written with `>` or `>>`, `tee`, `sed -i`, `perl -i`, `cp`, `mv`, `git mv`, `git apply`, `patch`; Edit, Write, MultiEdit, NotebookEdit; `apply_patch` updates; Cursor edits |
 | create | `mkdir`, `touch`; `apply_patch` "Add File" |
-| delete | `rm`, `rmdir`, `unlink`, `git rm`; `apply_patch` "Delete File" |
+| delete | `rm`, `rmdir`, `unlink`, `git rm`, `find -delete`; `apply_patch` "Delete File" |
 | test | `npm/pnpm/yarn/bun test`, scripts named `test*` or `*:test`, `node --test`, `vitest`, `jest`, `mocha`, `playwright test`, `pytest`, `python -m pytest`, `go test`, `cargo test`, `dotnet test`, `mvn test`, `gradle test`, `make test`, `xcodebuild test` |
 | build (kind: build, typecheck, lint) | scripts named `build`, `check`, `typecheck`, `lint`; `tsc`, `mypy`, `pyright`; `eslint`, `biome`, `ruff`, `prettier --check`, `clippy`; `cargo build/check`, `go build/vet`, `make`, `vite build`, `xcodebuild` |
 | install | `npm install/ci/add/update/remove`, `pnpm/yarn/bun add/install`, `pip install`, `uv add/sync`, `poetry add`, `go get`, `go mod tidy`, `cargo add`, `brew install`, `bundle` |
@@ -51,17 +51,31 @@ When one command line contains several commands, it is described by its most sig
 | script | Anything else: `python3`, `node`, local scripts, MCP tools |
 | agent | Claude's Agent/Task tool |
 
-Package-runner prefixes are unwrapped first: `npx`, `bunx`, `pnpm dlx`, `uv run`, `poetry run`, `bundle exec`, `python -m`, `env`, `sudo`, `time`, `timeout`, `xargs`. Paths are counted only when they are literal: a word with `$`, a glob or a substitution is not a path.
+Prefixes are unwrapped first:
+- package runners: `npx`, `bunx`, `pnpm dlx`, `uv run`, `poetry run`, `bundle exec`, `python -m`;
+- `env`, `sudo`, `time`, `timeout`, `xargs`;
+- the conditions of `if`, `while` and `until`, and `!` (whose result is then unknown);
+- `sh -c` and `bash -lc` scripts.
+
+Parentheses of a subshell separate commands, so `(cd web && npm test)` is a test. `$(( ))` arithmetic is not a command. Paths are counted only when they are literal: a word with `$`, a glob or a substitution is not a path.
 
 ## What an exit status proves
 
-A shell reports one exit status for a whole line:
-- **Exit 0** proves a command passed only if nothing is piped after it and every connector from it to the end is `&&`. `npm test | tail` proves nothing about `npm test`, and neither does `npm test; echo done`.
-- **A failure** is pinned on a command only when nothing else could have failed:
-  - in a line joined only by `&&`, when it is the only command that is not noise (`cd`, `echo` and assignments are assumed not to fail) and nothing is piped after it;
-  - otherwise, when it is the last command of a line joined by `;` or `||`.
-- **A command cut at the recording limit** (300 characters) proves nothing per part. Its last fragment is not read unless the cut fell inside a heredoc body.
-- **Everything else** is "unknown". Rows say so ("result not visible", "result unknown") and never claim success.
+A shell reports one exit status for a whole line. The model:
+- A line is a series of lists separated by `;`, `&` or newlines.
+- A list is pipelines joined by `&&` and `||`, read left to right.
+- A pipeline's status is its last command's (no pipefail).
+- The line's status is its last list's, and only when that list is not run in the background (`&`).
+
+What can be proven:
+- **Exit 0:** in the last list, every pipeline after the last `||` ran and passed (all of them when there is no `||`). Only a pipeline's last command is proven, and never one negated with `!`. So `npm test | tail`, `npm test; echo done`, `npm ci || npm install` and `npm test &` prove nothing about the test or the install.
+- **A failure:** pinned on a command only when the last list is joined only by `&&` and that command ends the only pipeline that could have failed. The commands that cannot fail are `cd`, `pushd`, `popd`, `pwd`, `echo`, `printf`, `true`, `:`, `sleep`, `export`, `unset`, `set`, `clear`, `date`, `alias`, `local`, `declare`, `shopt`, `seq`, and an assignment that runs no command. Everything else can fail, including `test`, `[`, `which`, `false`, `read` and `F=$(...)`. So `[ -f x ] && npm test` failing says nothing about the tests.
+- **Commands in `$(...)`, in an earlier list, or in a line cut at the recording limit** (300 characters) are unknown. A cut line's last fragment is not read, unless the cut fell inside a heredoc body.
+- **Everything else is "unknown".** A running command says "running".
+
+Rows never claim more than this:
+- tests whose results are unknown show "result not visible";
+- a commit, push or pull-request command whose result is unknown is named as a command ("Ran git commit", "Ran git push", "Ran gh pr merge"), not as done.
 
 CI is a result only when the command's exit status means one:
 - `gh pr checks`: 0 is passed, 8 is pending, anything else is failed.
@@ -71,7 +85,12 @@ CI is a result only when the command's exit status means one:
 ## Grouping
 
 1. **Turns:** a user prompt starts a turn. Cursor without turn status reports no prompts, so its activity is one turn.
-2. **Plan (when the agent reported one):** the plan's items are the rows, in the plan's order, with their latest status (done, in progress, not started). Every atom recorded while an item was in progress belongs to it. Activity while no item is in progress falls back to step 3.
+2. **Plan (when the agent reported one):**
+   - The plan's items are the rows, in order of first appearance, with their latest status (done, in progress, not started).
+   - An item without an id is known by its title (a repeated title by its occurrence), so inserting or reordering items never moves work.
+   - Every atom recorded while an item was in progress, in the same turn, belongs to it: a new prompt ends the claim until the agent marks an item again.
+   - An item that leaves the plan after work was done under it stays, marked removed from the plan.
+   - Activity while no item is in progress falls back to step 3.
 3. **Phases (no plan):** one row per phase type in a turn, in order of first occurrence:
 
    | Phase | From | Title |
@@ -81,9 +100,9 @@ CI is a result only when the command's exit status means one:
    | install | install | Installed dependencies |
    | test | test | Ran tests |
    | build | build | Built, Type-checked, Linted or Checked build |
-   | commit | commit | Committed changes, or Commit failed |
-   | push | push | Pushed, or Push failed |
-   | pr | pr | Opened, Merged or Updated pull request, or Pull request command failed |
+   | commit | commit | Committed changes, Commit failed, or Ran git commit (result unknown) |
+   | push | push | Pushed, Push failed, or Ran git push |
+   | pr | pr | Opened, Merged or Updated pull request, Pull request command failed, or Ran gh pr … |
    | ci | ci | CI passed, CI failed, CI pending or Checked CI |
    | agent | agent | Ran sub-agents |
    | other | script, git | Ran commands (only when the turn has nothing else) |
@@ -96,7 +115,7 @@ CI is a result only when the command's exit status means one:
    - "4 runs · 3 passed · 1 failed"
    - "typecheck · lint · build · 3 runs · all passed"
 
-   The row shows at most three parts and the duration; a failure is never the part left out. The full line is in the row's tooltip.
+   The row shows at most three parts and the duration; a failure is never the part left out. Expanding the row shows the full line.
 5. **Status:**
    - test, build and CI rows: from the last run whose result is known;
    - commit, push and pull-request rows: from the last command;
@@ -141,4 +160,4 @@ Turn 1 · 11:05 PM · 2s
   - Cursor's `afterShellExecution` payload.
 
   Fixtures for Codex and Cursor follow their documentation.
-- **Retention.** A session keeps its newest 2000 timeline events. Read and Grep tools add to that count, so very long sessions lose their earliest turns.
+- **Retention.** A session keeps, and the window reads, its newest 2000 timeline events. Read and Grep tools add to that count, so very long sessions lose their earliest turns.

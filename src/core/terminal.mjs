@@ -727,7 +727,7 @@ export class TerminalManager extends EventEmitter {
     // A command reported once, at its end: Codex PostToolUse (with its exit code), Cursor afterShellExecution.
     const shell = session.provider === 'cursor' ? event.event === 'afterShellExecution' : adapter?.toolStarts === false && typeof event.command === 'string';
     if (shell && typeof event.command === 'string' && event.command) {
-      const command = redact(event.command, 300); const toolUseId = event.toolUseId ?? `${session.provider}-${entry.storyEvents}`;
+      const command = redact(event.command, 300); const toolUseId = event.toolUseId ?? `${session.provider}-${randomUUID()}`;
       const status = event.interrupted ? 'interrupted' : Number.isInteger(event.exit) ? event.exit === 0 ? 'succeeded' : 'failed' : event.failed ? 'failed' : 'unknown';
       this.record(id, 'command-start', { toolUseId, command, cwd: this.commandCwd(session, event.cwd), background: false, test: isTestCommand(command) });
       this.record(id, 'command-end', { toolUseId, status, exitCode: status === 'succeeded' ? 0 : Number.isInteger(event.exit) ? event.exit : null, durationMs: Number.isFinite(event.durationMs) ? event.durationMs : null });
@@ -749,11 +749,16 @@ export class TerminalManager extends EventEmitter {
   // TaskUpdate changes one. null when the update names nothing known.
   planSnapshot(entry, plan) {
     entry.plan ??= new Map();
-    if (plan.kind === 'todos' && Array.isArray(plan.items)) { entry.plan = new Map(plan.items.map(item => [item.id, { ...item }])); }
-    else if (plan.kind === 'create' && plan.title) { const itemId = plan.id ?? String(entry.plan.size + 1); if (entry.plan.size < 50) entry.plan.set(itemId, { id: itemId, title: plan.title, status: 'pending' }); }
+    // The hook bounded these; the runtime keeps only the known fields again (a line is untrusted input).
+    const id = value => typeof value === 'string' && value ? value.slice(0, 160) : null;
+    const title = value => typeof value === 'string' && value.trim() ? redact(value.trim(), 120) : null;
+    const status = value => ['pending', 'in_progress', 'completed'].includes(value) ? value : null;
+    if (plan.kind === 'todos' && Array.isArray(plan.items)) {
+      entry.plan = new Map(plan.items.slice(0, 50).map(item => ({ id: id(item?.id), title: title(item?.title), status: status(item?.status) })).filter(item => item.id && item.title && item.status).map(item => [item.id, item]));
+    } else if (plan.kind === 'create' && title(plan.title)) { const itemId = id(plan.id) ?? String(entry.plan.size + 1); if (entry.plan.size < 50) entry.plan.set(itemId, { id: itemId, title: title(plan.title), status: 'pending' }); }
     else if (plan.kind === 'update' && entry.plan.has(plan.id)) {
       if (plan.status === 'deleted') entry.plan.delete(plan.id);
-      else { const item = entry.plan.get(plan.id); entry.plan.set(plan.id, { ...item, ...(plan.status ? { status: plan.status } : {}), ...(plan.title ? { title: plan.title } : {}) }); }
+      else { const item = entry.plan.get(plan.id); entry.plan.set(plan.id, { ...item, ...(status(plan.status) ? { status: plan.status } : {}), ...(title(plan.title) ? { title: title(plan.title) } : {}) }); }
     } else return null;
     // A timeline event holds at most 4000 characters (store.appendEvent): the plan's first items that fit.
     const items = [...entry.plan.values()];

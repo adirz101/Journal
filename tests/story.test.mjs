@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { commandParts } from '../src/core/story/shell.mjs';
 import { classifyCommand, commitMessage } from '../src/core/story/classify.mjs';
 import { atomsOf, buildStory, partResults } from '../src/core/story/story.mjs';
+import { planItems } from '../src/runtime/adapters/common.mjs';
 
 // Event builders in Journal's timeline shape (src/core/terminal.mjs records these).
 let clock = Date.parse('2026-10-06T10:00:00.000Z');
@@ -128,7 +129,7 @@ test('commit, push and pull request rows come from the commands and their exits'
   const failed = buildStory([prompt(), ...run('git commit -m "x"', { exit: 1 }), turnEnd()]);
   assert.equal(phases(failed)[0].title, 'Commit failed');
   const unknown = buildStory([prompt(), ...run('git commit -m "x" 2>&1 | tail -1'), turnEnd()]);
-  assert.deepEqual(phases(unknown)[0].summary, ['x', 'result unknown']);
+  assert.deepEqual([phases(unknown)[0].title, phases(unknown)[0].summary], ['Ran git commit', ['x', 'result unknown']], 'Not claimed when the exit is tail\'s');
 });
 
 test('CI passes or fails only when the command proves it', () => {
@@ -171,7 +172,7 @@ test('identical input gives identical output; nothing depends on the clock or in
 });
 
 test('no semantic inference: titles come from the fixed vocabulary or the agent\'s own plan', () => {
-  const vocabulary = /^(?:Investigated|Implemented changes|Installed dependencies|Ran tests|Built|Type-checked|Linted|Checked build|Committed changes|Commit failed|Pushed|Push failed|Opened pull request|Merged pull request|Updated pull request|Pull request command failed|CI passed|CI failed|CI pending|Checked CI|Ran sub-agents|Ran commands)$/;
+  const vocabulary = /^(?:Investigated|Implemented changes|Installed dependencies|Ran tests|Built|Type-checked|Linted|Checked build|Committed changes|Commit failed|Ran git commit|Pushed|Push failed|Ran git push|Opened pull request|Merged pull request|Updated pull request|Pull request command failed|Ran gh pr(?: \w+)?|CI passed|CI failed|CI pending|Checked CI|Ran sub-agents|Ran commands)$/;
   const events = [prompt(), ...run('grep -rn "authentication bug" src', { description: 'Find the authentication bug' }), edit('src/auth.ts'), ...run('npm test -- auth', { description: 'Run auth tests' }), turnEnd()];
   const story = buildStory(events);
   for (const phase of phases(story)) assert.match(phase.title, vocabulary, phase.title);
@@ -190,8 +191,9 @@ test('approvals are counted on the turn and the open one is reported as waiting'
 test('the real Claude session reads as a short story', () => {
   const story = buildStory(fixture('claude-terminal-fit.json').events);
   assert.deepEqual(story.turns.map(t => t.phases.map(p => p.title)), [
-    ['Investigated', 'Implemented changes', 'Ran tests', 'Type-checked', 'Committed changes'], ['Checked CI', 'Merged pull request']]);
+    ['Investigated', 'Implemented changes', 'Ran tests', 'Type-checked', 'Ran git commit'], ['Checked CI', 'Ran gh pr merge']]);
   const rows = phases(story).length; assert.ok(rows >= 3 && rows <= 8, `${rows} rows`);
+  // The commit line was cut at the recording limit inside its message: the commit is named, not claimed.
   assert.ok(phases(story).find(p => p.kind === 'commit').summary.includes('Terminal: the last row and column fit inside the frame'));
   assert.equal(phases(story).find(p => p.kind === 'test').summary[1], 'result not visible', 'Its test output was piped to grep');
 });
@@ -206,4 +208,60 @@ test('Codex without a plan still gives a useful story; Cursor with sparse events
     ['Investigated', 'neutral', '1 read'], ['Implemented changes', 'neutral', '1 file changed'], ['Ran tests', 'unknown', '1 run · result not visible']]);
   assert.deepEqual(buildStory([]), { plan: null, turns: [], waiting: null, counts: { events: 0, commands: 0, hidden: 0 } });
   assert.deepEqual(atomsOf([null, { kind: 42 }, { kind: 'unknown-kind', at: at(), body: {} }]), []);
+});
+
+// ---- Review cases (PR #26) -----------------------------------------------------------------
+test('results: earlier lists, || and & prove nothing; only commands that cannot fail are excused', () => {
+  const results = (command, status) => { const parts = classifyCommand(command); return partResults(parts, status).map((r, i) => `${parts[i].category}:${r}`).join(' '); };
+  assert.equal(results('cd /tmp; npm run build && npm test', 'failed'), 'noise:unknown build:unknown test:unknown', 'The build may have failed and the tests never ran');
+  assert.equal(results('[ -f package.json ] && npm test', 'failed'), 'noise:unknown test:unknown', 'A test command [ can fail');
+  assert.equal(results('which jq && jq . a.json', 'failed'), 'noise:unknown explore:unknown');
+  assert.equal(results('F=$(git ls-files) && wc -l $F', 'failed').endsWith('explore:unknown'), true, 'An assignment that runs a command can fail');
+  assert.equal(results('export A=1 && npm test', 'failed'), 'noise:unknown test:failed');
+  assert.equal(results('npm test > log 2>&1 &', 'succeeded'), 'test:unknown', 'Run in the background');
+  assert.equal(results('npm ci || npm install', 'succeeded'), 'install:unknown install:unknown');
+  assert.equal(results('npm ci || npm install && npm test', 'succeeded'), 'install:unknown install:unknown test:passed');
+  assert.equal(results('! npm test', 'succeeded'), 'test:unknown', '! inverts the status');
+  assert.equal(results('cd w; npm test', 'succeeded'), 'noise:unknown test:passed');
+});
+
+test('shell: a commit heredoc with an apostrophe keeps the push after it; subshells, if, sh -c, arithmetic', () => {
+  const line = `git commit -m "$(cat <<'EOF'\nFix: don't crash (again)\n\nBody\nEOF\n)" && git push origin main`;
+  assert.deepEqual(classifyCommand(line).filter(p => !p.inner).map(p => p.category), ['commit', 'push']);
+  assert.equal(commitMessage(line), "Fix: don't crash (again)");
+  const story = buildStory([prompt(), ...run(line), turnEnd()]);
+  assert.deepEqual(titles(story), ['Committed changes', 'Pushed']);
+  const top = command => classifyCommand(command).filter(p => p.category !== 'noise').map(p => p.category).join(',');
+  assert.equal(top('(cd web && npm test)'), 'test');
+  assert.equal(top('if npm test; then echo ok; fi'), 'test');
+  assert.equal(top('bash -lc "npm test"'), 'test');
+  assert.equal(top('echo $(( 1 + 2 ))'), '');
+  assert.equal(top('find . -name "*.tmp" -delete'), 'delete');
+  assert.equal(top('git diff > changes.patch'), 'edit');
+  assert.equal(partResults(classifyCommand('(cd web && npm test)'), 'succeeded').at(-1), 'passed');
+  assert.equal(partResults(classifyCommand('if npm test; then echo ok; fi'), 'succeeded')[0], 'unknown');
+});
+
+test('plan items are known by title: inserting or replacing items never moves or loses work', () => {
+  const snapshot = list => ({ kind: 'plan', at: at(), body: { items: planItems(list.map(([content, status]) => ({ content, status }))) } });
+  const inserted = buildStory([prompt(), snapshot([['Investigate', 'completed'], ['Fix uploader', 'in_progress']]), edit('src/up.ts'),
+    snapshot([['Investigate', 'completed'], ['Add retry helper', 'pending'], ['Fix uploader', 'in_progress']]), ...run('npm test'), turnEnd()]);
+  assert.deepEqual(inserted.plan.map(p => [p.title, p.summary.join(' · ')]), [['Investigate', ''], ['Fix uploader', '1 file changed · tests passed'], ['Add retry helper', '']]);
+  const replaced = buildStory([prompt(), snapshot([['Old task', 'in_progress']]), edit('a.ts'), ...run('npm test'), snapshot([['New task', 'pending']]), turnEnd()]);
+  assert.deepEqual(replaced.plan.map(p => [p.title, p.status, p.summary.join(' · ')]), [['Old task', 'removed', '1 file changed · tests passed'], ['New task', 'pending', '']]);
+  assert.equal(planItems([{ content: 'Same', status: 'pending' }, { content: 'Same', status: 'pending' }]).map(i => i.id).join(','), 'title:Same,title:Same#2');
+});
+
+test('a plan item claims work only in its own turn; an empty plan is no plan', () => {
+  const story = buildStory([prompt(), plan([['Refactor', 'in_progress']]), edit('a.ts'), turnEnd('interrupted'), prompt(), ...run('git push origin main'), turnEnd()]);
+  assert.deepEqual([story.plan[0].summary, story.turns[1].phases.map(p => p.title)], [['1 file changed'], ['Pushed']]);
+  assert.equal(buildStory([prompt(), plan([]), ...run('cat a.ts'), turnEnd()]).plan, null);
+});
+
+test('rows keep their keys as events arrive; a running test says so', () => {
+  const events = [prompt(), ...run('cat a.ts'), edit('a.ts')];
+  const before = phases(buildStory(events)).map(p => p.key);
+  const after = phases(buildStory([{ kind: 'start', at: at(), body: {} }, ...events, ...run('npm test', { status: 'running' })])).map(p => p.key);
+  assert.deepEqual(after.slice(0, 2), before);
+  assert.deepEqual(phases(buildStory([prompt(), ...run('npm test', { status: 'running' })]))[0].summary, ['1 run', 'running']);
 });

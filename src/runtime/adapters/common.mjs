@@ -28,9 +28,14 @@ const PLAN_STATUSES = new Set(['pending', 'in_progress', 'completed']);
 // A plan's items (Claude's TodoWrite todos): titles and statuses only, at most 50.
 export function planItems(list) {
   if (!Array.isArray(list)) return null;
-  const items = list.slice(0, 50).map((item, index) => {
+  // Without an id an item is known by its title (a repeated title by its occurrence), not by its
+  // position: inserting an item must not move work to another one.
+  const seen = new Map();
+  const items = list.slice(0, 50).map(item => {
     const value = object(item); const title = describe(value.content ?? value.subject ?? value.title);
-    return title && PLAN_STATUSES.has(value.status) ? { id: str(value.id, 40) ?? String(index + 1), title, status: value.status } : null;
+    if (!title || !PLAN_STATUSES.has(value.status)) return null;
+    const count = (seen.get(title) ?? 0) + 1; seen.set(title, count);
+    return { id: str(value.id, 40) ?? `title:${title}${count > 1 ? `#${count}` : ''}`.slice(0, 160), title, status: value.status };
   }).filter(Boolean);
   return items;
 }

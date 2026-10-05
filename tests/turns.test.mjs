@@ -465,7 +465,7 @@ test('Story evidence: Claude descriptions, reads, sub-agents and plans; never co
   assert.equal(agent.description, 'Review the diff'); assert.ok(!JSON.stringify(agent).includes('LONG PROMPT'));
   const todos = claude.extract({ hook_event_name: 'PostToolUse', session_id: 'n', cwd, tool_name: 'TodoWrite', tool_use_id: 't4',
     tool_input: { todos: [{ content: 'Investigate issue', status: 'completed', activeForm: 'Investigating' }, { content: 'Implement fix', status: 'in_progress' }, { content: 'bad', status: 'weird' }] } });
-  assert.deepEqual(todos.plan, { kind: 'todos', items: [{ id: '1', title: 'Investigate issue', status: 'completed' }, { id: '2', title: 'Implement fix', status: 'in_progress' }] });
+  assert.deepEqual(todos.plan, { kind: 'todos', items: [{ id: 'title:Investigate issue', title: 'Investigate issue', status: 'completed' }, { id: 'title:Implement fix', title: 'Implement fix', status: 'in_progress' }] });
   const created = claude.extract({ hook_event_name: 'PostToolUse', session_id: 'n', cwd, tool_name: 'TaskCreate', tool_use_id: 't5', tool_input: { subject: 'Run tests', description: 'long' }, tool_response: { task: { id: '3' } } });
   assert.deepEqual(created.plan, { kind: 'create', title: 'Run tests', id: '3' });
   const updated = claude.extract({ hook_event_name: 'PostToolUse', session_id: 'n', cwd, tool_name: 'TaskUpdate', tool_use_id: 't6', tool_input: { taskId: '3', status: 'in_progress' } });

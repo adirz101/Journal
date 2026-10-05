@@ -447,5 +447,5 @@ export const story = {
   approvals: (n: number) => `${n} ${n === 1 ? 'approval' : 'approvals'}`,
   waiting: (label: string) => `Waiting for approval: ${label}`,
   outcome: { interrupted: 'interrupted', error: 'ended with an error' } as Record<string, string>,
-  status: { passed: 'passed', done: 'done', failed: 'failed', active: 'in progress', pending: 'not started', unknown: 'result unknown' } as Record<string, string>,
+  status: { passed: 'passed', done: 'done', failed: 'failed', active: 'in progress', pending: 'not started', removed: 'removed from the plan', unknown: 'result unknown' } as Record<string, string>,
 };

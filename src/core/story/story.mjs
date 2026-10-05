@@ -12,31 +12,38 @@ const CLASS_OF = { explore: 'investigate', search: 'investigate', 'git-inspect':
 export const phaseClass = category => CLASS_OF[category] ?? null;
 
 // ---- Results ------------------------------------------------------------------------------
-// What one recorded command proves about each simple command in it. A shell reports one exit
-// status for the whole line: exit 0 proves every command joined by && up to the end, but not one
-// whose output was piped (the pipe's last command decides) or one followed by ; or ||. A failure
-// is pinned on a command only when nothing else could have failed: it is the line's only command
-// that is not noise (cd, echo, assignments are assumed not to fail) and nothing is piped after it,
-// or it is the last command of a line joined by ; or ||.
+// What one recorded exit status proves about each simple command in the line. The shell model:
+// a line is lists separated by ; or & (or newlines); a list is pipelines joined by && and ||
+// (left to right); a pipeline's status is its last command's (no pipefail). The line's status
+// is the last list's, and only if that list is not run in the background.
+//   Exit 0: in the last list, every pipeline after the last || ran and passed (all of them when
+//   there is no ||); only a pipeline's last command is proven, and never a negated one (!).
+//   Failure: in a last list joined only by &&, the failing pipeline is the only one whose last
+//   command could fail (noise such as cd, echo or a plain assignment is assumed not to fail);
+//   with || or with several candidates, nothing is pinned.
+//   A command inside $(...), in an earlier list, or in a cut-off line is unknown.
 export function partResults(parts, status) {
-  // A command cut at the recording limit may have had more parts: only its overall status is known.
-  if (parts.some(part => part.truncated) && status !== 'interrupted' && status !== 'running') return parts.map(() => 'unknown');
-  const outer = parts.map((part, index) => ({ part, index })).filter(({ part }) => !part.inner);
   const results = parts.map(() => status === 'interrupted' ? 'interrupted' : status === 'running' ? 'running' : 'unknown');
+  if (status !== 'succeeded' && status !== 'failed') return results;
+  if (parts.some(part => part.truncated)) return results;
+  const outer = parts.map((part, index) => ({ part, index })).filter(({ part }) => !part.inner);
+  if (!outer.length) return results;
+  // The last list: after the last ; or & before the end.
+  let from = 0;
+  outer.forEach(({ part }, position) => { if (position < outer.length - 1 && (part.next === ';' || part.next === '&')) from = position + 1; });
+  const list = outer.slice(from);
+  if (list.at(-1).part.next === '&') return results;
+  // Its pipelines, and the connectors between them.
+  const pipelines = []; let current = [];
+  for (const entry of list) { current.push(entry); if (entry.part.next !== '|') { pipelines.push(current); current = []; } }
+  const connectors = pipelines.slice(0, -1).map(pipeline => pipeline.at(-1).part.next);
+  const lastOf = pipeline => pipeline.at(-1);
   if (status === 'succeeded') {
-    outer.forEach(({ part, index }, position) => {
-      const after = outer.slice(position);
-      if (part.next !== '|' && after.slice(0, -1).every(({ part: p }) => p.next === '&&')) results[index] = 'passed';
-    });
-  } else if (status === 'failed') {
-    const chained = outer.slice(0, -1).every(({ part }) => part.next === '&&');
-    const significant = outer.filter(({ part }) => part.category !== 'noise');
-    if (chained) {
-      if (significant.length === 1 && significant[0].part.next !== '|' && !outer.slice(outer.indexOf(significant[0])).some(({ part }) => part.next === '|')) results[significant[0].index] = 'failed';
-    } else {
-      const last = outer.at(-1);
-      if (last && last.part.category !== 'noise') results[last.index] = 'failed';
-    }
+    const lastOr = connectors.lastIndexOf('||');
+    pipelines.slice(lastOr === -1 ? 0 : lastOr + 2).forEach(pipeline => { const { part, index } = lastOf(pipeline); if (!part.negated) results[index] = 'passed'; });
+  } else if (connectors.every(connector => connector === '&&')) {
+    const candidates = pipelines.filter(pipeline => !lastOf(pipeline).part.safe);
+    if (candidates.length === 1 && !lastOf(candidates[0]).part.negated) results[lastOf(candidates[0]).index] = 'failed';
   }
   return results;
 }
@@ -170,7 +177,8 @@ export function describePhase(kind, atoms, extra = []) {
       title = 'Ran tests'; const passed = atoms.filter(a => a.status === 'passed').length; const failed = atoms.filter(a => a.status === 'failed').length;
       const unknown = atoms.length - passed - failed; meta.push(plural(atoms.length, 'run'));
       if (passed) meta.push(`${passed} passed`); if (failed) meta.push(`${failed} failed`);
-      if (unknown) meta.push(passed || failed ? `${unknown} unknown` : 'result not visible');
+      const running = atoms.filter(a => a.status === 'running').length; const hidden = unknown - running;
+      if (running) meta.push('running'); if (hidden) meta.push(passed || failed || running ? `${hidden} unknown` : 'result not visible');
       const last = lastKnown(atoms); status = last === 'failed' ? 'failed' : last === 'passed' ? 'passed' : 'unknown';
       break;
     }
@@ -185,21 +193,22 @@ export function describePhase(kind, atoms, extra = []) {
     }
     case 'commit': {
       const done = atoms.filter(a => a.status !== 'failed'); const last = atoms.at(-1);
-      title = last.status === 'failed' ? 'Commit failed' : 'Committed changes'; status = last.status === 'failed' ? 'failed' : last.status === 'passed' ? 'passed' : 'unknown';
+      // Committed only when an exit status proves it; otherwise the command is named, not its effect.
+      title = last.status === 'failed' ? 'Commit failed' : last.status === 'passed' ? 'Committed changes' : 'Ran git commit'; status = last.status === 'failed' ? 'failed' : last.status === 'passed' ? 'passed' : 'unknown';
       const message = [...atoms].reverse().find(a => a.message)?.message;
       if (atoms.length > 1) meta.push(plural(done.length || atoms.length, 'commit'));
       if (message) meta.push(message);
       break;
     }
     case 'push': {
-      const last = atoms.at(-1); title = last.status === 'failed' ? 'Push failed' : 'Pushed'; status = last.status === 'failed' ? 'failed' : last.status === 'passed' ? 'passed' : 'unknown';
+      const last = atoms.at(-1); title = last.status === 'failed' ? 'Push failed' : last.status === 'passed' ? 'Pushed' : 'Ran git push'; status = last.status === 'failed' ? 'failed' : last.status === 'passed' ? 'passed' : 'unknown';
       const target = [last.part?.remote, last.part?.ref].filter(Boolean).join(' '); if (target) meta.push(target);
       if (atoms.length > 1) meta.push(plural(atoms.length, 'push', 'pushes'));
       break;
     }
     case 'pr': {
       const last = atoms.at(-1); const action = last.part?.action;
-      title = last.status === 'failed' ? 'Pull request command failed' : action === 'merge' ? 'Merged pull request' : action === 'create' ? 'Opened pull request' : 'Updated pull request';
+      title = last.status === 'failed' ? 'Pull request command failed' : last.status !== 'passed' ? `Ran gh pr ${action ?? ''}`.trim() : action === 'merge' ? 'Merged pull request' : action === 'create' ? 'Opened pull request' : 'Updated pull request';
       status = last.status === 'failed' ? 'failed' : last.status === 'passed' ? 'passed' : 'unknown';
       break;
     }
@@ -220,7 +229,7 @@ export function describePhase(kind, atoms, extra = []) {
   if (others && kind !== 'other') meta.push(plural(others, 'other command'));
   if (failures && !['test', 'build', 'commit', 'push', 'ci', 'pr'].includes(kind)) { meta.push(`${failures} failed`); status = 'failed'; }
   // A milestone whose result the exit status cannot prove says so.
-  if (['commit', 'push', 'pr'].includes(kind) && status === 'unknown') meta.push('result unknown');
+  if (['commit', 'push', 'pr'].includes(kind) && status === 'unknown' && atoms.at(-1).status !== 'running') meta.push('result unknown');
   // The row shows at most three parts and the duration; the full line is kept for a tooltip.
   // A failure is never the part that is left out.
   const shown = meta.slice(0, 3); const failure = meta.slice(3).find(part => / failed$/.test(part));
@@ -228,7 +237,8 @@ export function describePhase(kind, atoms, extra = []) {
   const summary = [...shown, ...(time && !['commit', 'push', 'pr'].includes(kind) ? [time] : [])];
   if (time && !['commit', 'push', 'pr'].includes(kind)) meta.push(time);
   const items = all.slice().sort((a, b) => a.order - b.order).map(a => ({ at: a.at, label: a.label, status: a.status ?? 'unknown', category: a.category, command: a.command ?? null }));
-  return { key: `${kind}:${all[0]?.order ?? 0}`, kind, title, status, meta, summary, at: all[0]?.at ?? null, endAt: all.at(-1)?.endAt ?? all.at(-1)?.at ?? null, items };
+  // One phase of each kind per turn: the kind is a stable key (event positions shift).
+  return { key: kind, kind, title, status, meta, summary, at: all[0]?.at ?? null, endAt: all.at(-1)?.endAt ?? all.at(-1)?.at ?? null, items };
 }
 
 // The deterministic fallback: a turn's atoms → phases, one per class, in order of first
@@ -268,19 +278,21 @@ function planMeta(atoms) {
   const reads = sets.read.size || atoms.filter(a => a.category === 'explore').length; if (reads) parts.push(plural(reads, 'read'));
   return parts.slice(0, 3);
 }
-const PLAN_STATUS = { completed: 'done', in_progress: 'active', pending: 'pending' };
+const PLAN_STATUS = { completed: 'done', in_progress: 'active', pending: 'pending', removed: 'removed' };
 
 // ---- Story ---------------------------------------------------------------------------------
 export function buildStory(events) {
   const atoms = atomsOf(events);
   const turns = []; let turn = null; let hidden = 0;
-  let plan = null; let active = null; const byItem = new Map(); const order = [];
+  let plan = null; let active = null; const byItem = new Map(); const order = []; const titles = new Map();
   const newTurn = atom => { turn = { index: turns.length + 1, at: atom?.at ?? null, endAt: null, outcome: null, atoms: [], approvals: 0 }; turns.push(turn); };
   for (const atom of atoms) {
-    if (atom.category === 'turn') { newTurn(atom); continue; }
+    // A new prompt ends the plan item's claim: work in this turn belongs to an item only after
+    // the agent marks one in progress again.
+    if (atom.category === 'turn') { newTurn(atom); active = null; continue; }
     if (atom.category === 'plan') {
       plan = atom.items.map(item => ({ id: String(item.id ?? item.title), title: String(item.title ?? '').slice(0, 120), status: item.status }));
-      for (const item of plan) if (!byItem.has(item.id)) { byItem.set(item.id, []); order.push(item.id); }
+      for (const item of plan) { if (!byItem.has(item.id)) { byItem.set(item.id, []); order.push(item.id); } titles.set(item.id, item.title); }
       active = plan.find(item => item.status === 'in_progress')?.id ?? null;
       continue;
     }
@@ -293,13 +305,15 @@ export function buildStory(events) {
   // Waiting: the last approval request with nothing after it.
   const lastApproval = atoms.findLastIndex(a => a.category === 'approval');
   const waiting = lastApproval >= 0 && !atoms.slice(lastApproval + 1).some(a => !['approval', 'noise', 'plan'].includes(a.category)) ? { tool: atoms[lastApproval].tool, label: atoms[lastApproval].label } : null;
-  const planRows = plan ? order.filter(id => plan.some(item => item.id === id)).map(id => {
-    const item = plan.find(entry => entry.id === id); const itemAtoms = byItem.get(id) ?? [];
+  // The latest plan's items, plus any item that left the plan after work was done under it
+  // (shown as removed, so its work is never lost).
+  const planRows = plan?.length || [...byItem.values()].some(list => list.length) ? order.filter(id => plan?.some(item => item.id === id) || byItem.get(id)?.length).map(id => {
+    const item = plan?.find(entry => entry.id === id) ?? { id, title: titles.get(id) ?? id, status: 'removed' }; const itemAtoms = byItem.get(id) ?? [];
     const meta = planMeta(itemAtoms);
     return { key: `plan:${id}`, kind: 'plan', title: item.title, status: PLAN_STATUS[item.status] ?? 'pending', meta, summary: meta, at: itemAtoms[0]?.at ?? null,
       items: itemAtoms.map(a => ({ at: a.at, label: a.label, status: a.status ?? 'unknown', category: a.category, command: a.command ?? null })) };
   }) : null;
   const storyTurns = turns.map(t => ({ index: t.index, at: t.at, endAt: t.endAt, outcome: t.outcome, approvals: t.approvals, phases: phasesOf(t.atoms) }));
   const commands = atoms.filter(a => a.command !== undefined).length;
-  return { plan: planRows, turns: storyTurns, waiting, counts: { events: Array.isArray(events) ? events.length : 0, commands, hidden } };
+  return { plan: planRows?.length ? planRows : null, turns: storyTurns, waiting, counts: { events: Array.isArray(events) ? events.length : 0, commands, hidden } };
 }

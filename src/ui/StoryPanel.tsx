@@ -7,7 +7,7 @@ import { story as copy } from './copy';
 // The Session tab's Story: a deterministic summary of what the session's recorded events show
 // (src/core/story), the latest turn first-class, earlier turns one line each, and the raw
 // evidence (exact commands, exits, durations and the full timeline) under Details.
-const GLYPH: Record<string, string> = { passed: '✓', done: '✓', failed: '✕', active: '●', pending: '○', unknown: '·', neutral: '·', running: '·', interrupted: '·' };
+const GLYPH: Record<string, string> = { passed: '✓', done: '✓', failed: '✕', active: '●', pending: '○', removed: '–', unknown: '·', neutral: '·', running: '·', interrupted: '·' };
 const ITEMS = 12;
 const clock = (at: string | null) => at ? new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 function elapsed(from: string | null, to: string | null) {
@@ -27,6 +27,7 @@ function Row({ phase }: { phase: StoryPhase }) {
         {phase.summary.length > 0 && <span className="story-meta">{phase.summary.join(' · ')}</span>}
       </span>
     </button>
+    {open && phase.meta.length > phase.summary.length && <p className="story-full">{phase.meta.join(' · ')}</p>}
     {open && <ul className="story-items" aria-label={copy.itemsOf(phase.title)}>
       {phase.items.length > shown.length && <li className="story-more">{copy.earlierItems(phase.items.length - shown.length)}</li>}
       {shown.map((item, index) => <li key={`${item.at}-${index}`} className={`status-${item.status}`}>
@@ -48,7 +49,7 @@ export function StoryPanel({ events, waiting = false, empty }: { events: Timelin
   const latest = active.at(-1); const older = active.slice(0, -1);
   return <div className="story">
     {waiting && story.waiting && <p className="story-waiting" role="note"><span aria-hidden="true">●</span> {copy.waiting(story.waiting.label)}</p>}
-    {story.plan && <section aria-label={copy.plan}><h3 className="story-heading">{copy.plan}</h3><ol className="story-list">{story.plan.map(phase => <Row key={phase.key} phase={phase} />)}</ol></section>}
+    {story.plan?.length ? <section aria-label={copy.plan}><h3 className="story-heading">{copy.plan}</h3><ol className="story-list">{story.plan.map(phase => <Row key={phase.key} phase={phase} />)}</ol></section> : null}
     {latest ? <section aria-label={copy.turn(latest.index)}><h3 className="story-heading">{turnHeading(latest)}</h3><ol className="story-list">{latest.phases.map(phase => <Row key={phase.key} phase={phase} />)}</ol></section>
       : !story.plan && <p className="muted">{empty}</p>}
     {older.length > 0 && <>

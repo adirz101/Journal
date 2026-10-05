@@ -33,10 +33,26 @@ export function commandParts(line) {
   // Reads a balanced $( ... ) or ` ... ` from i (at the opening), returning [content, index after].
   const readSub = (i, open) => {
     if (open === '`') { let j = i + 1; while (j < text.length && text[j] !== '`') { if (text[j] === '\\') j++; j++; } return [text.slice(i + 1, j), j + 1]; }
-    let depth = 1; let j = i + 2; let quote = null;
+    let depth = 1; let j = i + 2; let quote = null; const pending = [];
     while (j < text.length && depth > 0) {
       const c = text[j];
       if (quote) { if (c === quote) quote = null; else if (c === '\\' && quote === '"') j++; }
+      // A heredoc inside the substitution ($(cat <<'EOF' ... EOF)): its body is text, so an
+      // apostrophe or a parenthesis in it (a commit message) must not be read as syntax.
+      else if (c === '<' && text[j + 1] === '<' && text[j + 2] !== '<') {
+        let k = j + 2; if (text[k] === '-') k++; while (isSpace(text[k])) k++;
+        let delimiter = ''; while (k < text.length && !isSpace(text[k]) && !'\n;&|<>()'.includes(text[k])) { if (!`'"\\`.includes(text[k])) delimiter += text[k]; k++; }
+        if (delimiter) pending.push(delimiter);
+        j = k; continue;
+      }
+      else if (c === '\n' && pending.length) {
+        j++;
+        while (pending.length) {
+          const delimiter = pending.shift();
+          while (j < text.length) { const end = text.indexOf('\n', j); const lineEnd = end === -1 ? text.length : end; const content = text.slice(j, lineEnd); j = lineEnd + 1; if (content.replace(/^\t+/, '') === delimiter) break; }
+        }
+        continue;
+      }
       else if (c === "'" || c === '"') quote = c;
       else if (c === '\\') j++;
       else if (c === '(') depth++;
@@ -76,6 +92,7 @@ export function commandParts(line) {
       i = j + 1; continue;
     }
     if (c === '\\') { inWord = true; if (text[i + 1] === '\n') { i += 2; continue; } word += text[i + 1] ?? ''; i += 2; continue; }
+    if (c === '$' && text[i + 1] === '(' && text[i + 2] === '(') { inWord = true; const end = text.indexOf('))', i + 3); const stop = end === -1 ? text.length : end + 2; word += text.slice(i, stop); i = stop; continue; }
     if (c === '$' && text[i + 1] === '(') { inWord = true; const [inner, after] = readSub(i, '$('); subs.push(inner); word += `$(${inner})`; i = after; continue; }
     if (c === '`') { inWord = true; const [inner, after] = readSub(i, '`'); subs.push(inner); word += `\`${inner}\``; i = after; continue; }
     if (c === '&' && text[i + 1] === '&') { endPart('&&'); i += 2; continue; }
@@ -103,13 +120,17 @@ export function commandParts(line) {
       redirect = c === '2' ? 'read' : 'write';
       i = j; continue;
     }
-    if ((c === '(' || c === ')' || c === '{' || c === '}') && !inWord) { endWord(); i++; continue; }
+    if (c === '(' && text[i + 1] === ')') { inWord = true; word += '()'; i += 2; continue; }
+    // A subshell's parentheses separate words even when attached: (cd web && npm test).
+    if (c === '(' || c === ')') { endWord(); i++; continue; }
+    if ((c === '{' || c === '}') && !inWord) { endWord(); i++; continue; }
     inWord = true; word += c; i++;
   }
   endPart(null);
   // Whether the text ended inside a heredoc body (its command's words are complete).
   const inBody = heredocBody;
   const result = parts.filter(part => part.words.length || part.assignments.length || part.writes.length || part.subs.length)
-    .map((part, index, all) => ({ ...part, next: index === all.length - 1 ? null : part.next }));
+    // The last part has no next command, but a trailing & still marks it as run in the background.
+    .map((part, index, all) => ({ ...part, next: index === all.length - 1 ? part.next === '&' ? '&' : null : part.next }));
   return Object.assign(result, { endedInHeredoc: inBody });
 }

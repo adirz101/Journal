@@ -12,9 +12,14 @@ export const MILESTONES = new Set(['commit', 'push', 'pr', 'ci', 'test', 'build'
 
 const NOISE = new Set(['seq', 'cd', 'pushd', 'popd', 'pwd', 'echo', 'printf', 'true', 'false', ':', 'sleep', 'export', 'unset', 'set', 'source', '.', 'clear', 'exit', 'wait',
   'read', 'alias', 'type', 'which', 'command', 'date', 'whoami', 'hash', 'shopt', 'trap', 'test', '[', '[[', 'let', 'local', 'declare', 'return', 'break', 'continue']);
-const CONTROL = new Set(['for', 'while', 'until', 'if', 'elif', 'case', 'select', 'function']);
+// Noise that cannot fail, so a failed line is never blamed on it (anything else can fail:
+// test, [, which, false, read, exit and an assignment that runs a command are not here).
+const SAFE = new Set(['cd', 'pushd', 'popd', 'pwd', 'echo', 'printf', 'true', ':', 'sleep', 'export', 'unset', 'set', 'clear', 'date', 'alias', 'local', 'declare', 'shopt', 'seq']);
+const CONTROL = new Set(['for', 'case', 'select', 'function']);
 const CLOSERS = new Set(['done', 'fi', 'esac', '}', ')', 'in']);
-const LEADERS = new Set(['do', 'then', 'else', '!', 'time', 'nohup', 'exec', 'builtin', 'noglob']);
+// Words before the command: if/while/until conditions are commands like any other.
+const LEADERS = new Set(['do', 'then', 'else', 'if', 'elif', 'while', 'until', 'time', 'nohup', 'exec', 'builtin', 'noglob']);
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash']);
 const EXPLORE = new Set(['cat', 'head', 'tail', 'less', 'more', 'bat', 'nl', 'wc', 'file', 'stat', 'ls', 'tree', 'du', 'df', 'od', 'xxd', 'hexdump', 'jq', 'yq', 'awk',
   'gawk', 'cut', 'sort', 'uniq', 'column', 'diff', 'cmp', 'realpath', 'readlink', 'basename', 'dirname', 'sed', 'md5', 'md5sum', 'shasum', 'sha256sum', 'strings', 'plutil',
   'ps', 'lsof', 'env', 'printenv', 'uname', 'tr', 'xargs', 'tee', 'comm', 'paste', 'fold', 'expand', 'base64', 'sw_vers', 'defaults', 'mdls', 'otool', 'nm', 'codesign', 'spctl']);
@@ -30,10 +35,12 @@ const VALUE_OPTIONS = { head: ['-n', '-c'], tail: ['-n', '-c'], cut: ['-f', '-d'
 const base = word => String(word ?? '').replace(/^.*\//, '');
 const options = words => words.filter(w => w.startsWith('-'));
 // Package-runner prefixes that only start another tool: the tool decides the category.
-function unwrap(words) {
+function unwrap(words, flags = {}) {
   let w = [...words];
-  for (let guard = 0; guard < 6 && w.length; guard++) {
+  for (let guard = 0; guard < 8 && w.length; guard++) {
     const head = base(w[0]);
+    // ! inverts the exit status: the command's own result is then unknown.
+    if (w[0] === '!') { flags.negated = true; w = w.slice(1); continue; }
     if (LEADERS.has(head) || head === 'sudo' || head === 'caffeinate') { w = w.slice(1); continue; }
     // Assignments after do/then (do f=$(...)) are assignments too.
     if (/^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(w[0])) { w = w.slice(1); continue; }
@@ -88,6 +95,7 @@ function classifyWords(words, writes) {
     if (verb === 'rm') return { category: 'delete', paths: paths(operands(args)) };
     if (verb === 'mv') return { category: 'edit', paths: paths(operands(args).slice(-1)) };
     if (verb === 'apply' || verb === 'am') return { category: 'edit', paths: [] };
+    if (writes.length) return { category: 'edit', paths: paths(writes) };
     if (GIT_INSPECT.has(verb) || !verb) return { category: 'git-inspect' };
     return { category: 'git', verb };
   }
@@ -148,6 +156,7 @@ function classifyWords(words, writes) {
   if (head === 'tee') return { category: 'edit', paths: paths(operands(words)) };
   if (head === 'patch' || head === 'truncate' || head === 'chmod' || head === 'chown') return { category: head === 'patch' ? 'edit' : 'script', paths: [] };
   if (writes.length) return { category: 'edit', paths: paths(writes) };
+  if (head === 'find' && rest.includes('-delete')) return { category: 'delete', paths: [] };
   if (SEARCH.has(head)) return { category: 'search' };
   if (EXPLORE.has(head)) {
     const list = operands(words);
@@ -174,10 +183,17 @@ export function classifyCommand(command) {
   if (truncated && parts.length > 1 && !parts.endedInHeredoc) parts = parts.slice(0, -1);
   const out = [];
   for (const part of parts) {
-    const words = unwrap(part.words);
-    // `for f in a b; do cat $f; done`: the header is noise, the body is classified on its own.
+    const flags = {}; const words = unwrap(part.words, flags);
+    // sh -c '...' and bash -lc '...' run a script: classify the script.
+    if (SHELLS.has(base(words[0])) && /^-[a-z]*c[a-z]*$/.test(words[1] ?? '') && typeof words[2] === 'string') {
+      const inner = classifyCommand(words[2]);
+      inner.forEach((entry, index) => out.push({ ...entry, next: index === inner.length - 1 ? part.next : entry.next, ...(flags.negated ? { negated: true } : {}), ...(truncated ? { truncated: true } : {}) }));
+      continue;
+    }
     const info = classifyWords(words, part.writes);
-    out.push({ ...info, next: part.next, words: words.slice(0, 12), ...(truncated ? { truncated: true } : {}) });
+    // Whether this part could have made the line fail: only noise that cannot fail, and plain assignments, cannot.
+    const safe = info.category === 'noise' && (words.length ? SAFE.has(base(words[0])) || CLOSERS.has(base(words[0])) || CONTROL.has(base(words[0])) || /\(\)$/.test(words[0]) : !part.subs.length);
+    out.push({ ...info, next: part.next, words: words.slice(0, 12), safe, ...(flags.negated ? { negated: true } : {}), ...(truncated ? { truncated: true } : {}) });
     // Command substitutions run commands too: $(grep -rl x) is a search.
     for (const sub of part.subs) for (const inner of classifyCommand(sub)) if (inner.category !== 'noise' && !(inner.category === 'explore' && !inner.paths?.length)) out.push({ ...inner, next: ';', inner: true });
   }
