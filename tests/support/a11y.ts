@@ -65,10 +65,14 @@ export function audit(page: Page): Promise<Audit> {
   return page.evaluate(() => {
     const visible = (el: Element) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && !el.closest('[hidden],[aria-hidden=true],[inert]'); };
     const describe = (el: Element) => `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${typeof el.className === 'string' && el.className ? `.${el.className.trim().split(/\s+/).join('.')}` : ''}`;
+    // Containers and composite widgets are not named by their content: a dialog, region, section,
+    // listbox or combobox needs aria-labelledby, aria-label or a <label> (review I3).
+    const ownNameOnly = 'dialog,[role=dialog],[role=listbox],[role=combobox],[role=region],section';
     const nameOf = (el: Element) => {
       const labelled = el.getAttribute('aria-labelledby');
       if (labelled) return labelled.split(/\s+/).map(id => document.getElementById(id)?.textContent ?? '').join(' ').trim();
       const aria = el.getAttribute('aria-label'); if (aria?.trim()) return aria.trim();
+      if (el.matches(ownNameOnly)) return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement ? [...(el.labels ?? [])].map(l => l.textContent ?? '').join(' ').trim() : '';
       if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
         const labels = [...(el.labels ?? [])].map(l => l.textContent ?? '').join(' ').trim(); if (labels) return labels;
         return el.getAttribute('title') ?? el.getAttribute('placeholder') ?? '';

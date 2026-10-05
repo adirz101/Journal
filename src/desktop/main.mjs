@@ -26,7 +26,7 @@ import { settledError } from './ipc-error.mjs';
 import electronUpdater from 'electron-updater';
 import { dataDirectory, isNetworkPath, unpackedPath, withGuiPath } from './environment.mjs';
 import { WINDOW_BACKGROUND } from './window-colors.mjs';
-import { crashPageUrl, isReloadRequest } from './crash-page.mjs';
+import { CRASH_COPY, crashPageUrl, isReloadRequest, rendererGoneAction } from './crash-page.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../..');
@@ -74,7 +74,9 @@ const recoveryFrom = hello => {
   return null;
 };
 // crashShown: the window shows the crash page (crash-page.mjs) after its renderer was lost.
-let window; let modalOpen = false; let crashShown = false; let store; let runtime; let updater; let updatePolicy = null; let closing = false; let closed = false; let runtimeState = 'connecting'; let runtimeWarning = null;
+let window; let modalOpen = false; let crashShown = false;
+// loadedSinceGone: a page finished loading since the renderer was last lost (rendererGoneAction).
+let loadedSinceGone = false; let store; let runtime; let updater; let updatePolicy = null; let closing = false; let closed = false; let runtimeState = 'connecting'; let runtimeWarning = null;
 // The development server (npm run dev, and the profiling build in tests/desktop-performance.spec.ts).
 // A released build always loads its own dist/, whatever the environment says.
 const devUrl = app.isPackaged ? undefined : process.env.JOURNAL_DEV_URL;
@@ -138,19 +140,38 @@ function createWindow() {
   // A reloading renderer re-attaches; until then the runtime keeps buffering.
   window.webContents.on('did-start-loading', () => { modalOpen = false; void runtime?.call('detach', {}).catch(() => {}); });
   // A crashed or killed renderer never detaches its panes itself. Instead of a blank window it shows
-  // the crash page (Something went wrong · Reload); sessions keep running in the runtime and
-  // reattach when the app loads again, with nothing resent. No automatic reload: a renderer that
-  // crashes on load would loop, and the page says what happened.
+  // the crash page (Something went wrong · Reload), or, when a page cannot help, a native message box
+  // (rendererGoneAction). Sessions keep running in the runtime and reattach when the app loads again,
+  // with nothing resent. Nothing reloads without the user asking.
+  window.webContents.on('did-finish-load', () => { loadedSinceGone = true; });
   window.webContents.on('render-process-gone', (_event, details) => {
     modalOpen = false; void runtime?.call('detach', {}).catch(() => {});
-    if (details?.reason === 'clean-exit' || closing || !window || window.isDestroyed()) return;
-    crashShown = true; void window.loadURL(crashPageUrl(appearance)).catch(() => {});
+    const action = rendererGoneAction({ reason: details?.reason, quitting: closing || closed, destroyed: !window || window.isDestroyed() || window.webContents.isDestroyed(),
+      crashPageShowing: crashShown, loadedSinceLastGone: loadedSinceGone });
+    loadedSinceGone = false;
+    if (action === 'page') { crashShown = true; void window.loadURL(crashPageUrl(appearance)).catch(() => {}); }
+    else if (action === 'dialog') void askAfterCrash();
   });
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   window.on('closed', () => { window = null; });
   // Windows and Linux flash the taskbar while something waits; looking at Journal stops it.
   window.on('focus', () => { if (process.platform !== 'darwin' && !headless) window?.flashFrame(false); });
   loadApp();
+}
+
+// When no page can be shown: Reload or Quit, asked once at a time. Headless test runs never show it;
+// a test answers through globalThis.__journalCrashDialog (options → response), otherwise nothing happens.
+let crashDialogOpen = false;
+async function askAfterCrash() {
+  if (crashDialogOpen || !window || window.isDestroyed()) return;
+  crashDialogOpen = true;
+  try {
+    const options = { type: 'error', buttons: [CRASH_COPY.reload, CRASH_COPY.quit], defaultId: 0, cancelId: 1, message: CRASH_COPY.dialogMessage, detail: CRASH_COPY.dialogDetail };
+    const hook = headless ? globalThis.__journalCrashDialog : null;
+    if (headless && typeof hook !== 'function') return;
+    const { response } = headless ? { response: await hook(options) } : await dialog.showMessageBox(window, options);
+    if (response === 0) loadApp(); else app.quit();
+  } finally { crashDialogOpen = false; }
 }
 
 // Loads the renderer (at start and from the crash page's Reload).

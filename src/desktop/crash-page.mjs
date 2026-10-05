@@ -7,12 +7,31 @@ import { CRASH_COLORS } from './window-colors.mjs';
 // focused on load. Reload submits a form to RELOAD_URL, a reserved address that main's
 // will-navigate handler intercepts (and always cancels) to load the app again.
 
-// Shown text; tests/copy.test.mjs checks it with the renderer's voice rules.
+// Shown text; tests/copy.test.mjs checks it with the renderer's voice rules. dialog*: the native
+// message box used when a page cannot be shown (see rendererGoneAction).
 export const CRASH_COPY = {
   title: 'Something went wrong',
   body: 'Journal’s window stopped unexpectedly; running sessions were not affected.',
   reload: 'Reload',
+  dialogMessage: 'Journal’s window could not start',
+  dialogDetail: 'Running sessions were not affected. Reload tries again; Quit closes Journal.',
+  quit: 'Quit',
 };
+
+// What main does when the window's renderer is gone (render-process-gone), as a pure decision:
+// - 'ignore': a clean exit, Journal is quitting, or the window is already destroyed;
+// - 'dialog': a page cannot help, so a native message box offers Reload or Quit. That is the case
+//   when no renderer can start (launch-failed, integrity-failure), when the crash page itself was
+//   lost, or when the renderer was lost again before any page finished loading (for example a
+//   sustained out-of-memory). Loading the crash page then would need another renderer and could
+//   repeat in a tight loop;
+// - 'page': load the crash page (Something went wrong · Reload).
+// Nothing reloads by itself: every new attempt after a dialog or the page is the user's.
+export function rendererGoneAction({ reason, quitting = false, destroyed = false, crashPageShowing = false, loadedSinceLastGone = true }) {
+  if (reason === 'clean-exit' || quitting || destroyed) return 'ignore';
+  if (reason === 'launch-failed' || reason === 'integrity-failure' || crashPageShowing || !loadedSinceLastGone) return 'dialog';
+  return 'page';
+}
 
 // .invalid never resolves (RFC 2606); the navigation is cancelled before any request.
 export const RELOAD_URL = 'https://journal.invalid/reload';
@@ -38,8 +57,8 @@ button:focus-visible{outline:2px solid ${c.ring};outline-offset:2px}
 @media (forced-colors:active){button{border-color:ButtonText}button:focus-visible{outline-color:Highlight}}
 </style></head><body><main>
 <h1>${escape(CRASH_COPY.title)}</h1>
-<p>${escape(CRASH_COPY.body)}</p>
-<form method="get" action="${RELOAD_URL}"><button type="submit" autofocus>${escape(CRASH_COPY.reload)}</button></form>
+<p id="crash-body">${escape(CRASH_COPY.body)}</p>
+<form method="get" action="${RELOAD_URL}"><button type="submit" autofocus aria-describedby="crash-body">${escape(CRASH_COPY.reload)}</button></form>
 </main></body></html>`;
 }
 

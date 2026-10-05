@@ -444,7 +444,7 @@ test('the renderer-crash page uses the plain voice and has one next step', () =>
   for (const theme of ['dark', 'light']) {
     const html = crashPageHtml(theme);
     assert.equal((html.match(/<button/g) ?? []).length, 1, 'one next step');
-    assert.match(html, /<button type="submit" autofocus>Reload<\/button>/);
+    assert.match(html, /<button type="submit" autofocus aria-describedby="crash-body">Reload<\/button>/);
     assert.doesNotMatch(html, /<script|\son[a-z]+=/i, 'no script');
     assert.match(html, /Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"/);
     assert.doesNotMatch(html, /animation|transition/, 'nothing animates');

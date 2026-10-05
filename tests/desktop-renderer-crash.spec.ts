@@ -154,3 +154,21 @@ test('every crash shows the page again, and the crash page navigates nowhere els
     expect(f.launches()).toHaveLength(0);
   } finally { await closeApp(app); f.cleanup(); }
 });
+
+test('a lost crash page never loads another one: a message box offers Reload or Quit instead (headless: a test hook)', async () => {
+  const f = setup('renderer-crash-loop'); const { app } = await open(f.env, f.project);
+  try {
+    await app.evaluate(() => { const g = globalThis as any; g.__crashDialogs = []; g.__journalCrashDialog = async (options: any) => { g.__crashDialogs.push(options); return 0; }; });
+    await crashRenderer(app);
+    await showsCrashPage(app);
+    // The crash page's own renderer is lost: no new page (that could repeat in a tight loop).
+    await crashRenderer(app);
+    await expect.poll(() => app.evaluate(() => (globalThis as any).__crashDialogs.length), { timeout: 15000 }).toBe(1);
+    const options = await app.evaluate(() => (globalThis as any).__crashDialogs[0]);
+    expect(options).toMatchObject({ buttons: ['Reload', 'Quit'], message: 'Journal’s window could not start', defaultId: 0, cancelId: 1 });
+    // Reload (the hook's answer) loads the app, once.
+    await showsApp(app);
+    expect(await app.evaluate(() => (globalThis as any).__crashDialogs.length)).toBe(1);
+    expect(f.launches()).toHaveLength(0);
+  } finally { await closeApp(app); f.cleanup(); }
+});

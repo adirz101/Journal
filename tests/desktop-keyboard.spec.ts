@@ -4,7 +4,7 @@ import { resolve, delimiter } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pressKey } from './support/keys';
 import { fixtureEnv } from './support/env';
-import { expectAccessible, expectVisibleFocus, focusRingProblem, tabTo } from './support/a11y';
+import { audit, expectAccessible, expectVisibleFocus, focusRingProblem, tabTo } from './support/a11y';
 import { taskBox } from './support/ui';
 
 // Phase 9: the three usability tasks of board B15, walked with the keyboard only.
@@ -331,6 +331,27 @@ async function reachCatch(app: ElectronApplication, page: Page, task: string, va
   await expect(card).toBeVisible({ timeout: 15000 });
   return card;
 }
+
+test('the audit reports an unnamed dialog, listbox and comboboxes, and accepts named ones (review I3)', async () => {
+  const f = setup('kbd-names'); const { app, page } = await launch(f);
+  try {
+    await page.evaluate(() => {
+      const box = document.createElement('div'); box.id = 'probe';
+      box.innerHTML = '<dialog open id="bad-dialog"><ul role="listbox" id="bad-list"><li role="option">Alpha</li></ul><input role="combobox" id="bad-input"><div role="combobox" tabindex="0" id="bad-div">Pick one</div></dialog>';
+      document.body.append(box);
+    });
+    const unnamed = (await audit(page)).unnamed;
+    for (const id of ['dialog#bad-dialog', 'ul#bad-list', 'input#bad-input', 'div#bad-div']) expect(unnamed, id).toContain(id);
+    expect(unnamed.filter(entry => entry.startsWith('li'))).toEqual([]); // an option is named by its text
+    await page.evaluate(() => {
+      document.getElementById('bad-dialog')!.setAttribute('aria-label', 'Probe'); document.getElementById('bad-list')!.setAttribute('aria-label', 'Choices');
+      document.getElementById('bad-div')!.setAttribute('aria-label', 'Choice');
+      const label = document.createElement('label'); label.htmlFor = 'bad-input'; label.textContent = 'Search'; document.getElementById('bad-dialog')!.prepend(label);
+    });
+    const after = (await audit(page)).unnamed;
+    expect(after.filter(entry => /#bad-/.test(entry))).toEqual([]);
+  } finally { await closeApp(app); f.cleanup(); }
+});
 
 test('the focus check fails a shadow-only or transparent ring and passes the real one', async () => {
   const f = setup('kbd-ring'); const { app, page } = await launch(f);

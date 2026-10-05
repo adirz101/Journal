@@ -107,7 +107,16 @@ export default function App() {
   const [provider, setProviderState] = useState<Provider>(() => defaultProvider(undefined, rememberedAgent.current ?? null));
   // Until the user (or a hand-off) picks an agent, the default follows detection: an agent still
   // being checked when bootstrap answered must not lose its place to a later one (Phase 9).
+  // The user takes the choice over by choosing a card, starting a session or editing the task box;
+  // a hand-off and a remembered agent count as chosen. A change made here clears a start error,
+  // which belonged to the previous agent.
   const providerAuto = useRef(true);
+  const autoProvider = (agents: AgentInfo[] | undefined) => {
+    if (!providerAuto.current || rememberedAgent.current) return;
+    const next = defaultProvider(agents, null);
+    setProviderState(current => { if (current !== next) setStartError(null); return next; });
+  };
+  const editTask = useCallback((value: string) => { providerAuto.current = false; setTask(value); }, []);
   const chooseProvider = (next: Provider) => { providerAuto.current = false; setProviderState(next); setStartError(null); rememberedAgent.current = next; try { localStorage.setItem('journal-agent', next); } catch { /* optional */ } };
   // === End Phase 4: composer state ===
   const [processView, setProcessView] = useState<{ id: string; title: string; command?: string; provider: Provider; kind: ProcessKind } | null>(null);
@@ -247,7 +256,7 @@ export default function App() {
   useEffect(() => {
     void api<Bootstrap>('bootstrap').then(async data => {
       hasNotesAtStart.current = data.hasNotes; settleFirstNote(data.hasNotes); // Phase 7: an upgrading install never sees the first-note moment
-      setBootstrap(latestAgents.current ? { ...data, agents: latestAgents.current } : data); setProjects(data.projects); if (!rememberedAgent.current) setProviderState(defaultProvider(latestAgents.current ?? data.agents, null)); setRuntime(data.runtime); merge([...data.active, ...data.live]); setRecovery(data.recovery ?? null);
+      setBootstrap(latestAgents.current ? { ...data, agents: latestAgents.current } : data); setProjects(data.projects); autoProvider(latestAgents.current ?? data.agents); setRuntime(data.runtime); merge([...data.active, ...data.live]); setRecovery(data.recovery ?? null);
       const remembered = (() => { try { return localStorage.getItem('journal-project'); } catch { return null; } })();
       const firstLive = slotOrder([...data.active, ...data.live]).find(isLive);
       const selected = data.projects.find(p => p.id === (firstLive?.projectId ?? remembered));
@@ -276,7 +285,7 @@ export default function App() {
       if (event.type === 'proposals') { setKnowledgeVersion(v => v + 1); return; }
       if (event.type === 'providers') {
         latestAgents.current = event.agents; setBootstrap(current => current ? { ...current, agents: event.agents } : current);
-        if (providerAuto.current && !rememberedAgent.current) setProviderState(defaultProvider(event.agents, null));
+        autoProvider(event.agents);
         // After an install or sign-in exits, main checks that provider again and tags the result.
         const after = event.after; const next = after && event.agents.find(a => a.provider === after.provider);
         if (after && next) setProviderNotes(notes => ({ ...notes, [after.provider]: providerNote(after.provider, after.kind, next) }));
@@ -448,7 +457,7 @@ export default function App() {
   async function start(provider: Provider, resumeFrom?: Session) {
     const projectId = resumeFrom?.projectId ?? state?.project.id; if (!projectId) return;
     // Take the task now so text typed while this start finishes is never cleared.
-    const submitted = resumeFrom ? '' : task; if (!resumeFrom) setTask('');
+    const submitted = resumeFrom ? '' : task; if (!resumeFrom) { providerAuto.current = false; setTask(''); }
     await run(async () => {
       try {
         if (!resumeFrom) setStartError(null);
@@ -786,7 +795,7 @@ export default function App() {
           onEdit={(scope, statement) => { const draft = scope === 'checkout' ? currentDrafts.overview : currentDrafts.branch; if (draft) setForm({ draft: { ...draft, statement }, firstRun: scope }); }} />
         : firstRunPending ? <div className="first-run-pending" aria-busy="true" />
         : !session ? <NewSessionView project={state.project} bootstrap={bootstrap} workspaces={workspaces} workspaceId={workspaceId}
-          task={task} onTask={setTask} taskRef={taskRef} references={references} disabled={disabled} onDisabled={setDisabled} provider={provider} mode={mode}
+          task={task} onTask={editTask} taskRef={taskRef} references={references} disabled={disabled} onDisabled={setDisabled} provider={provider} mode={mode}
           connected={connected} liveCount={liveCount} busy={busy} startError={startError} knowledgeVersion={knowledgeVersion} onAddReference={openReferencePicker}
           {...composerCallbacks} providers={providerProps} mark={journalMark} justRemembered={justRemembered}
           emptyTerminal={firstSession ? bootstrap?.shortcuts['new-session']?.label ?? '' : null} />
