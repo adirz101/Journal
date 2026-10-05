@@ -41,6 +41,7 @@ export class RuntimeClient extends EventEmitter {
         const reader = lineReader(message => {
           if (settled) return this.receive(message);
           if (message.error === 'Protocol mismatch') { settled = true; socket.destroy(); resolve({ mismatch: message.protocol }); return; }
+          if (message.closing === true) { settled = true; socket.destroy(); resolve({ closing: true }); return; }
           if (message.error) { fail(); return; }
           if (!challenged) {
             // The server must prove the token before we prove ours.
@@ -70,6 +71,8 @@ export class RuntimeClient extends EventEmitter {
       let launched = false; const deadline = Date.now() + this.connectTimeoutMs;
       while (Date.now() < deadline && !this.closing) {
         const connection = await this.attempt();
+        // The runtime is finishing its shutdown: wait for it to go, never launch over it.
+        if (connection?.closing) { await wait(150); continue; }
         if (connection?.mismatch !== undefined) {
           // A runtime from another Journal version still holds this data directory.
           // Never launch over it; its sessions stay running until it is stopped.

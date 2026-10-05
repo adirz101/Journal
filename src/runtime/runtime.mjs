@@ -55,7 +55,7 @@ export async function acquireLock(dataDir, path, identify = processIdentity) {
 }
 
 export async function startRuntime({ dataDir, store, spawn, platform = process.platform, identify, table, hookScript, execPath = process.execPath,
-  idleMs = 60_000, log = () => {}, exit = () => {}, observerMs = 300, stopGraceMs, resolveProvider = null }) {
+  idleMs = 60_000, log = () => {}, exit = () => {}, observerMs = 300, stopGraceMs, resolveProvider = null, drainGraceMs, launcherTimeoutSeconds, adapters, home, cursor }) {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const path = socketPath(dataDir, platform);
   const releaseLock = await acquireLock(dataDir, path, identify ?? processIdentity);
@@ -65,11 +65,13 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
   const token = randomBytes(32).toString('hex'); const runtimeId = randomUUID(); const build = buildId();
   let manager = null;
   const observers = new Observers({ dataDir, hookScript, execPath, platform, ingest: (id, event) => manager.ingest(id, event),
-    lost: id => manager.record(id, 'error', { message: 'Activity observation stopped: the hook event file reached its size limit.' }) });
+    lost: (id, reason) => manager.observerLost(id, reason === 'unreadable' ? 'Activity observation stopped: the hook event file could not be read.' : 'Activity observation stopped: the hook event file reached its size limit.'),
+    ...(drainGraceMs !== undefined ? { drainGraceMs } : {}), ...(launcherTimeoutSeconds ? { launcherTimeoutSeconds } : {}), ...(adapters ? { adapters } : {}), ...(home ? { home } : {}) });
+  if (!observers.launcher) log('hook launcher could not be written: sessions start unobserved');
   // Set by main when it launches the runtime; otherwise this checkout's version.
   const appVersion = process.env.JOURNAL_APP_VERSION || (() => { try { return JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version; } catch { return null; } })();
-  manager = new TerminalManager({ store, spawn, runtimeId, platform, appVersion, makeSettings: (session, project) => observers.settings(session, project),
-    ...(identify ? { identify } : {}), ...(table ? { table } : {}), ...(stopGraceMs ? { stopGraceMs } : {}), resolveProvider });
+  manager = new TerminalManager({ store, spawn, runtimeId, platform, appVersion, makeObserver: (session, project, options) => observers.prepare(session, project, options),
+    ...(identify ? { identify } : {}), ...(table ? { table } : {}), ...(stopGraceMs ? { stopGraceMs } : {}), ...(adapters ? { adapters } : {}), ...(cursor ? { cursor } : {}), resolveProvider });
   const recovered = await manager.recover();
   // Trace retention (timelines of long-ended sessions); knowledge is never pruned.
   try { await store.applyRetention?.({ eventDays: 90 }); } catch (error) { log(`retention skipped: ${error.message}`); }
@@ -86,7 +88,9 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
   manager.on('event', event => {
     if (event.type === 'status' && !['starting', 'running', 'waiting', 'stopping'].includes(event.session.status) && !ended.has(event.session.id)) {
       ended.add(event.session.id);
-      setTimeout(() => { try { observers.release(event.session.id); } catch (error) { log(`observer release failed: ${error.message}`); } }, 500).unref();
+      // Final events (a native ID first reported at the end, the agent's own clean end) can land
+      // just after the exit: the observer drains its file before it closes (4.7).
+      observers.drain(event.session.id).catch(error => log(`observer drain failed: ${error?.message ?? error}`));
       // Deterministic proposals after a session ends; never blocks or fails the session.
       // Always sent, naming the session and including zero, so the wrap-up stops looking at the real moment;
       // failed: generation threw, so "no suggestions" would be untrue.
@@ -130,6 +134,10 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
     socket.on('data', lineReader(async message => {
       const { id, method, params } = message ?? {};
       if (!authenticated) {
+        // A runtime that is shutting down (draining final hook events) takes no new client: the
+        // app waits for it to go and then starts the next one (runtime-client.mjs). Optional
+        // field on an error reply: an older app treats it as a failed attempt.
+        if (closing) { connection.send({ id, error: 'Runtime shutting down', closing: true }); socket.destroy(); return; }
         // hello: client nonce -> server proves the token and issues a challenge.
         if (method === 'hello' && !challenge && params?.protocol === PROTOCOL && typeof params?.nonce === 'string' && params.nonce.length >= 32) {
           challenge = { client: params.nonce, server: nonce() };
@@ -174,6 +182,15 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
       log(`shutdown (stop sessions: ${stopSessions})`);
       clearInterval(idleTimer); clearInterval(observerTimer);
       await manager.dispose({ stopSessions });
+      // Quit with "stop": the sessions this shutdown stopped started their drains when they exited;
+      // their final events (a native ID first reported at the end, the agent's own clean end) are
+      // read before the observers close, within one drain grace (DRAIN_GRACE_MS, 5.5 s; the stop
+      // itself waits at most 5 s for exits). The app does not wait for this (the shutdown request
+      // returns at once), so quitting never hangs on it. Other shutdowns (idle exit, replacement by
+      // another build) have no running sessions to stop and close at once. A desktop that only
+      // disconnects (quit with "keep running") never gets here: observation goes on in the runtime.
+      if (stopSessions) await observers.drainAll();
+      observers.closeAll();
       client?.close(); server.close();
       try { if (JSON.parse(readFileSync(infoFile, 'utf8')).runtimeId === runtimeId) rmSync(infoFile, { force: true }); } catch { /* already gone */ }
       try { if (platform !== 'win32' && lstatSync(path).ino === socketInode) rmSync(path, { force: true }); } catch { /* already gone */ }
@@ -183,7 +200,7 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
     })();
     return closing;
   }
-  return { server, manager, token, runtimeId, build, path, infoFile, shutdown };
+  return { server, manager, observers, token, runtimeId, build, path, infoFile, shutdown };
 }
 
 // Entry point when launched as a process.

@@ -27,7 +27,7 @@ function setup(name: string) {
   const fixture = `#!${process.execPath}
 const fs=require('node:fs');
 if(process.argv.includes('--version')){console.log('fixture 1.0');process.exit(0)}
-fs.appendFileSync(${JSON.stringify(ledger)},JSON.stringify({pid:process.pid,argv:process.argv.slice(2)})+'\\n');
+fs.appendFileSync(${JSON.stringify(ledger)},JSON.stringify({pid:process.pid,argv:process.argv.slice(2),session:process.env.JOURNAL_SESSION_ID,target:process.env.JOURNAL_HOOK_TARGET,token:process.env.JOURNAL_HOOK_TOKEN})+'\\n');
 console.log('TASK '+(process.argv.at(-1)||'').split('\\n').at(-1));
 process.stdin.setRawMode(true);process.stdin.resume();`;
   writeFileSync(resolve(bin, 'claude'), fixture); chmodSync(resolve(bin, 'claude'), 0o755);
@@ -91,11 +91,14 @@ async function startClaude(page: Page, task: string) {
   return matches[0];
 }
 
-// Plays one Claude hook event through Journal's own hook script and settings file.
+// Plays one Claude hook event through Journal's own launcher, settings file and hook script,
+// with the observer values the fixture CLI received in its environment (as Claude passes them on).
 function hook(env: Record<string, string>, root: string, project: string, session: { id: string; nativeId: string }, event: string, fields: Record<string, unknown> = {}) {
   const settings = JSON.parse(readFileSync(resolve(root, 'data/observers', `${session.id}.settings.json`), 'utf8'));
   const command = settings.hooks[event][0].hooks[0].command as string;
-  execFileSync('/bin/sh', ['-c', command], { input: JSON.stringify({ hook_event_name: event, session_id: session.nativeId, cwd: project, ...fields }), env: { ...env, JOURNAL_SESSION_ID: session.id }, stdio: ['pipe', 'ignore', 'ignore'] });
+  const launch = readFileSync(resolve(root, 'launches.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)).find(row => row.session === session.id);
+  const observer = { JOURNAL_SESSION_ID: session.id, JOURNAL_HOOK_TARGET: launch.target, JOURNAL_HOOK_TOKEN: launch.token };
+  execFileSync('/bin/sh', ['-c', command], { input: JSON.stringify({ hook_event_name: event, session_id: session.nativeId, cwd: project, ...fields }), env: { ...env, ...observer }, stdio: ['pipe', 'ignore', 'ignore'] });
 }
 const bash = (toolUseId: string) => ({ tool_name: 'Bash', tool_use_id: toolUseId, tool_input: { command: COMMAND } });
 

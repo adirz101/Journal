@@ -33,7 +33,8 @@ export function socketPath(dataDir, platform = process.platform) {
 
 // Code identity of the process owner. A runtime from another build keeps its
 // sessions; the app reports the mismatch instead of silently mixing versions.
-const owned = ['runtime/runtime.mjs', 'runtime/protocol.mjs', 'runtime/observers.mjs', 'core/terminal.mjs', 'core/agents.mjs', 'core/process.mjs'];
+const owned = ['runtime/runtime.mjs', 'runtime/protocol.mjs', 'runtime/observers.mjs', 'core/terminal.mjs', 'core/agents.mjs', 'core/process.mjs',
+  'runtime/adapters/index.mjs', 'runtime/adapters/common.mjs', 'runtime/adapters/claude.mjs', 'runtime/adapters/codex.mjs', 'runtime/adapters/cursor.mjs'];
 export function buildId() {
   const hash = createHash('sha256');
   for (const file of owned) { try { hash.update(readFileSync(fileURLToPath(new URL(`../${file}`, import.meta.url)))); } catch { hash.update(file); } }

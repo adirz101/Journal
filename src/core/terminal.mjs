@@ -10,6 +10,7 @@ import { referenceEvent } from './references.mjs';
 import { realPath } from './paths.mjs';
 import { REPO_ENV } from './git-env.mjs';
 import { agentTerminalEnv, APPEARANCES, QueryResponder, themeReport } from './terminal-queries.mjs';
+import { ADAPTERS } from '../runtime/adapters/index.mjs';
 
 export const MAX_SESSIONS = 4;
 export const IDLE_SETTLE_MS = 750;
@@ -17,6 +18,34 @@ export const ECHO_MS = 300;          // output this soon after input or resize i
 export const QUIET_MS = 10_000;      // output after this much quiet is a resume edge
 export const ACTIVITY_THROTTLE_MS = 5_000;
 export const LIVE_STATES = ['starting', 'running', 'waiting', 'stopping'];
+// Observation (docs/superpowers/plans/2026-10-05-codex-cursor-hooks.md, 4.4). Definitions:
+// - pending: the launch registered hooks and no event has been applied yet.
+// - live: an applied parent event arrived (first event, or any event after loss). Only a live
+//   observer lets the UI present a current state.
+// - unobserved: the hooks will not report, by positive evidence only: the launch registered
+//   nothing (provider not supported, gate failed), or a clearly submitted first prompt got
+//   terminal output but no event within UNOBSERVED_GRACE_MS. Later gates (version, trust,
+//   plugin refused) report through observationUnavailable().
+// - lost: the hooks did report, then the observer reported a failure (file cap, unreadable
+//   file) or a provider gate reported it unavailable. Never from silence.
+// Silence never changes the observation: a long tool run or an unanswered approval can be
+// silent for a long time. It only ages confidence: lastObserved keeps the last applied fact
+// and its time, and the UI says when Working has not been confirmed recently
+// (src/ui/sessionState.ts). A pending approval is cleared only by an event or an answer.
+export const OBSERVATIONS = ['pending', 'live', 'unobserved', 'lost'];
+export const UNOBSERVED_GRACE_MS = 20_000;
+export const OBSERVATION_CHECK_MS = 5_000;
+// lastObserved is sent with a status at most this old, so the window can age it accurately.
+const OBSERVED_REFRESH_MS = 60_000;
+// Turns (4.3): settled turn keys and applied event signatures kept per session.
+const MAX_SETTLED_TURNS = 256; const MAX_SIGNATURES = 512; const MAX_CHILDREN = 100;
+// One outcome per turn: the strongest wins, whatever the order. A turn replaced by a
+// newer one before it reported an end is 'superseded' (weaker than any reported outcome).
+const PRECEDENCE = { superseded: 0, completed: 1, error: 2, interrupted: 3 };
+const stronger = (a, b) => (PRECEDENCE[b] ?? -1) > (PRECEDENCE[a] ?? -1) ? b : a;
+// What an approval request asks, to recognise the same request while it is still open.
+const requestKey = event => [event.tool ?? '', event.command ?? '', event.filePath ?? ''].join('\u0000');
+const bounded = (collection, limit) => { while (collection.size > limit) collection.delete(collection.keys().next().value); };
 // Exited sessions whose output stays in memory for review (BUG-8): with four live
 // sessions, at most 12 × 256 KiB ≈ 3 MiB. Output is never written to disk.
 export const RETAINED_EXITED = 8;
@@ -96,22 +125,25 @@ export const providerResolver = (env = process.env, platform = process.platform)
 // only entries this manager spawned (and that have not exited) accept input or
 // signals. Output stays in bounded memory; nothing raw is persisted.
 export class TerminalManager extends EventEmitter {
-  constructor({ store, spawn, makeSettings = () => null, runtimeId = randomUUID(), platform = process.platform, appVersion = null,
+  constructor({ store, spawn, makeObserver = () => null, runtimeId = randomUUID(), platform = process.platform, appVersion = null,
     identify = processIdentity, table = processTable, verifiedSignal = signalVerified, alive = isAlive, stopGraceMs = 3000, trackMs = 5000,
     cursor = { find: () => findCursor(process.env), createChat: (path, cwd) => createChat(path, cwd, process.env) },
     // Where a Claude or Codex CLI is now (PATH, PATHEXT on Windows), or null; checked before any
     // start. The runtime passes providerResolver(); unit tests with an injected spawn pass their own
     // or none (then the spawn alone decides, as before).
-    resolveProvider = null, env = process.env }) {
-    super(); this.cursor = cursor; this.resolveProvider = resolveProvider; this.env = env; this.store = store; this.spawn = spawn; this.makeSettings = makeSettings; this.runtimeId = runtimeId; this.platform = platform;
+    resolveProvider = null, env = process.env, unobservedGraceMs = UNOBSERVED_GRACE_MS, observationMs = OBSERVATION_CHECK_MS, adapters = ADAPTERS }) {
+    super(); this.cursor = cursor; this.resolveProvider = resolveProvider; this.env = env; this.store = store; this.spawn = spawn; this.makeObserver = makeObserver; this.runtimeId = runtimeId; this.platform = platform;
+    this.unobservedGraceMs = unobservedGraceMs; this.adapters = adapters;
     this.identify = identify; this.table = table; this.verifiedSignal = verifiedSignal; this.alive = alive; this.stopGraceMs = stopGraceMs;
     // Journal's light or dark appearance: main sends it with each start and on every switch.
     this.appearance = 'dark'; this.appVersion = appVersion;
     // Slots 1-4 are reserved synchronously at start so concurrent starts never share one.
     this.entries = new Map(); this.reservedSlots = new Set(); this.flushPending = false; this.disposed = false; this.settling = new Set();
     this.tracker = trackMs ? setInterval(() => { void this.trackDescendants().catch(() => {}); void this.recheckOrphans().catch(() => {}); }, trackMs) : null; this.tracker?.unref?.();
+    this.observationTimer = observationMs ? setInterval(() => this.checkObservation(), observationMs) : null; this.observationTimer?.unref?.();
   }
   entry(id) { return this.entries.get(id) ?? null; }
+  adapter(provider) { return Object.hasOwn(this.adapters, provider) ? this.adapters[provider] : null; }
   liveEntries() { return [...this.entries.values()].filter(entry => !entry.exited); }
   list() { return [...this.entries.values()].map(entry => ({ ...entry.session })); }
   // The lowest slot not held by a live session of this runtime or a start in progress.
@@ -130,7 +162,7 @@ export class TerminalManager extends EventEmitter {
     this.reservedSlots.add(slot);
     try { return await this.launch({ ...request, slot }); } finally { this.reservedSlots.delete(slot); }
   }
-  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, plan = false, disabled = [], references = [], slot = null, cliVersion = null, appearance }) {
+  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, plan = false, disabled = [], references = [], slot = null, cliVersion = null, hooksEnabled = null, appearance }) {
     if (!PROVIDERS.includes(provider)) throw new Error('Unknown agent provider');
     if (APPEARANCES.includes(appearance)) this.setAppearance(appearance);
     if (typeof research !== 'boolean' || typeof plan !== 'boolean') throw new Error('Invalid mode option');
@@ -183,6 +215,8 @@ export class TerminalManager extends EventEmitter {
       // An additional-folder session runs in that folder with its own Git identity (if any).
       branch: project.cwd ? project.cwdBranch ?? null : project.branch, head: project.cwd ? project.cwdHead ?? null : project.head, cwd, workspaceId, research, plan, baseline, runtimeId: this.runtimeId, activity: null,
       slot, nativeIdSource, identityMismatch: false, lastOutputAt: null, pending: null,
+      // What Journal observes of this launch (OBSERVATIONS); lastObserved: the last applied fact, as past evidence.
+      observation: 'pending', lastObserved: null, children: 0,
       // The CLI version main detected for this launch (a resume records the version at resume time).
       cliVersion: typeof cliVersion === 'string' ? cliVersion.slice(0, 64) : null };
     let prompt = task;
@@ -196,18 +230,33 @@ export class TerminalManager extends EventEmitter {
     let entry = null;
     try {
       if (this.disposed) throw fail(ERROR_CODES.SHUTTING_DOWN, 'Journal is shutting down');
-      const settingsFile = provider === 'claude' ? this.makeSettings(session, project) : null;
-      const launch = buildAgentLaunch({ provider, nativeId: session.nativeId, resume: !!prior, prompt, settingsFile, research, plan, executable: cursor?.path });
+      // The provider's adapter registers this launch's hooks (Claude: --settings); null when it is not observed.
+      // Codex: what the desktop's detection read (`codex features list`). Cursor: whether this CLI's own
+      // help lists --plugin-dir (an older Cursor would refuse the flag, so nothing is registered then).
+      const observing = provider === 'cursor' ? cursor?.supports?.pluginDir === true : typeof hooksEnabled === 'boolean' ? hooksEnabled : null;
+      const observer = this.makeObserver(session, project, { hooksEnabled: observing });
+      if (!observer) session.observation = 'unobserved';
+      // What this launch's hooks can report (Cursor without level 2: no turn end; never approvals).
+      session.observes = observer?.observes ?? null;
+      const launch = buildAgentLaunch({ provider, nativeId: session.nativeId, resume: !!prior, prompt, settingsFile: observer?.settingsFile ?? null, hookArgs: observer?.args ?? [], research, plan, executable: cursor?.path });
       // The agent's terminal is Journal's, not the one Journal was started from: TERM_PROGRAM names
       // Journal, and COLORFGBG (read by Claude Code in theme Auto and by Cursor) is Journal's appearance.
+      // The hook launcher reads the observer's target and token from here (the command is the same for every launch).
+      // An inherited observer (Journal started from a Journal session's agent) is never passed on:
+      // only an observed launch gets a target and token, its own.
       const env = { ...agentTerminalEnv(process.env, { appearance: this.appearance, version: this.appVersion }), JOURNAL_SESSION_ID: session.id };
-      delete env.ELECTRON_RUN_AS_NODE; delete env.JOURNAL_APP_VERSION;
+      delete env.ELECTRON_RUN_AS_NODE; delete env.JOURNAL_APP_VERSION; delete env.JOURNAL_HOOK_TARGET; delete env.JOURNAL_HOOK_TOKEN;
+      Object.assign(env, observer?.env ?? {});
       // The agent works in session.cwd: Git variables that point at another repository are not passed on (git-env.mjs).
       for (const name of Object.keys(env)) if (REPO_ENV.has(name.toUpperCase())) delete env[name];
       const proc = this.spawn(launch.executable, launch.argv, { cwd: session.cwd, env, name: 'xterm-256color', ...PTY_SIZE });
       entry = { session, proc, buffer: new OutputBuffer(), attached: 0, sent: 0, acknowledged: 0, inflight: [], tail: '', exited: false,
         stopping: false, waiters: [], descendants: new Map(), identityAmbiguous: false, commands: new Map(), tools: new Map(), pending: [], answered: false, lastPersist: 0,
-        lastInputAt: 0, lastResizeAt: 0, lastActivityEmit: 0, activityTimer: null, size: { cols: PTY_SIZE.cols, rows: PTY_SIZE.rows }, queries: new QueryResponder() };
+        lastInputAt: 0, lastResizeAt: 0, lastActivityEmit: 0, activityTimer: null, size: { cols: PTY_SIZE.cols, rows: PTY_SIZE.rows }, queries: new QueryResponder(),
+        // Turns and observation: the current turn key, settled keys with their outcome, applied event
+        // signatures, child IDs seen, when lastObserved was last sent and when a prompt was first submitted.
+        currentTurn: null, settled: new Map(), signatures: new Set(), childIds: new Set(), observedSentAt: 0,
+        promptAt: prompt ? Date.now() : 0, typedText: false };
       this.entries.set(session.id, entry);
       session.status = 'running'; session.pid = Number.isInteger(proc.pid) ? proc.pid : null;
       // Identity is read asynchronously, and again on first output once the CLI is running.
@@ -342,13 +391,23 @@ export class TerminalManager extends EventEmitter {
     // Claude's prompt answer keys: a digit selects, Enter confirms, Esc or Ctrl+C dismisses (deny with feedback ends with Enter).
     // Pasted text never counts. The only open prompt settles at once; with several, the next tool event settles one.
     const dismiss = data === '\x1b' || data === '\x03';
-    if (entry.pending.length && !data.startsWith('\x1b[200~') && (data.includes('\r') || dismiss || /^[1-9]$/.test(data))) entry.answered = true;
+    const extra = this.adapter(entry.session.provider)?.answerKeys;
+    if (entry.pending.length && !data.startsWith('\x1b[200~') && (data.includes('\r') || dismiss || /^[1-9]$/.test(data) || (extra && extra.test(data)))) entry.answered = true;
     entry.proc.write(data); entry.lastInputAt = Date.now();
-    if (printable(data)) entry.typedThisTurn = true;
+    if (printable(data)) { entry.typedThisTurn = true; entry.typedText = true; }
+    // A prompt is clearly submitted when Enter follows typed text (not inside a paste).
+    const submitted = entry.typedText && data.includes('\r') && !data.startsWith('\x1b[200~') && !entry.pending.length;
+    if (submitted) { entry.typedText = false; entry.promptAt ||= entry.lastInputAt; }
     const { session } = entry;
+    // A provider without a turn-start event (Cursor): a prompt submitted at Your turn starts a turn no
+    // hook announces, so the state becomes unknown until the next event, never a stale Your turn.
+    if (submitted && session.status === 'running' && session.activity === 'idle' && this.adapter(session.provider)?.turnStarts === false) {
+      session.activity = null; this.persist(session, true); this.emitStatus(session);
+    }
     if (entry.answered && entry.pending.length === 1 && session.status === 'waiting') {
       // Esc or Ctrl+C rejects the tool and interrupts the turn, which no hook reports: Claude is back at its input box.
-      entry.pending = []; entry.answered = false; this.syncPending(entry); this.observe(id, session.nativeId, 'running', dismiss ? 'idle' : 'working');
+      // Claude: Esc or Ctrl+C is back at its input box. Other providers report what follows (Codex: Interrupt).
+      entry.pending = []; entry.answered = false; this.syncPending(entry); this.observe(id, session.nativeId, 'running', dismiss && session.provider === 'claude' ? 'idle' : 'working');
     } else if (dismiss && !entry.pending.length && session.provider === 'claude' && session.status === 'running' && session.activity === 'working' && !entry.typedThisTurn) {
       // "esc to interrupt": Stop does not fire on a user interrupt. A later tool event corrects this if the turn went on.
       // Not after typing during the turn: the key may only close an autocomplete menu or leave vim insert mode.
@@ -365,6 +424,8 @@ export class TerminalManager extends EventEmitter {
     const reason = session.provider !== 'claude' ? `Journal cannot see when ${PROVIDER_NAMES[session.provider]} is ready for input`
       : session.activity === 'permission' || session.status === 'waiting' ? 'The agent is waiting for a permission answer'
       : session.status !== 'running' || entry.stopping ? 'The agent is not ready for input'
+      // Without a live observer the last state may be out of date.
+      : session.observation !== 'live' ? 'Journal does not know yet whether the agent is ready for input'
       : session.activity === 'working' ? 'The agent is working and could ask for permission at any moment'
       // A permission prompt can appear just before its hook is observed, so
       // only a turn that has been idle for a moment counts as ready.
@@ -441,29 +502,41 @@ export class TerminalManager extends EventEmitter {
   }
   observe(id, nativeId, status, activity) {
     const entry = this.entries.get(id);
-    if (!entry || entry.exited || !UUID.test(nativeId ?? '')) return;
+    if (!entry || entry.exited || !this.bindIdentity(entry, nativeId)) return;
     const { session } = entry;
-    // Child sessions and native /clear can report another ID. Never graft it
-    // onto a confirmed parent or silently restore confidence on a later hook.
-    if (nativeId !== session.nativeId && !entry.identityAmbiguous) {
-      entry.identityAmbiguous = true; session.identityMismatch = true;
-      this.emit('event', { type: 'error', sessionId: id, code: IDENTITY_CHANGED, message: 'Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.' });
-    }
-    // The preassigned ID is now seen in Claude's own hook.
-    if (nativeId === session.nativeId && !entry.identityAmbiguous && session.nativeIdSource === 'preassigned') session.nativeIdSource = 'preassigned-observed';
-    session.nativeIdConfirmed = !entry.identityAmbiguous;
     if (!entry.stopping && status) session.status = status;
     if (activity !== undefined) { if (activity !== session.activity) { entry.activitySince = Date.now(); entry.typedThisTurn = false; } session.activity = activity; }
     this.persist(session, true); this.emitStatus(session);
   }
+  // A parent event's native ID against the session's (4.8). A launch without one binds the
+  // first parent ID when its adapter allows it (Codex); an exit-banner hint gives way to it.
+  // Any other ID is a mismatch: child sessions and native /clear can report another ID, which
+  // is never grafted onto a known parent nor silently forgiven by a later matching hook.
+  // False when the ID is not a UUID (the event then changes no state). Children never get here.
+  bindIdentity(entry, nativeId) {
+    if (!UUID.test(nativeId ?? '')) return false;
+    const { session } = entry;
+    const bindable = !entry.identityAmbiguous && this.adapter(session.provider)?.bindsIdentity
+      && (!session.nativeId || (session.nativeIdSource === 'exit-banner' && !session.nativeIdConfirmed));
+    if (bindable && session.nativeId !== nativeId) { session.nativeId = nativeId; session.nativeIdSource = 'hook'; }
+    if (nativeId !== session.nativeId && !entry.identityAmbiguous) {
+      entry.identityAmbiguous = true; session.identityMismatch = true;
+      this.emit('event', { type: 'error', sessionId: session.id, code: IDENTITY_CHANGED, message: 'Native session identity changed. Stop the terminal and confirm its conversation ID before continuing.' });
+    }
+    // The preassigned ID is now seen in Claude's own hook.
+    if (nativeId === session.nativeId && !entry.identityAmbiguous && session.nativeIdSource === 'preassigned') session.nativeIdSource = 'preassigned-observed';
+    if (nativeId === session.nativeId && !entry.identityAmbiguous && session.nativeIdSource === 'exit-banner') session.nativeIdSource = 'hook';
+    session.nativeIdConfirmed = !entry.identityAmbiguous;
+    return true;
+  }
   // Open approval prompts end when their own tool (or the last in-flight tool of its kind)
   // completes, or when the user answers: one answer settles the oldest prompt. A sibling or
   // subagent event alone must not hide a prompt. `known` is undefined for a tool that is starting.
-  settlePermissions(id, nativeId, toolUseId, known) {
+  settlePermissions(id, nativeId, toolUseId, known, event = null) {
     const entry = this.entries.get(id); if (!entry) return;
     const before = entry.pending[0];
     if (known !== undefined) {
-      const open = entry.pending.filter(p => !this.permissionResolvedBy(entry, p, toolUseId, known));
+      const open = entry.pending.filter(p => !this.permissionResolvedBy(entry, p, toolUseId, known, event));
       // The answer belonged to the prompt this tool resolved.
       if (open.length < entry.pending.length) { entry.pending = open; entry.answered = false; }
     }
@@ -476,10 +549,11 @@ export class TerminalManager extends EventEmitter {
   // The banner shows the oldest open prompt, the one the next answer settles.
   syncPending(entry) { entry.session.pending = entry.pending[0]?.detail ?? null; }
   // Workspace-relative, '/'-separated and bounded; null outside the workspace.
-  relativePath(session, file) {
+  // A relative file is resolved against the hook's working directory (base) when known.
+  relativePath(session, file, base) {
     if (typeof file !== 'string' || !file) return null;
     // Compare canonical paths (for example /var vs /private/var on macOS).
-    const path = relative(session.cwd, canonical(isAbsolute(file) ? file : join(session.cwd, file)));
+    const path = relative(session.cwd, canonical(isAbsolute(file) ? file : join(typeof base === 'string' && isAbsolute(base) ? base : session.cwd, file)));
     if (!path || path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path)) return null;
     return path.split(sep).join('/').slice(0, 300);
   }
@@ -489,22 +563,61 @@ export class TerminalManager extends EventEmitter {
     if (entry.session.status === 'running' && entry.session.activity === 'idle') this.observe(id, nativeId, 'running', 'working');
   }
   // A tool finished (already removed from entry.tools): was it the one that asked?
-  permissionResolvedBy(entry, pending, toolUseId, known) {
+  permissionResolvedBy(entry, pending, toolUseId, known, event = null) {
     if (pending.toolUseId && known) return pending.toolUseId === toolUseId;
     if (pending.toolUseId === toolUseId && toolUseId) return true;
+    // Without tool starts (Codex), only the asking tool's own end settles it: the same tool and
+    // command or path. A sibling tool finishing in parallel never does.
+    if (this.adapter(entry.session.provider)?.toolStarts === false) return !!event && !!pending.request && pending.request === requestKey(event);
     return ![...entry.tools.values()].some(tool => tool.tool === pending.tool);
   }
-  // Claude hook observations: lifecycle, Bash commands with exit status when
-  // the CLI reports it, and file edits. Command text is redacted and bounded;
-  // no tool output or prompt text is kept.
-  ingest(id, event) {
-    const entry = this.entries.get(id); if (!entry || entry.exited) return;
+  // Hook observations, normalized by the session's provider adapter: lifecycle, Bash
+  // commands with exit status when the CLI reports it, and file edits. Command text is
+  // redacted and bounded; no tool output or prompt text is kept. An event the adapter
+  // cannot classify is dropped; a child's event only updates the child count; turn rules
+  // (turnVerdict) keep an old or repeated event from changing the current state.
+  ingest(id, raw) {
+    const entry = this.entries.get(id); if (!entry) return;
+    const event = this.adapter(entry.session.provider)?.normalize(raw); if (!event) return;
+    if (entry.exited) { this.drained(entry, event); return; }
+    // Shut down with the process still running: its state was saved as interrupted and stays so.
+    if (this.disposed) return;
+    const { session } = entry; const now = Date.now();
+    session.lastActivityAt = new Date(now).toISOString();
+    if (event.child) { this.child(entry, event); return; }
+    const verdict = this.turnVerdict(entry, event);
+    if (verdict === 'ignore') return;
+    // A turn end that arrived late (an older turn) or that strengthens the current turn's
+    // outcome is recorded for the timeline, which shows one entry per turn; state is unchanged.
+    if (verdict === 'late' || verdict === 'revised') {
+      this.record(id, 'turn-end', { turn: event.turn, outcome: event.outcome, ...(verdict === 'late' ? { late: true } : {}) });
+      if (verdict === 'revised') session.lastObserved = { fact: `turn-${event.outcome}`, at: session.lastActivityAt };
+      return;
+    }
+    const wasLive = session.observation === 'live'; const version = session.version; const lastSent = entry.observedSentAt ?? 0;
+    session.observation = 'live';
+    session.lastObserved = { fact: event.kind === 'turn-end' ? `turn-${event.outcome}` : event.kind, at: session.lastActivityAt };
+    // A new turn ends whatever the previous one left open; its first event, unless it is the
+    // turn's start, end or an approval request, shows the new turn is working.
+    if (verdict === 'new-turn') {
+      entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry);
+      if (event.kind === 'tool-end' || event.kind === 'tool-start') this.observe(id, event.nativeId, 'running', 'working');
+    }
+    this.apply(id, entry, event);
+    if (session.version !== version) entry.observedSentAt = now;
+    // Becoming live, or a last fact the window has not had for a while, is sent on its own.
+    else if (!wasLive || now - lastSent >= OBSERVED_REFRESH_MS) { entry.observedSentAt = now; this.emitStatus(session); }
+  }
+  apply(id, entry, event) {
     const { session } = entry;
-    session.lastActivityAt = new Date().toISOString();
-    switch (event.event) {
-      case 'SessionStart': entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry); this.observe(id, event.nativeId, 'running', 'idle'); break;
-      case 'UserPromptSubmit': entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry); this.observe(id, event.nativeId, 'running', 'working'); this.record(id, 'prompt', {}); break;
-      case 'PermissionRequest': {
+    // Codex and Cursor check every parent event's ID; Claude, as before, when its state changes.
+    if (this.adapter(session.provider)?.strictIdentity) this.bindIdentity(entry, event.nativeId);
+    switch (event.kind) {
+      case 'session-start': entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry); this.observe(id, event.nativeId, 'running', 'idle'); break;
+      case 'turn-start': entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry); this.observe(id, event.nativeId, 'running', 'working'); this.record(id, 'prompt', {}); break;
+      // In-turn evidence (Cursor's response event): the turn goes on.
+      case 'turn-progress': if (session.status === 'running' && session.activity !== 'working') this.observe(id, event.nativeId, 'running', 'working'); break;
+      case 'permission-wait': {
         // The request may not carry a tool id: match it to the in-flight tool that asked, if exactly one fits.
         const candidates = [...entry.tools].filter(([, tool]) => !tool.asked && tool.tool === event.tool
           && (!event.command || tool.command === event.command) && (!event.filePath || tool.filePath === event.filePath));
@@ -514,16 +627,18 @@ export class TerminalManager extends EventEmitter {
         const matched = toolUseId ? entry.tools.get(toolUseId) : null;
         const rawCommand = event.command || matched?.command || null;
         const rawPath = event.filePath || matched?.filePath || null;
-        const detail = { tool: event.tool ?? null, command: rawCommand ? redact(rawCommand, 300) : null, path: rawPath ? this.relativePath(session, rawPath) : null,
+        const detail = { tool: event.tool ?? null, command: rawCommand ? redact(rawCommand, 300) : null, path: rawPath ? this.relativePath(session, rawPath, event.filePath ? event.cwd : matched?.cwd) : null,
           at: new Date().toISOString(), ...(!event.command && !event.filePath && matched ? { inferred: true } : {}) };
-        entry.pending.push({ toolUseId, tool: event.tool ?? null, detail }); if (entry.pending.length > 100) entry.pending.shift(); entry.answered = false;
+        entry.pending.push({ toolUseId, tool: event.tool ?? null, detail, request: requestKey(event) }); if (entry.pending.length > 100) entry.pending.shift(); entry.answered = false;
         this.syncPending(entry);
         this.observe(id, event.nativeId, 'waiting', 'permission');
         this.record(id, 'permission', { tool: detail.tool, command: detail.command, path: detail.path, toolUseId }); break;
       }
-      case 'Stop': entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry); this.observe(id, event.nativeId, 'running', 'idle'); this.record(id, 'turn-end', {}); break;
-      case 'PreToolUse':
-        if (event.toolUseId && entry.tools.size < 500) entry.tools.set(event.toolUseId, { tool: event.tool, command: event.command ?? null, filePath: event.filePath ?? null });
+      case 'turn-end':
+        entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry); this.observe(id, event.nativeId, 'running', 'idle');
+        this.record(id, 'turn-end', event.turn ? { turn: event.turn, outcome: event.outcome } : {}); break;
+      case 'tool-start':
+        if (event.toolUseId && entry.tools.size < 500) entry.tools.set(event.toolUseId, { tool: event.tool, command: event.command ?? null, filePath: event.filePath ?? null, cwd: event.cwd });
         this.settlePermissions(id, event.nativeId, event.toolUseId);
         this.restoreWorking(id, entry, event.nativeId);
         if (event.tool === 'Bash' && event.toolUseId && entry.commands.size < 500) {
@@ -535,23 +650,109 @@ export class TerminalManager extends EventEmitter {
           this.record(id, 'command-start', { toolUseId: event.toolUseId, command, cwd, background: !!event.background, test: isTestCommand(command) });
         }
         break;
-      case 'PostToolUse': case 'PostToolUseFailure': {
-        // The tool ran, so any permission prompt for it was answered, even if no further PreToolUse arrives.
+      case 'tool-end': {
+        // The tool ran, so any permission prompt for it was answered, even if no further tool-start arrives.
         const tool = entry.tools.get(event.toolUseId); const known = entry.tools.delete(event.toolUseId);
-        this.settlePermissions(id, event.nativeId, event.toolUseId, known);
+        this.settlePermissions(id, event.nativeId, event.toolUseId, known, event);
         // A rejected (asked) or interrupted tool failing is the end of the turn, not new work.
-        if (known && !(event.event === 'PostToolUseFailure' && (event.interrupted || tool.asked))) this.restoreWorking(id, entry, event.nativeId);
+        if (known && !(event.failed && (event.interrupted || tool.asked))) this.restoreWorking(id, entry, event.nativeId);
         if (event.tool === 'Bash' && entry.commands.delete(event.toolUseId)) {
           // Exit 0 only when Claude reported completion of a foreground command.
-          const status = event.interrupted ? 'interrupted' : event.background ? 'unknown' : event.event === 'PostToolUse' ? 'succeeded' : Number.isInteger(event.exit) ? 'failed' : 'unknown';
+          const status = event.interrupted ? 'interrupted' : event.background ? 'unknown' : !event.failed ? 'succeeded' : Number.isInteger(event.exit) ? 'failed' : 'unknown';
           this.record(id, 'command-end', { toolUseId: event.toolUseId, status, exitCode: status === 'succeeded' ? 0 : Number.isInteger(event.exit) ? event.exit : null, durationMs: Number.isFinite(event.durationMs) ? event.durationMs : null });
-        } else if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(event.tool) && event.filePath && event.event === 'PostToolUse') {
-          const path = this.relativePath(session, event.filePath);
+        } else if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(event.tool) && event.filePath && !event.failed) {
+          const path = this.relativePath(session, event.filePath, event.cwd);
           if (path) this.record(id, 'file', { path, tool: event.tool });
         }
         break;
       }
+      // The agent reported its own end; the process exit follows and decides the status.
+      case 'session-end': this.persist(session, true); break;
       default: break;
+    }
+  }
+  // Turn identity (4.3), for providers whose events carry a turn key (Claude's do not:
+  // its events always apply). Returns:
+  //   'apply' or 'new-turn' (the event starts the key's turn and settles an open older one);
+  //   'late': a turn end for a turn that is not the current one (recorded, no state change);
+  //   'revised': a stronger outcome for the current, already settled turn (recorded only);
+  //   'ignore': a duplicate, a weaker or equal outcome, or a tool, permission or turn start
+  //   event for a settled turn (a delayed turn start never reopens it).
+  turnVerdict(entry, event) {
+    const key = event.turn;
+    if (!key) return 'apply';
+    const settle = (turn, outcome) => { entry.settled.set(turn, outcome); bounded(entry.settled, MAX_SETTLED_TURNS); };
+    if (entry.settled.has(key)) {
+      if (event.kind !== 'turn-end') return 'ignore';
+      const before = entry.settled.get(key); const after = stronger(before, event.outcome);
+      if (after === before) return 'ignore';
+      settle(key, after); event.outcome = after;
+      return key === entry.currentTurn ? 'revised' : 'late';
+    }
+    // The current turn has already applied an event: a delayed or repeated start of it changes
+    // nothing (it must not clear an open approval or end an approval wait).
+    if (event.kind === 'turn-start' && key === entry.currentTurn) return 'ignore';
+    // Duplicates. With a tool id: the same event, turn, tool, request and status already applied.
+    // Without one, a repeat is indistinguishable from a new request, so only an approval request
+    // identical to one still open and unanswered counts; tool ends without an id always apply
+    // (two identical commands or edits in a row are two events, and applying one twice changes nothing).
+    const signature = [event.event, key, event.toolUseId ?? '', event.tool ?? '', event.command ?? '', event.filePath ?? '', event.outcome ?? ''].join('\u0000');
+    if (event.toolUseId && entry.signatures.has(signature)) return 'ignore';
+    if (event.kind === 'permission-wait' && !event.toolUseId && !entry.answered && entry.pending.some(open => open.request === requestKey(event))) return 'ignore';
+    const open = entry.currentTurn && !entry.settled.has(entry.currentTurn);
+    let verdict = 'apply';
+    if (key !== entry.currentTurn) {
+      // An older turn's end while a newer turn runs: recorded, never finishes the newer one.
+      if (event.kind === 'turn-end' && open) { settle(key, event.outcome); return 'late'; }
+      if (open) settle(entry.currentTurn, 'superseded');
+      entry.currentTurn = key; verdict = 'new-turn';
+    }
+    if (event.toolUseId) { entry.signatures.add(signature); bounded(entry.signatures, MAX_SIGNATURES); }
+    if (event.kind === 'turn-end') settle(key, event.outcome);
+    return verdict;
+  }
+  // A child's (sub-agent's) event: a bounded count of the children seen, nothing else. It
+  // never binds or replaces the parent's identity, starts or ends the parent's turn or
+  // clears its approval prompt, and does not make the parent's observation live.
+  child(entry, event) {
+    if (!event.childId || entry.childIds.has(event.childId) || entry.childIds.size >= MAX_CHILDREN) return;
+    entry.childIds.add(event.childId); entry.session.children = entry.childIds.size; this.emitStatus(entry.session);
+  }
+  // Events read after the process exited (the observer's drain, 4.7): this launch's only, and
+  // only for identity (a native ID first reported at the end) and the agent's own clean end
+  // (lastObserved 'session-end'). The final turn outcome is not recorded: a turn end read after
+  // the exit changes nothing. Never reopens the session or changes its status.
+  drained(entry, event) {
+    if (event.child) return;
+    const { session } = entry;
+    const before = JSON.stringify([session.nativeId, session.nativeIdSource, session.nativeIdConfirmed, session.identityMismatch, session.lastObserved]);
+    this.bindIdentity(entry, event.nativeId);
+    if (event.kind === 'session-end') session.lastObserved = { fact: 'session-end', at: new Date().toISOString() };
+    if (JSON.stringify([session.nativeId, session.nativeIdSource, session.nativeIdConfirmed, session.identityMismatch, session.lastObserved]) === before) return;
+    this.persist(session, true); if (!this.disposed) this.emitStatus(session);
+  }
+  // Positive evidence that the hooks do not (or no longer) report: the observer failed (its
+  // file reached the size cap or cannot be read), or a provider gate reported it. Before any
+  // event the session is unobserved; after one it is lost. The next applied event makes it live.
+  observationUnavailable(id) {
+    const entry = this.entries.get(id); if (!entry || entry.exited) return;
+    const { observation } = entry.session;
+    if (observation === 'live') this.setObservation(entry, 'lost');
+    else if (observation === 'pending') this.setObservation(entry, 'unobserved');
+  }
+  observerLost(id, message) { this.observationUnavailable(id); this.record(id, 'error', { message }); }
+  setObservation(entry, observation) {
+    if (entry.session.observation === observation) return;
+    entry.session.observation = observation; this.persist(entry.session, true); this.emitStatus(entry.session);
+  }
+  // Periodic (observationMs) and callable with a time in tests: pending -> unobserved when a
+  // clearly submitted first prompt produced output but no event within the grace period. This
+  // is the only timed rule; a live observer is never downgraded by silence (see OBSERVATIONS).
+  checkObservation(now = Date.now()) {
+    if (this.disposed) return;
+    for (const entry of this.liveEntries()) {
+      const { session } = entry; const output = session.lastOutputAt ? Date.parse(session.lastOutputAt) : 0;
+      if (session.observation === 'pending' && entry.promptAt && now - entry.promptAt >= this.unobservedGraceMs && output >= entry.promptAt) this.setObservation(entry, 'unobserved');
     }
   }
   record(sessionId, kind, body) {
@@ -681,7 +882,7 @@ export class TerminalManager extends EventEmitter {
     this.emitStatus(next); return { ...result, exited: gone };
   }
   async dispose({ stopSessions = true, timeoutMs = 5000 } = {}) {
-    if (this.disposed) return; clearInterval(this.tracker);
+    if (this.disposed) return; clearInterval(this.tracker); clearInterval(this.observationTimer);
     const live = this.liveEntries();
     if (stopSessions && live.length) {
       const exits = live.map(entry => new Promise(resolve => {

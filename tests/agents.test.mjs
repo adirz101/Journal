@@ -123,13 +123,24 @@ test('a Codex whose login help lacks status gets no probe', async t => {
   const env = fakePath(t);
   const { runner, calls } = fakeRunner({ '--version': 'codex-cli 0.40.0', '--help': CODEX_HELP, 'login --help': 'Usage: codex login [OPTIONS]\n  --api-key <KEY>\n' });
   const row = await module.detectProvider('codex', env, { runner });
-  assert.deepEqual(row.supports, { login: true, authStatus: false });
+  assert.deepEqual(row.supports, { login: true, authStatus: false, hooks: null });
   assert.equal(await module.probeAuth(row, env, { runner }), 'unchecked');
   assert.deepEqual(calls, ['--version', '--help', 'login --help']);
   // A Codex without login at all never reads login --help.
   const bare = fakeRunner({ '--version': 'codex-cli 0.1.0', '--help': 'Usage: codex [PROMPT]\n  exec  Run\n' });
   const old = await module.detectProvider('codex', env, { runner: bare.runner });
-  assert.deepEqual(old.supports, { login: false, authStatus: false }); assert.deepEqual(bare.calls, ['--version', '--help']);
+  assert.deepEqual(old.supports, { login: false, authStatus: false, hooks: null }); assert.deepEqual(bare.calls, ['--version', '--help']);
+});
+
+test('a Codex that lists features reports whether its hooks are on; nothing else is run', async t => {
+  const env = fakePath(t);
+  const help = `${CODEX_HELP}\n  features  Inspect feature flags\n`;
+  for (const [listing, expected] of [['hooks  stable  true\n', true], ['hooks  stable  false\n', false], ['other  stable  true\n', null]]) {
+    const { runner, calls } = fakeRunner({ '--version': 'codex-cli 0.159.3', '--help': help, 'login --help': CODEX_LOGIN_HELP, 'features list': listing });
+    const row = await module.detectProvider('codex', env, { runner });
+    assert.equal(row.supports.hooks, expected, listing);
+    assert.deepEqual(calls, ['--version', '--help', 'login --help', 'features list']);
+  }
 });
 
 test('probeAuth runs the documented status command once a probe is allowed', async t => {
@@ -143,7 +154,7 @@ test('probeAuth runs the documented status command once a probe is allowed', asy
   const codex = fakeRunner({ '--version': 'codex-cli 0.40.0', '--help': CODEX_HELP, 'login --help': CODEX_LOGIN_HELP,
     'login status': Object.assign(new Error('exit 1'), { code: 1, stdout: '', stderr: 'Not logged in\n' }) });
   const crow = await module.detectProvider('codex', env, { runner: codex.runner });
-  assert.deepEqual(crow.supports, { login: true, authStatus: true });
+  assert.deepEqual(crow.supports, { login: true, authStatus: true, hooks: null });
   assert.equal(await module.probeAuth(crow, env, { runner: codex.runner }), 'signed-out'); assert.equal(codex.calls.at(-1), 'login status');
   // Codex prints its status on stderr; a successful run keeps both streams for the parser.
   const signedIn = async (path, args, _env, options) => args.join(' ') === 'login status' && options.output === 'both' ? { stdout: '', stderr: 'Logged in using ChatGPT\n' } : codex.runner(path, args);

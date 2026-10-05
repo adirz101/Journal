@@ -8,7 +8,7 @@
 - Installed Claude Code 2.1.284, authenticated with Claude.ai; Codex CLI 0.154.0, authenticated with ChatGPT. Authentication checks reported status only, without account identity or credentials.
 - Actual Electron app, real native CLIs and model turns, isolated Journal data and a disposable Git project under ignored `.cache/native-validation/run-2/`. The fixture has no dependencies or private data. Native terminal output was observed locally; no native transcript storage or hidden reasoning was read for validation.
 - Inherited Codex model `gpt-6.1-sol` was rejected by the CLI with HTTP 400 for this ChatGPT account. The user selected `gpt-5.6-luna` for the short trial. A temporary PATH wrapper in this app's process supplied `--model gpt-5.6-luna` on fresh launch and exact resume. Production launcher arguments and permanent model settings were not changed.
-- Native workspace trust was accepted for the disposable fixture. Codex's newly detected hooks were left untrusted through its native prompt; existing hook configuration was not edited. Its configured local MCP server failed to connect. Claude's inherited integrations included an ancestor AGENTS.md loader. Tasks prohibited agent spawning and network tools, but provider startup integrations were still inherited.
+- Native workspace trust was accepted for the disposable fixture. Codex's newly detected hooks were left untrusted through its native prompt (on 1 October 2026, before Journal registered Codex hooks); existing hook configuration was not edited. Its configured local MCP server failed to connect. Claude's inherited integrations included an ancestor AGENTS.md loader. Tasks prohibited agent spawning and network tools, but provider startup integrations were still inherited.
 - Codex retained its native custom `workspace` permissions profile. Claude's review started in inherited auto mode; its native Shift+Tab control switched this trial to stricter manual mode for permission tests. Each allowed write used **Yes once**, without switching to automatic edit approval. No permission bypass flags or manual global configuration edits were used. Native trust decisions may persist in provider-managed settings.
 
 ## Observed outcomes
@@ -128,6 +128,24 @@ settings, permissions and exact-ID resume; nothing here asks you to change them.
 - [ ] **Tests run.** A real Claude test command (for example `npm test`) fills Tests run with its count and command; Codex and Cursor show "Not visible for Codex" or "Not visible for Cursor".
 - [ ] **Error exit.** An authenticated session that exits with an error (for example a bad Codex `config.toml`) leads with its real last output, and Copy output copies it on macOS and on Windows.
 - [ ] **The first-note moment,** played at 0.2× in DevTools (from scale 0.96, the mascot tilting from -8°, nothing from scale 0) and looked at again the next day; with "Reduce motion" on it appears without motion. It never takes focus from the composer.
+
+### Codex and Cursor hooks
+Fixture-tested only (5 October 2026). The provider behaviour underneath was observed natively on
+5 October 2026 with Codex 0.159.3 and Cursor 2026.10.01 in a throwaway repository (plan section 3);
+these check Journal's integrated feature.
+- [ ] **Codex review, once.** The first Codex session shows "Hooks need review" listing Journal's 9 hooks (Session flags); after trusting them, a new session and `codex resume` start without the review, and the session shows Working, then Your turn.
+- [ ] **Codex approval.** A command that needs approval shows Needs approval with the command; answering in the terminal returns to Working; a Codex notification appears while Journal is in the background.
+- [ ] **Codex interrupt and exit.** Esc during a turn leaves the turn interrupted (not Your turn); `/quit` ends the session with its ID recorded; Continue resumes the same conversation.
+- [ ] **Codex untrusted.** Choosing "Continue without trusting" leaves the session on Limited status, and Journal never claims a state.
+- [ ] **Codex questions and other approvals.** Whether `request_user_input` or plan-mode questions, network approvals and MCP approvals fire any hook (Journal maps none of them).
+- [ ] **Codex after an app update.** Whether Codex asks to review the hooks again after Journal is updated (the launcher path stays the same).
+- [ ] **Codex sub-agents.** A sub-agent's events never change the parent's state or ID.
+- [ ] **Cursor level 1.** A Cursor session shows its activity (last seen: command finished) and never Your turn; nothing is written to `~/.cursor`.
+- [ ] **Cursor turn status.** Settings shows the exact change; after confirming, a new Cursor session shows Your turn when a turn ends and one interruption for Esc; Remove leaves the other entries unchanged.
+- [ ] **Cursor in-session changes.** `/new` or `/resume` inside the Cursor TUI marks the identity as changed instead of rebinding silently.
+- [ ] **Cursor with a user stop hook that returns a follow-up.** The follow-up turn is shown as a new turn.
+- [ ] **Shell start-up.** A slow shell profile (Cursor runs hooks through `$SHELL -ilc`) never delays or blocks the agent beyond Cursor's 5 s timeout.
+- [ ] **Windows, both providers.** Hooks run (launcher `.cmd`), with a data folder path without spaces; a path with spaces leaves sessions on Limited status.
 
 ### Palette and states
 

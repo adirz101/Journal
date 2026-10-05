@@ -81,7 +81,7 @@ process.stdin.resume();`);
     for (const provider of ['claude', 'codex']) await request(page, 'providerStatus', { provider, fresh: true });
     await expect.poll(async () => (await row(page, 'codex')).auth).toBe('signed-out');
     await expect.poll(async () => (await row(page, 'claude')).auth).toBe('signed-out');
-    expect((await row(page, 'codex')).supports).toEqual({ login: true, authStatus: true });
+    expect((await row(page, 'codex')).supports).toEqual({ login: true, authStatus: true, hooks: null }); // no `features` in the fixture's help
 
     // Extra fields from the window are ignored: the argv and executable are main's.
     const login = await request<{ id: string; command: string }>(page, 'providerLogin', { provider: 'codex', argv: ['--evil'], command: 'rm -rf /', path: '/bin/sh' });

@@ -59,6 +59,8 @@ test('identityLine for each source and the mismatch', async t => {
   assert.equal(line({ source: 'create-chat' }, 'cursor').text, 'Chat created by Journal before the start');
   assert.deepEqual(line({ source: 'exit-banner', confirmed: false }, 'codex'), { text: 'From Codex’s exit message · confirm before continuing', tone: 'amber', canContinue: false, needsConfirm: true });
   assert.deepEqual(line({ source: 'user' }, 'codex'), { text: 'Confirmed by you', tone: 'ok', canContinue: true, needsConfirm: false });
+  // Bound from the agent's own hook (hooks plan 4.8).
+  assert.deepEqual(line({ source: 'hook' }, 'codex'), { text: 'Same conversation · ID reported by the agent', tone: 'ok', canContinue: true, needsConfirm: false });
   assert.deepEqual(line({ mismatch: true, confirmed: false }), { text: 'Claude reported a different conversation. Confirm the ID before continuing.', tone: 'amber', canContinue: false, needsConfirm: true });
   // A mismatch blocks Continue even if a confirmed flag lingers.
   assert.equal(line({ mismatch: true }).canContinue, false);

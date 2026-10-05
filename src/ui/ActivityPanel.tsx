@@ -12,7 +12,7 @@ const describe = (event: TimelineEvent) => {
     case 'context': return `Context ${deliveryState(b.state)}: ${count(Number(b.claims ?? 0), 'note')}`;
     case 'prompt': return 'Prompt submitted';
     case 'permission': return `Waiting for approval${b.tool ? `: ${b.tool}` : ''}`;
-    case 'turn-end': return 'Agent finished its turn';
+    case 'turn-end': return `${b.outcome === 'interrupted' ? 'Turn interrupted' : b.outcome === 'error' ? 'Turn ended with an error' : 'Agent finished its turn'}${b.late ? ' (an earlier turn, reported late)' : ''}`;
     case 'command-start': return `$ ${b.command}`;
     case 'command-end': return `${b.status === 'succeeded' ? 'Exit 0' : b.exitCode !== null && b.exitCode !== undefined ? `Exit ${b.exitCode}` : b.status}${b.durationMs ? ` · ${(b.durationMs / 1000).toFixed(1)}s` : ''}`;
     case 'file': return `${b.tool ?? 'Edited'} ${b.path}`;

@@ -6,7 +6,7 @@ import { ResizableWorkspace } from './ResizableWorkspace';
 import { useShellLayout } from './useShellLayout';
 import { useProposals } from './useProposals';
 import { Sidebar } from './Sidebar';
-import { nextNeedsYou, resumable, slotOrder, slotTarget, stateFor } from './sessionState';
+import { nextNeedsYou, outputOnly, resumable, slotOrder, slotTarget, stateFor } from './sessionState';
 import { ChangesPanel } from './ChangesPanel';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import { ContextPanel } from './ContextPanel';
@@ -212,7 +212,7 @@ export default function App() {
   useEffect(() => { void api('setAppearance', { appearance }).catch(failed); }, [appearance, failed]);
   // Relative times only; no animation. While a live Codex or Cursor session is
   // listed, tick every 5 s so "output just now" ends within 5 s of its 10 s threshold.
-  const outputClock = Object.values(sessions).some(s => !s.removed && isLive(s) && s.provider !== 'claude');
+  const outputClock = Object.values(sessions).some(s => !s.removed && isLive(s) && outputOnly(s));
   useEffect(() => { setNow(Date.now()); const timer = setInterval(() => setNow(Date.now()), outputClock ? 5000 : 15000); return () => clearInterval(timer); }, [outputClock]);
   // The latest refresh's project wins: a slower, older refresh (a checkout poll of project A that
   // answers after the user chose project B) neither shows nor remembers A.

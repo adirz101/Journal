@@ -1,40 +1,43 @@
 // Observer only: appends small, bounded metadata for Journal's activity view.
-// No prompt text, tool output or file contents; never makes approval decisions.
+// No prompt text, assistant text, tool output, file contents, transcript paths,
+// model parameters or account details; never makes approval decisions. Run by
+// the hook launcher (src/runtime/observers.mjs), which always exits 0, discards
+// this script's output and prints the provider's neutral response itself.
+//
+// Bounds: this script exits after 1.5 s whatever happens. Before it starts (launcher, shell,
+// interpreter start-up) the bound is the launcher's watchdog on macOS and Linux and, on every
+// platform, the timeout registered with the provider (adapters: hookTimeoutSeconds).
+//
+// Usage: hook.mjs <provider>. Per-launch values come from the agent's environment:
+// JOURNAL_SESSION_ID, JOURNAL_HOOK_TARGET (the events file) and JOURNAL_HOOK_TOKEN.
+// The older form hook.mjs <target> <token> (Claude only) is still read, for sessions
+// of a runtime started before this version.
 import { appendFileSync, statSync } from 'node:fs';
-import { redact } from '../core/validation.mjs';
-const [target, token] = process.argv.slice(2);
-const EVENTS = ['SessionStart', 'UserPromptSubmit', 'PermissionRequest', 'Stop', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure'];
-const FILE_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
+import { adapterFor } from '../runtime/adapters/index.mjs';
+
+const MAX_INPUT = 4 * 1024 * 1024;
+const MAX_FILE = 1024 * 1024;
+// A hook that cannot finish in time gives up silently; the launcher has its own limit too.
+setTimeout(() => process.exit(0), 1500).unref();
+
+const args = process.argv.slice(2);
+const legacy = args.length >= 2 && !adapterFor(args[0]);
+const provider = legacy ? 'claude' : args[0];
+const target = legacy ? args[0] : process.env.JOURNAL_HOOK_TARGET;
+const token = legacy ? args[1] : process.env.JOURNAL_HOOK_TOKEN;
+const adapter = adapterFor(provider);
+
 let input = ''; let oversized = false;
 process.stdin.setEncoding('utf8');
-// Tool payloads (for example Write content) can be large; keep only the prefix
-// needed to read the event and drop anything that does not parse.
-process.stdin.on('data', chunk => { if (input.length + chunk.length > 4 * 1024 * 1024) oversized = true; else input += chunk; });
+// Tool payloads (for example Write content) can be large; anything over the cap is dropped.
+process.stdin.on('data', chunk => { if (oversized || input.length + chunk.length > MAX_INPUT) { oversized = true; input = ''; } else input += chunk; });
 process.stdin.on('end', () => {
   try {
-    if (oversized || !target || !token || !process.env.JOURNAL_SESSION_ID) return;
-    try { if (statSync(target).size > 1024 * 1024) return; } catch { /* first event */ }
+    if (oversized || !adapter || !target || !token || !process.env.JOURNAL_SESSION_ID) return;
+    try { if (statSync(target).size > MAX_FILE) return; } catch { /* first event */ }
     const event = JSON.parse(input);
-    if (!EVENTS.includes(event.hook_event_name)) return;
-    const tool = typeof event.tool_name === 'string' ? event.tool_name.slice(0, 80) : null;
-    const response = event.tool_response && typeof event.tool_response === 'object' ? event.tool_response : {};
-    const observation = { token, id: process.env.JOURNAL_SESSION_ID, nativeId: event.session_id, event: event.hook_event_name, cwd: event.cwd, at: Date.now(),
-      tool, toolUseId: typeof event.tool_use_id === 'string' ? event.tool_use_id.slice(0, 100) : null };
-    // Every event, PermissionRequest included, carries tool_use_id, the Bash
-    // command and the file tools' path: Journal's pending-approval detail
-    // relies on these fields. Whether native PermissionRequest payloads include
-    // tool_input is still to verify (docs/NATIVE-VALIDATION.md).
-    if (tool === 'Bash') {
-      observation.command = redact(String(event.tool_input?.command ?? ''), 600);
-      observation.background = !!(event.tool_input?.run_in_background || response.backgroundTaskId);
-    }
-    if (FILE_TOOLS.includes(tool)) observation.filePath = String(event.tool_input?.file_path ?? event.tool_input?.notebook_path ?? '').slice(0, 1000);
-    if (event.hook_event_name === 'PostToolUseFailure') {
-      const exit = String(event.error ?? '').match(/Exit code (\d+)/);
-      observation.exit = exit ? Number(exit[1]) : null; observation.interrupted = !!event.is_interrupt;
-    }
-    if (event.hook_event_name === 'PostToolUse') observation.interrupted = !!response.interrupted;
-    if (Number.isFinite(event.duration_ms)) observation.durationMs = event.duration_ms;
-    appendFileSync(target, `${JSON.stringify(observation)}\n`, { mode: 0o600 });
+    if (!adapter.events.includes(event?.hook_event_name)) return;
+    const line = { token, id: process.env.JOURNAL_SESSION_ID, provider, ...adapter.extract(event, { absolutePaths: legacy }), at: Date.now() };
+    appendFileSync(target, `${JSON.stringify(line)}\n`, { mode: 0o600 });
   } catch { /* Observation failures never stop the native agent. */ }
 });

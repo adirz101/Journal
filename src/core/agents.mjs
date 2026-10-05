@@ -1,6 +1,7 @@
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { resolveExecutable, runFile, testProviderAllowed } from './process.mjs';
 import { cursorState, findCursor, installCommand } from './cursor.mjs';
+import { CODEX_EVENTS } from '../runtime/adapters/codex.mjs';
 
 // Journal-owned adapter for the documented interactive CLI arguments.
 // https://code.claude.com/docs/en/cli-reference
@@ -10,8 +11,10 @@ export const CODEX_RESUME_MARKER = 'To continue this session, run';
 export const PROVIDERS = ['claude', 'codex', 'cursor'];
 export const PROVIDER_NAMES = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
 
+// The only `-c` value shape Journal passes to Codex: one hooks.<Event> entry with one command handler.
+const CODEX_HOOK_VALUE = new RegExp(`^hooks\\.(?:${CODEX_EVENTS.join('|')})=\\[\\{hooks=\\[\\{type="command",command="(?:[^"\\\\]|\\\\.)*",timeout=\\d+\\}\\]\\}\\]$`);
 export function buildAgentLaunch(request) {
-  const { provider, nativeId, resume, prompt, settingsFile, research = false, plan = false, executable } = request;
+  const { provider, nativeId, resume, prompt, settingsFile, hookArgs = [], research = false, plan = false, executable } = request;
   if (!PROVIDERS.includes(provider)) throw new Error('Unknown agent provider');
   if ((resume || nativeId) && !UUID.test(nativeId ?? '')) throw new Error('An exact native session ID is required');
   if (provider === 'cursor') {
@@ -19,7 +22,9 @@ export function buildAgentLaunch(request) {
     // "resume latest" or --continue. Ask mode is Cursor's read-only mode.
     if (!executable) throw new Error('Cursor CLI is not installed');
     const mode = research ? ['--mode=ask'] : plan ? ['--mode=plan'] : [];
-    return { executable, argv: [...(nativeId ? [`--resume=${nativeId}`] : []), ...mode, ...(prompt ? ['--', prompt] : [])] };
+    // Journal's observer plugin (per launch): exactly --plugin-dir and one absolute folder, nothing else.
+    const plugin = Array.isArray(hookArgs) && hookArgs.length === 2 && hookArgs[0] === '--plugin-dir' && typeof hookArgs[1] === 'string' && isAbsolute(hookArgs[1]) ? hookArgs : [];
+    return { executable, argv: [...(nativeId ? [`--resume=${nativeId}`] : []), ...mode, ...plugin, ...(prompt ? ['--', prompt] : [])] };
   }
   if (plan && provider === 'codex') throw new Error('Codex has no plan mode; use Read-only instead');
 
@@ -27,10 +32,14 @@ export function buildAgentLaunch(request) {
     ? (resume ? ['resume', nativeId] : [])
     : (resume ? ['--resume', nativeId] : nativeId ? ['--session-id', nativeId] : []);
   const settingsArgs = provider === 'claude' && settingsFile ? ['--settings', settingsFile] : [];
+  // Codex: Journal's per-launch hook overrides (`-c hooks.*`), only ever hook entries (never notify,
+  // trust state or permission settings). Each is a pair: '-c' and one hooks.<Event>= value.
+  const codexHooks = provider === 'codex' && Array.isArray(hookArgs) && hookArgs.length % 2 === 0
+    && hookArgs.every((arg, i) => i % 2 ? CODEX_HOOK_VALUE.test(arg) : arg === '-c') ? hookArgs : [];
   // Research mode starts each CLI in its own stricter mode. It is an intent,
   // not enforcement: the user can leave plan mode or approve escalation natively.
   const researchArgs = !research && !plan ? [] : provider === 'claude' ? ['--permission-mode', 'plan'] : ['--sandbox', 'read-only'];
-  return { executable: provider, argv: [...sessionArgs, ...researchArgs, ...settingsArgs, ...(prompt ? ['--', prompt] : [])] };
+  return { executable: provider, argv: [...sessionArgs, ...researchArgs, ...settingsArgs, ...codexHooks, ...(prompt ? ['--', prompt] : [])] };
 }
 
 export function captureCodexId(output) {
@@ -50,10 +59,10 @@ export function captureCodexId(output) {
 export const CAPABILITIES = {
   claude: { exactResume: 'preassigned --session-id; --resume <UUID>', identity: 'known at launch; hook UUID mismatch requires confirmation',
     observer: 'per-launch hooks', status: ['working', 'idle', 'waiting for permission'], commands: 'Bash command text, exit code, duration (foreground only)', fileEdits: true, interrupt: 'Ctrl+C to the PTY' },
-  codex: { exactResume: 'codex resume <UUID> after confirming the exit-banner hint', identity: 'hint from exit banner; confirmation required',
-    observer: 'none', status: ['running', 'exited'], commands: 'unknown', fileEdits: false, interrupt: 'Ctrl+C to the PTY' },
+  codex: { exactResume: 'codex resume <UUID>', identity: 'reported by its hooks (or the exit-banner hint, confirmation required)',
+    observer: 'per-launch hooks (0.131 or later, trusted once in Codex)', status: ['working', 'idle', 'waiting for permission', 'interrupted'], commands: 'unknown', fileEdits: false, interrupt: 'Ctrl+C to the PTY' },
   cursor: { exactResume: 'chat created with create-chat before launch, then --resume=<UUID>', identity: 'known at launch; exit-banner hint needs confirmation if the chat could not be created first',
-    observer: 'none', status: ['running', 'exited'], commands: 'unknown', fileEdits: false, interrupt: 'Ctrl+C to the PTY', modes: 'Research: --mode=ask (read-only); Plan: --mode=plan' },
+    observer: 'per-launch plugin; turn end with Cursor turn status in Settings', status: ['running', 'exited', 'idle (with turn status)'], commands: 'unknown', fileEdits: false, interrupt: 'Ctrl+C to the PTY', modes: 'Research: --mode=ask (read-only); Plan: --mode=plan' },
 };
 
 // ----- Phase 7: install, sign-in and status commands -----
@@ -129,7 +138,16 @@ export async function detectProvider(provider, env = process.env, { runner = run
   }
   const login = /^\s+login\b/m.test(top);
   const status = login && /^\s+status\b/m.test(await help(['login', '--help']));
-  return { ...ready, supports: { login, authStatus: status } };
+  // Whether Codex's hooks feature is on (`codex features list`, a local read): false only when the
+  // row says so; Journal then registers no hooks for that launch. Unknown keeps the default (on).
+  const features = /^\s+features\b/m.test(top) ? await help(['features', 'list']) : '';
+  return { ...ready, supports: { login, authStatus: status, hooks: codexHooksFeature(features) } };
+}
+
+// `codex features list` prints one row per feature: name, stage, effective state (true/false).
+export function codexHooksFeature(text) {
+  const row = /^(?:hooks|codex_hooks)\s+\S+\s+(true|false)\s*$/m.exec(typeof text === 'string' ? text : '');
+  return row ? row[1] === 'true' : null;
 }
 
 // Signed in or out, parsed in memory: only the conclusion leaves these functions.

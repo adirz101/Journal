@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, isLive, type Changes, type Session, type TimelineEvent } from './types';
 import { indexEvents, mergeEvents, type EventIndex } from './sessionView';
+import { outputOnly } from './sessionState';
 
 const NONE: TimelineEvent[] = [];
 
@@ -39,7 +40,7 @@ export function useSessionChanges(session: Session | null, fileEvents: number) {
   }, [id]);
   useEffect(() => { refresh(); return () => { ticket.current++; }; }, [refresh]);
   useEffect(() => { if (!fileEvents) return; const timer = setTimeout(refresh, 500); return () => clearTimeout(timer); }, [fileEvents, refresh]);
-  const poll = !!session && isLive(session) && session.provider !== 'claude';
+  const poll = !!session && isLive(session) && outputOnly(session);
   useEffect(() => {
     if (!poll) return;
     const timer = setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, POLL_MS);

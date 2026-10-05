@@ -60,7 +60,20 @@ test('none when the window is focused at entry, and none later in that episode',
   assert.equal(f.shown().length, 1);
 });
 
-test('none for Codex or Cursor waiting', async () => {
+test('an observed Codex approval notifies under its own name; Cursor, unobserved and lost sessions never do', async () => {
+  const f = setup();
+  const approvals = { turns: true, approvals: true };
+  f.notifier.update(f.session({ id: 'x1', provider: 'codex', status: 'waiting', observation: 'live', observes: approvals, pending: { tool: 'Bash', command: 'rm x' } }));
+  f.notifier.update(f.session({ id: 'x2', provider: 'cursor', status: 'waiting', observation: 'live', observes: { turns: true, approvals: false } }));
+  f.notifier.update(f.session({ id: 'x3', provider: 'codex', status: 'waiting', observation: 'unobserved', observes: approvals }));
+  f.notifier.update(f.session({ id: 'x4', provider: 'codex', status: 'waiting', observation: 'lost', observes: approvals }));
+  f.notifier.update(f.session({ id: 'x5', provider: 'claude', status: 'waiting', observation: 'lost' }));
+  await flush();
+  assert.deepEqual(f.shown().map(n => n.options.title), ['Codex needs approval']);
+  assert.deepEqual(f.badges.at(-1), 1, 'Only the observed approval counts on the badge');
+});
+
+test('none for Codex or Cursor waiting without observed approvals', async () => {
   const f = setup();
   f.notifier.update(f.session({ id: 'c1', provider: 'codex', status: 'waiting' }));
   f.notifier.update(f.session({ id: 'c2', provider: 'cursor', status: 'waiting' }));
