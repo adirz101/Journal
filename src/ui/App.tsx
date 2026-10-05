@@ -20,6 +20,8 @@ import { CommandPalette } from './CommandPalette';
 import { RuntimeBanner } from './RuntimeBanner'; // Phase 8
 import { RecoveryPanel } from './RecoveryPanel'; // Phase 8
 import { recoveryView } from './statesModel'; // Phase 8
+import { firstEnabled, useKeepFocus } from './useKeepFocus';
+
 import { PALETTE_ACTIONS, type PaletteActionId } from './paletteModel'; // Phase 8
 import { expectModalDialog } from './modal'; // Phase 8 review I5
 import { Inspector } from './Inspector';
@@ -48,6 +50,11 @@ import { EndedTerminal, WrapUp } from './WrapUp'; // Phase 6
 import { endedView, type HandoffPrefill } from './wrapUpModel'; // Phase 6
 import { keyLetter } from './keys';
 import { api, errorCode, isLive, PROVIDER_NAMES, type AgentInfo, type Bootstrap, type CommandId, type FirstRunDrafts, type ProcessKind, type FileReference, type InspectorTab, type Memory, type Mode, type Project, type ProjectState, type Provider, type Receipt, type Recovery, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
+
+// The main column's place for keyboard focus when a banner or panel above it goes away.
+const mainFocusTarget = () => document.querySelector<HTMLElement>('main.workspace .terminal-surface .xterm-helper-textarea')
+  ?? document.querySelector<HTMLElement>('#wrapup-title') ?? document.getElementById('task')
+  ?? document.querySelector<HTMLElement>('main.workspace button:not(:disabled)');
 
 const MAX_SESSIONS = 4;
 const NO_KEYS = {}; // Phase 8: the palette's keys before bootstrap
@@ -98,7 +105,19 @@ export default function App() {
   const rememberedAgent = useRef<string | null | undefined>(undefined);
   if (rememberedAgent.current === undefined) rememberedAgent.current = (() => { try { const value = localStorage.getItem('journal-agent'); return isProvider(value) ? value : null; } catch { return null; } })();
   const [provider, setProviderState] = useState<Provider>(() => defaultProvider(undefined, rememberedAgent.current ?? null));
-  const chooseProvider = (next: Provider) => { setProviderState(next); setStartError(null); rememberedAgent.current = next; try { localStorage.setItem('journal-agent', next); } catch { /* optional */ } };
+  // Until the user (or a hand-off) picks an agent, the default follows detection: an agent still
+  // being checked when bootstrap answered must not lose its place to a later one (Phase 9).
+  // The user takes the choice over by choosing a card, starting a session or editing the task box;
+  // a hand-off and a remembered agent count as chosen. A change made here clears a start error,
+  // which belonged to the previous agent.
+  const providerAuto = useRef(true);
+  const autoProvider = (agents: AgentInfo[] | undefined) => {
+    if (!providerAuto.current || rememberedAgent.current) return;
+    const next = defaultProvider(agents, null);
+    setProviderState(current => { if (current !== next) setStartError(null); return next; });
+  };
+  const editTask = useCallback((value: string) => { providerAuto.current = false; setTask(value); }, []);
+  const chooseProvider = (next: Provider) => { providerAuto.current = false; setProviderState(next); setStartError(null); rememberedAgent.current = next; try { localStorage.setItem('journal-agent', next); } catch { /* optional */ } };
   // === End Phase 4: composer state ===
   const [processView, setProcessView] = useState<{ id: string; title: string; command?: string; provider: Provider; kind: ProcessKind } | null>(null);
   // === Phase 7: first run state ===
@@ -237,7 +256,7 @@ export default function App() {
   useEffect(() => {
     void api<Bootstrap>('bootstrap').then(async data => {
       hasNotesAtStart.current = data.hasNotes; settleFirstNote(data.hasNotes); // Phase 7: an upgrading install never sees the first-note moment
-      setBootstrap(latestAgents.current ? { ...data, agents: latestAgents.current } : data); setProjects(data.projects); if (!rememberedAgent.current) setProviderState(defaultProvider(latestAgents.current ?? data.agents, null)); setRuntime(data.runtime); merge([...data.active, ...data.live]); setRecovery(data.recovery ?? null);
+      setBootstrap(latestAgents.current ? { ...data, agents: latestAgents.current } : data); setProjects(data.projects); autoProvider(latestAgents.current ?? data.agents); setRuntime(data.runtime); merge([...data.active, ...data.live]); setRecovery(data.recovery ?? null);
       const remembered = (() => { try { return localStorage.getItem('journal-project'); } catch { return null; } })();
       const firstLive = slotOrder([...data.active, ...data.live]).find(isLive);
       const selected = data.projects.find(p => p.id === (firstLive?.projectId ?? remembered));
@@ -266,6 +285,7 @@ export default function App() {
       if (event.type === 'proposals') { setKnowledgeVersion(v => v + 1); return; }
       if (event.type === 'providers') {
         latestAgents.current = event.agents; setBootstrap(current => current ? { ...current, agents: event.agents } : current);
+        autoProvider(event.agents);
         // After an install or sign-in exits, main checks that provider again and tags the result.
         const after = event.after; const next = after && event.agents.find(a => a.provider === after.provider);
         if (after && next) setProviderNotes(notes => ({ ...notes, [after.provider]: providerNote(after.provider, after.kind, next) }));
@@ -356,7 +376,7 @@ export default function App() {
   // The agent is preselected for this hand-off only; the remembered default agent is not changed.
   function handoff(prefill: HandoffPrefill) {
     newSession(); setTask(prefill.task); setReferences(prefill.references); setWorkspaceId(prefill.workspaceId); setDisabled([]);
-    setProviderState(prefill.provider); setMode(prefill.mode); setStartError(null);
+    providerAuto.current = false; setProviderState(prefill.provider); setMode(prefill.mode); setStartError(null);
     requestAnimationFrame(() => { const field = taskRef.current; if (field) field.setSelectionRange(field.value.length, field.value.length); });
   }
   // === End Phase 6 ===
@@ -437,7 +457,7 @@ export default function App() {
   async function start(provider: Provider, resumeFrom?: Session) {
     const projectId = resumeFrom?.projectId ?? state?.project.id; if (!projectId) return;
     // Take the task now so text typed while this start finishes is never cleared.
-    const submitted = resumeFrom ? '' : task; if (!resumeFrom) setTask('');
+    const submitted = resumeFrom ? '' : task; if (!resumeFrom) { providerAuto.current = false; setTask(''); }
     await run(async () => {
       try {
         if (!resumeFrom) setStartError(null);
@@ -709,6 +729,11 @@ export default function App() {
   }, []);
   // Once every row is resolved (continued, removed or archived), the panel closes and acknowledges.
   useEffect(() => { if (recovery && recoveryLoadedAt === recovery.at && !recoveryShown) acknowledgeRecovery(recovery.at); }, [recovery, recoveryLoadedAt, recoveryShown, acknowledgeRecovery]);
+  // When the banner or the recovery panel goes (or a resolved row leaves it) with focus inside, focus
+  // moves to the panel's next control, else to the session: the live terminal, the wrap-up's heading,
+  // or the task box (Phase 9). It never falls to the page.
+  const runtimeSlot = useKeepFocus<HTMLDivElement>(mainFocusTarget);
+  const recoverySlot = useKeepFocus<HTMLDivElement>(root => firstEnabled(root) ?? mainFocusTarget());
   // === End Phase 8 ===
   const projectBranchChanged = session && state && !session.workspaceId && session.projectId === state.project.id && isLive(session) && session.branch !== undefined && session.branch !== state.project.branch;
   // One timeline fetch and one changes source per session, shared by the header, status bar and inspector.
@@ -751,10 +776,13 @@ export default function App() {
     {/* === Region B: main column (session view) === */}
     <main className="workspace" aria-busy={busy || undefined}>
       {/* === Phase 8: runtime disconnected and crash recovery (board 9) === */}
-      {runtime.state === 'disconnected' && <RuntimeBanner runtime={runtime} onReconnect={() => api('reconnectRuntime')} />}
+      {/* The banner sits in a status region that stays mounted, so it is announced when it appears (Phase 9). */}
+      <div className="runtime-live" role="status" ref={runtimeSlot}>{runtime.state === 'disconnected' && <RuntimeBanner runtime={runtime} onReconnect={() => api('reconnectRuntime')} />}</div>
       {runtime.warning && runtime.state !== 'disconnected' && <div className="error-banner" role="status"><span>{runtime.warning}</span></div>}
-      {recovery && recoveryShown && <RecoveryPanel recovery={recovery} view={recoveryShown} busy={busy} onContinue={target => void start(target.provider, target)}
-        onSelect={target => void selectSession(target)} onDone={() => acknowledgeRecovery(recovery.at)} />}
+      {/* The recovery panel is a region, not a live one: this always-present region says once that it appeared. */}
+      <div className="visually-hidden recovery-live" role="status">{recovery && recoveryShown ? `${statesCopy.crashTitle}. ${statesCopy.crashBody(recovery)}` : ''}</div>
+      <div ref={recoverySlot}>{recovery && recoveryShown && <RecoveryPanel recovery={recovery} view={recoveryShown} busy={busy} onContinue={target => void start(target.provider, target)}
+        onSelect={target => void selectSession(target)} onDone={() => acknowledgeRecovery(recovery.at)} />}</div>
       {/* === End Phase 8 === */}
       {error && <div className="error-banner" role="alert"><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
       {/* Phase 7: the first-note moment (its text is announced by this always-present region), then Welcome or Getting to know your project. */}
@@ -767,7 +795,7 @@ export default function App() {
           onEdit={(scope, statement) => { const draft = scope === 'checkout' ? currentDrafts.overview : currentDrafts.branch; if (draft) setForm({ draft: { ...draft, statement }, firstRun: scope }); }} />
         : firstRunPending ? <div className="first-run-pending" aria-busy="true" />
         : !session ? <NewSessionView project={state.project} bootstrap={bootstrap} workspaces={workspaces} workspaceId={workspaceId}
-          task={task} onTask={setTask} taskRef={taskRef} references={references} disabled={disabled} onDisabled={setDisabled} provider={provider} mode={mode}
+          task={task} onTask={editTask} taskRef={taskRef} references={references} disabled={disabled} onDisabled={setDisabled} provider={provider} mode={mode}
           connected={connected} liveCount={liveCount} busy={busy} startError={startError} knowledgeVersion={knowledgeVersion} onAddReference={openReferencePicker}
           {...composerCallbacks} providers={providerProps} mark={journalMark} justRemembered={justRemembered}
           emptyTerminal={firstSession ? bootstrap?.shortcuts['new-session']?.label ?? '' : null} />

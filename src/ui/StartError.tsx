@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { states } from './copy';
+import { providers, states } from './copy';
 import { api, PROVIDER_NAMES } from './types';
 import { keptText, terminalActionLabel, type StartProblem } from './statesModel';
 
@@ -7,7 +7,8 @@ import { keptText, terminalActionLabel, type StartProblem } from './statesModel'
 // the command to run, and Open terminal, Copy command and Check again. Open terminal runs
 // main's constant-argv sign-in (or install) in a visible terminal; the renderer never builds
 // argv, and Journal never handles the login. alert: from a refused start (announced at once);
-// otherwise the agent's own status check said so (a polite status).
+// otherwise the agent's own status check said so (a polite status). Check again stays focusable
+// while it runs (aria-disabled); when the card goes, the composer moves focus to Start.
 export function StartError({ problem, alert, onOpenTerminal }: { problem: StartProblem; alert: boolean; onOpenTerminal: (() => void) | null }) {
   const [copied, setCopied] = useState<'done' | 'failed' | null>(null);
   const [checking, setChecking] = useState(false);
@@ -26,7 +27,7 @@ export function StartError({ problem, alert, onOpenTerminal }: { problem: StartP
     <div className="start-error-actions">
       {onOpenTerminal && <button type="button" className="primary" onClick={onOpenTerminal}>{terminalActionLabel(problem)}</button>}
       {command && <button type="button" onClick={() => void copy()}>{copied === 'done' ? states.copied : copied === 'failed' ? states.copyFailed : states.copyCommand}</button>}
-      <button type="button" className="ghost" disabled={checking} onClick={() => void check()}>{states.checkAgain}</button>
+      <button type="button" className="ghost" aria-disabled={checking || undefined} onClick={() => { if (!checking) void check(); }}>{checking ? providers.checking : states.checkAgain}</button>
     </div>
     {alert && <p className="start-error-kept">{keptText(problem)}</p>}
   </div>;

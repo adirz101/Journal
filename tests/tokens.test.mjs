@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { terminalThemes } from '../src/ui/theme.ts';
 import { TERMINAL_COLORS } from '../src/core/terminal-queries.mjs';
-import { WINDOW_BACKGROUND } from '../src/desktop/window-colors.mjs';
+import { CRASH_COLORS, WINDOW_BACKGROUND } from '../src/desktop/window-colors.mjs';
+import { crashPageHtml } from '../src/desktop/crash-page.mjs';
 
 // Token values per theme, read from src/ui/tokens.css (comments stripped).
 const css = readFileSync(new URL('../src/ui/tokens.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
@@ -174,6 +175,16 @@ for (const [name, t] of Object.entries(themes)) {
 
   test(`${name} theme: the window background is the --bg token`, () => {
     assert.equal(WINDOW_BACKGROUND[name].toUpperCase(), t.bg.toUpperCase());
+  });
+
+  // Phase 9: the page main shows after a renderer crash cannot load tokens.css; its colours repeat the tokens.
+  test(`${name} theme: the crash page uses the tokens' colours`, () => {
+    const mirrored = { bg: 'bg', text: 'tx', body: 'tx2', button: 'accbtn', onButton: 'on-acc', ring: 'acc' };
+    for (const [key, token] of Object.entries(mirrored)) assert.equal(CRASH_COLORS[name][key].toUpperCase(), t[token].toUpperCase(), `${key} = --${token}`);
+    assert.deepEqual(Object.keys(CRASH_COLORS[name]).sort(), Object.keys(mirrored).sort());
+    const html = crashPageHtml(name);
+    for (const colour of Object.values(CRASH_COLORS[name])) assert.ok(html.includes(colour), colour);
+    assert.match(html, new RegExp(`color-scheme:${name}`));
   });
 }
 

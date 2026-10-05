@@ -222,3 +222,14 @@ test('motion inventory: only the listed, budgeted motion exists, and reduced mot
   // No smooth scrolling anywhere in the renderer (it is motion too, and keyboard-triggered).
   for (const name of readdirSync(UI).filter(file => /\.(tsx?|css)$/.test(file))) assert.doesNotMatch(read(name), /behavior:\s*['"]?smooth|scroll-behavior:\s*smooth/, name);
 });
+
+// Phase 9 part 2 review M2: a waiting button (aria-disabled, so it keeps focus) looks unavailable and does not react to hover.
+test('aria-disabled waiting buttons look unavailable and ignore hover', () => {
+  const css = readFileSync(new URL('../src/ui/styles.css', import.meta.url), 'utf8');
+  for (const scope of ['.runtime-banner', '.recovery-panel', '.start-error-actions']) {
+    assert.ok(css.includes(`${scope} button[aria-disabled=true]`), scope);
+    assert.ok(css.includes(`${scope} button[aria-disabled=true]:not(:disabled):hover`), `${scope} hover`);
+  }
+  assert.match(css, /\.start-error-actions button\[aria-disabled=true\]\{cursor:default;background:var\(--raised\);border-color:var\(--line2\);color:var\(--tx3\)\}/);
+});
+

@@ -59,7 +59,13 @@ export const isProvider = (value: string | null | undefined): value is Provider 
 // The first available agent in the order Claude, Codex, Cursor; a remembered choice wins.
 export function defaultProvider(agents: AgentInfo[] | undefined, remembered: string | null): Provider {
   if (isProvider(remembered)) return remembered;
-  return AGENT_ORDER.find(provider => agentReady(agents?.find(a => a.provider === provider))) ?? 'claude';
+  // In agent order, the first ready agent; an agent still being checked holds its place (Phase 9),
+  // so the default only moves forward as detection answers, never away from a ready agent.
+  for (const provider of AGENT_ORDER) {
+    const agent = agents?.find(a => a.provider === provider);
+    if (!agent || agent.state === 'checking' || agentReady(agent)) return provider;
+  }
+  return 'claude';
 }
 
 // Why an installed agent can't start yet, in a word (the card's line also names the version).

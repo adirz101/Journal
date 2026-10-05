@@ -122,6 +122,11 @@ test('the default agent is the first available one, and a remembered choice wins
   assert.equal(defaultProvider([claude, codex], 'codex'), 'codex');
   assert.equal(defaultProvider([claude, codex], 'nonsense'), 'claude');
   assert.equal(defaultProvider(undefined, null), 'claude');
+  // An agent still being checked holds its place: no skipping ahead to a later ready one.
+  const checking = { state: 'checking', available: false, version: null };
+  assert.equal(defaultProvider([{ ...claude, ...checking }, codex, cursor()], null), 'claude');
+  assert.equal(defaultProvider([{ ...claude, ...none }, { ...codex, ...checking }, cursor()], null), 'codex');
+  assert.equal(defaultProvider([claude, { ...codex, ...checking }], null), 'claude');
 });
 
 const note = (id, category, terms, bytes, extra = {}) => ({ id, revisionId: `${id}-r1`, revision: 1, statement: `Note ${id}`, category, scope: category === 'brief' ? 'checkout' : 'checkout', area: '', branch: null, source: { kind: 'user', note: 'x' }, status: 'active', validation: 'current', selection: { reason: 'matched', bytes, terms }, ...extra });
