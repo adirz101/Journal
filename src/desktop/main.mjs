@@ -1,27 +1,32 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, shell } from 'electron';
 import { spawn } from 'node:child_process';
-import { resolve, dirname, join, sep } from 'node:path';
+import { resolve, dirname, isAbsolute, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { StoreClient } from './store-client.mjs';
 import { RuntimeClient } from './runtime-client.mjs';
 import { buildId } from '../runtime/protocol.mjs';
-import { detectAgents, detectCursor } from '../core/agents.mjs';
+import { PROVIDER_COMMANDS, PROVIDER_NAMES, PROVIDERS, commandsFor, detectCursor, detectProvider, initialAgents, installFor, probeAuth } from '../core/agents.mjs';
 import { cursorAuth, findCursor, installCommand, installEnv } from '../core/cursor.mjs';
 import { ProcessRunner } from './processes.mjs';
 import { homedir } from 'node:os';
-import { relativePath, text } from '../core/validation.mjs';
+import { choice, relativePath, text } from '../core/validation.mjs';
 import { SESSION_USER_FIELDS, survivorScanPending } from '../core/sessions.mjs';
-import { headDiff, listDirectory, locate, previewFile, treePath } from '../core/files.mjs';
+import { headDiff, listDirectory, ListingCache, locate, previewFile, searchFiles, treePath } from '../core/files.mjs';
 import { gitStatus } from '../core/git-status.mjs';
 import { formatReference, referenceEvent } from '../core/references.mjs';
 import { isSensitivePath } from '../core/evidence.mjs';
-import { launchTarget, resolveExecutable } from '../core/process.mjs';
+import { launchTarget, resolveExecutable, testProviderAllowed } from '../core/process.mjs';
 import { RootWatcher } from './watch.mjs';
 import { Updater, updateMode } from './updater.mjs';
 import { checkOutcome, menuTemplate } from './menu.mjs';
+import { APP_USER_MODEL_ID, createNotifier, readPreferences, systemSurface, writePreferences } from './notify.mjs';
+import { dialogKeyHold, matchShortcut, OPENS_DIALOG, shortcutKeys, shouldDispatch } from './shortcuts.mjs';
+import { settledError } from './ipc-error.mjs';
 import electronUpdater from 'electron-updater';
-import { dataDirectory, unpackedPath, withGuiPath } from './environment.mjs';
+import { dataDirectory, isNetworkPath, unpackedPath, withGuiPath } from './environment.mjs';
+import { WINDOW_BACKGROUND } from './window-colors.mjs';
+import { CRASH_COPY, crashPageUrl, isReloadRequest, rendererGoneAction } from './crash-page.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../..');
@@ -34,6 +39,8 @@ const appIcon = nativeImage.createFromPath(resolve(root, 'assets/branding/journa
 const iconSize = appIcon.getSize(); const iconInset = Math.round(Math.min(iconSize.width, iconSize.height) * 0.05);
 const displayIcon = appIcon.crop({ x: iconInset, y: iconInset, width: iconSize.width - 2 * iconInset, height: iconSize.height - 2 * iconInset });
 app.setName('Journal');
+// Windows shows a packaged app's notifications only under its AppUserModelId (the installer's shortcut carries the same appId).
+if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? APP_USER_MODEL_ID : process.execPath);
 // A packaged app opened from Finder has a minimal PATH; add the usual CLI
 // install folders so Claude Code, Codex and Cursor are found (see environment.mjs).
 if (app.isPackaged) { const next = withGuiPath(process.env).PATH; if (next) process.env.PATH = next; }
@@ -41,11 +48,42 @@ if (app.isPackaged) { const next = withGuiPath(process.env).PATH; if (next) proc
 const userData = dataDirectory(process.env, app.getPath('appData'));
 mkdirSync(userData, { recursive: true, mode: 0o700 });
 app.setPath('userData', userData);
+// The last chosen appearance, so the first frame of a new window has the right background.
+const appearancePrefs = join(userData, 'appearance.json');
+const lastAppearance = () => { try { return JSON.parse(readFileSync(appearancePrefs, 'utf8')).appearance === 'light' ? 'light' : 'dark'; } catch { return 'dark'; } };
+// The current appearance, for the runtime: it sets COLORFGBG at launch and answers colour queries with it.
+let appearance = lastAppearance();
+// A runtime from an earlier build has no setAppearance; its sessions keep the window's answers.
+const tellRuntimeAppearance = () => { void runtime?.call('setAppearance', { appearance }).catch(() => {}); };
+// Notification preferences (two booleans; see notify.mjs). Local to this device, read without a store round trip.
+const preferencesFile = join(userData, 'preferences.json');
+let preferences = readPreferences(preferencesFile);
 if (!app.requestSingleInstanceLock()) app.quit();
-let window; let store; let runtime; let updater; let updatePolicy = null; let closing = false; let closed = false; let runtimeState = 'connecting'; let runtimeWarning = null;
-const devUrl = process.env.JOURNAL_DEV_URL;
+// modalOpen: the renderer reports whether a modal dialog is open (setModalOpen).
+// recovery: sessions the runtime recovered from a crashed predecessor (its hello), until the renderer acknowledges them.
+// Acknowledgements are kept by runtime ID and time (at most 20, the oldest dropped), so one made while the
+// runtime was unreachable is sent again when that runtime is back, and never hides another runtime's recovery.
+let recovery = null; const acknowledgedRecovery = new Set();
+const recoveryKey = value => `${value?.runtimeId ?? ''}\u0000${value?.at ?? ''}`;
+const acknowledge = value => { acknowledgedRecovery.delete(value); acknowledgedRecovery.add(value); while (acknowledgedRecovery.size > 20) acknowledgedRecovery.delete(acknowledgedRecovery.values().next().value); };
+const recoveryFrom = hello => {
+  if (!hello?.recovery) return null;
+  if (!acknowledgedRecovery.has(recoveryKey(hello.recovery))) return hello.recovery;
+  // Acknowledged here while disconnected: tell the runtime now (an older runtime rejects the method).
+  runtime.call('acknowledgeRecovery', { at: hello.recovery.at }).catch(() => {});
+  return null;
+};
+// crashShown: the window shows the crash page (crash-page.mjs) after its renderer was lost.
+let window; let modalOpen = false; let crashShown = false; const dialogKeys = dialogKeyHold();
+// loadedSinceGone: a page finished loading since the renderer was last lost (rendererGoneAction).
+let loadedSinceGone = false; let store; let runtime; let updater; let updatePolicy = null; let closing = false; let closed = false; let runtimeState = 'connecting'; let runtimeWarning = null;
+// The development server (npm run dev, and the profiling build in tests/desktop-performance.spec.ts).
+// A released build always loads its own dist/, whatever the environment says.
+const devUrl = app.isPackaged ? undefined : process.env.JOURNAL_DEV_URL;
 // Automated tests run without visible windows or a Dock icon.
 const headless = process.env.JOURNAL_HEADLESS === '1';
+// Phase 7: Getting to know your project is offered outside headless runs, and in them only with the test hook.
+const firstRunOn = () => !headless || globalThis.__journalFirstRun === true;
 if (devUrl && !/^http:\/\/127\.0\.0\.1:\d+\/$/.test(devUrl)) throw new Error('Development URL must be local');
 const LIVE = ['starting', 'running', 'waiting', 'stopping'];
 
@@ -62,7 +100,8 @@ function validSender(event) {
 // The runtime is detached from this process so an app crash or window close
 // does not end running agents. Its output goes to a bounded log, not a pipe.
 function launchRuntime() {
-  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+  // The runtime names Journal's version to agents as TERM_PROGRAM_VERSION.
+  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', JOURNAL_APP_VERSION: app.getVersion() };
   const log = openSync(join(userData, 'runtime-stderr.log'), 'a', 0o600);
   const child = spawn(process.execPath, [unpacked(resolve(here, '../runtime/runtime.mjs')), '--data', userData], { detached: true, stdio: ['ignore', 'ignore', log], env, windowsHide: true });
   // Report exit from the child handle: a killed, not yet reaped runtime still
@@ -72,7 +111,10 @@ function launchRuntime() {
 }
 
 function createWindow() {
-  window = new BrowserWindow({ title: 'Journal', icon: displayIcon, width: 1440, height: 920, minWidth: 900, minHeight: 640, backgroundColor: '#101216',
+  // The size is the page's (useContentSize): Windows counts its frame borders in a window's
+  // width, so a 1440-wide window gave the page about 1424 px there and opened in the medium
+  // layout (inspector folded) instead of the wide one macOS and Linux get.
+  window = new BrowserWindow({ title: 'Journal', icon: displayIcon, width: 1440, height: 920, useContentSize: true, minWidth: 900, minHeight: 640, backgroundColor: WINDOW_BACKGROUND[lastAppearance()],
     show: !headless,
     // Hidden test windows keep their size on small CI screens (macOS clamps to the display otherwise).
     enableLargerThanScreen: headless,
@@ -81,15 +123,69 @@ function createWindow() {
   // Test runs: macOS clamps a new window to the screen (CI runners have a 1024x768
   // virtual display) even with enableLargerThanScreen; resizing after creation keeps
   // the requested size, so tests see the same layout everywhere.
-  if (headless) window.setSize(1440, 920);
+  if (headless) window.setContentSize(1440, 920);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  window.webContents.on('will-navigate', event => event.preventDefault());
+  // The page never navigates. On the crash page, Reload's request is the one navigation that means
+  // something: it is cancelled like every other and the app is loaded again.
+  window.webContents.on('will-navigate', (event, url) => { event.preventDefault(); if (crashShown && isReloadRequest(url)) loadApp(); });
   window.webContents.on('will-attach-webview', event => event.preventDefault());
+  // App shortcuts work while the terminal has focus (BUG-7): matched here, before
+  // the page sees the key, and sent as commands. A held key is claimed on every
+  // repeat (so it never leaks to the terminal) but sends its command once. While
+  // a modal dialog is open nothing is claimed: keys behave as usual inside it.
+  window.webContents.on('before-input-event', (event, input) => {
+    if (modalOpen) return;
+    // Keys after ⌘K / ⌘P wait for the palette instead of reaching the terminal first.
+    if (dialogKeys.holds()) { event.preventDefault(); return; }
+    const id = matchShortcut(input, process.platform);
+    if (!id) return;
+    event.preventDefault();
+    if (!shouldDispatch(input)) return;
+    if (OPENS_DIALOG.has(id) && !crashShown) dialogKeys.start(); // the crash page opens no dialog
+    send({ type: 'command', id });
+  });
   // A reloading renderer re-attaches; until then the runtime keeps buffering.
-  window.webContents.on('did-start-loading', () => { void runtime?.call('detach', {}).catch(() => {}); });
+  window.webContents.on('did-start-loading', () => { modalOpen = false; dialogKeys.release(); void runtime?.call('detach', {}).catch(() => {}); });
+  // A crashed or killed renderer never detaches its panes itself. Instead of a blank window it shows
+  // the crash page (Something went wrong · Reload), or, when a page cannot help, a native message box
+  // (rendererGoneAction). Sessions keep running in the runtime and reattach when the app loads again,
+  // with nothing resent. Nothing reloads without the user asking.
+  window.webContents.on('did-finish-load', () => { loadedSinceGone = true; });
+  window.webContents.on('render-process-gone', (_event, details) => {
+    modalOpen = false; dialogKeys.release(); void runtime?.call('detach', {}).catch(() => {});
+    const action = rendererGoneAction({ reason: details?.reason, quitting: closing || closed, destroyed: !window || window.isDestroyed() || window.webContents.isDestroyed(),
+      crashPageShowing: crashShown, loadedSinceLastGone: loadedSinceGone });
+    loadedSinceGone = false;
+    if (action === 'page') { crashShown = true; void window.loadURL(crashPageUrl(appearance)).catch(() => {}); }
+    else if (action === 'dialog') void askAfterCrash();
+  });
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   window.on('closed', () => { window = null; });
-  if (devUrl) window.loadURL(devUrl); else window.loadFile(resolve(root, 'dist/index.html'));
+  // Windows and Linux flash the taskbar while something waits; looking at Journal stops it.
+  window.on('focus', () => { if (process.platform !== 'darwin' && !headless) window?.flashFrame(false); });
+  loadApp();
+}
+
+// When no page can be shown: Reload or Quit, asked once at a time. Headless test runs never show it;
+// a test answers through globalThis.__journalCrashDialog (options → response), otherwise nothing happens.
+let crashDialogOpen = false;
+async function askAfterCrash() {
+  if (crashDialogOpen || !window || window.isDestroyed()) return;
+  crashDialogOpen = true;
+  try {
+    const options = { type: 'error', buttons: [CRASH_COPY.reload, CRASH_COPY.quit], defaultId: 0, cancelId: 1, message: CRASH_COPY.dialogMessage, detail: CRASH_COPY.dialogDetail };
+    const hook = headless ? globalThis.__journalCrashDialog : null;
+    if (headless && typeof hook !== 'function') return;
+    const { response } = headless ? { response: await hook(options) } : await dialog.showMessageBox(window, options);
+    if (response === 0) loadApp(); else app.quit();
+  } finally { crashDialogOpen = false; }
+}
+
+// Loads the renderer (at start and from the crash page's Reload).
+function loadApp() {
+  if (!window || window.isDestroyed()) return;
+  crashShown = false;
+  void (devUrl ? window.loadURL(devUrl) : window.loadFile(resolve(root, 'dist/index.html'))).catch(() => {});
 }
 
 // Do not top-level-await readiness: Electron waits for its entry module to finish
@@ -103,10 +199,36 @@ runtime = new RuntimeClient({ dataDir: userData, launch: launchRuntime });
 // The runtime's in-memory sessions carry status only: names, pins, archive and
 // removal belong to the store, so its copies of those fields never reach the UI.
 const fromRuntime = session => { const status = { ...session }; for (const field of SESSION_USER_FIELDS) delete status[field]; return status; };
-runtime.on('event', event => send(event?.type === 'status' && event.session ? { ...event, session: fromRuntime(event.session) } : event));
+// Approval notifications and the badge. Headless test runs never reach the OS:
+// a test replaces the notification, badge and focus through globals, and
+// without those they do nothing (systemSurface in notify.mjs).
+const testHook = name => headless && typeof globalThis[name] === 'function' ? globalThis[name] : null;
+const surface = systemSurface({ headless, hook: testHook, Notification,
+  isFocused: () => !!window && !window.isDestroyed() && window.isFocused(),
+  setBadgeCount: count => app.setBadgeCount(count),
+  // macOS: Dock badge. Windows has no badge count (setBadgeCount returns false), so the taskbar flashes instead; Linux gets both where its launcher supports a count.
+  flashFrame: count => { if (process.platform !== 'darwin' && window && !window.isDestroyed()) window.flashFrame(count > 0 && !window.isFocused()); } });
+const notifier = createNotifier({
+  ...surface,
+  onClick: sessionId => {
+    if (!window || window.isDestroyed()) return;
+    // Hidden test windows stay hidden.
+    if (!headless) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); }
+    send({ type: 'focus-session', sessionId });
+  },
+  // The user's name for the session lives in the store, not in the runtime's copy.
+  titleFor: session => store.getSession(session.id).then(row => row.displayName || row.title, () => session.title),
+  preferences: () => preferences,
+});
+const seedNotifier = async () => { try { notifier.seed([...(await runtime.call('list')).map(fromRuntime), ...(await store.activeSessions())]); } catch { /* the next status events correct the badge */ } };
+runtime.on('event', event => {
+  if (event?.type === 'status' && event.session) { const session = fromRuntime(event.session); notifier.update(session); send({ ...event, session }); return; }
+  send(event);
+});
 // Explorer: one watched root, the status call per root shared while it runs,
 // and an external editor found on PATH (or named by JOURNAL_EDITOR).
-const watcher = new RootWatcher(change => send({ type: 'files', ...change }));
+// A change in the watched root also marks its open-file listing stale, so a new file is found after one refresh.
+const watcher = new RootWatcher(change => { listings.invalidate(change.key); send({ type: 'files', ...change }); });
 const statusCalls = new Map();
 // Resolved roots are cached briefly so browsing does not run Git in the store
 // worker for every request; any workspace or folder change clears the cache.
@@ -116,7 +238,16 @@ const fileRoot = async (projectId, rootKey) => {
   if (cached && Date.now() - cached.at < 5000) return cached.root;
   const root = await store.fileRoot(projectId, rootKey); rootCache.set(key, { root, at: Date.now() }); return root;
 };
-const ROOT_CHANGES = new Set(['addProjectFolder', 'removeProjectFolder', 'removeProject', 'openProject', 'createWorkspace', 'importWorkspace', 'removeWorkspace', 'forgetWorkspace']);
+// Open-file (Phase 8): git ls-files listings per root (ListingCache): kept 30 s, at most four
+// roots, one listing per root at a time. A watcher batch marks its root's list stale: searches get
+// the stale list while one refresh runs (at most every 1.5 s). Workspace and folder changes drop
+// them all, like the root cache.
+const listings = new ListingCache();
+const fileListing = async (projectId, rootKey) => {
+  const root = await fileRoot(projectId, rootKey);
+  return listings.get(`${projectId}\u0000${rootKey}`, root);
+};
+const ROOT_CHANGES = new Set(['addProjectFolder', 'removeProjectFolder', 'removeProject', 'openProject', 'openProjectPath', 'createWorkspace', 'importWorkspace', 'removeWorkspace', 'forgetWorkspace']);
 const EDITORS = { code: line => file => ['--goto', `${file}:${line}`], cursor: line => file => ['--goto', `${file}:${line}`], zed: line => file => [`${file}:${line}`], subl: line => file => [`${file}:${line}`] };
 let editor;
 const findEditor = () => {
@@ -129,39 +260,106 @@ const findEditor = () => {
 runtime.on('warning', message => { runtimeWarning = message; send({ type: 'runtime', state: runtimeState, warning: message }); });
 runtime.on('disconnected', () => { runtimeState = 'disconnected'; send({ type: 'runtime', state: 'disconnected' }); });
 runtime.on('failed', message => { runtimeWarning = message; send({ type: 'runtime', state: 'disconnected', warning: message }); });
-runtime.on('reconnected', () => { runtimeState = 'connected'; send({ type: 'runtime', state: 'connected', recovered: true }); });
-let agents = detectAgents();
-// Cursor's sign-in state is checked off the startup path, again after install
-// or sign-in, and on request. Only signed in / signed out is kept.
-let cursorCheck = null;
-const refreshCursor = async ({ fresh = false } = {}) => {
-  // One check at a time. After an install or sign-in a running (older) check
-  // is waited for and a new one started, so the result reflects the change.
-  if (cursorCheck && !fresh) return cursorCheck;
-  if (cursorCheck) await cursorCheck.catch(() => {});
-  if (cursorCheck) return cursorCheck;
+// A warning from before the disconnect (a failed launch, a protocol mismatch) no longer applies;
+// a build mismatch of the new connection is kept (the client reports it again when adopting it).
+runtime.on('reconnected', hello => {
+  runtimeState = 'connected'; runtimeWarning = runtime.warning ?? null; recovery = recoveryFrom(hello);
+  send({ type: 'runtime', state: 'connected', recovered: true, recovery, ...(runtimeWarning ? { warning: runtimeWarning } : {}) }); void seedNotifier(); tellRuntimeAppearance();
+});
+// Phase 7: every provider starts as "checking"; detection, help reads and sign-in
+// probes start at once when main loads (refreshProviders below), before the window
+// exists, and run asynchronously beside it, one check in flight per provider. Only signed in / signed out / unknown is kept.
+let agents = initialAgents(process.platform, process.env);
+// Headless test runs: fixture CLIs treat any argument but --version as a session (and
+// log it as a launch), so help reads and probes run only when a spec asks for them
+// (__journalAuthProbes: true for every provider, or a list of providers).
+// Cursor has no --version-only check (a Cursor build is known by its version and help together),
+// so in those runs Cursor is not looked for at all until a spec allows its probes.
+const probesAllowed = provider => {
+  if (!headless) return true;
+  const allowed = globalThis.__journalAuthProbes;
+  return allowed === true || (Array.isArray(allowed) && allowed.includes(provider));
+};
+const checks = new Map();
+const refreshProvider = async (provider, { fresh = false, after = null } = {}) => {
+  // After an install or sign-in a running (older) check is waited for and a new
+  // one started, so the result reflects the change.
+  if (checks.has(provider) && !fresh) return checks.get(provider);
+  if (checks.has(provider)) await checks.get(provider).catch(() => {});
+  if (checks.has(provider)) return checks.get(provider);
   const check = (async () => {
-    const row = await detectCursor(process.env);
-    const auth = row.available ? await cursorAuth(row.path, process.env) : 'unchecked';
-    const next = { ...row, auth, state: row.available && auth === 'signed-out' ? 'login-required' : row.state };
-    agents = agents.map(agent => agent.provider === 'cursor' ? next : agent);
-    send({ type: 'providers', agents });
-    return next;
+    let row;
+    if (provider === 'cursor') {
+      // Detection runs the CLI (version and help) and the sign-in check runs `agent status`:
+      // both only when probes are allowed. Otherwise (headless tests) Cursor stays not found.
+      row = probesAllowed(provider) ? await detectCursor(process.env) : await detectCursor(process.env, { inspect: false });
+      const auth = row.available && probesAllowed(provider) ? await cursorAuth(row.path, process.env) : 'unchecked';
+      row = { ...row, auth, state: row.available && auth === 'signed-out' ? 'login-required' : row.state };
+    } else {
+      const probes = probesAllowed(provider);
+      row = await detectProvider(provider, process.env, { probes });
+      if (probes) row = { ...row, auth: await probeAuth(row, process.env) };
+    }
+    agents = agents.map(agent => agent.provider === provider ? row : agent);
+    // after names the install or sign-in that ended, so the renderer can say what changed.
+    send({ type: 'providers', agents, ...(after ? { after: { provider, kind: after } } : {}) });
+    return row;
   })();
-  cursorCheck = check; void check.finally(() => { if (cursorCheck === check) cursorCheck = null; }).catch(() => {});
+  checks.set(provider, check); void check.finally(() => { if (checks.get(provider) === check) checks.delete(provider); }).catch(() => {});
   return check;
 };
-void refreshCursor().catch(() => {});
-const processes = new ProcessRunner(send, async (file, args, options) => (await import('node-pty')).spawn(file, args, options));
+const refreshProviders = () => Promise.all(PROVIDERS.map(provider => refreshProvider(provider).catch(() => {})));
+// The row to act on: the check in flight, else the last detected one.
+// Started at once and never awaited: detection runs beside the runtime connection and the
+// first window, and never delays either (Phase 7). Rows arrive as providers events.
+void refreshProviders();
+const currentRow = provider => checks.get(provider) ?? agents.find(agent => agent.provider === provider);
+// After an install or sign-in ends, main checks that provider again itself.
+const processes = new ProcessRunner(event => { send(event); if (event.type === 'process-exit') void refreshProvider(event.provider, { fresh: true, after: event.kind }).catch(() => {}); },
+  async (file, args, options) => (await import('node-pty')).spawn(file, args, options));
 const runnable = env => { const next = { ...env }; delete next.ELECTRON_RUN_AS_NODE; return next; };
 const actions = {
-  setAppearance: ({ appearance }) => {
-    if (appearance !== 'light' && appearance !== 'dark') throw new Error('Invalid appearance');
+  setAppearance: ({ appearance: chosen }) => {
+    if (chosen !== 'light' && chosen !== 'dark') throw new Error('Invalid appearance');
+    appearance = chosen; tellRuntimeAppearance();
     nativeTheme.themeSource = appearance;
-    window?.setBackgroundColor(appearance === 'light' ? '#fafbfe' : '#101216');
+    window?.setBackgroundColor(WINDOW_BACKGROUND[appearance]);
+    try { writeFileSync(appearancePrefs, JSON.stringify({ appearance })); } catch { /* The next launch starts dark. */ }
   },
-  bootstrap: async () => ({ projects: await store.listProjects(), agents, platform: process.platform, runtime: { state: runtimeState, warning: runtimeWarning },
-    live: runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [], active: await store.activeSessions() }),
+  setModalOpen: ({ open }) => {
+    if (typeof open !== 'boolean') throw new Error('Invalid dialog state');
+    modalOpen = open; dialogKeys.release();
+  },
+  // Notification preferences (Settings). writePreferences accepts only known keys with boolean values.
+  preferences: () => preferences,
+  setPreference: ({ key, value }) => { if (typeof key !== 'string') throw new Error('Invalid preference'); preferences = writePreferences(preferencesFile, { [key]: value }); return preferences; },
+  // agents is read after the last await, so a providers event sent while bootstrap waited
+  // is already in it (the renderer also keeps such events and applies the newest).
+  bootstrap: async () => {
+    const projects = await store.listProjects(); const runtimeInfo = { state: runtimeState, warning: runtimeWarning };
+    const live = runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [];
+    const active = await store.activeSessions(); const hasNotes = await store.hasActiveNotes();
+    return { projects, agents, platform: process.platform, shortcuts: shortcutKeys(process.platform), runtime: runtimeInfo, live, active, hasNotes, recovery };
+  },
+  // Phase 8: open-file. The root comes from Journal's records (fileRoot), never a renderer path;
+  // the listing is ranked here and never reads a file. An empty query only warms the listing.
+  searchFiles: ({ projectId, rootKey, query, limit }) => {
+    const value = text(query, 'query', 200, true);
+    if (limit !== undefined && (typeof limit !== 'number' || !Number.isFinite(limit))) throw new Error('Invalid limit');
+    return searchFiles(null, value, { limit: Math.min(100, Math.max(1, Math.trunc(limit ?? 50))), list: () => fileListing(projectId, rootKey) });
+  },
+  // Phase 8: the recovery panel's Done. Main forgets its copy (and remembers the acknowledgement,
+  // so a reconnect to the same runtime does not bring it back); the runtime clears it for later
+  // apps. A runtime from before Phase 8 rejects the method: main's copy is cleared all the same.
+  acknowledgeRecovery: async ({ at }) => {
+    const value = text(at, 'recovery time', 40);
+    // The acknowledgement names the recovery main holds (its runtime); a stale at is remembered for no runtime.
+    acknowledge(recoveryKey({ runtimeId: recovery?.at === value ? recovery.runtimeId : runtime.info?.runtimeId, at: value })); if (recovery?.at === value) recovery = null;
+    if (!runtime.socket) return { cleared: false };
+    try { return await runtime.call('acknowledgeRecovery', { at: value }); } catch { return { cleared: false }; }
+  },
+  // Phase 8: Reconnect now. retrying is false when there is nothing to retry (already connected).
+  reconnectRuntime: () => ({ retrying: runtime.retryNow() }),
   openProject: async () => {
     const result = await dialog.showOpenDialog(window, { title: 'Open a Git project', properties: ['openDirectory'] });
     return result.canceled ? null : store.openProject(result.filePaths[0]);
@@ -178,14 +376,14 @@ const actions = {
     if (!root) throw new Error('Unknown folder');
     const { response } = await dialog.showMessageBox(window, { type: 'question', buttons: ['Remove folder from project', 'Cancel'], defaultId: 1, cancelId: 1,
       message: `Remove ${root.name} from ${details.project.name}?`,
-      detail: `Your files will not be deleted. Journal stops using ${root.path} as part of this project.${root.knowledge ? ` ${root.knowledge} knowledge claim${root.knowledge === 1 ? '' : 's'} from this folder will be kept but excluded until you add the same folder again.` : ''}` });
+      detail: `Your files will not be deleted. Journal stops using ${root.path} as part of this project.${root.knowledge ? ` ${root.knowledge} note${root.knowledge === 1 ? '' : 's'} from this folder will be kept but not included until you add the same folder again.` : ''}` });
     return response === 0 ? store.removeProjectRoot(id, rootId) : null;
   },
   // Removing never deletes files; the second option deletes Journal's own records for the project.
   removeProject: async ({ id }) => {
     const { project, counts } = await store.projectDetails(id);
     if (counts.liveSessions) throw new Error('Stop this project\'s running sessions first');
-    const data = [`${counts.knowledge} knowledge claim${counts.knowledge === 1 ? '' : 's'}`, `${counts.sessions} session record${counts.sessions === 1 ? '' : 's'}`, `${counts.receipts} context receipt${counts.receipts === 1 ? '' : 's'}`, `${counts.events} timeline event${counts.events === 1 ? '' : 's'}`, `${counts.proposals} open proposal${counts.proposals === 1 ? '' : 's'}`].join(', ');
+    const data = [`${counts.knowledge} note${counts.knowledge === 1 ? '' : 's'}`, `${counts.sessions} session record${counts.sessions === 1 ? '' : 's'}`, `${counts.receipts} record${counts.receipts === 1 ? '' : 's'} of what was sent`, `${counts.events} timeline event${counts.events === 1 ? '' : 's'}`, `${counts.proposals} open suggestion${counts.proposals === 1 ? '' : 's'}`].join(', ');
     const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Remove from Journal', 'Remove and delete Journal data', 'Cancel'], defaultId: 2, cancelId: 2,
       message: `Remove ${project.name} from Journal?`,
       detail: `Your files will not be deleted. Nothing in ${project.root} or its Git repository is touched.\n\nRemove from Journal: hides the project. Its Journal data (${data}) is kept, and opening the folder again restores everything.\n\nRemove and delete Journal data: permanently deletes that Journal data from this computer. This cannot be undone.${counts.worktrees ? `\n\nThis project has ${counts.worktrees} Journal worktree${counts.worktrees === 1 ? '' : 's'}; remove ${counts.worktrees === 1 ? 'it' : 'them'} under Workspaces before deleting data.` : ''}` });
@@ -195,7 +393,9 @@ const actions = {
   projects: () => store.listProjects(),
   // Cheap branch/HEAD read so the UI notices checkouts switched outside Journal.
   checkout: async ({ projectId }) => { const project = await store.project(projectId); return { branch: project.branch, head: project.head }; },
-  project: async ({ projectId }) => ({ project: await store.project(projectId), sessions: await store.listSessions(projectId, true), receipts: await store.listReceipts(projectId) }),
+  // needsOrientation (Phase 7): the renderer holds the main column until firstRunDrafts answers, so no composer flashes first.
+  project: async ({ projectId }) => ({ project: await store.project(projectId), sessions: await store.listSessions(projectId, true), receipts: await store.listReceipts(projectId),
+    needsOrientation: firstRunOn() && await store.needsOrientation(projectId) }),
   workspaces: ({ projectId }) => store.listWorkspaces(projectId),
   planWorkspace: ({ projectId, branch, base }) => store.planWorkspace(projectId, { branch, base }, join(userData, 'worktrees')),
   createWorkspace: ({ projectId, branch, base, baseCommit, planId }) => store.createWorkspace(projectId, { branch, base, baseCommit, planId }, join(userData, 'worktrees')),
@@ -203,12 +403,27 @@ const actions = {
   workspaceRemovalBlockers: ({ id }) => store.workspaceRemovalBlockers(id),
   removeWorkspace: ({ id }) => store.removeWorkspace(id),
   forgetWorkspace: ({ id }) => store.forgetWorkspace(id),
-  memoryPage: ({ projectId, offset, limit, filter, search }) => store.listMemoryPage(projectId, { offset, limit, filter, search }),
+  memoryPage: ({ projectId, offset, limit, filter, search, category, otherBranch, ids }) => store.listMemoryPage(projectId, { offset, limit, filter, search, category, otherBranch, ids }),
+  memoryOrigins: ({ projectId, ids }) => store.memoryOrigins(projectId, ids),
+  deliveryCounts: ({ projectId, ids }) => store.deliveryCounts(projectId, ids),
+  memoryChecks: ({ projectId, offset, limit }) => store.memoryChecks(projectId, { offset, limit }),
   proposeMemory: ({ projectId, input }) => store.proposeMemory(projectId, input),
-  setMemoryStatus: ({ id, status }) => store.setMemoryStatus(id, status, { reason: status === 'archived' ? 'withdrawn' : null }),
+  // Forgetting (archiving) cannot be undone, so it asks first; Cancel returns null.
+  setMemoryStatus: async ({ id, status }) => {
+    if (status === 'archived') {
+      const memory = await store.getMemory(id);
+      const statement = memory.statement.length > 160 ? `${memory.statement.slice(0, 159)}…` : memory.statement;
+      const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Forget', 'Cancel'], defaultId: 1, cancelId: 1, message: 'Forget this note?',
+        detail: `“${statement}”\n\nAgents stop receiving it from the next session. It stays in History and cannot be remembered again as it is; to use it again, revise it there and review it.` });
+      if (response !== 0) return null;
+    }
+    return store.setMemoryStatus(id, status, { reason: status === 'archived' ? 'withdrawn' : null });
+  },
   proposeStatusUpdate: ({ projectId, scope }) => store.proposeStatusUpdate(projectId, scope),
   memoryHistory: ({ id }) => store.memoryHistory(id),
-  prepareContext: ({ projectId, task, workspaceId, disabled, references }) => store.prepareContext(projectId, task, { workspaceId: workspaceId ?? null, disabled: disabled ?? [], references: references ?? [] }),
+  prepareContext: ({ projectId, task, workspaceId, disabled, references }) => store.prepareContext(projectId, task, { workspaceId: workspaceId ?? null, disabled: disabled ?? [], references: references ?? [], persist: false }),
+  // The typing preview: stored records only (no Git, no evidence reads, no writes).
+  previewSelection: ({ projectId, task, workspaceId, branch, disabled, references }) => store.previewSelection(projectId, task, { workspaceId: workspaceId ?? null, branch: branch ?? null, disabled: disabled ?? [], references: references ?? [] }),
   // ----- Explorer (read-only). Roots resolve from Journal's records; the
   // renderer only names a root key and a relative path. -----
   fileRoots: ({ projectId }) => store.fileRoots(text(projectId, 'project ID', 100)),
@@ -262,8 +477,9 @@ const actions = {
     if (result.inserted) return { inserted: true, text: textValue };
     clipboard.writeText(textValue);
     const event = referenceEvent(record, 'copied');
-    await store.appendEvent(id, 'reference', event).catch(() => {});
-    send({ type: 'timeline', event: { sessionId: id, kind: 'reference', at: new Date().toISOString(), body: event } });
+    const at = new Date().toISOString();
+    await store.appendEvent(id, 'reference', event, at).catch(() => {});
+    send({ type: 'timeline', event: { sessionId: id, kind: 'reference', at, body: event } });
     return { inserted: false, copied: true, reason: result.reason, text: textValue };
   },
   // A reference chosen for the next task: validated and fingerprinted now,
@@ -272,14 +488,20 @@ const actions = {
     return store.describeReference(text(projectId, 'project ID', 100), workspaceId ?? null, { rootKey, path, startLine, endLine });
   },
   setPinned: ({ id, pinned }) => store.setPinned(id, pinned),
-  proposals: ({ projectId }) => store.listProposals(projectId, 'open'),
+  proposals: ({ projectId, sessionId }) => store.listProposals(projectId, 'open', sessionId ? { sessionId } : {}),
+  // Phase 6: the session wrap-up. via is fixed here; the renderer cannot label its own audit entries.
+  sessionSummary: ({ id }) => store.sessionSummary(id),
+  staleNotes: ({ sessionId }) => store.staleNotesForSession(sessionId),
+  staleNoteDiff: ({ projectId, memoryId, sessionId }) => store.staleNoteDiff(text(projectId, 'project ID', 100), text(memoryId, 'note ID', 100), text(sessionId, 'session ID', 100)),
+  rememberProposals: ({ ids }) => store.rememberProposals(ids, { via: 'wrap-up' }),
+  reaffirmMemory: ({ id, startLine, endLine, workspaceId, expectedHash }) => store.reaffirmMemory(id, { startLine, endLine, workspaceId: workspaceId ?? null, expectedHash }),
   storageInfo: () => store.storageInfo(),
   backupData: async () => {
     const result = await dialog.showSaveDialog(window, { title: 'Back up Journal data', defaultPath: `journal-backup-${new Date().toISOString().slice(0, 10)}.sqlite` });
     return result.canceled ? null : store.backup(result.filePath);
   },
   exportBrain: async ({ projectId }) => {
-    const result = await dialog.showSaveDialog(window, { title: 'Export project knowledge', defaultPath: 'journal-knowledge.json', filters: [{ name: 'Journal knowledge', extensions: ['json'] }] });
+    const result = await dialog.showSaveDialog(window, { title: 'Export project memory', defaultPath: 'journal-project-memory.json', filters: [{ name: 'Journal project memory', extensions: ['json'] }] });
     if (result.canceled) return null;
     const { json, markdown } = await store.exportBrain(projectId);
     writeFileSync(result.filePath, JSON.stringify(json, null, 2));
@@ -289,7 +511,7 @@ const actions = {
     return { path: result.filePath, memories: json.memories.length, markdown: wroteMarkdown ? mdPath : null };
   },
   importBrain: async ({ projectId }) => {
-    const result = await dialog.showOpenDialog(window, { title: 'Import project knowledge', properties: ['openFile'], filters: [{ name: 'Journal knowledge', extensions: ['json'] }] });
+    const result = await dialog.showOpenDialog(window, { title: 'Import project memory', properties: ['openFile'], filters: [{ name: 'Journal project memory', extensions: ['json'] }] });
     if (result.canceled) return null;
     if (statSync(result.filePaths[0]).size > 5 * 1024 * 1024) throw new Error('Import file is larger than 5 MiB');
     return store.importBrain(projectId, readFileSync(result.filePaths[0], 'utf8'));
@@ -341,7 +563,7 @@ const actions = {
       if (after.survivors?.length) throw new Error(`The agent stopped, but ${after.survivors.length} child process${after.survivors.length === 1 ? '' : 'es'} kept running. The session was kept so you can end them from its header.`);
     } else {
       const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Remove from Journal', 'Remove and delete history', 'Cancel'], defaultId: 2, cancelId: 2, message: `Remove "${label}" from Journal?`,
-        detail: `Remove from Journal hides it and deletes its timeline; its context receipts are kept so the native conversation can still be resumed exactly. Remove and delete history also deletes its receipts (refused if other sessions continue the same native conversation). ${files}` });
+        detail: `Remove from Journal hides it and deletes its timeline; its records of what was sent are kept so you can still continue the native conversation. Remove and delete history also deletes those records (refused if other sessions continue the same native conversation). ${files}` });
       if (response === 2) return null;
       if (response === 1) { await runtime.call('release', { id }).catch(() => {}); await store.purgeSession(id); return { id, removed: true }; }
     }
@@ -376,26 +598,77 @@ const actions = {
   start: input => {
     // A runtime from another build may not understand newer launch options;
     // never let it silently run in the wrong workspace or mode.
-    if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.plan || input.provider === 'cursor' || input.disabled?.length || input.references?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, research or plan mode, Cursor, leave-out or file references.');
-    return runtime.call('start', input);
+    if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.plan || input.provider === 'cursor' || input.disabled?.length || input.references?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, read-only or plan mode, Cursor, leave-out or file references.');
+    // The CLI version comes from main's own provider detection, and the appearance from main, never from the renderer.
+    const { cliVersion: _ignored, appearance: _alsoIgnored, ...request } = input;
+    return runtime.call('start', { ...request, appearance, cliVersion: agents.find(agent => agent.provider === input.provider)?.version ?? null });
   },
-  // ----- Cursor CLI: install and sign in run visibly, only after the user asks. -----
-  providerStatus: ({ provider, fresh }) => { if (provider !== 'cursor') throw new Error('Only Cursor needs a status check'); return refreshCursor({ fresh: fresh === true }); },
-  installCursor: async () => {
-    const command = installCommand(process.platform, process.env);
-    const { response } = await dialog.showMessageBox(window, { type: 'question', buttons: ['Install', 'Cancel'], defaultId: 1, cancelId: 1, message: 'Install Cursor CLI?',
-      detail: `Journal will run Cursor's official installation command:\n\n${command.display}\n\nThis downloads and installs the Cursor Agent CLI on your computer from cursor.com.${process.platform === 'win32' ? ' The installer also adds its folder to your user PATH.' : ''} It runs as you, without administrator rights, in a window where you can watch its output. Journal will not receive or store your Cursor credentials.` });
+  // ----- Provider CLIs: install and sign in run visibly, only after the user asks. The renderer
+  // names a provider; the executable comes from detection and the argv from PROVIDER_COMMANDS. -----
+  providerStatus: ({ provider, fresh }) => refreshProvider(choice(provider, PROVIDERS, 'provider'), { fresh: fresh === true }),
+  providerInstall: async ({ provider }) => {
+    choice(provider, PROVIDERS, 'provider'); const name = PROVIDER_NAMES[provider];
+    const command = installFor(provider, process.platform, process.env);
+    if (!command) throw new Error('Open the install page instead');
+    const from = { claude: 'claude.ai', codex: 'chatgpt.com', cursor: 'cursor.com' }[provider];
+    const { response } = await dialog.showMessageBox(window, provider === 'cursor'
+      ? { type: 'question', buttons: ['Install', 'Cancel'], defaultId: 1, cancelId: 1, message: 'Install Cursor CLI?',
+        detail: `Journal will run Cursor's official installation command:\n\n${command.display}\n\nThis downloads and installs the Cursor Agent CLI on your computer from cursor.com.${process.platform === 'win32' ? ' The installer also adds its folder to your user PATH.' : ''} It runs as you, without administrator rights, in a window where you can watch its output. Journal will not receive or store your Cursor credentials.` }
+      : { type: 'question', buttons: ['Install', 'Cancel'], defaultId: 1, cancelId: 1, message: `Install ${name}?`,
+        detail: `Journal will run ${name}'s official installation command:\n\n${command.display}\n\nThis downloads and installs ${name} on your computer from ${from}. It runs as you, without administrator rights, in a window where you can watch its output. Journal will not receive or store your ${name} credentials.` });
     if (response !== 0) return null;
     // Automated tests substitute a local fixture installer; nothing else can.
-    const run = headless && globalThis.__journalCursorInstall ? globalThis.__journalCursorInstall : command;
-    return { ...(await processes.start('install', { file: run.file, args: run.args, env: installEnv(process.env), cwd: homedir() })), command: command.display };
+    const fixture = headless ? (globalThis.__journalInstall?.[provider] ?? (provider === 'cursor' ? globalThis.__journalCursorInstall : null)) : null;
+    const run = fixture ?? command;
+    return { ...(await processes.start({ provider, kind: 'install' }, { file: run.file, args: run.args, env: installEnv(process.env), cwd: homedir() })), command: command.display };
   },
-  cursorLogin: async () => {
-    const found = await findCursor(process.env);
-    if (!found.path) throw new Error('Install the Cursor CLI first');
-    const target = launchTarget(found.path, ['login'], { env: process.env });
-    return processes.start('login', { file: target.file, args: target.args, env: runnable(process.env), cwd: homedir() });
+  // No confirmation, as before: signing in is the CLI's own flow, in a visible terminal.
+  providerLogin: async ({ provider }) => {
+    choice(provider, PROVIDERS, 'provider'); const name = PROVIDER_NAMES[provider];
+    let path;
+    if (provider === 'cursor') {
+      const found = probesAllowed(provider) ? await findCursor(process.env) : { path: null };
+      if (!found.path) throw new Error('Install the Cursor CLI first');
+      path = found.path;
+    } else {
+      const row = await currentRow(provider);
+      if (!row?.available || !row.path) throw new Error(`Install ${name} first`);
+      if (row.supports?.login !== true) throw new Error(`${name}${row.version ? ` ${row.version}` : ''} can’t sign in from Journal. Run ${name} in a terminal and sign in there.`);
+      path = row.path;
+    }
+    if (!testProviderAllowed(path, process.env)) throw new Error(`Install ${name} first`);
+    const target = launchTarget(path, [...PROVIDER_COMMANDS[provider].login], { env: process.env });
+    return { ...(await processes.start({ provider, kind: 'login' }, { file: target.file, args: target.args, env: runnable(process.env), cwd: homedir() })), command: commandsFor(provider).login };
   },
+  // The official page from the constant table; the renderer never supplies a URL.
+  // Headless test runs record the URL instead (globalThis.__journalOpenedUrls) and never open a browser.
+  openInstallPage: async ({ provider }) => {
+    const url = PROVIDER_COMMANDS[choice(provider, PROVIDERS, 'provider')].installPage;
+    if (headless) { (globalThis.__journalOpenedUrls ??= []).push(url); return; }
+    await shell.openExternal(url);
+  },
+  // ----- Phase 7: first run -----
+  // A folder dropped on the window (preload pathForFile): an absolute, existing directory,
+  // then the store's own Git check. The same trust as the open dialog.
+  openProjectPath: ({ path }) => {
+    if (typeof path !== 'string' || !path || path.length > 4096 || !isAbsolute(path)) throw new Error('Drop a Git folder');
+    if (isNetworkPath(path)) throw new Error('Drop a folder on this computer, not a network share');
+    let directory = false; try { directory = statSync(path).isDirectory(); } catch { /* missing */ }
+    if (!directory) throw new Error('Drop a Git folder');
+    return store.openProject(path);
+  },
+  // Gated in headless runs: many specs open a fresh repository and go straight to Start.
+  // again (Draft again after the project moved) is a strict boolean.
+  firstRunDrafts: async ({ projectId, again }) => {
+    const id = text(projectId, 'project ID', 100);
+    if (again !== undefined && typeof again !== 'boolean') throw new Error('Invalid request');
+    return firstRunOn() ? store.firstRunDrafts(id, { again: again === true }) : null;
+  },
+  // The renderer calls this once the first-run screen has painted (D10: offered once).
+  markOrientationShown: ({ projectId }) => store.markOrientationShown(text(projectId, 'project ID', 100)),
+  // via is fixed here; the renderer cannot label its own audit entries.
+  rememberDraft: ({ projectId, overview, branch }) => store.rememberDraft(text(projectId, 'project ID', 100), { overview: overview ?? null, branch: branch ?? null }, { via: 'first-run' }),
+  skipOrientation: ({ projectId }) => store.skipOrientation(text(projectId, 'project ID', 100)),
   processInput: ({ id, data }) => processes.write(text(id, 'process', 40), data),
   processResize: ({ id, cols, rows }) => processes.resize(text(id, 'process', 40), cols, rows),
   processStop: ({ id }) => processes.stop(text(id, 'process', 40)),
@@ -441,11 +714,13 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
   try {
     if (!validSender(event)) throw new Error('Untrusted desktop caller');
     if (!Object.hasOwn(actions, action) || !input || typeof input !== 'object' || Array.isArray(input) || JSON.stringify(input).length > 100000) throw new Error('Invalid desktop request');
-    if (ROOT_CHANGES.has(action)) rootCache.clear();
-    try { return { ok: true, value: await actions[action](input) }; } finally { if (ROOT_CHANGES.has(action)) rootCache.clear(); }
-  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Operation failed' }; }
+    if (ROOT_CHANGES.has(action)) { rootCache.clear(); listings.clear(); }
+    // Headless test runs may wrap a request (globalThis.__journalRequestHook(action, run)) to count or delay it.
+    const hook = headless && typeof globalThis.__journalRequestHook === 'function' ? globalThis.__journalRequestHook : null;
+    try { return { ok: true, value: await (hook ? hook(action, () => actions[action](input)) : actions[action](input)) }; } finally { if (ROOT_CHANGES.has(action)) { rootCache.clear(); listings.clear(); } }
+  } catch (error) { return settledError(error); }
 });
-try { await runtime.connect(); runtimeState = 'connected'; }
+try { recovery = recoveryFrom(await runtime.connect()); runtimeState = 'connected'; tellRuntimeAppearance(); await seedNotifier(); }
 catch (error) { runtimeState = 'disconnected'; console.error('Journal runtime unavailable:', error.message); void runtime.reconnect(); }
 createWindow();
 // Updates: packaged builds only. The automatic-check preference lives in the data folder.
@@ -466,7 +741,9 @@ async function checkForUpdatesFromMenu() {
   if (outcome.kind === 'ready') await actions.installUpdate().catch(error => dialog.showErrorBox('Could not install the update', error.message));
   if (outcome.kind === 'available') actions.openUpdateRelease();
 }
-Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate({ platform: process.platform, name: app.name, checkForUpdates: () => void checkForUpdatesFromMenu().catch(() => {}), openUrl: url => void shell.openExternal(url) })));
+Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate({ platform: process.platform, name: app.name, packaged: app.isPackaged, devTools: process.env.JOURNAL_DEVTOOLS === '1',
+  checkForUpdates: () => void checkForUpdatesFromMenu().catch(() => {}), openUrl: url => void shell.openExternal(url), openSettings: () => send({ type: 'command', id: 'settings' }),
+  command: id => send({ type: 'command', id }) })));
 // Release smoke checks of builds that cannot be driven by automation (the
 // Windows portable EXE relaunches itself): report basic health, then quit.
 // Packaged builds only; contains no project or user content.
@@ -489,12 +766,14 @@ app.on('before-quit', event => {
     let live = [];
     // Never start a runtime while quitting: only ask a connected one.
     if (runtime.socket) { try { live = (await runtime.call('list')).filter(session => LIVE.includes(session.status)); } catch { /* runtime unavailable */ } }
-    // A half-finished Cursor install could leave a broken CLI behind: ask first.
+    // A half-finished install could leave a broken CLI behind: ask first.
     const running = processes.running();
     if (running.length && !headless) {
+      // An installation is named first: stopping it can leave a broken CLI behind.
+      const first = running.find(entry => entry.kind === 'install') ?? running[0]; const name = PROVIDER_NAMES[first.provider];
       const { response } = await dialog.showMessageBox({ type: 'warning', buttons: ['Stop it and quit', 'Cancel'], defaultId: 1, cancelId: 1,
-        message: running.includes('install') ? 'The Cursor CLI installation is still running.' : 'Cursor sign-in is still running.',
-        detail: running.includes('install') ? 'Quitting now stops the installer and may leave an incomplete installation. You can run the installer again afterwards.' : 'Quitting now cancels the sign-in.' });
+        message: first.kind === 'install' ? `The ${name} installation is still running.` : `${name} sign-in is still running.`,
+        detail: first.kind === 'install' ? 'Quitting now stops the installer and may leave an incomplete installation. You can run the installer again afterwards.' : 'Quitting now cancels the sign-in.' });
       if (response === 1) { closing = false; if (updatePolicy) { updatePolicy = null; updater.setInstalling(false); } if (!window) createWindow(); return; }
     }
     // An update install already asked what to do with running sessions.
@@ -506,7 +785,7 @@ app.on('before-quit', event => {
       if (response === 2) { closing = false; if (!window) createWindow(); return; }
       policy = response === 0 ? 'stop' : 'keep';
     }
-    processes.stopAll(); updater?.stop();
+    processes.stopAll(); updater?.stop(); notifier.dispose();
     await runtime.close({ shutdown: policy !== 'keep' && !!runtime.socket, stopSessions: true });
     await store.close().catch(() => {});
     closed = true;

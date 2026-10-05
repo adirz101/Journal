@@ -13,6 +13,11 @@ User goal, 1 October 2026: a new conversation should know what the repo means an
 
 ## User workflow
 
+**First open (redesign, Phase 7; decision D1 approved 4 October 2026).** When a project has no brief at all, Journal drafts both briefs from Git once, after the project has rendered (decision D10), and shows them on **Getting to know your project**: the whole draft, with **Working on now**, **Next**, the optional **Rules to keep** (and **Purpose** when the README has no purpose line) as fields. **Remember both** admits exactly what the two cards show in one action (audited `via: 'first-run'`), because both whole statements are on screen; a HEAD or branch that moved since the draft is refused and offers **Draft again**. **Edit** opens the form below (two-step review); **Skip for now** is stored and the screen is not offered again for that project. Later updates use the Memory tab's **Draft “Where this branch stands”** and **Draft “About this project”**, which keep the review step.
+
+Freshness stays file-level: a note is out of date when any byte of its cited file changed (decision D2, range-level freshness, is not approved and not implemented). The out-of-date catch after a session shows the note beside the changed lines; **Still true** admits a new revision at once (`via: 'reaffirm'`), as in the terminal-first spec.
+
+
 Click **Add project brief**, write the overview once, attach a tracked source excerpt or explicit source note, and approve it. The form defaults to **Repo overview · all branches in this checkout**. Add another brief with **Current branch update** to record current progress. Revise/approve it when the branch state changes. A new provider session receives both applicable summaries automatically; there is no need to paste them into each task.
 
 Suggested overview:

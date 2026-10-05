@@ -8,7 +8,9 @@ Switching agents should not mean rediscovering architecture decisions, constrain
 
 ![Journal](assets/branding/journal-banner.png)
 
-<!-- TODO: Add a product screenshot or GIF at docs/assets/journal-preview.png. The banner above is branding, not an application preview. -->
+![Journal with a running session, the status bar and the Memory tab](docs/assets/journal-preview.png)
+
+*Fixture data: a throwaway repository and a stand-in agent CLI, captured headless with `scripts/readme-screenshot.mjs`.*
 
 ## Why Journal?
 
@@ -94,18 +96,53 @@ On macOS, development and start commands use a cached local `Journal.app` runtim
 
 Data remains in the `journal-desktop` directory under Electron's application-data location; set `JOURNAL_DATA_DIR` to use another directory. Terminal output and keystrokes are volatile and live only in the runtime's bounded memory. Reloading or reopening reconnects to running sessions; quitting asks whether to stop them or keep them running; a stopped session needs explicit native resume.
 
+## Screens
+
+- **Welcome.** Shown while no project is open: **Open a project…** (or drop a folder on the window) and one row per agent (Claude Code, Codex, Cursor) saying whether it is installed and signed in, with one action each (**Install…**, **Sign in…**, **Check again**). Install and sign-in run the agent's own command in a visible terminal after you confirm.
+- **Getting to know your project.** The first time a project without notes is opened, Journal drafts *About this project* and *Where this branch stands* from Git (no AI call; nothing leaves the computer). Fill in **Working on now** and **Next**, then **Remember both**, edit one, or **Skip for now**.
+- **Sidebar.** The project switcher, **New session**, the active sessions with their slot keys and states (*Working*, *Needs approval*, *Your turn* for Claude; *Running · output just now* or *quiet* for Codex and Cursor, marked *Limited status*), recent sessions by day, **Project memory** with a count of notes waiting for review, **Settings** and the runtime line. Below 1180 px it folds to a rail.
+- **New session.** The task box (matched words are underlined), agent cards, the **Build / Plan / Read-only** mode, the workspace, one **Start** button, and a live preview of what the agent will know: notes every session gets, notes relevant to this task, and their size.
+- **Session.** A header with the agent, workspace, mode and state; a banner naming the command when Claude waits for your approval (you answer in the terminal); the native terminal; and a status bar with how many notes the agent got (**See what was sent**), the changes against the session's start and whether output is saved.
+- **Inspector.** Three tabs: **Session** (what the agent was told and what it did), **Files** (Changed, or the whole read-only tree with previews and references) and **Memory** (search, categories, Needs review, Check needed and other branches). Below 1440 px it folds to a rail and opens as an overlay.
+- **Wrap-up.** When a session ends: its summary, suggestions worth keeping (**Remember**, **Remember all**, Edit, Dismiss with Undo), an out-of-date catch when the session changed a file a note cites (the note and the changed lines side by side, with **Update note…**, **Still true** and **Forget…**), **Continue** to resume the same conversation, and hand-off to another agent. An error exit leads with the last output.
+- **Command palette.** ⌘K / Ctrl+Shift+P: one search over sessions (live ones by slot), quiet Codex and Cursor sessions to check, every action (a blocked one says why) and remembered notes; type `>` for actions only. Arrow keys move, Enter runs, Escape returns focus where it was. With no match it offers a new session with that task.
+- **Open any file.** ⌘P / Ctrl+Shift+O: searches the files Git lists in the Files tab's current folder (ignored and sensitive paths left out) and previews the chosen file there; from the composer's **Add reference…** it adds the file as a reference.
+- **When something fails.** A banner while the local runtime is disconnected, with **Reconnect now**; after a runtime crash, a recovery list of the sessions it ended, with **Continue**, **Confirm ID…** or **Review**; a card above **Start** when an agent is missing, unsupported, signed out or cannot start, with **Open terminal**, **Copy command** and **Check again**; with four sessions running, Start says to stop or finish one first; and if the window itself stops, a plain page says so with **Reload**, which reopens the project and reattaches the running sessions without resending anything.
+- **Settings.** Appearance, notifications (Claude approvals, with the command hidden by default), updates, and data and backups.
+
 ## Basic workflow
 
-1. **Open a repo.** Select an existing Git checkout.
-2. **Add and review knowledge.** Use **Add project brief** for a checkout-wide overview or current-branch update. Attach a source note or 1–30 lines from a tracked file, then review and **Approve**. Keep branch status current by revising and approving it when work changes.
-3. **Preview context.** Enter a task and select **Preview context** to inspect the proposed knowledge packet. Eligible briefs are considered even without task text; context is revalidated at launch.
-4. **Start Claude or Codex.** Work and approve tools in the native terminal.
-5. **Run several agents.** Start up to four sessions, across projects or providers. Each receives the current reviewed overview, applicable branch update, and relevant task knowledge for its own project and branch.
-6. **Resume explicitly.** Select the session and confirm its exact native ID where required. For Codex, confirm the UUID from the native CLI after stopping. Journal never falls back to the latest session.
+1. **Open a project.** Choose an existing Git checkout, and remember the two drafted notes on the first visit (or skip).
+2. **Start a session.** Type the task, pick the agent and mode, check the preview, and press **Start** (⌘↵ / Ctrl+Enter). Work and approve tools in the native terminal.
+3. **Run several agents.** Up to four sessions at once, across projects or providers. ⌘J / Ctrl+Shift+J jumps to the next session that needs you.
+4. **Keep what was learned.** The wrap-up suggests notes; one click remembers a suggestion whose whole statement is on screen. Notes can also be added and reviewed in **Memory**.
+5. **Resume explicitly.** **Continue** reopens the exact native conversation. Codex needs its native UUID confirmed first. Journal never falls back to the latest session.
 
-Keyboard shortcuts: Cmd/Ctrl+O opens a project, Cmd/Ctrl+N starts a new session (focuses the task), ⌘1–4 (macOS) or Alt+1–4 switches active sessions, and Cmd/Ctrl+Shift+K adds knowledge. Ctrl+C in the terminal or **Interrupt** sends an interrupt to the native process.
+### Keyboard shortcuts
 
-Use **Light mode** / **Dark mode** in the sidebar to change appearance. Drag either sidebar's inner edge to resize it, or focus the divider and use arrow keys (Shift for larger steps), Home/End for limits, or Enter to reset. Double-click also resets. Theme and widths are saved locally.
+App shortcuts work while the terminal has focus: Journal claims them before the terminal sees them. Every other key, such as Ctrl+C, Ctrl+R, Ctrl+K, Ctrl+P or Alt+letter, goes to the terminal. While a dialog is open, keys work as usual inside it. Standard window keys such as ⌘W (Ctrl+W) belong to the app menu.
+
+| Action | macOS | Windows and Linux |
+| --- | --- | --- |
+| New session | ⌘N | Ctrl+Shift+N |
+| Open a project | ⌘O | Ctrl+O (outside the terminal) |
+| Switch to active session 1–4 | ⌘1–⌘4 | Alt+1–Alt+4 |
+| Next session that needs you | ⌘J | Ctrl+Shift+J |
+| Focus the terminal | ⌘E | Ctrl+Shift+E |
+| Inspector: Session, Files, Memory | ⌥⌘1, ⌥⌘2, ⌥⌘3 | Alt+Shift+1, Alt+Shift+2, Alt+Shift+3 |
+| Show or hide the inspector | ⌘I | Ctrl+Shift+B |
+| Show or hide the sidebar | ⌘\ | Ctrl+Shift+\ |
+| Add a note | ⇧⌘K | Ctrl+Shift+K |
+| Settings | ⌘, | Ctrl+, |
+| Command palette | ⌘K or ⇧⌘P | Ctrl+Shift+P |
+| Open any file | ⌘P | Ctrl+Shift+O |
+| Start, in the task box | ⌘↵ | Ctrl+Enter |
+| Remember both, on Getting to know your project | ⌘↵ | Ctrl+Enter |
+| Wrap-up: Continue / Remember all | ⌘↵ / ⇧⌘↵ | Ctrl+Enter / Ctrl+Shift+Enter |
+
+The terminal keeps the Tab key, so the keyboard leaves it with ⌥⌘2 / Alt+Shift+2 (Files), ⌘N / Ctrl+Shift+N (the task box) or a dialog key, and ⌘E / Ctrl+Shift+E returns. ⌥⌘1 and ⌥⌘3 switch the inspector tab and leave focus in the terminal. **Interrupt** also sends an interrupt to the native process. The keys come from [`src/desktop/shortcuts.mjs`](src/desktop/shortcuts.mjs).
+
+Change appearance in **Settings**. Drag either sidebar's inner edge to resize it, or focus the divider and use arrow keys (Shift for larger steps), Home/End for limits, or Enter to reset. Double-click also resets. Theme and widths are saved locally.
 
 ## Development / verification
 
@@ -120,7 +157,7 @@ npm run smoke:agents
 npm run pilot:memory
 ```
 
-The [current implementation status](docs/IMPLEMENTATION-STATUS.md) records 164 passing core tests, a passing typecheck and production build, and sixteen passing desktop scenarios (run headless). Desktop checks use real Electron, the runtime process and node-pty with controlled fixture CLIs: they cover context delivery, resume, four concurrent sessions, reload, app and runtime crashes, process cleanup, worktrees, research mode, and the changes view. These fixtures do not establish authenticated provider behavior.
+The [current implementation status](docs/IMPLEMENTATION-STATUS.md) records 640 passing unit tests, a passing typecheck and production build, and 144 passing desktop tests, run headless (1 skipped: a Windows/Linux-only key check). Desktop checks use real Electron, the runtime process and node-pty with controlled fixture CLIs, never a real provider CLI or login: they cover context delivery, resume, four concurrent sessions, reload, window, app and runtime crashes, process cleanup, worktrees, the redesigned screens with keyboard-only walkthroughs and accessibility audits in both themes, and the changes view. These fixtures do not establish authenticated provider behavior; the [To verify](docs/NATIVE-VALIDATION.md#to-verify) checklist lists what still needs real CLIs, Windows hardware and screen readers.
 
 `smoke:agents` checks installed native CLI startup without submitting a task or accepting trust prompts. `pilot:memory` evaluates local retrieval against 28 frozen synthetic claims and 20 labelled tasks without provider requests; it measures scope/evidence exclusion and lexical relevance, not model quality or time savings.
 

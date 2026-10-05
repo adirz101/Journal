@@ -37,7 +37,7 @@ export async function backupTo(db, destination) {
 
 export function storageInfo(db, path) {
   const count = table => db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n;
-  const info = { database: size(path), wal: size(`${path}-wal`), tables: Object.fromEntries(['memories', 'revisions', 'receipts', 'sessions', 'events', 'proposals', 'workspaces', 'audit'].map(t => [t, count(t)])) };
+  const info = { database: size(path), wal: size(`${path}-wal`), tables: Object.fromEntries(['memories', 'revisions', 'receipts', 'deliveries', 'sessions', 'events', 'proposals', 'workspaces', 'audit'].map(t => [t, count(t)])) };
   try { const fs = statfsSync(dirname(path)); info.freeBytes = fs.bavail * fs.bsize; info.lowDisk = info.freeBytes < 200 * 1024 * 1024; } catch { info.freeBytes = null; info.lowDisk = null; }
   return info;
 }
@@ -87,8 +87,8 @@ export function importBrain(store, projectId, raw) {
   const project = store.project(projectId);
   if (typeof raw !== 'string' || Buffer.byteLength(raw) > MAX_IMPORT_BYTES) throw new Error('Import file is missing or larger than 5 MiB');
   let document; try { document = JSON.parse(raw); } catch { throw new Error('Import file is not valid JSON'); }
-  if (document?.format !== BRAIN_FORMAT || document.version !== BRAIN_VERSION || !Array.isArray(document.memories)) throw new Error('Not a Journal knowledge export (format journal-brain, version 1)');
-  if (document.memories.length > 5000) throw new Error('Too many claims in one import');
+  if (document?.format !== BRAIN_FORMAT || document.version !== BRAIN_VERSION || !Array.isArray(document.memories)) throw new Error('Not a Journal project memory export (format journal-brain, version 1)');
+  if (document.memories.length > 5000) throw new Error('Too many notes in one import');
   if (document.checksum !== checksum(document.memories)) throw new Error('Checksum mismatch: the export was modified or damaged');
   const origin = text(String(document.project?.name ?? 'unknown project'), 'project name', 200);
   const existing = store.db.prepare(`SELECT r.body FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.project_id=? AND m.status IN ('active','candidate')`).all(projectId).map(row => JSON.parse(row.body).statement);
@@ -122,10 +122,19 @@ export function purgeSession(store, sessionId) {
   if (survivorScanPending(session)) throw new Error('Journal is still checking for leftover child processes; try again in a moment');
   // Resume compares against the latest delivery in the same native
   // conversation; deleting one of several rows would hide what was delivered.
-  if (session.nativeId && store.db.prepare(`SELECT 1 FROM sessions WHERE id<>? AND json_extract(body,'$.provider')=? AND json_extract(body,'$.nativeId')=?`).get(sessionId, session.provider, session.nativeId)) throw new Error('Other sessions continue this native conversation; purge cannot remove one of them without breaking resume history');
+  if (session.nativeId && store.db.prepare(`SELECT 1 FROM sessions WHERE id<>? AND json_extract(body,'$.provider')=? AND json_extract(body,'$.nativeId')=?`).get(sessionId, session.provider, session.nativeId)) throw new Error('Other sessions continue this native conversation. Remove this session without deleting its history, so you can still continue it.');
   store.transaction(() => {
     store.db.prepare('DELETE FROM events WHERE session_id=?').run(sessionId);
+    store.db.prepare('DELETE FROM deliveries WHERE session_id=? OR receipt_id=?').run(sessionId, session.receiptId ?? null);
     store.db.prepare(`DELETE FROM receipts WHERE id=? OR json_extract(body,'$.sessionId')=?`).run(session.receiptId, sessionId);
+    // Suggestions outlive their session: open ones stay acceptable, handled ones keep their state and note link.
+    // Record why no session is linked and drop what pointed at the purge ("session <id>" or the bare id in a note,
+    // the deleted event). Absent notes stay absent. Provider and date stay for the note's origin line; the title
+    // does not, because it comes from the task text a purge deletes.
+    store.db.prepare(`UPDATE proposals SET body=json_set(
+        CASE WHEN json_extract(body,'$.source.note') IS NOT NULL THEN json_set(body,'$.source.note',replace(replace(json_extract(body,'$.source.note'),'session '||?1,'a purged session'),?1,'a purged session')) ELSE body END,
+        '$.evidence.sessionId',NULL,'$.evidence.eventId',NULL,'$.evidence.sessionPurged',json('true'),'$.evidence.provider',?2,'$.evidence.sessionDate',?3)
+      WHERE json_extract(body,'$.evidence.sessionId')=?1`).run(sessionId, session.provider ?? null, typeof session.createdAt === 'string' && session.createdAt.length >= 10 ? session.createdAt.slice(0, 10) : null);
     store.db.prepare('DELETE FROM sessions WHERE id=?').run(sessionId);
     store.audit('session-purged', { sessionId });
   });

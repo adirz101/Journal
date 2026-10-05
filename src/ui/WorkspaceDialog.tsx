@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, type Project, type WorkspaceList } from './types';
+import { useModalDialog } from './useModalDialog';
 
 // Managed worktrees: created from an explicit base, never forced or stashed;
 // removed only when clean and idle; imported worktrees are never deleted.
@@ -10,11 +11,12 @@ export function WorkspaceDialog({ project, onClose, onChanged }: { project: Proj
   const [plan, setPlan] = useState<{ id: string; path: string; notices: string[]; base: string } | null>(null);
   const [blockers, setBlockers] = useState<Record<string, string[]>>({});
   const load = async () => setList(await api<WorkspaceList>('workspaces', { projectId: project.id }));
-  useEffect(() => { dialog.current?.showModal(); void load().catch(e => setError(e.message)); }, []);
+  useModalDialog(dialog);
+  useEffect(() => { void load().catch(e => setError(e.message)); }, []);
   const act = async (action: () => Promise<unknown>) => { setBusy(true); setError(''); try { await action(); await load(); onChanged(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
   async function preview() { setError(''); setPlan(null); try { setPlan(await api('planWorkspace', { projectId: project.id, branch, base })); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } }
   return <dialog ref={dialog} onCancel={onClose} aria-labelledby="workspace-title" className="knowledge-dialog workspace-dialog">
-    <div className="dialog-heading"><div><span className="eyebrow">ISOLATION</span><h2 id="workspace-title">Workspaces</h2></div><button type="button" onClick={onClose} aria-label="Close workspaces" className="icon-button">×</button></div>
+    <div className="dialog-heading"><div><span className="eyebrow">Isolation</span><h2 id="workspace-title">Workspaces</h2></div><button type="button" onClick={onClose} aria-label="Close workspaces" className="icon-button">×</button></div>
     <p className="muted">Run sessions in the current checkout or in a separate Git worktree. Journal never stashes, copies or force-removes your work.</p>
     <section aria-label="Create a worktree" className="workspace-create">
       <div className="form-row"><label>New branch<input value={branch} onChange={e => { setBranch(e.target.value); setPlan(null); }} placeholder="journal/feature-name" maxLength={200} /></label>

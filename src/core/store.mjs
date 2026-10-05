@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { inspectProject } from './project.mjs';
+import { git, inspectProject } from './project.mjs';
 import { captureEvidence, validateEvidence } from './evidence.mjs';
 import { choice, relativePath, refuseCredentials, text } from './validation.mjs';
 import { branchDraft, commitsSince, overviewDraft, PLACEHOLDER } from './status.mjs';
@@ -16,13 +16,28 @@ import { addWorktree, creationNotices, listGitWorktrees, plannedPath, registered
 import { redact } from './validation.mjs';
 import { fingerprintSync, treePath } from './files.mjs';
 import { MAX_REFERENCES, pathFromCwd, referencesBlock } from './references.mjs';
+import { deliveryCounts, memoryChecks, memoryOrigins, noteIds, sessionProposals, sessionSummary, staleNoteDiff, staleNotesForSession } from './insights.mjs';
 
 const LIVE = "('starting','running','waiting','stopping')";
 const EVENT_LIMIT = 2000;
 
 const parse = row => row ? JSON.parse(row.body) : null;
 const now = () => new Date().toISOString();
+const NO_BRIEF_WARNING = 'No current approved project brief is included. Add a checkout-scoped brief to orient every session.';
 const categories = ['brief', 'decision', 'constraint', 'convention', 'lesson', 'issue'];
+// One row per note in a launch that reached (or may have reached) the agent. Previews
+// (never stored), prepared and failed launches are not deliveries. RECORD_DELIVERIES
+// scans every receipt (the v8 backfill); RECORD_RECEIPT_DELIVERIES records one launch
+// and finds its receipt through the primary key.
+export const RECORD_DELIVERIES = `INSERT OR IGNORE INTO deliveries(receipt_id, memory_id, revision, project_id, session_id, provider, native_id, at)
+  SELECT r.id, json_extract(i.value,'$.id'), json_extract(i.value,'$.revision'), r.project_id,
+    coalesce(json_extract(r.body,'$.sessionId'), s.id), json_extract(s.body,'$.provider'), json_extract(s.body,'$.nativeId'),
+    coalesce(json_extract(r.body,'$.updatedAt'), json_extract(r.body,'$.createdAt'))
+  FROM receipts r JOIN json_each(r.body,'$.items') i
+  LEFT JOIN sessions s ON s.id = coalesce(json_extract(r.body,'$.sessionId'),
+    (SELECT s2.id FROM sessions s2 WHERE json_extract(s2.body,'$.receiptId')=r.id LIMIT 1))
+  WHERE json_extract(r.body,'$.state') IN ('submitted','uncertain') AND json_extract(i.value,'$.id') IS NOT NULL`;
+export const RECORD_RECEIPT_DELIVERIES = `${RECORD_DELIVERIES} AND r.id=?`;
 
 export class JournalStore {
   constructor(path) {
@@ -72,6 +87,26 @@ export class JournalStore {
           const body = JSON.parse(row.body);
           update.run(JSON.stringify({ displayName: null, pinned: false, pinSeq: null, archived: false, removed: false, ...body }), row.id);
         }
+      }],
+      // Note trust: origin lookups, approval time and a per-conversation delivery count.
+      [8, () => {
+        const columns = new Set(this.db.prepare('PRAGMA table_info(memories)').all().map(column => column.name));
+        if (!columns.has('approved_at')) this.db.exec('ALTER TABLE memories ADD COLUMN approved_at TEXT');
+        if (!columns.has('approved_revision')) this.db.exec('ALTER TABLE memories ADD COLUMN approved_revision INTEGER');
+        this.db.exec(`CREATE INDEX IF NOT EXISTS proposals_memory ON proposals(json_extract(body,'$.memoryId'));
+          CREATE INDEX IF NOT EXISTS proposals_session ON proposals(json_extract(body,'$.evidence.sessionId'));
+          CREATE TABLE IF NOT EXISTS deliveries(receipt_id TEXT NOT NULL, memory_id TEXT NOT NULL, revision INTEGER, project_id TEXT NOT NULL,
+            session_id TEXT, provider TEXT, native_id TEXT, at TEXT NOT NULL, PRIMARY KEY(receipt_id, memory_id));
+          CREATE INDEX IF NOT EXISTS deliveries_memory ON deliveries(project_id, memory_id);
+          CREATE INDEX IF NOT EXISTS deliveries_session ON deliveries(session_id);`);
+        // Latest approval per note, in one ordered pass over the audit log (no per-row subquery).
+        const latest = new Map();
+        for (const row of this.db.prepare(`SELECT at, body FROM audit WHERE action='memory-active' ORDER BY id`).all()) {
+          try { const body = JSON.parse(row.body); if (typeof body.id === 'string') latest.set(body.id, { at: row.at, revision: Number.isInteger(body.revision) ? body.revision : null }); } catch { /* truncated body: skip */ }
+        }
+        const set = this.db.prepare('UPDATE memories SET approved_at=?, approved_revision=? WHERE id=?');
+        for (const [id, approval] of latest) set.run(approval.at, approval.revision, id);
+        this.db.prepare(RECORD_DELIVERIES).run();
       }],
     ];
     for (const [version, apply] of steps) {
@@ -189,54 +224,111 @@ export class JournalStore {
       this.db.prepare('DELETE FROM revisions WHERE memory_id IN (SELECT id FROM memories WHERE project_id=?)').run(id);
       this.db.prepare('DELETE FROM memories WHERE project_id=?').run(id);
       this.db.prepare('DELETE FROM events WHERE session_id IN (SELECT id FROM sessions WHERE project_id=?)').run(id);
-      for (const table of ['sessions', 'receipts', 'proposals', 'workspaces']) this.db.prepare(`DELETE FROM ${table} WHERE project_id=?`).run(id);
+      for (const table of ['sessions', 'receipts', 'deliveries', 'proposals', 'workspaces']) this.db.prepare(`DELETE FROM ${table} WHERE project_id=?`).run(id);
       this.db.prepare('DELETE FROM projects WHERE id=?').run(id);
       this.audit('project-removed', { id, deleteData: true, knowledge: revisionIds.length });
     });
     return { removed: id, deletedData: true };
   }
-  proposeMemory(projectId, input) {
-    const project = this.project(projectId);
+  // The internal `branch` option (never reachable from the renderer) binds branch-scoped knowledge to the
+  // branch a suggestion came from instead of the checked-out one. Briefs always follow the checkout.
+  proposeMemory(projectId, input, options = {}) {
+    const { item, expected } = this.prepareMemory(projectId, input, options);
+    this.transaction(() => this.writeMemory(item, expected));
+    return { ...item, status: 'candidate', validation: 'current' };
+  }
+  // Every check, Git query and evidence read of a new revision, with no writes, so
+  // Git and file I/O never run inside BEGIN IMMEDIATE. `view` (internal) is the copy
+  // the evidence is read from: a ready worktree on the note's branch, or the checkout.
+  // expected: the revision the note had when it was checked (null for a new note).
+  prepareMemory(projectId, input, { branch: boundBranch = null, view = null } = {}) {
+    const project = this.project(projectId); const seen = view ?? project;
     const statement = text(input.statement, 'statement'); refuseCredentials(statement);
     const category = choice(input.category, categories, 'category');
     const scope = choice(input.scope, ['checkout', 'branch'], 'scope');
-    if (scope === 'branch' && !project.branch) throw new Error('Branch scope requires a named branch');
+    const target = scope === 'branch' ? boundBranch ?? seen.branch : null;
+    if (scope === 'branch' && !target) throw new Error('Branch scope requires a named branch');
+    if (input.source?.rootId && scope === 'branch') throw new Error('Notes on one branch must come from the primary repository; choose All branches for notes from additional folders');
+    if (scope === 'branch' && boundBranch) {
+      if (category === 'brief') throw new Error('A project summary follows the checked-out branch');
+      // Cheap checks first, then Git; the name is validated so it can never be read as an option.
+      const invalid = () => new Error(`Invalid branch name: ${String(boundBranch).slice(0, 80)}`);
+      if (typeof boundBranch !== 'string' || boundBranch.startsWith('-') || boundBranch.length > 200) throw invalid();
+      try { git(project.root, ['check-ref-format', '--branch', boundBranch]); } catch { throw invalid(); }
+      // Exact spelling: a case-insensitive file system must not match feature/Flags to feature/flags.
+      let listed = ''; try { listed = git(project.root, ['for-each-ref', '--format=%(refname:short)', `refs/heads/${boundBranch}`]); } catch { /* treated as missing */ }
+      if (listed !== boundBranch) throw new Error(`The branch ${boundBranch} no longer exists; this suggestion cannot be remembered. Dismiss it to clear it from your suggestions.`);
+    }
     const area = relativePath(input.area ?? '', true);
     // Optional environment qualifier ("macOS only", "with Docker running").
     const environment = text(input.environment ?? '', 'environment qualifier', 200, true); if (environment) refuseCredentials(environment);
     // A revision of a replacement keeps what it replaces unless told otherwise.
     const carried = !input.supersedes && input.memoryId ? (() => { try { return this.getMemory(input.memoryId).supersedes?.id ?? null; } catch { return null; } })() : null;
     const supersedes = input.supersedes || carried ? this.getMemory(input.supersedes || carried) : null;
-    if (input.source?.rootId && scope === 'branch') throw new Error('Branch scope applies to the primary repository; use project scope for knowledge from additional folders');
     if (supersedes && supersedes.projectId !== projectId) throw new Error('Superseded memory belongs to another project');
-    if (supersedes && (supersedes.id === input.memoryId || (supersedes.status !== 'active' && !carried))) throw new Error('Only another approved claim can be superseded; revise a claim to change it');
-    if (category === 'brief' && area) throw new Error('Project briefs apply to the whole checkout; leave the area empty');
+    if (supersedes && (supersedes.id === input.memoryId || (supersedes.status !== 'active' && !carried))) throw new Error('Only another remembered note can be replaced; revise a note to change it');
+    if (category === 'brief' && area) throw new Error('A project summary applies to the whole project; leave the area empty');
     if (input.source?.kind === 'git' && PLACEHOLDER.test(statement)) throw new Error('Replace the bracketed placeholders before saving the update');
-    const source = captureEvidence(project, input.source);
+    const source = captureEvidence(seen, input.source);
     let previous = null;
     if (input.memoryId) {
       previous = this.getMemory(input.memoryId);
       if (previous.projectId !== projectId) throw new Error('Memory belongs to another project');
+      if (previous.scope === 'branch' && scope === 'branch' && !boundBranch && previous.branch !== seen.branch) throw this.wrongBranch(projectId, previous.branch, 'revise');
     }
     const id = previous?.id ?? randomUUID();
     const revision = (previous?.revision ?? 0) + 1;
-    const branch = scope === 'branch' ? project.branch : null;
+    const branch = target;
     // Flag, never block: the reviewer decides whether two claims really conflict.
-    const conflicts = this.db.prepare(`SELECT r.body FROM memories m JOIN revisions r ON r.id=m.current_revision
-      WHERE m.project_id=? AND m.status='active' AND m.id<>? LIMIT 500`).all(projectId, id).map(parse)
-      .filter(other => (other.scope === 'checkout' || scope === 'checkout' || other.branch === branch) && (!other.area || !area || other.area.startsWith(area) || area.startsWith(other.area)))
-      .filter(other => possibleConflict(statement, other.statement)).slice(0, 5)
-      .map(other => ({ id: other.id, revision: other.revision, statement: other.statement.slice(0, 160) }));
+    const conflicts = this.conflictsWith(projectId, id, { statement, scope, branch, area });
     const item = { id, projectId, revisionId: randomUUID(), revision, statement, category, scope, area,
       branch, source, conflicts, createdAt: now(), ...(environment ? { environment } : {}),
       ...(supersedes ? { supersedes: { id: supersedes.id, revision: supersedes.revision } } : {}),
       ...(input.promotedFrom ? { promotedFrom: input.promotedFrom } : {}) };
-    this.transaction(() => {
-      this.db.prepare('INSERT INTO memories(id,project_id,current_revision,status) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET current_revision=excluded.current_revision,status=excluded.status').run(id, projectId, item.revisionId, 'candidate');
-      this.db.prepare('INSERT INTO revisions VALUES(?,?,?,?)').run(item.revisionId, id, revision, JSON.stringify(item));
-      this.db.prepare('INSERT INTO memory_fts(revision_id,statement,aliases) VALUES(?,?,?)').run(item.revisionId, statement, aliasesFor(item));
-    });
-    return { ...item, status: 'candidate', validation: 'current' };
+    return { item, expected: previous?.revisionId ?? null };
+  }
+  // Remembered notes a statement may contradict (at most 5), from SQLite alone.
+  conflictsWith(projectId, id, { statement, scope, branch, area }) {
+    return this.db.prepare(`SELECT r.body FROM memories m JOIN revisions r ON r.id=m.current_revision
+      WHERE m.project_id=? AND m.status='active' AND m.id<>? LIMIT 500`).all(projectId, id).map(parse)
+      .filter(other => (other.scope === 'checkout' || scope === 'checkout' || other.branch === branch) && (!other.area || !area || other.area.startsWith(area) || area.startsWith(other.area)))
+      .filter(other => possibleConflict(statement, other.statement)).slice(0, 5)
+      .map(other => ({ id: other.id, revision: other.revision, statement: other.statement.slice(0, 160) }));
+  }
+  // The writes of a prepared revision, without a transaction of its own: the caller
+  // holds one. The note must still be at the revision prepareMemory saw.
+  writeMemory(item, expected) {
+    const row = this.db.prepare('SELECT current_revision FROM memories WHERE id=?').get(item.id);
+    if ((row?.current_revision ?? null) !== expected) throw new Error('This note changed while you were checking it; try again');
+    this.db.prepare('INSERT INTO memories(id,project_id,current_revision,status) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET current_revision=excluded.current_revision,status=excluded.status').run(item.id, item.projectId, item.revisionId, 'candidate');
+    this.db.prepare('INSERT INTO revisions VALUES(?,?,?,?)').run(item.revisionId, item.id, item.revision, JSON.stringify(item));
+    this.db.prepare('INSERT INTO memory_fts(revision_id,statement,aliases) VALUES(?,?,?)').run(item.revisionId, item.statement, aliasesFor(item));
+  }
+  // Remembering a checked candidate, without a transaction of its own. via (internal,
+  // set by the main process or core) labels a one-step path in the audit log.
+  // retire: false (reaffirm) keeps the supersedes record without archiving what it replaced again.
+  approveMemory(memory, { via = null, reason = null, retire = true } = {}) {
+    const { id } = memory;
+    // Only the revision that was checked is remembered; a newer one (another window) is left for review.
+    const { changes } = this.db.prepare(`UPDATE memories SET status='active', approved_at=?, approved_revision=? WHERE id=? AND current_revision=?`).run(now(), memory.revision, id, memory.revisionId);
+    if (changes !== 1) throw new Error('This note changed while you were checking it; try again');
+    const retired = retire ? memory.supersedes?.id ?? null : null;
+    // Approving a replacement retires the claim it supersedes.
+    if (retired) this.db.prepare(`UPDATE memories SET status='archived', pinned=0 WHERE id=? AND status='active'`).run(retired);
+    if (memory.category === 'brief' && memory.scope === 'branch') this.db.prepare(`UPDATE proposals SET body=json_set(body,'$.state','accepted','$.memoryId',?) WHERE project_id=? AND json_extract(body,'$.kind')='branch-status' AND json_extract(body,'$.branch')=? AND json_extract(body,'$.state')='open'`).run(id, memory.projectId, memory.branch);
+    this.audit('memory-active', { id, revision: memory.revision, reason, supersedes: retired, ...(via ? { via } : {}) });
+  }
+  // Where a note can be checked for approval: the checkout, or for a note on another
+  // branch a ready separate copy (worktree) whose live branch is that branch. Folder
+  // notes are project-level and always use the checkout.
+  approvalView(memory) {
+    const project = this.project(memory.projectId);
+    if (memory.scope !== 'branch' || memory.source?.rootId || project.branch === memory.branch) return project;
+    for (const row of this.db.prepare(`SELECT body FROM workspaces WHERE project_id=? AND json_extract(body,'$.state')='ready' ORDER BY rowid`).all(memory.projectId)) {
+      const workspace = parse(row); if (!existsSync(workspace.path)) continue;
+      try { const view = workspaceView(project, workspace); if (view.branch === memory.branch) return view; } catch { /* not a usable copy */ }
+    }
+    return project;
   }
   getMemory(id) {
     const row = this.db.prepare('SELECT r.body,m.status,m.pinned FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.id=?').get(text(id, 'memory ID', 100));
@@ -275,7 +367,7 @@ export class JournalStore {
   proposeStatusUpdate(projectId, scope) {
     const project = this.project(projectId);
     choice(scope, ['checkout', 'branch'], 'scope');
-    if (scope === 'branch' && !project.branch) throw new Error('Branch updates require a named branch');
+    if (scope === 'branch' && !project.branch) throw new Error('"Where this branch stands" needs a named branch');
     const row = this.db.prepare(`SELECT r.body,m.status FROM memories m JOIN revisions r ON r.id=m.current_revision
       WHERE m.project_id=? AND m.status IN ('active','candidate') AND json_extract(r.body,'$.category')='brief'
       AND json_extract(r.body,'$.scope')=? AND (? = 'checkout' OR json_extract(r.body,'$.branch')=?)
@@ -285,38 +377,70 @@ export class JournalStore {
     return { scope, memoryId: previous?.id ?? null, previousRevision: previous?.revision ?? null, previousStatement: previous?.statement ?? null, ...draft };
   }
   // Paged, filtered list for the knowledge panel; validation runs per page.
-  listMemoryPage(projectId, { offset = 0, limit = 100, filter = 'all', search = '' } = {}) {
+  // Category counts ignore the category; the other-branch count ignores the category, the
+  // other-branch toggle and the note list, so each control shows what choosing it would list.
+  listMemoryPage(projectId, { offset = 0, limit = 100, filter = 'all', search = '', category = 'all', otherBranch = false, ids = null } = {}) {
     const project = this.project(projectId); const cache = new Map();
     if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error('Invalid page');
     const statuses = { all: ['candidate', 'active'], review: ['candidate'], active: ['active'], history: ['candidate', 'active', 'rejected', 'archived'] }[choice(filter, ['all', 'review', 'active', 'history'], 'filter')];
     search = text(search, 'search', 200, true).toLocaleLowerCase();
-    const where = `m.project_id=? AND m.status IN (${statuses.map(() => '?').join(',')}) AND (?='' OR instr(lower(json_extract(r.body,'$.statement')),?)>0 OR instr(lower(coalesce(json_extract(r.body,'$.source.path'),'')),?)>0 OR json_extract(r.body,'$.category')=?)`;
-    const args = [projectId, ...statuses, search, search, search, search];
-    const total = this.db.prepare(`SELECT count(*) AS n FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE ${where}`).get(...args).n;
-    const items = this.db.prepare(`SELECT r.body,m.status,m.pinned FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE ${where} ORDER BY m.pinned DESC, r.rowid DESC LIMIT ? OFFSET ?`).all(...args, limit, offset)
+    choice(category, ['all', ...categories], 'category');
+    if (typeof otherBranch !== 'boolean') throw new Error('Invalid filter');
+    const list = ids === null ? null : noteIds(ids);
+    const base = [`m.project_id=? AND m.status IN (${statuses.map(() => '?').join(',')}) AND (?='' OR instr(lower(json_extract(r.body,'$.statement')),?)>0 OR instr(lower(coalesce(json_extract(r.body,'$.source.path'),'')),?)>0 OR json_extract(r.body,'$.category')=?)`,
+      [projectId, ...statuses, search, search, search, search]];
+    // With a detached HEAD (no branch), every branch note belongs to another branch.
+    const other = [`json_extract(r.body,'$.scope')='branch' AND json_extract(r.body,'$.branch') IS NOT ?`, [project.branch ?? null]];
+    const conditions = [base, ...(otherBranch ? [other] : []), ...(list ? [['m.id IN (SELECT value FROM json_each(?))', [list]]] : [])];
+    const join = parts => [parts.map(([sql]) => `(${sql})`).join(' AND '), parts.flatMap(([, args]) => args)];
+    const [where, args] = join([...conditions, [`(?='all' OR json_extract(r.body,'$.category')=?)`, [category, category]]]);
+    const from = 'FROM memories m JOIN revisions r ON r.id=m.current_revision';
+    const total = this.db.prepare(`SELECT count(*) AS n ${from} WHERE ${where}`).get(...args).n;
+    const items = this.db.prepare(`SELECT r.body,m.status,m.pinned ${from} WHERE ${where} ORDER BY m.pinned DESC, r.rowid DESC LIMIT ? OFFSET ?`).all(...args, limit, offset)
       .map(row => { const item = { ...parse(row), status: row.status, pinned: !!row.pinned }; const validation = this.validation(project, item, cache); return { ...item, validation, drift: validation === 'current' ? this.drift(project, item, cache) : null }; });
     const counts = Object.fromEntries(this.db.prepare('SELECT status, count(*) AS n FROM memories WHERE project_id=? GROUP BY status').all(projectId).map(row => [row.status, row.n]));
-    return { items, total, offset, limit, counts };
+    const [byWhere, byArgs] = join(conditions);
+    const categoryCounts = Object.fromEntries(['all', ...categories].map(name => [name, 0]));
+    for (const row of this.db.prepare(`SELECT json_extract(r.body,'$.category') AS category, count(*) AS n ${from} WHERE ${byWhere} GROUP BY 1`).all(...byArgs)) {
+      categoryCounts.all += row.n; if (Object.hasOwn(categoryCounts, row.category) && row.category !== 'all') categoryCounts[row.category] = row.n;
+    }
+    const [otherWhere, otherArgs] = join([base, other]);
+    const otherCount = this.db.prepare(`SELECT count(*) AS n ${from} WHERE ${otherWhere}`).get(...otherArgs).n;
+    return { items, total, offset, limit, counts, categoryCounts, otherBranch: otherCount };
+  }
+  // Git refuses to check out a branch that another worktree has checked out.
+  wrongBranch(projectId, branch, verb) {
+    const open = this.db.prepare(`SELECT 1 FROM workspaces WHERE project_id=? AND json_extract(body,'$.branch')=? AND json_extract(body,'$.state')='ready'`).get(projectId, branch);
+    // Approval runs in a ready copy on the branch (approvalView); revising from a worktree is not offered yet.
+    return new Error(open && verb !== 'approve' ? `This note belongs to branch ${branch}, which is open in a separate copy (worktree); revising it from there is not available yet. You can reject it.`
+      : `This note belongs to branch ${branch}; check out that branch to ${verb === 'approve' ? 'remember' : verb} it`);
   }
   setMemoryStatus(id, status, { reason = null } = {}) {
     choice(status, ['active', 'rejected', 'archived'], 'status');
     if (reason !== null) choice(reason, ['incorrect', 'superseded', 'withdrawn'], 'reason');
     const memory = this.getMemory(id);
-    if (status === 'active' && memory.status !== 'candidate') throw new Error('Only a candidate can be approved');
-    if (status === 'active' && this.validation(this.project(memory.projectId), memory) !== 'current') throw new Error('Evidence or branch changed; revise before approving');
+    if (status === 'active' && memory.status !== 'candidate') throw new Error('Only a note waiting for review can be remembered');
+    if (status === 'active') {
+      const validation = this.validation(this.approvalView(memory), memory);
+      if (validation === 'wrong-branch') throw this.wrongBranch(memory.projectId, memory.branch, 'approve');
+      if (validation !== 'current') throw new Error('Evidence or branch changed; revise the note before remembering it');
+      this.transaction(() => this.approveMemory(memory, { reason }));
+      return this.getMemory(id);
+    }
     this.transaction(() => {
-      this.db.prepare('UPDATE memories SET status=?, pinned=CASE WHEN ?=\'active\' THEN pinned ELSE 0 END WHERE id=?').run(status, status, id);
-      // Approving a replacement retires the claim it supersedes.
-      if (status === 'active' && memory.supersedes) this.db.prepare(`UPDATE memories SET status='archived', pinned=0 WHERE id=? AND status='active'`).run(memory.supersedes.id);
-      if (status === 'active' && memory.category === 'brief' && memory.scope === 'branch') this.db.prepare(`UPDATE proposals SET body=json_set(body,'$.state','accepted','$.memoryId',?) WHERE project_id=? AND json_extract(body,'$.kind')='branch-status' AND json_extract(body,'$.branch')=? AND json_extract(body,'$.state')='open'`).run(id, memory.projectId, memory.branch);
-      this.audit(`memory-${status}`, { id, revision: memory.revision, reason, supersedes: status === 'active' ? memory.supersedes?.id ?? null : null });
+      // Archive and reject keep approved_at: an archived note still says when it was remembered.
+      this.db.prepare('UPDATE memories SET status=?, pinned=0 WHERE id=?').run(status, id);
+      this.audit(`memory-${status}`, { id, revision: memory.revision, reason, supersedes: null });
     });
     return this.getMemory(id);
   }
+  memoryOrigins(projectId, ids) { return memoryOrigins(this, projectId, ids); }
+  deliveryCounts(projectId, ids) { return deliveryCounts(this, projectId, ids); }
+  memoryChecks(projectId, options) { return memoryChecks(this, projectId, options); }
   setPinned(id, pinned) {
     const memory = this.getMemory(id);
     if (typeof pinned !== 'boolean') throw new Error('Invalid pin');
-    if (pinned && memory.status !== 'active') throw new Error('Only an approved claim can be pinned');
+    if (pinned && memory.status !== 'active') throw new Error('Only a remembered note can be pinned');
     this.db.prepare('UPDATE memories SET pinned=? WHERE id=?').run(pinned ? 1 : 0, id); this.audit(pinned ? 'memory-pinned' : 'memory-unpinned', { id });
     return this.getMemory(id);
   }
@@ -324,14 +448,14 @@ export class JournalStore {
   // still needs review; the branch claim stays as it is.
   proposePromotion(id) {
     const memory = this.getMemory(id);
-    if (memory.scope !== 'branch' || memory.status !== 'active') throw new Error('Only an approved branch claim can be proposed for all branches');
-    if (memory.category === 'brief') throw new Error('Branch updates describe one branch; write a repo overview instead');
+    if (memory.scope !== 'branch' || memory.status !== 'active') throw new Error('Only a remembered note on one branch can be proposed for all branches');
+    if (memory.category === 'brief') throw new Error('"Where this branch stands" describes one branch; write "About this project" instead');
     const source = memory.source.kind === 'file' ? { kind: 'file', path: memory.source.path, startLine: memory.source.startLine, endLine: memory.source.endLine }
       : { kind: 'user', note: `${memory.source.note ?? 'Reviewed claim'} (promoted from branch ${memory.branch})`.slice(0, 2000) };
     return this.proposeMemory(memory.projectId, { statement: memory.statement, category: memory.category, scope: 'checkout', area: memory.area, environment: memory.environment, source,
       promotedFrom: { id: memory.id, revision: memory.revision, branch: memory.branch } });
   }
-  prepareContext(projectId, query, { workspaceId = null, disabled = [], references = [] } = {}) {
+  prepareContext(projectId, query, { workspaceId = null, disabled = [], references = [], persist = true } = {}) {
     query = text(query, 'task', 4000, true); refuseCredentials(query);
     if (!Array.isArray(disabled) || disabled.length > 100 || disabled.some(x => typeof x !== 'string')) throw new Error('Invalid disabled claims');
     const project = this.view(projectId, workspaceId);
@@ -340,7 +464,28 @@ export class JournalStore {
     // area-scoped claims for a referenced area become eligible.
     const areaQuery = [query, ...referenced.map(ref => ref.path)].join(' ');
     const terms = queryTerms(areaQuery);
-    let matches = []; const cache = new Map(); const warnings = []; const matchedIds = new Set();
+    const cache = new Map();
+    const referencedPaths = referenced.filter(ref => ref.family === 'primary').map(ref => ref.path);
+    const selected = this.selectCandidates(projectId, project, { areaQuery, terms, referencedPaths, check: item => this.validation(project, item, cache) });
+    const id = randomUUID();
+    const assembled = this.assemblePacket(selected.matches, project, { id, disabled, areaQuery, drift: memory => this.drift(project, memory, cache) });
+    const { items, excluded } = assembled; const disabledSet = new Set(disabled);
+    this.matchedTerms(items, terms);
+    const warnings = [...selected.warnings, ...assembled.warnings];
+    // References carry paths, ranges and hashes, never contents.
+    const packet = assembled.packet + referencesBlock(referenced);
+    const receipt = { id, projectId, query, packet, items, excluded, warnings, disabled: [...disabledSet], workspaceId, references: referenced, checkout: { root: project.root, branch: project.branch, head: project.head }, state: 'prepared', estimatedTokens: Math.ceil(Buffer.byteLength(packet) / 3), createdAt: now(), terms };
+    // Previews show what would be sent; only a launch keeps an immutable receipt.
+    if (!persist) return { ...receipt, preview: true };
+    this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(id, projectId, JSON.stringify(receipt));
+    return receipt;
+  }
+  // Candidate rows in delivery order: briefs, pinned rules, referenced areas,
+  // then paged FTS matches. check(item) returns the validation word; a page
+  // counts an item as eligible when it is 'current' or 'unchecked' (the typing
+  // preview) and its area applies.
+  selectCandidates(projectId, project, { areaQuery, terms, referencedPaths, check }) {
+    const matches = []; const warnings = []; const matchedIds = new Set();
     // Orientation is independent of task words. Current checkout identity and
     // current-branch updates alternate so neither silently crowds out the other.
     const briefs = this.db.prepare(`SELECT r.body,m.status FROM memories m JOIN revisions r ON r.id=m.current_revision
@@ -351,18 +496,17 @@ export class JournalStore {
     const checkoutBriefs = briefs.slice(0, 100).filter(row => parse(row).scope === 'checkout');
     const branchBriefs = briefs.slice(0, 100).filter(row => parse(row).scope === 'branch');
     for (let i = 0; i < Math.max(checkoutBriefs.length, branchBriefs.length); i++) {
-      for (const row of [checkoutBriefs[i], branchBriefs[i]]) if (row) matches.push({ ...row, validation: this.validation(project, parse(row), cache), reason: parse(row).scope === 'checkout' ? 'repo overview' : 'branch update' });
+      for (const row of [checkoutBriefs[i], branchBriefs[i]]) if (row) matches.push({ ...row, validation: check(parse(row)), reason: parse(row).scope === 'checkout' ? 'repo overview' : 'branch update' });
     }
     // Pinned rules come next, independent of task words but never exempt from
     // scope, freshness or area rules.
     for (const row of this.db.prepare(`SELECT r.body,m.status FROM memories m JOIN revisions r ON r.id=m.current_revision
       WHERE m.project_id=? AND m.status='active' AND m.pinned=1 AND json_extract(r.body,'$.category')!='brief'
       AND (json_extract(r.body,'$.scope')='checkout' OR json_extract(r.body,'$.branch')=?) ORDER BY r.rowid DESC LIMIT 20`).all(projectId, project.branch)) {
-      matches.push({ ...row, validation: this.validation(project, parse(row), cache), reason: 'pinned', pinned: true }); matchedIds.add(parse(row).id);
+      matches.push({ ...row, validation: check(parse(row)), reason: 'pinned', pinned: true }); matchedIds.add(parse(row).id);
     }
     // Claims scoped to an area the user referenced (a file or folder of the
     // primary repository inside that area, or the area inside a referenced folder).
-    const referencedPaths = referenced.filter(ref => ref.family === 'primary').map(ref => ref.path);
     if (referencedPaths.length) {
       for (const row of this.db.prepare(`SELECT r.body,m.status FROM memories m JOIN revisions r ON r.id=m.current_revision
         WHERE m.project_id=? AND m.status='active' AND coalesce(json_extract(r.body,'$.area'),'')<>'' AND json_extract(r.body,'$.category')!='brief'
@@ -370,7 +514,7 @@ export class JournalStore {
         const item = parse(row); if (matchedIds.has(item.id)) continue;
         const area = item.area.replace(/\/+$/, '');
         if (!referencedPaths.some(path => path === area || path.startsWith(`${area}/`) || area.startsWith(`${path}/`))) continue;
-        matches.push({ ...row, validation: this.validation(project, item, cache), reason: `referenced area ${area}` }); matchedIds.add(item.id);
+        matches.push({ ...row, validation: check(item), reason: `referenced area ${area}` }); matchedIds.add(item.id);
       }
     }
     if (terms.length) {
@@ -388,8 +532,8 @@ export class JournalStore {
         const page = select.all(fts, projectId, project.branch, offset); if (!page.length) break;
         for (const row of page) {
           const item = parse(row);
-          const validation = this.validation(project, item, cache);
-          const valid = validation === 'current' && areaMatches(item.area, areaQuery);
+          const validation = check(item);
+          const valid = (validation === 'current' || validation === 'unchecked') && areaMatches(item.area, areaQuery);
           if (matchedIds.has(item.id)) continue; matchedIds.add(item.id);
           const lower = `${item.statement} ${aliasesFor(item)}`.toLocaleLowerCase();
           const hit = terms.filter(term => lower.includes(term.slice(0, Math.max(4, term.length - 2))));
@@ -400,7 +544,13 @@ export class JournalStore {
         if (offset === 900 && eligible < 100) warnings.push('Search inspected 1000 matches. Refine the task or retire stale knowledge to search further.');
       }
     }
-    const id = randomUUID(); const items = []; const excluded = []; let briefCount = 0; const perCategory = new Map();
+    return { matches, warnings };
+  }
+  // Exclusions, duplicates, the brief and category limits and the
+  // 12-claim/6000-byte budget, in candidate order; then the packet text and
+  // its warnings. 'unchecked' (the typing preview) counts as current.
+  assemblePacket(matches, project, { id, disabled, areaQuery, drift }) {
+    const items = []; const excluded = []; const warnings = []; let briefCount = 0; const perCategory = new Map();
     const disabledSet = new Set(disabled);
     const header = `Journal project knowledge — checkout ${project.head ?? 'unborn'}, receipt ${id}\nProject: ${project.name}; branch ${project.branch ?? 'detached HEAD'}.\n${project.cwd ? `Working folder: ${project.cwd}. Evidence paths without a folder are relative to the primary repository at ${project.root}.\n` : ''}These are reviewed, scoped claims with evidence. Native project instructions take precedence. Validate against current code.\n`;
     let packet = header;
@@ -408,7 +558,7 @@ export class JournalStore {
       const memory = { ...parse(row), status: row.status };
       const validation = row.validation;
       if (disabledSet.has(memory.id)) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'left-out-for-task' }); continue; }
-      if (validation !== 'current') { if (excluded.length < 100) excluded.push({ id: memory.id, reason: validation }); continue; }
+      if (validation !== 'current' && validation !== 'unchecked') { if (excluded.length < 100) excluded.push({ id: memory.id, reason: validation }); continue; }
       if (!areaMatches(memory.area, areaQuery)) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'area-not-requested' }); continue; }
       if (items.some(item => isDuplicate(item.statement, memory.statement))) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'duplicate' }); continue; }
       if (memory.category === 'brief' && briefCount >= 4) {
@@ -423,28 +573,111 @@ export class JournalStore {
         : memory.source.kind === 'git' ? `Git history ${memory.source.base ? `${memory.source.base.slice(0, 7)}..` : ''}${memory.source.head.slice(0, 7)}`
         : memory.source.kind === 'import' ? `Imported (reviewed here): ${memory.source.note}`
         : `User statement: ${memory.source.note}`;
-      const drift = this.drift(project, memory, cache);
-      const age = drift ? `; ${drift} commit${drift === 1 ? '' : 's'} since this update` : '';
+      const commits = drift(memory);
+      const age = commits ? `; ${commits} commit${commits === 1 ? '' : 's'} since this update` : '';
       const label = memory.category === 'brief' ? `${memory.scope === 'checkout' ? 'Project brief' : 'Branch update'}\n` : '';
       const qualifier = memory.environment ? `\nApplies when: ${memory.environment}` : '';
       const chunk = `\n${label}[${memory.id} r${memory.revision}; ${memory.category}; ${memory.scope}${memory.branch ? ` ${memory.branch}` : ''}${memory.area ? `; area ${memory.area}` : ''}]\n${memory.statement}${qualifier}\nEvidence: ${evidence}${age}\n`;
       if (items.length >= 12 || Buffer.byteLength(packet + chunk) > 6000) { if (excluded.length < 100) excluded.push({ id: memory.id, reason: 'budget' }); continue; }
       items.push({ ...memory, selection: { reason: row.reason ?? 'matched', bytes: Buffer.byteLength(chunk) } }); packet += chunk; if (memory.category === 'brief') briefCount++;
       else perCategory.set(memory.category, (perCategory.get(memory.category) ?? 0) + 1);
-      if (drift) warnings.push(`The current branch update is ${drift} commit${drift === 1 ? '' : 's'} behind HEAD. Propose a status update to review recent progress.`);
+      if (commits) warnings.push(`The current branch update is ${commits} commit${commits === 1 ? '' : 's'} behind HEAD. Propose a status update to review recent progress.`);
     }
     for (const [index, a] of items.entries()) for (const b of items.slice(index + 1)) {
       if (possibleConflict(a.statement, b.statement)) warnings.push(`Claims ${a.id.slice(0, 8)} r${a.revision} and ${b.id.slice(0, 8)} r${b.revision} may conflict. Review them in Knowledge.`);
     }
     if (excluded.some(item => item.reason === 'brief-limit')) warnings.push('Only four current project brief entries fit the orientation limit. Consolidate superseded briefs.');
     if (matches.some(row => parse(row).category === 'brief' && excluded.some(item => item.id === parse(row).id && item.reason === 'budget'))) warnings.push('A project brief was excluded by the context budget. Shorten or consolidate the reviewed summaries.');
-    if (!items.some(item => item.category === 'brief' && item.scope === 'checkout')) warnings.push('No current approved project brief is included. Add a checkout-scoped brief to orient every session.');
+    if (!items.some(item => item.category === 'brief' && item.scope === 'checkout')) warnings.push(NO_BRIEF_WARNING);
     if (!items.length) packet = '';
-    // References carry paths, ranges and hashes, never contents.
-    packet += referencesBlock(referenced);
-    const receipt = { id, projectId, query, packet, items, excluded, warnings, disabled: [...disabledSet], workspaceId, references: referenced, checkout: { root: project.root, branch: project.branch, head: project.head }, state: 'prepared', estimatedTokens: Math.ceil(Buffer.byteLength(packet) / 3), createdAt: now() };
-    this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(id, projectId, JSON.stringify(receipt));
-    return receipt;
+    return { items, excluded, warnings, packet };
+  }
+  // The typing preview: what prepareContext would select, from SQLite alone.
+  // It never runs Git, reads or hashes evidence, or writes. The branch is the
+  // renderer's display hint, never trusted for launch: the full preview and the
+  // launch validate again. Notes are 'unchecked' unless stored records exclude them.
+  previewSelection(projectId, task, { workspaceId = null, branch = null, disabled = [], references = [] } = {}) {
+    const query = text(task, 'task', 4000, true); refuseCredentials(query);
+    if (!Array.isArray(disabled) || disabled.length > 100 || disabled.some(x => typeof x !== 'string')) throw new Error('Invalid disabled claims');
+    const project = this.storedView(projectId, workspaceId, branch === null ? null : text(branch, 'branch', 255));
+    // Reference paths only: resolving a reference hashes its file.
+    if (!Array.isArray(references) || references.length > MAX_REFERENCES) throw new Error(`Reference up to ${MAX_REFERENCES} files or folders per task`);
+    // resolveReferences' rules from stored records: a reference is primary unless
+    // its root is an additional folder, and a primary path must come from the
+    // session's own copy when the session itself runs in a primary copy.
+    const sessionRoot = references.length ? this.storedRoot(projectId, project, workspaceId ?? 'checkout') : null;
+    const paths = references.map(input => {
+      if (!input || typeof input !== 'object') throw new Error('Invalid reference');
+      if (input.projectId !== undefined && input.projectId !== projectId) throw new Error(`${input.path} was chosen in another project; add it again from this project`);
+      const root = this.storedRoot(projectId, project, text(input.rootKey, 'reference root', 100));
+      if (root.family === 'primary' && sessionRoot.family === 'primary' && root.key !== sessionRoot.key) throw new Error(`${input.path} is in ${root.label}, but this session runs in ${sessionRoot.label}. Reference it from the session's own copy.`);
+      return { path: treePath(input.path), primary: root.family === 'primary' };
+    });
+    const areaQuery = [query, ...paths.map(ref => ref.path)].join(' ');
+    const terms = queryTerms(areaQuery);
+    const { matches, warnings } = this.selectCandidates(projectId, project, { areaQuery, terms, referencedPaths: paths.filter(ref => ref.primary).map(ref => ref.path), check: item => this.storedValidation(project, item) });
+    const assembled = this.assemblePacket(matches, project, { id: randomUUID(), disabled, areaQuery, drift: () => null });
+    this.matchedTerms(assembled.items, terms);
+    // Whether a brief is current is known only after validation.
+    return { kind: 'selection', checked: false, query, branch: project.branch, items: assembled.items, excluded: assembled.excluded,
+      warnings: [...warnings, ...assembled.warnings.filter(warning => warning !== NO_BRIEF_WARNING)], bytes: Buffer.byteLength(assembled.packet), terms, taskNotes: this.taskNotes(projectId, project.branch) };
+  }
+  // The project as stored, seen from a workspace, on the branch the renderer shows.
+  // The same checks and messages as view(), without Git or the file system.
+  storedView(projectId, workspaceId, branch) {
+    const stored = this.storedProject(projectId);
+    if (stored.removed) throw new Error('This project was removed from Journal; open its folder again to restore it');
+    const project = { ...this.describe(stored), branch };
+    if (!workspaceId) return project;
+    if (workspaceId.startsWith('root:')) {
+      const root = project.roots.find(entry => entry.id === workspaceId.slice(5));
+      if (!root) throw new Error('That folder is no longer part of this project');
+      return { ...project, cwd: root.path, workspaceId };
+    }
+    const workspace = this.getWorkspace(workspaceId);
+    if (workspace.projectId !== projectId) throw new Error('Workspace belongs to another project');
+    if (workspace.state !== 'ready') throw new Error(`Workspace ${workspace.branch ?? basename(workspace.path)} is ${workspace.state}`);
+    return { ...project, root: workspace.path, head: workspace.head ?? project.head, workspaceId };
+  }
+  // fileRoot() from stored records only: the same keys, families, labels and
+  // messages, without Git or checking that the folder still exists on disk.
+  storedRoot(projectId, project, key) {
+    if (key === 'checkout') return { key, family: 'primary', label: `${project.name} (checkout)` };
+    if (typeof key === 'string' && key.startsWith('root:')) {
+      if (!(project.roots ?? []).some(entry => `root:${entry.id}` === key)) throw new Error('That folder is no longer part of this project');
+      return { key, family: 'folder' };
+    }
+    const workspace = this.getWorkspace(text(key, 'root', 100));
+    if (workspace.projectId !== projectId) throw new Error('Workspace belongs to another project');
+    if (workspace.state !== 'ready') throw new Error('This worktree is not available');
+    return { key, family: 'primary', label: `${project.name} (worktree ${workspace.branch ?? basename(workspace.path)})` };
+  }
+  // validation() from stored records only: evidence is not read, so a note is
+  // 'unchecked' rather than 'current'.
+  storedValidation(project, memory) {
+    if (memory.source?.rootId && !(project.roots ?? []).some(root => root.id === memory.source.rootId)) return 'folder-removed';
+    // A guard: selectCandidates already filters branch scope in SQL, so a
+    // candidate on another branch never reaches this check.
+    if (memory.scope === 'branch' && project.branch !== memory.branch) return 'wrong-branch';
+    return 'unchecked';
+  }
+  // selection.terms: the searched terms (task text and referenced paths) FTS
+  // (porter stemming, no prefixes) matches in each selected note, one statement per term. Briefs never depend on task words.
+  matchedTerms(items, terms) {
+    const byRevision = new Map(items.map(item => [item.revisionId, []]));
+    const ids = JSON.stringify(items.filter(item => item.category !== 'brief').map(item => item.revisionId));
+    if (terms.length && ids !== '[]') {
+      const check = this.db.prepare('SELECT revision_id FROM memory_fts WHERE memory_fts MATCH ? AND revision_id IN (SELECT value FROM json_each(?))');
+      for (const term of terms) for (const { revision_id: revision } of check.all(`"${term.replaceAll('"', '""')}"`, ids)) byRevision.get(revision)?.push(term);
+    }
+    for (const item of items) item.selection.terms = item.category === 'brief' ? [] : byRevision.get(item.revisionId) ?? [];
+    return items;
+  }
+  // Remembered notes a task could match on this branch: active, not briefs, checkout-wide or on the branch.
+  taskNotes(projectId, branch) {
+    return this.db.prepare(`SELECT count(*) AS n FROM memories m JOIN revisions r ON r.id=m.current_revision
+      WHERE m.project_id=? AND m.status='active' AND json_extract(r.body,'$.category')!='brief'
+      AND (json_extract(r.body,'$.scope')='checkout' OR json_extract(r.body,'$.branch')=?)`).get(projectId, branch).n;
   }
   // Files and folders the user chose for the next task, recorded with what
   // they were at selection time. A primary-repository path must come from the
@@ -501,17 +734,27 @@ export class JournalStore {
   }
   listReceipts(projectId) {
     this.project(projectId);
-    return this.db.prepare('SELECT body FROM receipts WHERE project_id=? ORDER BY rowid DESC LIMIT 50').all(projectId).map(parse);
+    // Older versions stored every preview as a prepared receipt without a session. Receipts are immutable,
+    // so those stay stored but unlisted. A launch receipt is prepared until delivery records its session id,
+    // but its session row names it from before the agent starts.
+    return this.db.prepare(`SELECT r.body FROM receipts r WHERE r.project_id=? AND NOT (json_extract(r.body,'$.state')='prepared' AND json_extract(r.body,'$.sessionId') IS NULL
+      AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.project_id=r.project_id AND json_extract(s.body,'$.receiptId')=r.id)) ORDER BY r.rowid DESC LIMIT 50`).all(projectId).map(parse);
   }
+  // One transaction: the app and the runtime both record deliveries, and the
+  // delivery rows must match the state change exactly once.
   updateReceiptState(id, state, sessionId, launchPrompt) {
     choice(state, ['submitted', 'failed', 'uncertain'], 'delivery state');
-    const receipt = this.getReceipt(id);
-    if (receipt.state !== 'prepared' && !(receipt.state === 'submitted' && state === 'uncertain')) throw new Error('Receipt delivery is already recorded');
     if (launchPrompt !== undefined && (typeof launchPrompt !== 'string' || Buffer.byteLength(launchPrompt) > 32000)) throw new Error('Invalid launch prompt snapshot');
-    const updated = { ...receipt, state, sessionId: sessionId ?? receipt.sessionId, updatedAt: now(),
-      ...(receipt.state === 'prepared' && launchPrompt !== undefined ? { launchPrompt } : {}) };
-    this.db.prepare('UPDATE receipts SET body=? WHERE id=?').run(JSON.stringify(updated), id);
-    return updated;
+    return this.transaction(() => {
+      const receipt = this.getReceipt(id);
+      if (receipt.state !== 'prepared' && !(receipt.state === 'submitted' && state === 'uncertain')) throw new Error('Receipt delivery is already recorded');
+      const updated = { ...receipt, state, sessionId: sessionId ?? receipt.sessionId, updatedAt: now(),
+        ...(receipt.state === 'prepared' && launchPrompt !== undefined ? { launchPrompt } : {}) };
+      this.db.prepare('UPDATE receipts SET body=? WHERE id=?').run(JSON.stringify(updated), id);
+      // From prepared only: submitted → uncertain is the same delivery.
+      if (receipt.state === 'prepared' && state !== 'failed') this.db.prepare(RECORD_RECEIPT_DELIVERIES).run(id);
+      return updated;
+    });
   }
   // Runtime saves carry status; user-owned fields (name, pin, archive,
   // removal) always come from the stored row, so a status save can never
@@ -593,8 +836,16 @@ export class JournalStore {
     }
     return created;
   }
-  listProposals(projectId, state = 'open') {
+  // With sessionId: that session's suggestions and its resume chain's (earlier: true), each with
+  // the remembered notes it may conflict with, so a one-click Remember is offered only without one.
+  listProposals(projectId, state = 'open', { sessionId } = {}) {
     this.project(projectId); choice(state, ['open', 'accepted', 'dismissed'], 'proposal state');
+    if (sessionId !== undefined && sessionId !== null) {
+      const session = this.getSession(sessionId);
+      if (session.projectId !== projectId) throw new Error('Session belongs to another project');
+      return sessionProposals(this, session, state).map(proposal => proposal.kind === 'branch-status' || !proposal.statement ? proposal
+        : { ...proposal, conflicts: this.conflictsWith(projectId, '', { statement: proposal.statement, scope: proposal.scope, branch: proposal.branch ?? null, area: '' }) });
+    }
     return this.db.prepare(`SELECT body FROM proposals WHERE project_id=? AND json_extract(body,'$.state')=? ORDER BY rowid DESC LIMIT 100`).all(projectId, state).map(parse);
   }
   getProposal(id) {
@@ -603,14 +854,180 @@ export class JournalStore {
   }
   // Accepting creates a candidate (still unapproved); status proposals open the helper instead.
   acceptProposal(id) {
-    const proposal = this.getProposal(id);
-    if (proposal.state !== 'open') throw new Error('This proposal was already handled');
-    if (proposal.kind === 'branch-status') throw new Error('Use Propose branch update for status proposals');
-    if (proposal.evidence?.sessionId) this.getSession(proposal.evidence.sessionId);
-    const memory = this.proposeMemory(proposal.projectId, { statement: proposal.statement, category: proposal.category, scope: proposal.scope, area: '', source: proposal.source });
+    const proposal = this.openProposal(id);
+    const memory = this.proposeMemory(proposal.projectId, { statement: proposal.statement, category: proposal.category, scope: proposal.scope, area: '', source: proposal.source },
+      proposal.scope === 'branch' ? { branch: proposal.branch } : undefined);
     this.db.prepare('UPDATE proposals SET body=? WHERE id=?').run(JSON.stringify({ ...proposal, state: 'accepted', memoryId: memory.id, handledAt: now() }), id);
     this.audit('proposal-accepted', { id, memoryId: memory.id, kind: proposal.kind });
     return memory;
+  }
+  // ----- Phase 6: the session wrap-up -----
+  sessionSummary(id) { return sessionSummary(this, id); }
+  staleNotesForSession(sessionId, options) { return staleNotesForSession(this, sessionId, options); }
+  staleNoteDiff(projectId, memoryId, sessionId, options) { return staleNoteDiff(this, projectId, memoryId, sessionId, options); }
+  // acceptProposal's checks, before anything is written.
+  openProposal(id) {
+    const proposal = this.getProposal(id);
+    if (proposal.state !== 'open') throw new Error('This suggestion was already handled');
+    if (proposal.kind === 'branch-status') throw new Error('This suggestion updates “Where this branch stands”. Use its own update button instead of Add for review.');
+    if (proposal.scope === 'branch' && !proposal.branch) throw new Error('This suggestion was made without a branch checked out, so Journal cannot tell which branch it belongs to. Dismiss it to clear it from your suggestions.');
+    if (proposal.evidence?.sessionId) this.getSession(proposal.evidence.sessionId);
+    return proposal;
+  }
+  // One-step Remember (D1): the full statement was on screen. All or nothing. Every
+  // item is checked (Git, evidence) before one transaction writes and remembers them
+  // all; `via` (set by the main process) labels the audit entries.
+  rememberProposals(ids, { via } = {}) {
+    choice(via, ['wrap-up'], 'remember path');
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > 5 || ids.some(id => typeof id !== 'string' || !id || id.length > 100) || new Set(ids).size !== ids.length) throw new Error('Choose 1 to 5 suggestions');
+    const prepared = ids.map(id => {
+      const proposal = this.openProposal(id);
+      const branch = proposal.scope === 'branch' ? proposal.branch : null;
+      // A branch suggestion is checked in a copy that has its branch checked out.
+      const view = branch ? this.approvalView({ projectId: proposal.projectId, scope: 'branch', branch }) : null;
+      if (branch && view.branch !== branch) throw this.wrongBranch(proposal.projectId, branch, 'approve');
+      const { item, expected } = this.prepareMemory(proposal.projectId, { statement: proposal.statement, category: proposal.category, scope: proposal.scope, area: '', source: proposal.source },
+        branch ? { branch, view } : {});
+      if (item.conflicts.length) throw new Error(`"${proposal.statement.slice(0, 60)}" may conflict with a remembered note. Review it in Memory.`);
+      return { proposal, item, expected };
+    });
+    if (new Set(prepared.map(({ proposal }) => proposal.projectId)).size > 1) throw new Error('Choose suggestions from one project');
+    for (const [index, a] of prepared.entries()) for (const b of prepared.slice(index + 1)) {
+      if (isDuplicate(a.item.statement, b.item.statement)) throw new Error(`"${b.item.statement.slice(0, 60)}" repeats another suggestion; remember only one of them`);
+      const overlap = a.item.scope === 'checkout' || b.item.scope === 'checkout' || a.item.branch === b.item.branch;
+      if (overlap && possibleConflict(a.item.statement, b.item.statement)) throw new Error(`"${b.item.statement.slice(0, 60)}" may contradict another suggestion; remember only one of them`);
+    }
+    return this.transaction(() => prepared.map(({ proposal, item, expected }) => {
+      // Re-read inside the lock: another window may have handled it meanwhile.
+      const current = this.getProposal(proposal.id);
+      if (current.state !== 'open') throw new Error('This suggestion was already handled');
+      // Again under the lock (SQLite only): a note remembered meanwhile may contradict it.
+      if (this.conflictsWith(item.projectId, item.id, item).length) throw new Error(`"${proposal.statement.slice(0, 60)}" may conflict with a remembered note. Review it in Memory.`);
+      this.writeMemory(item, expected);
+      this.db.prepare('UPDATE proposals SET body=? WHERE id=?').run(JSON.stringify({ ...current, state: 'accepted', memoryId: item.id, handledAt: now() }), proposal.id);
+      this.audit('proposal-accepted', { id: proposal.id, memoryId: item.id, kind: proposal.kind, via });
+      this.approveMemory(this.getMemory(item.id), { via });
+      return this.getMemory(item.id);
+    }));
+  }
+  // ----- Phase 7: first run. The orientation flag lives in the project body, so it survives
+  // reopening and remove-then-restore. The renderer sets it (markOrientationShown) once the
+  // screen has painted (D10: once per project, even if the user walks away); drafts that were
+  // produced but never seen (a project switch, a reload) leave the project eligible.
+  setOrientation(projectId, state) { const stored = this.storedProject(projectId); return this.saveProject({ ...stored, orientation: { state, at: now() } }); }
+  // A current project summary of a scope (and, for a branch, that branch), active or waiting for review.
+  currentBrief(projectId, scope, branch) {
+    return this.db.prepare(`SELECT m.id FROM memories m JOIN revisions r ON r.id=m.current_revision
+      WHERE m.project_id=? AND m.status IN ('active','candidate') AND json_extract(r.body,'$.category')='brief'
+      AND (? IS NULL OR json_extract(r.body,'$.scope')=?) AND (? IS NULL OR json_extract(r.body,'$.branch')=?) LIMIT 1`).get(projectId, scope, scope, branch, branch) ?? null;
+  }
+  // No flag and no project summary of any scope that counts (active or candidate): projects
+  // from before Phase 7 without one are offered it once; any summary means never.
+  needsOrientation(projectId) {
+    const stored = this.storedProject(projectId);
+    return !stored.orientation && !this.currentBrief(projectId, null, null);
+  }
+  // The two first-run drafts (Git only, nothing stored), or null. again: Draft again on a
+  // screen that was shown (its HEAD or branch moved); never after Remember or Skip.
+  firstRunDrafts(projectId, { again = false } = {}) {
+    const eligible = this.needsOrientation(projectId)
+      || (again === true && this.storedProject(projectId).orientation?.state === 'shown' && !this.currentBrief(projectId, null, null));
+    if (!eligible) return null;
+    const project = this.project(projectId);
+    // An unborn HEAD is not marked: there is nothing to draft until the first commit.
+    if (!project.head) return null;
+    // With a commit and a named branch neither draft is expected to throw, so a throw is a
+    // real failure (Git could not be read): the card is null with the neutral reason 'failed'.
+    let overview = null; let branch = null; let branchSkipped = null; let overviewSkipped = null;
+    try { overview = this.proposeStatusUpdate(projectId, 'checkout'); } catch { overviewSkipped = 'failed'; }
+    if (!project.branch) branchSkipped = 'detached';
+    else { try { branch = this.proposeStatusUpdate(projectId, 'branch'); } catch { branchSkipped = 'failed'; } }
+    if (!overview && !branch) return null;
+    // branchName: the branch the drafts were made on; rememberDraft refuses another one.
+    return { projectId, head: project.head, branchName: project.branch ?? null, overview, branch, branchSkipped, overviewSkipped };
+  }
+  // One action for both first-run cards (D1: the whole statements were on screen). Each part
+  // is null or { statement, base, head, branch } (head and branch: the drafts' head and branchName). Every check, Git query and evidence read happens in
+  // prepareMemory before one transaction writes, remembers and audits them all; any throw
+  // leaves nothing behind. `via` is set by the main process.
+  rememberDraft(projectId, { overview = null, branch = null } = {}, { via } = {}) {
+    choice(via, ['first-run'], 'remember path');
+    const parts = [['checkout', overview], ['branch', branch]].filter(([, part]) => part !== null && part !== undefined);
+    if (!parts.length) throw new Error('Choose a draft to remember');
+    for (const [, part] of parts) {
+      if (typeof part !== 'object' || Array.isArray(part) || typeof part.statement !== 'string' || typeof part.head !== 'string' || !(part.base === null || typeof part.base === 'string') || !(part.branch === null || typeof part.branch === 'string')) throw new Error('Invalid draft');
+    }
+    const project = this.project(projectId);
+    // A switch to another branch at the same commit changes what the branch card describes.
+    if (parts.some(([, part]) => part.head !== project.head || part.branch !== (project.branch ?? null))) throw new Error('The project changed since these drafts were made. Open Project memory to draft them again.');
+    const meanwhile = () => new Error('A project summary was added meanwhile; review it in Project memory');
+    const target = scope => scope === 'branch' ? project.branch : null;
+    const prepared = parts.map(([scope, part]) => {
+      if (scope === 'branch' && !project.branch) throw new Error('"Where this branch stands" needs a named branch');
+      if (this.currentBrief(projectId, scope, target(scope))) throw meanwhile();
+      return this.prepareMemory(projectId, { statement: part.statement, category: 'brief', scope, area: '', source: { kind: 'git', base: part.base } });
+    });
+    return this.transaction(() => {
+      // Re-read inside the lock: another window may have added one meanwhile.
+      for (const [scope] of parts) if (this.currentBrief(projectId, scope, target(scope))) throw meanwhile();
+      const notes = prepared.map(({ item, expected }) => {
+        this.writeMemory(item, expected);
+        this.approveMemory(this.getMemory(item.id), { via });
+        return this.getMemory(item.id);
+      });
+      this.setOrientation(projectId, 'remembered');
+      this.audit('orientation-remembered', { projectId, notes: notes.length });
+      return notes;
+    });
+  }
+  // The first-run screen has painted: from now on it is not offered again. Only the first
+  // call sets the flag; it never replaces remembered or skipped. Returns whether it was set.
+  markOrientationShown(projectId) {
+    const stored = this.storedProject(projectId);
+    if (stored.orientation) return false;
+    this.setOrientation(projectId, 'shown');
+    return true;
+  }
+  // Skip for now: only the flag; no note is touched.
+  skipOrientation(projectId) {
+    const stored = this.storedProject(projectId);
+    if (stored.orientation?.state === 'remembered') return this.describe(stored);
+    const saved = this.setOrientation(projectId, 'skipped');
+    this.audit('orientation-skipped', { projectId });
+    return saved;
+  }
+  // Any remembered note in any project (an upgrading install never sees the first-note moment).
+  hasActiveNotes() { return !!this.db.prepare(`SELECT 1 FROM memories WHERE status='active' LIMIT 1`).get(); }
+  // "Still true": the user checked an out-of-date file note against the change. A new
+  // revision with fresh evidence (the same statement, scope and qualifiers), remembered
+  // at once with via 'reaffirm'. Earlier revisions are never edited; pinning is kept.
+  // expectedHash: the file's contentHash from staleNotesForSession, the content the user
+  // was shown; a file edited since then is refused rather than saved unseen.
+  reaffirmMemory(id, { startLine, endLine, workspaceId = null, expectedHash } = {}) {
+    const memory = this.getMemory(id);
+    if (memory.status !== 'active' || memory.source?.kind !== 'file') throw new Error('Only a remembered note based on a file can be marked still true');
+    if (workspaceId !== null && typeof workspaceId !== 'string') throw new Error('Invalid workspace');
+    let view;
+    if (memory.source.rootId || memory.scope !== 'branch') {
+      // Folder notes are project-level; an all-branches note is checked against the main checkout.
+      if (workspaceId !== null) throw new Error('Check this note from the main checkout');
+      view = this.project(memory.projectId);
+    } else {
+      if (workspaceId?.startsWith('root:')) throw new Error('Check this note from the main checkout');
+      view = this.view(memory.projectId, workspaceId);
+      if (view.branch !== memory.branch) throw this.wrongBranch(memory.projectId, memory.branch, 'approve');
+    }
+    if (this.validation(view, memory) !== 'stale') throw new Error('This note\'s file is unchanged; there is nothing to check');
+    if (typeof expectedHash !== 'string' || !/^[0-9a-f]{64}$/.test(expectedHash)) throw new Error('Check the change before marking the note still true');
+    const source = { kind: 'file', ...(memory.source.rootId ? { rootId: memory.source.rootId } : {}), path: memory.source.path,
+      startLine: startLine ?? memory.source.startLine, endLine: endLine ?? memory.source.endLine };
+    // The view is on the note's branch, so a branch note keeps it without a bound branch.
+    const { item, expected } = this.prepareMemory(memory.projectId, { memoryId: id, statement: memory.statement, category: memory.category, scope: memory.scope,
+      area: memory.area, environment: memory.environment, source, ...(memory.promotedFrom ? { promotedFrom: memory.promotedFrom } : {}) }, { view });
+    if (item.source.contentHash !== expectedHash) throw new Error('The file changed again; check it once more.');
+    if (memory.supersedes) item.supersedes = memory.supersedes;
+    this.transaction(() => { this.writeMemory(item, expected); this.approveMemory(this.getMemory(id), { via: 'reaffirm', retire: false }); });
+    return { ...this.getMemory(id), validation: 'current' };
   }
   dismissProposal(id) {
     const proposal = this.getProposal(id);
@@ -764,10 +1181,12 @@ export class JournalStore {
   archiveSession(id) { return this.updateSessionUser(id, { archived: true, archivedAt: now() }); }
   // Bounded per-session timeline. Bodies are small metadata: no terminal
   // output, prompts or tool results.
-  appendEvent(sessionId, kind, body) {
+  // at: the time the caller also broadcast live, so the window can merge the two copies.
+  appendEvent(sessionId, kind, body, at) {
     const text = JSON.stringify(body ?? {});
     if (text.length > 4000) throw new Error('Timeline event is too large');
-    this.db.prepare('INSERT INTO events(session_id,at,kind,body) VALUES(?,?,?,?)').run(sessionId, now(), choice(kind, ['start', 'resume', 'context', 'prompt', 'permission', 'turn-end', 'command-start', 'command-end', 'file', 'interrupt', 'stop', 'exit', 'error', 'recovered', 'cleanup', 'disconnected', 'reference'], 'event kind'), text);
+    const stamp = typeof at === 'string' && Number.isFinite(Date.parse(at)) ? new Date(at).toISOString() : now();
+    this.db.prepare('INSERT INTO events(session_id,at,kind,body) VALUES(?,?,?,?)').run(sessionId, stamp, choice(kind, ['start', 'resume', 'context', 'prompt', 'permission', 'turn-end', 'command-start', 'command-end', 'file', 'interrupt', 'stop', 'exit', 'error', 'recovered', 'cleanup', 'disconnected', 'reference'], 'event kind'), text);
     this.eventCounts ??= new Map(); const count = (this.eventCounts.get(sessionId) ?? 0) + 1; this.eventCounts.set(sessionId, count);
     if (count % 50 === 0) this.db.prepare(`DELETE FROM events WHERE session_id=? AND id <= (SELECT id FROM events WHERE session_id=? ORDER BY id DESC LIMIT 1 OFFSET ${EVENT_LIMIT})`).run(sessionId, sessionId);
   }

@@ -108,7 +108,7 @@ test('review fixes: export approved only, purge keeps shared resume history, res
   const receipt = f.store.prepareContext(f.project.id, '');
   const base = { projectId: f.project.id, provider: 'claude', nativeId: '44444444-4444-4444-8444-444444444444', status: 'stopped', receiptId: receipt.id, createdAt: '' };
   f.store.saveSession({ ...base, id: 'a' }); f.store.saveSession({ ...base, id: 'b', resumedFrom: 'a' });
-  assert.throws(() => f.store.purgeSession('b'), /native conversation/);
+  assert.throws(() => f.store.purgeSession('b'), /so you can still continue it/);
   const { DatabaseSync } = await import('node:sqlite');
   const other = join(f.root, 'other.sqlite'); const db = new DatabaseSync(other); db.exec('CREATE TABLE x(a)'); db.close();
   assert.throws(() => restore(other, f.data, { alive: () => false }), /not a Journal backup/);
@@ -117,4 +117,32 @@ test('review fixes: export approved only, purge keeps shared resume history, res
   (await import('node:fs')).symlinkSync('host-12345', join(f.data, 'SingletonLock')); // dangling, as Chromium creates it
   const good = join(f.root, 'good.sqlite'); await f.store.backup(good);
   assert.throws(() => restore(good, f.data, { alive: () => false }), /appears to be open/);
+});
+
+test('purge removes a session\'s deliveries; remove keeps them; deleting project data clears them', t => {
+  const f = fixture(t); const note = f.approve('Docker runs the integration suite.');
+  const deliver = id => {
+    const receipt = f.store.prepareContext(f.project.id, 'Docker');
+    f.store.saveSession({ id, projectId: f.project.id, provider: 'claude', status: 'exited', receiptId: receipt.id, createdAt: '2026-09-30T10:00:00.000Z' });
+    f.store.updateReceiptState(receipt.id, 'submitted', id); return receipt;
+  };
+  const count = () => f.store.deliveryCounts(f.project.id, [note.id])[note.id];
+  const purged = deliver('purged'); deliver('hidden'); deliver('kept');
+  assert.equal(count(), 3);
+  f.store.purgeSession('purged');
+  assert.equal(count(), 2);
+  assert.equal(f.store.db.prepare('SELECT count(*) AS n FROM deliveries WHERE session_id=? OR receipt_id=?').get('purged', purged.id).n, 0);
+  f.store.removeSession('hidden');
+  assert.equal(count(), 2);
+  const otherRepo = join(f.root, 'other'); execFileSync('git', ['init', '-q', '-b', 'main', otherRepo]);
+  const other = f.store.openProject(otherRepo);
+  const otherNote = f.store.proposeMemory(other.id, { statement: 'Docker is optional here.', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'x' } });
+  f.store.setMemoryStatus(otherNote.id, 'active');
+  const receipt = f.store.prepareContext(other.id, 'Docker');
+  f.store.saveSession({ id: 'other', projectId: other.id, provider: 'codex', status: 'exited', receiptId: receipt.id });
+  f.store.updateReceiptState(receipt.id, 'submitted', 'other');
+  assert.equal(f.store.storageInfo().tables.deliveries, 3);
+  f.store.removeProject(f.project.id, { deleteData: true });
+  const rows = f.store.db.prepare('SELECT project_id FROM deliveries').all().map(row => row.project_id);
+  assert.deepEqual(rows, [other.id]);
 });

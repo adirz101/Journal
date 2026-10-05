@@ -1,4 +1,6 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import type { Pane } from './types';
+import type { ShellLayout } from './useShellLayout';
 
 type Side = 'project' | 'knowledge';
 type Widths = Record<Side, number | null>;
@@ -15,9 +17,22 @@ function storedWidths(): Widths {
   } catch { return { project: null, knowledge: null }; }
 }
 
-export const RAIL_WIDTH = 34;
-// collapsed: the right panel shrinks to a rail; wide: it widens while a file is previewed (not saved).
-export function ResizableWorkspace({ hasKnowledge, collapsed = false, wide = false, children }: { hasKnowledge: boolean; collapsed?: boolean; wide?: boolean; children: ReactNode }) {
+export const SIDEBAR_RAIL = 56, INSPECTOR_RAIL = 44;
+// Accessible names; the side ids are also the keys of the stored widths.
+const names: Record<Side, string> = { project: 'project sidebar', knowledge: 'side panel' };
+const overlayWidth = { project: (stored: number | null) => clamp(stored ?? 264, 220, 300), knowledge: (stored: number | null, wide: boolean) => wide ? Math.min(720, Math.round(window.innerWidth * 0.5)) : clamp(stored ?? 384, 320, 420) };
+
+// The shell grid: sidebar | main | inspector. Each side pane renders in full
+// (resizable, wide windows), as a rail, or as a rail plus an overlay. An
+// overlay sits out of flow above the main column, so opening or closing one
+// never changes the grid and never refits the terminal. It is not modal: no
+// focus trap, no scrim. Esc closes it only from inside it or its rail (Esc in
+// the terminal belongs to the CLI); a pointer press elsewhere closes it too.
+// wide: the inspector widens while a file is previewed (not saved).
+export function ResizableWorkspace({ layout, wide = false, sidebar, inspector, children }: {
+  layout: ShellLayout; wide?: boolean;
+  sidebar: (pane: Pane, overlay: boolean) => ReactNode; inspector: ((pane: Pane, overlay: boolean) => ReactNode) | null; children: ReactNode;
+}) {
   const shell = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(window.innerWidth);
   const [requested, setRequested] = useState<Widths>(storedWidths);
@@ -29,21 +44,24 @@ export function ResizableWorkspace({ hasKnowledge, collapsed = false, wide = fal
     return () => observer.disconnect();
   }, []);
 
+  const sidebarFull = layout.sidebar === 'full'; const inspectorState = inspector ? layout.inspector : 'none';
+  const inspectorFull = inspectorState === 'full'; const inspectorRail = inspectorState === 'rail' || inspectorState === 'overlay';
   const compact = containerWidth <= 1150;
-  const defaults = { project: compact ? 176 : 218, knowledge: compact ? 304 : 350 };
+  // Boards B4 and B10: 264 px sidebar and 384 px inspector when wide, a 248 px sidebar in a medium window.
+  const defaults = { project: compact ? 176 : containerWidth >= 1440 ? 264 : 248, knowledge: compact ? 304 : 384 };
   const workspaceMin = compact ? 340 : 390;
-  let project = requested.project ?? defaults.project;
-  let knowledge = hasKnowledge ? requested.knowledge ?? defaults.knowledge : 0;
-  if (hasKnowledge && wide && !collapsed) knowledge = Math.max(knowledge, Math.min(720, Math.round(containerWidth * 0.5), limits.knowledge.max + 120));
+  let project = sidebarFull ? requested.project ?? defaults.project : SIDEBAR_RAIL;
+  let knowledge = inspectorFull ? requested.knowledge ?? defaults.knowledge : inspectorRail ? INSPECTOR_RAIL : 0;
+  if (inspectorFull && wide) knowledge = Math.max(knowledge, Math.min(720, Math.round(containerWidth * 0.5), limits.knowledge.max + 120));
   // Constrain the displayed widths, preserving the saved preference for larger windows.
-  if (hasKnowledge && collapsed) { project = Math.min(project, containerWidth - workspaceMin - RAIL_WIDTH); knowledge = RAIL_WIDTH; }
-  else if (hasKnowledge && project + knowledge > containerWidth - workspaceMin) {
+  if (sidebarFull && inspectorFull && project + knowledge > containerWidth - workspaceMin) {
     const extra = project - limits.project.min + knowledge - limits.knowledge.min;
     const available = Math.max(0, containerWidth - workspaceMin - limits.project.min - limits.knowledge.min);
     const ratio = extra > 0 ? Math.min(1, available / extra) : 0;
     project = limits.project.min + Math.floor((project - limits.project.min) * ratio);
     knowledge = limits.knowledge.min + Math.floor((knowledge - limits.knowledge.min) * ratio);
-  } else if (!hasKnowledge) project = Math.min(project, containerWidth - workspaceMin);
+  } else if (sidebarFull) project = Math.max(limits.project.min, Math.min(project, containerWidth - workspaceMin - knowledge));
+  else if (inspectorFull) knowledge = Math.max(limits.knowledge.min, Math.min(knowledge, containerWidth - workspaceMin - project));
   const widths = { project, knowledge };
   const max = {
     project: Math.max(limits.project.min, Math.min(limits.project.max, containerWidth - workspaceMin - knowledge)),
@@ -57,12 +75,49 @@ export function ResizableWorkspace({ hasKnowledge, collapsed = false, wide = fal
     const next = { ...requestedRef.current, [side]: value === null ? null : clamp(value, limits[side].min, maxRef.current[side]) };
     requestedRef.current = next; setRequested(next); if (save) persist();
   };
-  const style = { '--sidebar-width': `${project}px`, '--knowledge-width': `${knowledge}px`, '--workspace-min-width': `${workspaceMin}px` } as CSSProperties;
-  return <div ref={shell} className="app-shell" style={style}>
+  const overlay = layout.sidebar === 'overlay' ? 'sidebar' : inspectorState === 'overlay' ? 'inspector' : null;
+  const style = { '--sidebar-width': `${project}px`, '--knowledge-width': `${knowledge}px`, '--workspace-min-width': `${workspaceMin}px`,
+    gridTemplateColumns: `${project}px minmax(${Math.min(workspaceMin, 300)}px, 1fr)${knowledge ? ` ${knowledge}px` : ''}` } as CSSProperties;
+  // Keyboard: Esc from inside an overlay or its own rail closes it and returns focus.
+  // An Esc an inner element already handled (a file preview, a search) stays there,
+  // and Esc in a docked pane (the sidebar beside an inspector overlay) is that pane's own.
+  const escape = (from: 'sidebar' | 'inspector' | 'overlay') => (event: KeyboardEvent<HTMLElement>) => {
+    if (event.defaultPrevented || event.key !== 'Escape' || !overlay || (from !== 'overlay' && from !== overlay)) return;
+    event.preventDefault(); layout.closeOverlays(true);
+  };
+  return <div ref={shell} className={`app-shell mode-${layout.mode}`} style={style}>
+    <div className="shell-pane" data-shell-pane="sidebar" onKeyDown={escape('sidebar')}>{sidebar(sidebarFull ? 'full' : 'rail', false)}</div>
     {children}
-    <ResizeHandle side="project" value={widths.project} max={max.project} onChange={change} onCommit={persist} />
-    {hasKnowledge && !collapsed && !wide && <ResizeHandle side="knowledge" value={widths.knowledge} max={max.knowledge} onChange={change} onCommit={persist} />}
+    {inspector && inspectorState !== 'none' && <div className="shell-pane" data-shell-pane="inspector" onKeyDown={escape('inspector')}>{inspector(inspectorFull ? 'full' : 'rail', false)}</div>}
+    {overlay && <Overlay key={overlay} side={overlay} layout={layout} width={overlay === 'sidebar' ? overlayWidth.project(requested.project) : overlayWidth.knowledge(requested.knowledge, wide)} onKeyDown={escape('overlay')}>
+      {overlay === 'sidebar' ? sidebar('full', true) : inspector!('full', true)}</Overlay>}
+    {sidebarFull && <ResizeHandle side="project" value={widths.project} max={max.project} onChange={change} onCommit={persist} />}
+    {inspectorFull && !wide && <ResizeHandle side="knowledge" value={widths.knowledge} max={max.knowledge} onChange={change} onCommit={persist} />}
   </div>;
+}
+
+// An open overlay: focus moves into it and comes back where it was when it closes.
+function Overlay({ side, layout, width, onKeyDown, children }: { side: 'sidebar' | 'inspector'; layout: ShellLayout; width: number; onKeyDown: (event: KeyboardEvent<HTMLElement>) => void; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const previous = document.activeElement as HTMLElement | null; const node = box.current!;
+    const target = side === 'inspector' ? node.querySelector<HTMLElement>('[role=tab][aria-selected=true]') : node.querySelector<HTMLElement>('.session-select[aria-current=true]') ?? node.querySelector<HTMLElement>('.new-session');
+    target?.focus({ preventScroll: true });
+    // A pointer press outside the overlay and both rails closes it; the click decides focus. Dialogs opened from it are inside.
+    const outside = (event: Event) => {
+      const at = event.target as Element | null;
+      if (!at || node.contains(at) || at.closest('[data-shell-pane]') || at.closest('dialog[open]')) return;
+      layout.closeOverlays(false);
+    };
+    document.addEventListener('pointerdown', outside, true);
+    return () => {
+      document.removeEventListener('pointerdown', outside, true);
+      if (!layout.restoreFocus.current) return;
+      if (previous?.isConnected && previous !== document.body) previous.focus({ preventScroll: true });
+      else window.dispatchEvent(new CustomEvent('journal:focus-terminal'));
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return <div ref={box} className={`shell-overlay ${side}-overlay`} style={{ width }} onKeyDown={onKeyDown}>{children}</div>;
 }
 
 function ResizeHandle({ side, value, max, onChange, onCommit }: {
@@ -86,7 +141,7 @@ function ResizeHandle({ side, value, max, onChange, onCommit }: {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
   return <div className={`panel-resizer ${side}-resizer${dragging ? ' dragging' : ''}`}
-    role="separator" tabIndex={0} aria-orientation="vertical" aria-label={`Resize ${side} sidebar`}
+    role="separator" tabIndex={0} aria-orientation="vertical" aria-label={`Resize ${names[side]}`}
     aria-controls={side === 'project' ? 'project-sidebar' : 'knowledge-sidebar'}
     aria-valuemin={limits[side].min} aria-valuemax={max} aria-valuenow={value} aria-valuetext={`${value} pixels`}
     title="Drag or use arrow keys to resize. Double-click to reset."

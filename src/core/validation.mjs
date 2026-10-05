@@ -12,7 +12,7 @@ export function choice(value, allowed, label) {
 
 export function refuseCredentials(value) {
   if (/\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16})\b|-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._-]{16,}|\b(?:password|passwd|api[_-]?key|secret|access[_-]?token|auth[_-]?token)\s*[=:]\s*["']?[^\s"']{4,}|\btoken\s*[=:]\s*["']?[^\s"']{8,}/i.test(value)) {
-    throw new Error('Possible credential detected; remove it before saving knowledge');
+    throw new Error('Possible credential detected; remove it before saving the note');
   }
 }
 

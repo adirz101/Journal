@@ -1,7 +1,9 @@
 import { test, expect, _electron as electron } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { newSession, startSession, switchProject } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 // This verifies owned real processes, not assistant text or a simulated interrupt.
 test('running child cancellation, terminal stop and app exit leave no owned fixture processes', async () => {
@@ -35,8 +37,7 @@ if(command==='run'){child=spawn(process.execPath,['-e',${JSON.stringify(childCod
 else console.log('ECHO '+command);
 }});`;
   for (const name of ['claude', 'codex']) { writeFileSync(resolve(bin, name), fixture); chmodSync(resolve(bin, name), 0o755); }
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' };
-  delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false; throw error; } };
   const launches = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
   const ownedChildren: number[] = [];
@@ -44,9 +45,8 @@ else console.log('ECHO '+command);
   try {
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
     let page = await app.firstWindow();
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    await page.getByLabel('Initial task').fill('LIFECYCLE_INITIAL_TASK');
-    await page.getByRole('button', { name: 'Start Claude' }).click();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
+    await startSession(page, 'claude', { task: 'LIFECYCLE_INITIAL_TASK' });
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
     const firstArgs = launches()[0].argv; const nativeId = firstArgs[firstArgs.indexOf('--session-id') + 1];
     // The terminal accepts input once its output is replayed; wait until a typed line echoes
@@ -71,11 +71,11 @@ else console.log('ECHO '+command);
     expect(alive(launches()[0].pid)).toBe(true);
 
     const stopped = await runChild();
-    await page.getByRole('button', { name: 'Stop terminal' }).click();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect.poll(() => alive(stopped)).toBe(false);
     await expect.poll(() => alive(launches()[0].pid)).toBe(false);
-    await expect(page.getByRole('button', { name: 'Resume', exact: true }).first()).toBeEnabled();
-    await page.getByRole('button', { name: 'Resume', exact: true }).first().click();
+    await expect(page.getByRole('button', { name: 'Continue', exact: true }).first()).toBeEnabled();
+    await page.getByRole('button', { name: 'Continue', exact: true }).first().click();
     await expect.poll(() => launches().length).toBe(2);
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
     expect(launches()[1].argv).toContain(nativeId);
@@ -91,7 +91,7 @@ else console.log('ECHO '+command);
     await expect.poll(() => alive(quittingParent)).toBe(false);
     const count = launches().length;
     app = await electron.launch({ args: ['.'], env }); page = await app.firstWindow();
-    await page.getByRole('button', { name: /^fixture project/ }).click();
+    await switchProject(app, page, 'fixture project');
     const after = await page.evaluate(async () => {
       const boot = await (window as any).journal.request('bootstrap');
       return { active: boot.live.filter((x: any) => ['starting', 'running', 'waiting', 'stopping'].includes(x.status)), project: await (window as any).journal.request('project', { projectId: boot.projects[0].id }) };
@@ -106,11 +106,11 @@ else console.log('ECHO '+command);
     }
     expect(after.project.receipts[0].state).toBe('submitted');
     await page.getByRole('button', { name: /^Claude Code:/ }).first().click();
-    await page.getByRole('button', { name: 'Resume', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).first().click();
     await expect.poll(() => launches().length).toBe(count + 1);
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY true');
     expect(launches()[count].argv).toEqual(['--resume', nativeId, '--settings', launches()[count].argv[3]]);
-    await page.getByRole('button', { name: 'Stop terminal' }).click();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect.poll(() => alive(launches()[count].pid)).toBe(false);
   } finally {
     await app.close();

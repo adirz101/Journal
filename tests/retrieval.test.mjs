@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { JournalStore } from '../src/core/store.mjs';
-import { aliasesFor, areaMatches, identifierParts, possibleConflict, queryTerms } from '../src/core/retrieval.mjs';
+import { aliasesFor, areaMatches, identifierPartRanges, identifierParts, possibleConflict, queryTerms, queryTermSpans } from '../src/core/retrieval.mjs';
+import { readFileSync } from 'node:fs';
 import { checkoutBaseline, sessionChanges, fileDiff } from '../src/core/changes.mjs';
 import { removeLater } from './support/cleanup.mjs';
 
@@ -96,13 +97,18 @@ test('a version 1 database migrates in place and keeps knowledge searchable', t 
   const store = new JournalStore(path); const project = store.openProject(repo);
   // Reopen the old file as v1, insert a memory with the old schema, then migrate again from scratch.
   store.close(); const raw = new DatabaseSync(path);
-  assert.equal(raw.prepare('PRAGMA user_version').get().user_version, 7);
+  assert.equal(raw.prepare('PRAGMA user_version').get().user_version, 8);
   raw.close();
   const reopened = new JournalStore(path); t.after(() => reopened.close());
   const memory = reopened.proposeMemory(project.id, { statement: 'Payments retry with backoff', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'x' } });
   reopened.setMemoryStatus(memory.id, 'active');
   assert.equal(reopened.prepareContext(project.id, 'payment retrying').items[0]?.id, memory.id);
   reopened.appendEvent('s1', 'start', {}); assert.throws(() => reopened.appendEvent('s1', 'made-up', {}), /event kind/);
+  // The caller's timestamp is kept, so the window merges the stored and live copies.
+  reopened.appendEvent('s1', 'stop', {}, '2026-10-04T10:00:00.123Z'); reopened.appendEvent('s1', 'exit', {}, 'not a time');
+  const events = reopened.db.prepare("SELECT kind, at FROM events WHERE session_id='s1'").all();
+  assert.equal(events.find(e => e.kind === 'stop').at, '2026-10-04T10:00:00.123Z');
+  assert.ok(Number.isFinite(Date.parse(events.find(e => e.kind === 'exit').at)));
 });
 
 test('session changes compare with the starting commit and label pre-existing edits', t => {
@@ -154,7 +160,7 @@ test('pinned rules ride along with every task but stale or wrong-branch pins are
   const stale = f.store.proposeMemory(f.project.id, { statement: 'README says fixture setup', category: 'convention', scope: 'checkout', area: '', source: { kind: 'file', path: 'README.md', startLine: 1, endLine: 1 } });
   f.store.setMemoryStatus(stale.id, 'active');
   f.store.setPinned(pinned.id, true); f.store.setPinned(stale.id, true);
-  assert.throws(() => f.store.setPinned(f.store.proposeMemory(f.project.id, { statement: 'candidate', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'x' } }).id, true), /approved/);
+  assert.throws(() => f.store.setPinned(f.store.proposeMemory(f.project.id, { statement: 'candidate', category: 'lesson', scope: 'checkout', area: '', source: { kind: 'user', note: 'x' } }).id, true), { message: 'Only a remembered note can be pinned' });
   const receipt = f.store.prepareContext(f.project.id, 'translate the landing page');
   assert.deepEqual(receipt.items.map(i => i.id).sort(), [pinned.id, stale.id].sort());
   assert.ok(receipt.items.every(i => i.selection.reason === 'pinned'));
@@ -192,4 +198,70 @@ test('category diversity keeps one kind of claim from filling the packet', t => 
   assert.equal(receipt.items.filter(i => i.category === 'lesson').length, 4);
   assert.ok(receipt.items.some(i => i.id === decision.id));
   assert.ok(receipt.excluded.some(x => x.reason === 'category-limit'));
+});
+
+// The split before the range refactor, kept here as the reference behaviour.
+const previousIdentifierParts = value => value.split(/[^\p{L}\p{N}]+/u).flatMap(word => word.replace(/([\p{Ll}\p{N}])(\p{Lu})/gu, '$1 $2').replace(/(\p{Lu})(\p{Lu}\p{Ll})/gu, '$1 $2').split(' '))
+  .map(part => part.toLowerCase()).filter(part => part.length > 1);
+
+test('identifierParts output is unchanged by the range refactor', () => {
+  for (const value of ['readTable', 'jsonStore.mjs', 'src/payments/retry.mjs', 'HTTPServer', 'readTable jsonStore.mjs HTTPServer snake_case', 'ABcDEf aBC1D xYz1A getHTTPResponseCode2xx'])
+    assert.deepEqual(identifierParts(value), previousIdentifierParts(value), value);
+  assert.deepEqual(identifierParts('readTable'), ['read', 'table']);
+  assert.deepEqual(identifierParts('jsonStore.mjs'), ['json', 'store', 'mjs']);
+  assert.deepEqual(identifierParts('src/payments/retry.mjs'), ['src', 'payments', 'retry', 'mjs']);
+  assert.deepEqual(identifierParts('HTTPServer'), ['http', 'server']);
+  // Random identifiers over mixed cases, digits, separators, astral and combining characters.
+  const alphabet = ['a', 'b', 'Z', 'Q', '1', '9', '_', '.', '/', '-', ' ', '\u00e9', '\u00c9', '\u0301', '\u{10400}', '\u{10428}', '\u4e2d', '\u0130'];
+  let seed = 7; const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  for (let i = 0; i < 2000; i++) {
+    const value = Array.from({ length: 1 + Math.floor(next() * 14) }, () => alphabet[Math.floor(next() * alphabet.length)]).join('');
+    assert.deepEqual(identifierParts(value), previousIdentifierParts(value), JSON.stringify(value));
+    for (const { part, start, end } of identifierPartRanges(value, 5)) assert.equal(value.slice(start - 5, end - 5).toLowerCase(), part);
+  }
+});
+
+test('queryTermSpans marks camelCase parts, paths and repeated words', () => {
+  const text = 'Fix createRefund in src/payments/retry.mjs, then refund again';
+  const spans = queryTermSpans(text);
+  const has = (term, start, end, whole) => spans.some(s => s.term === term && s.start === start && s.end === end && s.whole === whole);
+  assert.ok(has('createrefund', 4, 16, true));
+  assert.ok(has('create', 4, 10, false));
+  assert.ok(has('refund', 10, 16, false));
+  assert.ok(spans.some(s => s.term === 'payments' && text.slice(s.start, s.end) === 'payments'));
+  assert.ok(spans.some(s => s.term === 'retry' && text.slice(s.start, s.end) === 'retry'));
+  const later = text.lastIndexOf('refund');
+  assert.ok(has('refund', later, later + 6, true), 'the repeated word is marked again');
+  assert.equal(spans.filter(s => s.start === later).length, 1, 'a word that is its own only part is one span');
+  assert.deepEqual(new Set(spans.map(s => s.term)), new Set(queryTerms(text)));
+  for (let i = 1; i < spans.length; i++) assert.ok(spans[i - 1].start <= spans[i].start, 'text order');
+  for (const span of spans) assert.equal(text.slice(span.start, span.end).toLowerCase(), span.term);
+});
+
+test('queryTermSpans keeps UTF-16 offsets for Unicode', () => {
+  // A combining acute accent, an astral emoji before a word, and CJK.
+  const text = 'Cafe\u0301 menu \u{1F680}launchPad \u4e2d\u6587\u6d4b\u8bd5 r\u00e9sum\u00e9Builder';
+  const spans = queryTermSpans(text);
+  assert.ok(spans.length >= 5);
+  for (const span of spans.filter(s => s.whole)) assert.equal(text.slice(span.start, span.end).toLowerCase(), span.term);
+  for (const span of spans) assert.equal(text.slice(span.start, span.end).toLowerCase(), span.term);
+  const launch = spans.find(s => s.term === 'launchpad');
+  assert.equal(launch.start, text.indexOf('launchPad'), 'the emoji counts as two UTF-16 units');
+  assert.ok(spans.some(s => s.term === '\u4e2d\u6587\u6d4b\u8bd5' && s.whole));
+  assert.ok(spans.some(s => s.term === 'builder' && !s.whole));
+  assert.deepEqual(new Set(spans.map(s => s.term)), new Set(queryTerms(text)));
+});
+
+test('queryTermSpans never marks terms past the limit', () => {
+  const words = Array.from({ length: 30 }, (_, i) => `word${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26))}`);
+  const spans = queryTermSpans(words.join(' '), 24);
+  assert.equal(new Set(spans.map(s => s.term)).size, 24);
+  assert.deepEqual(new Set(spans.map(s => s.term)), new Set(queryTerms(words.join(' '), 24)));
+});
+
+test('retrieval.mjs is renderer-safe', () => {
+  const source = readFileSync(new URL('../src/core/retrieval.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /from\s+['"]node:/);
+  assert.doesNotMatch(source, /\bimport\s*\(/);
+  assert.doesNotMatch(source, /\brequire\s*\(/);
 });

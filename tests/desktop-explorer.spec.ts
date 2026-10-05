@@ -1,7 +1,10 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, symlinkSync, unlinkSync, readFileSync, existsSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { pressKey } from './support/keys';
+import { filesView, inspectContext, inspectorTab, inspectorToggle, newSession, openAnotherProject, projectContextMenu, sessionStatus, startSession, switchProject } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 // Real Electron, runtime and node-pty with fixture CLIs. Native menus are
 // driven through the headless menu hook (see desktop-context-menus.spec.ts).
@@ -38,8 +41,7 @@ fs.appendFileSync(${JSON.stringify(ledger)},JSON.stringify({argv:process.argv.sl
 console.log('PTY_READY');process.stdin.setRawMode(true);process.stdin.setEncoding('utf8');process.stdin.on('data',d=>process.stdout.write('IN:'+JSON.stringify(d)+'\\n'));`;
   for (const p of ['claude', 'codex']) { writeFileSync(resolve(bin, p), fixture); chmodSync(resolve(bin, p), 0o755); }
   writeFileSync(resolve(root, 'package.json'), '{"type":"commonjs"}\n');
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' };
-  delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const launches = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').map(l => JSON.parse(l)) : [];
   return { root, project, other, extra, env, launches };
 }
@@ -53,8 +55,8 @@ test('the explorer browses, decorates, previews and references files without edi
     await app.evaluate(({ dialog, shell }) => { (shell as any).showItemInFolder = (p: string) => { (globalThis as any).__revealed = p; }; (dialog as any).showOpenDialog = async () => ({ canceled: false, filePaths: [(globalThis as any).__nextFolder] }); });
     const choose = (path: string) => app.evaluate((_e, p) => { (globalThis as any).__nextFolder = p; }, path);
     const page = await app.firstWindow();
-    await choose(next); await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    await page.getByRole('tab', { name: 'Files' }).click();
+    await choose(next); await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
+    await inspectorTab(page, 'Files'); await filesView(page, 'all');
 
     // Tree: the primary root is open; .git is never listed; links, sensitive files and ignored folders are marked.
     await expect(row(page, /^explorer project \(checkout\)/)).toBeVisible();
@@ -109,7 +111,7 @@ test('the explorer browses, decorates, previews and references files without edi
     await expect(row(page, /^fresh\.ts, untracked/)).toBeVisible();
     await expect(row(page, /^src, contains changes/)).toBeVisible();
     await expect(page.getByRole('treeitem', { name: /^gone\.txt/ })).toHaveCount(0);
-    await page.getByRole('button', { name: /^Changed/ }).click();
+    await page.getByRole('button', { name: /^Uncommitted/ }).click();
     const changed = page.getByRole('list', { name: 'Changed files' });
     await expect(changed).toContainText('gone.txt'); await expect(changed).toContainText('fresh.ts');
     await changed.getByRole('button', { name: /gone\.txt/ }).click();
@@ -125,50 +127,55 @@ test('the explorer browses, decorates, previews and references files without edi
     await expect.poll(() => app.evaluate(() => (globalThis as any).__revealed)).toBe(resolve(f.project, 'src', 'a.ts'));
 
     // Next-task references reach the receipt and the launch, as paths and hashes only.
-    await page.getByRole('button', { name: 'Preview context ↗' }).click();
+    await inspectContext(page);
     await page.getByRole('button', { name: /Show exact/ }).click();
     await expect(page.getByTestId('context-packet').first()).toContainText('Referenced by the user');
     await expect(page.getByTestId('context-packet').first()).toContainText('src/a.ts lines 2-3');
     await expect(page.getByTestId('context-packet').first()).not.toContainText('export const');
-    await page.getByLabel('Initial task').fill('Check the constants');
-    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await startSession(page, 'claude', { task: 'Check the constants' });
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY');
     expect(f.launches()[0].argv.at(-1)).toContain('src/a.ts lines 2-3');
     await expect(page.getByRole('list', { name: 'Files referenced for the next task' })).toHaveCount(0);
-    await expect(page.getByRole('region', { name: /REFERENCED FOR THIS TASK/ })).toContainText('src/a.ts:2-3');
+    await expect(page.getByRole('region', { name: /Referenced for this task/ })).toContainText('src/a.ts:2-3');
 
     // A running session: the fixture reports no readiness, so the reference is copied, never typed.
-    await page.getByRole('tab', { name: 'Files' }).click();
+    await inspectorTab(page, 'Files'); await filesView(page, 'all');
     await menu(app, 'refSession'); await row(page, /^README\.md/).click({ button: 'right' });
     await expect(page.locator('.explorer-note')).toContainText('Copied @README.md');
     await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe('@README.md');
     await expect(page.locator('.terminal-surface')).not.toContainText('IN:');
-    await page.getByRole('tab', { name: 'Context' }).click();
-    await expect(page.getByRole('region', { name: 'REFERENCED DURING THIS SESSION' })).toContainText('README.md');
-    await page.getByRole('button', { name: 'Stop terminal' }).click(); await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await inspectorTab(page, 'Session');
+    await expect(page.getByRole('region', { name: 'Referenced during this session' })).toContainText('README.md');
+    await page.getByRole('button', { name: 'Stop', exact: true }).click(); await expect(sessionStatus(page)).toContainText('Stopped');
 
     // Additional folders appear as their own roots.
-    await page.getByRole('tab', { name: 'Files' }).click();
-    await choose(f.extra); await menu(app, 'addFolder'); await page.locator('.project-link').first().click({ button: 'right' });
+    await inspectorTab(page, 'Files'); await filesView(page, 'all');
+    await choose(f.extra); await menu(app, 'addFolder'); await projectContextMenu(page).click({ button: 'right' });
     await expect(row(page, /^extra/)).toBeVisible();
     await row(page, /^extra/).click(); await expect(row(page, /^notes\.md/)).toBeVisible();
 
-    // Collapse and restore the side panel from the keyboard.
-    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Alt+KeyB' : 'Control+Alt+KeyB');
-    await expect(page.getByRole('button', { name: 'Show side panel' })).toBeVisible();
-    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+KeyE' : 'Control+Shift+KeyE');
+    // Collapse the side panel and open Files from the keyboard: ⌘I and ⌥⌘2 on macOS,
+    // Ctrl+Shift+B and Alt+Shift+2 elsewhere.
+    const mac = process.platform === 'darwin';
+    await pressKey(app, mac ? 'I' : 'B', mac ? ['meta'] : ['control', 'shift']);
+    await expect(inspectorToggle(page, 'show')).toBeVisible();
+    await pressKey(app, '2', mac ? ['meta', 'alt'] : ['alt', 'shift']);
     await expect(page.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true');
 
     // Another project shows only its own files: no stale tree, preview or reference carries over.
     await menu(app, 'refNext'); await row(page, /^README\.md/).click({ button: 'right' });
+    await expect(page.locator('.explorer-note')).toContainText('Added README.md to the next task.');
+    // The next task's references show in the New session view.
+    await newSession(page);
     await expect(page.getByRole('list', { name: 'Files referenced for the next task' })).toContainText('README.md');
     await row(page, /^README\.md/).click(); await expect(page.locator('.preview-path')).toHaveText('README.md');
-    await choose(f.other); await page.locator('.open-project').click();
+    await choose(f.other); await openAnotherProject(app, page);
+    await expect(page.getByLabel('Task', { exact: true })).toBeVisible();
     await expect(page.locator('.file-preview')).toHaveCount(0);
     await expect(page.getByRole('list', { name: 'Files referenced for the next task' })).toHaveCount(0);
     await expect(row(page, /^OTHER_SECRET_FILE\.md/)).toBeVisible();
     await expect(page.getByRole('treeitem', { name: /^README\.md/ })).toHaveCount(0);
-    await page.locator('.project-link', { hasText: 'explorer project' }).click();
+    await switchProject(app, page, 'explorer project');
     await expect(row(page, /^README\.md/)).toBeVisible();
     await expect(page.getByRole('treeitem', { name: /^OTHER_SECRET_FILE/ })).toHaveCount(0);
 

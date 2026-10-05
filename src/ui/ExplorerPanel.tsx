@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { hotkeysCoreFeature, searchFeature, selectionFeature, syncDataLoaderFeature, type ItemInstance } from '@headless-tree/core';
 import { useTree } from '@headless-tree/react';
 import { menuPosition, showMenu, type MenuItem } from './menu';
+import { copy, shell, tip } from './copy';
 import { api, isLive, type DirectoryListing, type FilePreviewData, type FileReference, type FileRoot, type FileStatus, type GitKind, type Project, type Session } from './types';
 import type { LineRange } from './FilePreview';
 
@@ -16,6 +17,9 @@ const DESCRIBE: Record<GitKind, string> = { conflict: 'conflict', deleted: 'dele
 
 interface Item { id: string; rootKey: string; path: string; name: string; type: 'root' | 'directory' | 'file' | 'symlink' | 'other' | 'more'; sensitive: boolean; }
 const idOf = (rootKey: string, path: string) => `${rootKey}\u0000${path}`;
+// Phase 8: the last palette request handled, kept across remounts (the Files tab mounts this
+// panel each time it is shown), so an old request never opens its file again.
+let revealHandled = 0;
 type Roots = { primary: FileRoot[]; folders: FileRoot[] };
 interface Preview { rootKey: string; path: string; mode: 'file' | 'diff'; data?: FilePreviewData; diff?: { text: string; truncated: boolean; hidden: boolean }; error?: string; line?: number; }
 
@@ -29,8 +33,12 @@ function lookup(status: FileStatus | undefined) {
   };
 }
 
-export function ExplorerPanel({ project, session, rootsVersion, revealLabel, focusSignal, onPreviewing, onAddReference, onSaveEvidence, onError }: {
-  project: Project; session: Session | null; rootsVersion: string; revealLabel: string; focusSignal: number;
+export function ExplorerPanel({ project, session, rootsVersion, revealLabel, focusSignal, onFocusHandled, onPreviewing, onAddReference, onSaveEvidence, onError, reveal, onRoot }: {
+  project: Project; session: Session | null; rootsVersion: string; revealLabel: string; focusSignal: number; onFocusHandled?: () => void;
+  // Phase 8 review M2: the root shown (the palette searches it), and null on unmount.
+  onRoot?: (projectId: string, rootKey: string | null) => void;
+  // Phase 8: a file opened from the palette (seq increases per request); previewed once its root is shown.
+  reveal?: { projectId: string; rootKey: string; path: string; seq: number } | null;
   onPreviewing: (previewing: boolean) => void; onAddReference: (reference: FileReference) => Promise<void>;
   onSaveEvidence: (source: { rootKey: string; path: string; startLine: number; endLine: number }) => void; onError: (error: unknown) => void;
 }) {
@@ -52,6 +60,9 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
   const primary = roots?.primary.find(root => root.key === primaryKey) ?? null;
   const visible = useMemo(() => primary ? [primary, ...(roots?.folders.filter(root => root.exists !== false) ?? [])] : [], [primary, roots]);
   const visibleKey = visible.map(root => root.key).join('|');
+  const onRootRef = useRef(onRoot); onRootRef.current = onRoot;
+  useEffect(() => { if (primary) onRootRef.current?.(project.id, primaryKey); }, [project.id, primaryKey, primary]);
+  useEffect(() => () => onRootRef.current?.(project.id, null), [project.id]);
   const rootFor = (key: string) => visible.find(root => root.key === key) ?? null;
 
   useEffect(() => { setOverride(null); }, [ownSession?.id]);
@@ -125,6 +136,24 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
     tree.rebuildTree(); setVersion(v => v + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleKey]);
+
+  // === Phase 8: a file opened from the palette ===
+  // Show its root (unless it is a folder root, always listed), then expand its folders and
+  // preview it once that root's tree is in place (the effect above resets the tree first).
+  useEffect(() => {
+    if (!reveal || reveal.seq <= revealHandled || !roots) return;
+    const primaryRoot = roots.primary.some(root => root.key === reveal.rootKey);
+    // Another project's request, or a root that is gone, is dropped rather than kept waiting.
+    if (reveal.projectId !== project.id || (!primaryRoot && !roots.folders.some(root => root.key === reveal.rootKey))) { revealHandled = reveal.seq; return; }
+    if (primaryRoot && primaryKey !== reveal.rootKey) { setOverride(reveal.rootKey === followKey ? null : reveal.rootKey); return; }
+    if (!visible.some(root => root.key === reveal.rootKey)) return;
+    revealHandled = reveal.seq; setFilter('all');
+    const parts = reveal.path.split('/').slice(0, -1);
+    const folders = [idOf(reveal.rootKey, ''), ...parts.map((_, i) => idOf(reveal.rootKey, parts.slice(0, i + 1).join('/')))];
+    setExpanded(current => [...new Set([...current, ...folders])]);
+    void openPreview(reveal.rootKey, reveal.path);
+  }, [reveal, roots, primaryKey, visibleKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // === End Phase 8 ===
 
   const refreshStatus = useCallback(async () => {
     const started = generation.current;
@@ -237,9 +266,36 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
     const node = scroller.current; if (!node) return;
     const observer = new ResizeObserver(() => setHeight(node.clientHeight)); observer.observe(node); return () => observer.disconnect();
   }, [preview, filter]);
-  useEffect(() => { if (focusSignal) { if (preview) closePreview(); else requestAnimationFrame(() => { const focused = tree.getFocusedItem?.(); (focused?.getElement() ?? scroller.current?.querySelector<HTMLElement>('[role=treeitem]'))?.focus(); }); } }, [focusSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+  // One-shot: App clears the signal once handled, so a remount (a tab switch) never takes focus.
+  // When the tree has not loaded yet (the panel was just mounted), focus waits for its first row
+  // instead of staying behind (in the terminal, for example). The wait ends, without taking focus,
+  // when the user goes on elsewhere: focus moving outside the inspector, a key pressed outside it,
+  // ⌘E / Ctrl+Shift+E (journal:focus-terminal), or 2 s. When the rows arrive, the tree takes focus
+  // only if focus is still where it was when the key was pressed, on the page, or in the inspector.
+  const focusPending = useRef<{ at: number; from: Element | null } | null>(null);
+  const inInspector = (node: EventTarget | Element | null) => node instanceof Element && !!node.closest('.inspector-root');
+  // The request is recorded at once (a frame callback can run late in a hidden or busy window,
+  // after the user has moved on); each attempt checks it is still wanted.
+  const focusTree = () => {
+    const pending = focusPending.current; if (!pending) return;
+    const active = document.activeElement;
+    if (Date.now() - pending.at > 2000 || !(active === pending.from || !active || active === document.body || inInspector(active))) { focusPending.current = null; return; }
+    const focused = tree.getFocusedItem?.(); const row = focused?.getElement() ?? scroller.current?.querySelector<HTMLElement>('[role=treeitem]');
+    if (row) { focusPending.current = null; row.focus(); }
+  };
+  useEffect(() => {
+    if (!focusSignal) return; onFocusHandled?.();
+    if (preview) closePreview(); else { focusPending.current = { at: Date.now(), from: document.activeElement }; requestAnimationFrame(focusTree); }
+  }, [focusSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const cancel = (event: Event) => { if (focusPending.current && !inInspector(event.target)) focusPending.current = null; };
+    const cancelAlways = () => { focusPending.current = null; };
+    document.addEventListener('focusin', cancel); document.addEventListener('keydown', cancel, true); window.addEventListener('journal:focus-terminal', cancelAlways);
+    return () => { document.removeEventListener('focusin', cancel); document.removeEventListener('keydown', cancel, true); window.removeEventListener('journal:focus-terminal', cancelAlways); };
+  }, []);
 
   const rows = tree.getItems();
+  useEffect(() => { if (focusPending.current && rows.length) requestAnimationFrame(focusTree); }, [rows.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const first = Math.max(0, Math.floor(top / ROW) - 8); const last = Math.min(rows.length, Math.ceil((top + height) / ROW) + 8);
   const selectedId = preview ? idOf(preview.rootKey, preview.path) : null;
 
@@ -252,11 +308,11 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
     <div className="explorer-header">
       <label className="explorer-root"><span className="visually-hidden">Root</span>
         <select aria-label="Explorer root" value={primaryKey} onChange={event => setOverride(event.target.value === followKey ? null : event.target.value)}>
-          {roots?.primary.map(root => <option key={root.key} value={root.key}>{root.kind === 'checkout' ? `Checkout · ${root.branch ?? 'detached'}` : `${root.kind === 'managed' ? 'Worktree' : 'Imported'} · ${root.branch ?? 'detached'}`}</option>)}
+          {roots?.primary.map(root => <option key={root.key} value={root.key}>{root.kind === 'checkout' ? `Checkout · ${root.branch ?? 'detached'}` : `${root.kind === 'managed' ? copy.separateCopy : 'Existing worktree'} · ${root.branch ?? 'detached'}`}</option>)}
         </select></label>
       <div className="explorer-tools" role="group" aria-label="Show">
         <button aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>All</button>
-        <button aria-pressed={filter === 'changed'} onClick={() => setFilter('changed')}>Changed{changedRows.length ? ` ${changedRows.length}` : ''}</button>
+        <button aria-pressed={filter === 'changed'} title={tip.uncommitted} onClick={() => setFilter('changed')}>{shell.uncommitted}{changedRows.length ? ` ${changedRows.length}` : ''}</button>
         <button aria-label="Refresh files" title="Refresh" onClick={() => { generation.current++; children.current.clear(); loading.current.clear(); tree.rebuildTree(); setVersion(v => v + 1); void refreshStatus(); for (const id of expanded) void load(id); }}>↻</button>
       </div>
     </div>
@@ -276,7 +332,7 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
         {preview.mode === 'file' && preview.data?.kind === 'text' && <>
           <button disabled={!liveSession} title={liveSession ? 'Type the reference into the running agent\'s input' : 'Select a running session of this project'} onClick={() => void referenceInSession(describeTarget(preview.rootKey, preview.path, range ? 'lines' : 'file', range))}>{range ? `Reference lines ${range.startLine}–${range.endLine}` : 'Reference in session'}</button>
           <button onClick={() => void addToTask(describeTarget(preview.rootKey, preview.path, range ? 'lines' : 'file', range))}>Add to next task</button>
-          {canEvidence && <button onClick={() => onSaveEvidence({ rootKey: preview.rootKey, path: preview.path, startLine: range!.startLine, endLine: range!.endLine })}>Save as knowledge…</button>}
+          {canEvidence && <button onClick={() => onSaveEvidence({ rootKey: preview.rootKey, path: preview.path, startLine: range!.startLine, endLine: range!.endLine })}>Save as a note…</button>}
         </>}
         <button onClick={() => act(() => api('openInEditor', { projectId: project.id, rootKey: preview.rootKey, path: preview.path, line: range?.startLine }))}>Open in editor</button>
       </div>
@@ -311,7 +367,7 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
     </ul>
 
     : <div className="file-tree" ref={scroller} onScroll={event => setTop(event.currentTarget.scrollTop)}>
-      {tree.isSearchOpen() && <input {...tree.getSearchInputElementProps()} className="tree-search" aria-label="Find in loaded files" placeholder="Find in open folders" />}
+      {tree.isSearchOpen() && <input {...tree.getSearchInputElementProps()} className="tree-search" onKeyDown={event => { if (event.key === 'Escape') event.preventDefault(); /* the tree closes its search; the overlay stays */ }} aria-label="Find in loaded files" placeholder="Find in open folders" />}
       <div {...tree.getContainerProps('Files')} className="tree-rows" style={{ height: rows.length * ROW }}>
         {rows.slice(first, last).map(item => {
           const data = item.getItemData(); const meta = item.getItemMeta(); const state = stateOf(data); const dot = folderKind(data);
@@ -325,7 +381,7 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
             <span className="tree-twisty" aria-hidden="true">{folder ? item.isExpanded() ? '▾' : '▸' : ''}</span>
             <span className={`tree-name${kind ? ` git-${kind}` : ''}${data.sensitive ? ' sensitive' : ''}`}>{data.name}</span>
             {data.type === 'root' && <span className="tree-dir">{rootFor(data.rootKey)?.family === 'folder' ? 'folder' : rootFor(data.rootKey)?.branch ? `⑂ ${rootFor(data.rootKey)!.branch}` : ''}</span>}
-            {data.sensitive && <span className="tree-badge" aria-hidden="true" title="May contain credentials: not previewed">🔒</span>}
+            {data.sensitive && <span className="tree-badge" aria-hidden="true" title="May contain credentials: not previewed"><svg viewBox="0 0 24 24" width="11" height="11" focusable="false"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg></span>}
             {data.type === 'symlink' && <span className="tree-badge" aria-hidden="true" title="Link: not followed">↪</span>}
             {kind && kind !== 'ignored' ? <span className={`git-letter git-${kind}`} aria-hidden="true">{LETTER[kind]}</span>
               : dot && dot !== 'ignored' ? <span className={`git-dot git-${dot}`} aria-hidden="true">●</span> : null}

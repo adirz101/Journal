@@ -3,9 +3,14 @@ import { statSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { text } from './validation.mjs';
 import { realPath } from './paths.mjs';
+import { gitEnv } from './git-env.mjs';
+
+// Pathspecs stay as Git reads them here (check-ignore refuses literal pathspecs);
+// callers that pass a path from outside add --literal-pathspecs themselves.
+const projectEnv = () => { const env = gitEnv(); delete env.GIT_LITERAL_PATHSPECS; return env; };
 
 export function git(root, args) {
-  return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', timeout: 4000, maxBuffer: 1024 * 1024, windowsHide: true, stdio: 'pipe', env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' } }).trim();
+  return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', timeout: 4000, maxBuffer: 1024 * 1024, windowsHide: true, stdio: 'pipe', env: projectEnv() }).trim();
 }
 
 export function inspectProject(input) {

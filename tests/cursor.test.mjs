@@ -8,7 +8,6 @@ import { JournalStore } from '../src/core/store.mjs';
 import { TerminalManager } from '../src/core/terminal.mjs';
 import { buildAgentLaunch, detectCursor } from '../src/core/agents.mjs';
 import { captureCursorId, createChat, cursorAuth, cursorState, findCursor, inspectCursor, installCommand, installEnv, knownLocations, parseAuth } from '../src/core/cursor.mjs';
-import { ProcessRunner } from '../src/desktop/processes.mjs';
 import { formatReference } from '../src/core/references.mjs';
 import { removeLater } from './support/cleanup.mjs';
 
@@ -49,7 +48,7 @@ function fixture(t) {
 test('install commands are the official ones, run without shell startup files or elevation', () => {
   const mac = installCommand('darwin', {});
   assert.equal(mac.display, 'curl https://cursor.com/install -fsS | bash');
-  assert.deepEqual(mac.args, ['--noprofile', '--norc', '-c', 'curl https://cursor.com/install -fsS | bash']); assert.equal(mac.file, '/bin/bash');
+  assert.deepEqual(mac.args, ['--noprofile', '--norc', '-o', 'pipefail', '-c', 'curl https://cursor.com/install -fsS | bash']); assert.equal(mac.file, '/bin/bash');
   const win = installCommand('win32', { SystemRoot: 'C:\\Windows' });
   assert.equal(win.display, "irm 'https://cursor.com/install?win32=true' | iex");
   assert.match(win.file, /powershell\.exe$/); assert.deepEqual(win.args, ['-NoProfile', '-NonInteractive', '-Command', "irm 'https://cursor.com/install?win32=true' | iex"]);
@@ -114,7 +113,10 @@ test('a chat is created in the session folder; exit hints are captured but never
   writeFileSync(join(root, 'bin', 'hang-chat'), ''); const started = Date.now();
   assert.equal(await createChat(path, cwd, EMPTY), CHAT); assert.ok(Date.now() - started < 5000, 'Does not wait for exit');
   const pid = Number(readFileSync(join(root, 'bin', 'chat-pid'), 'utf8'));
-  await new Promise(r => setTimeout(r, 300)); assert.throws(() => process.kill(pid, 0), /ESRCH/, 'The lingering process is ended');
+  // Ending it is asynchronous (on Windows a taskkill of its tree): wait for it, up to 5 s, rather than a fixed 300 ms.
+  const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  for (const until = Date.now() + 5000; alive() && Date.now() < until;) await new Promise(r => setTimeout(r, 50));
+  assert.throws(() => process.kill(pid, 0), /ESRCH/, 'The lingering process is ended');
   rmSync(join(root, 'bin', 'hang-chat'));
   writeFileSync(join(root, 'bin', 'fail-chat'), ''); assert.equal(await createChat(path, cwd, EMPTY), null);
   assert.equal(captureCursorId(`bye\n\x1b[2mTo resume this session: cursor-agent --resume=${CHAT}\x1b[0m`), CHAT);
@@ -217,21 +219,4 @@ test('Journal never stores Cursor account details', async t => {
   for (const file of ['j.sqlite', 'j.sqlite-wal']) if (existsSync(join(f.root, file))) assert.ok(!readFileSync(join(f.root, file)).includes('person@example.com'));
 });
 
-test('visible processes: one per kind, catch-up snapshots, and no input after exit', async () => {
-  const events = []; let resolveSpawn; const procs = [];
-  const runner = new ProcessRunner(event => events.push(event), () => new Promise(resolve => { resolveSpawn = () => { const proc = { pid: undefined, writes: [], onData(cb) { this.data = cb; }, onExit(cb) { this.exit = cb; }, write(d) { this.writes.push(d); }, resize() {}, kill() { this.killed = true; } }; procs.push(proc); resolve(proc); }; }));
-  const first = runner.start('login', { file: 'x', args: [] });
-  await assert.rejects(runner.start('login', { file: 'x', args: [] }), /already running/, 'A double click starts one process');
-  resolveSpawn(); const { id } = await first;
-  procs[0].data('hello '); procs[0].data('world');
-  assert.deepEqual(runner.snapshot(id), { data: 'hello world', length: 11, done: false, code: null });
-  assert.deepEqual(events.map(e => e.offset), [0, 6]);
-  runner.write(id, 'y'); assert.deepEqual(procs[0].writes, ['y']);
-  assert.deepEqual(runner.running(), ['login']);
-  procs[0].exit({ exitCode: 0 });
-  assert.throws(() => runner.write(id, 'late'), /finished/); assert.equal(runner.snapshot(id).done, true);
-  runner.stop(id); assert.equal(procs[0].killed, undefined, 'A finished process is not signalled');
-  const failing = new ProcessRunner(() => {}, async () => { throw new Error('spawn failed'); });
-  await assert.rejects(failing.start('install', { file: 'x', args: [] }), /spawn failed/);
-  assert.deepEqual(failing.running(), [], 'A failed start frees its slot');
-});
+// The visible-process runner (install and sign-in) is tested in tests/process-runner.test.mjs.

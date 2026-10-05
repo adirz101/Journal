@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -21,6 +21,9 @@ test('worker-backed storage persists approved knowledge and marks unfinished del
   const receipt = await store.prepareContext(project.id, 'Docker tests'); const id = randomUUID();
   await store.saveSession({ id, projectId: project.id, provider: 'claude', status: 'running', receiptId: receipt.id });
   await store.updateReceiptState(receipt.id, 'submitted', id);
+  assert.equal((await store.memoryOrigins(project.id, [memory.id]))[memory.id].kind, 'manual');
+  assert.deepEqual(await store.deliveryCounts(project.id, [memory.id]), { [memory.id]: 1 });
+  assert.deepEqual((await store.memoryChecks(project.id, { offset: 0, limit: 50 })).stale, []);
   await store.close(); await store.close();
   await assert.rejects(store.listProjects(), /closed/);
   store = new StoreClient(path); await store.recoverSessions();
@@ -34,4 +37,47 @@ test('a failed storage worker rejects further requests instead of leaving caller
   t.after(() => store.worker.terminate());
   await store.worker.terminate();
   await assert.rejects(store.listProjects(), /stopped unexpectedly/);
+});
+
+test('previewSelection is callable through the worker', async t => {
+  const root = mkdtempSync(resolve(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'storage-worker-'));
+  execFileSync('git', ['init', '-b', 'main', root], { stdio: 'pipe' });
+  const store = new StoreClient(resolve(root, 'journal.sqlite'));
+  t.after(async () => { await store.close(); removeLater(root); });
+  const project = await store.openProject(root);
+  const memory = await store.proposeMemory(project.id, { statement: 'Docker tests require a local engine', category: 'constraint', scope: 'checkout',
+    source: { kind: 'user', note: 'Fixture owner explicitly requires it' } });
+  await store.setMemoryStatus(memory.id, 'active');
+  const preview = await store.previewSelection(project.id, 'Docker tests', { branch: 'main' });
+  assert.equal(preview.kind, 'selection'); assert.equal(preview.checked, false); assert.equal(preview.query, 'Docker tests'); assert.equal(preview.branch, 'main');
+  assert.deepEqual(preview.items.map(item => item.id), [memory.id]);
+  assert.deepEqual(preview.items[0].selection.terms, ['docker', 'tests']);
+  assert.deepEqual(preview.terms, ['docker', 'tests']); assert.equal(preview.taskNotes, 1);
+  assert.ok(preview.bytes > 0); assert.ok(Array.isArray(preview.excluded)); assert.ok(Array.isArray(preview.warnings));
+  assert.equal((await store.projectDetails(project.id)).counts.receipts, 0, 'a preview stores nothing');
+});
+
+test('the Phase 6 session-end methods are callable through the worker', async t => {
+  const root = mkdtempSync(resolve(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'storage-worker-'));
+  const git = (...args) => execFileSync('git', ['-C', root, ...args], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main'); writeFileSync(resolve(root, 'a.txt'), 'one\ntwo\n'); git('add', '.'); git('-c', 'user.name=a', '-c', 'user.email=a@a', 'commit', '-qm', 'init');
+  const store = new StoreClient(resolve(root, 'journal.sqlite'));
+  t.after(async () => { await store.close(); removeLater(root); });
+  const project = await store.openProject(root);
+  const receipt = await store.prepareContext(project.id, 'Ship.\nRule: Release tags must be signed by CI.'); const id = randomUUID();
+  await store.saveSession({ id, projectId: project.id, provider: 'claude', status: 'exited', receiptId: receipt.id, createdAt: new Date().toISOString(), endedAt: new Date().toISOString(), branch: 'main', survivors: [] });
+  const [proposal] = await store.generateProposals(id);
+  assert.equal((await store.sessionSummary(id)).suggestions, 1);
+  const [note] = await store.rememberProposals([proposal.id], { via: 'wrap-up' }); assert.equal(note.status, 'active');
+  const file = await store.proposeMemory(project.id, { statement: 'The a file lists two items', category: 'convention', scope: 'checkout', area: '', source: { kind: 'file', path: 'a.txt', startLine: 1, endLine: 2 } });
+  await store.setMemoryStatus(file.id, 'active');
+  writeFileSync(resolve(root, 'a.txt'), 'one\n2\n');
+  // No baseline was recorded, so the live changes count every file against the empty tree.
+  const caught = await store.staleNotesForSession(id);
+  assert.deepEqual(caught.notes.map(item => item.note.id), [file.id]);
+  const whole = await store.staleNoteDiff(project.id, file.id, id);
+  assert.equal(whole.available, true); assert.equal(whole.contentHash, caught.notes[0].contentHash); assert.match(whole.text, /^\+2$/m);
+  // The renderer reaches it only through its own allowlist entry.
+  assert.match(readFileSync(new URL('../src/desktop/preload.cjs', import.meta.url), 'utf8'), /^allowed\.add\('staleNoteDiff'\);$/m);
+  assert.equal((await store.reaffirmMemory(file.id, { expectedHash: caught.notes[0].contentHash })).revision, 2);
 });

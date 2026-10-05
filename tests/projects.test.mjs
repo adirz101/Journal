@@ -95,7 +95,7 @@ test('evidence keeps its folder identity; removing a folder excludes only its cl
   const fromPlugin = f.approve('Plugin README names the plugin repository.', { source: { kind: 'file', rootId: pluginRoot.id, path: 'README.md', startLine: 1, endLine: 1 } });
   const fromDocs = f.approve('Docs guide explains the plugin.', { source: { kind: 'file', rootId: docsRoot.id, path: 'guide.md', startLine: 1, endLine: 1 } });
   assert.equal(f.store.getMemory(fromPlugin.id).source.rootId, pluginRoot.id); assert.equal(f.store.getMemory(fromDocs.id).source.commit, null);
-  assert.throws(() => f.approve('Branch claim from plugin', { scope: 'branch', source: { kind: 'file', rootId: pluginRoot.id, path: 'README.md', startLine: 1, endLine: 1 } }), /primary repository/);
+  assert.throws(() => f.approve('Branch claim from plugin', { scope: 'branch', source: { kind: 'file', rootId: pluginRoot.id, path: 'README.md', startLine: 1, endLine: 1 } }), { message: 'Notes on one branch must come from the primary repository; choose All branches for notes from additional folders' });
   const packet = f.store.prepareContext(f.project.id, 'README plugin repository guide').packet;
   assert.match(packet, /unity-plugin\/README\.md:1/); assert.match(packet, /docs\/guide\.md:1 @ untracked folder/);
   f.store.removeProjectRoot(f.project.id, pluginRoot.id);

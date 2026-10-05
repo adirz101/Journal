@@ -49,12 +49,39 @@ also need `npm run test:desktop` with Electron-native node-pty. Distinguish fixt
 acceptance from authenticated native provider behavior. Preserve native settings,
 permissions, exact-ID resume, reviewed evidence and immutable receipts.
 
-Fixture-based GitHub Actions CI (macOS, Linux and experimental Windows) was requested by
+Fixture-based GitHub Actions CI (macOS and experimental Windows) was requested by
 the user on 2 October 2026 and is active in `.github/workflows/` since the user granted the
-`workflow` token scope on 4 October 2026. CI never uses
+`workflow` token scope on 4 October 2026. Linux was dropped from CI on 5 October 2026 because
+the product targets only macOS and Windows. CI never uses
 real provider logins, provider requests or secrets; authenticated native trials and the
 usefulness trial stay manual and local on the user's computer. Do not add nightly or
 scheduled jobs. The release workflow (requested by the user) builds unsigned artifacts and, for a
 pushed tag, creates only a draft pre-release that a maintainer publishes by hand.
 Keep local test commands available. Repository documents and authored text use
 English; Unicode fixture data may use escapes to retain multilingual coverage.
+
+## Testing: provider isolation
+
+Tests must never run a real provider CLI, use a real login, send a provider request or read a
+secret. Every desktop spec, launch helper and committed script that starts Electron builds its
+environment with `fixtureEnv({ root, bin, extra })` from `tests/support/env.ts`, the only file
+that reads the real environment:
+
+- PATH is the spec's fixture `bin` plus `root/tools/`, links to only the system tools the app and
+  fixtures need (node, git, sh, bash, ps, env, sleep, curl). Never add a real system folder or
+  Node's install folder (fnm, Homebrew and npm -g folders often hold a real `claude` or `codex`).
+- HOME, USERPROFILE, LOCALAPPDATA, APPDATA, XDG_*_HOME, CODEX_HOME and CLAUDE_CONFIG_DIR point
+  at a fixture home in `root`. No ANTHROPIC_*, OPENAI_*, CURSOR_*, CODEX_* or CLAUDE_* variable
+  is passed. Add other variables only through `extra`, never by spreading `process.env`.
+- `assertNoRealProviders` (called by `fixtureEnv`) throws if `claude`, `codex`, `agent` or
+  `cursor-agent` resolves outside `bin` through PATH or a known install location under the home.
+- `fixtureEnv` sets `JOURNAL_TEST_PROVIDER_DIR` to `root`. In headless runs Journal itself then
+  refuses to probe or launch a provider CLI whose real path is outside it, and Cursor is looked
+  for only after a spec sets `__journalAuthProbes` (true, or a list such as `['cursor']`).
+- A spec that needs a provider version or sign-in state uses a fixture CLI for it, never the
+  output of an installed CLI.
+
+`tests/isolation.test.mjs` fails if a desktop spec, a `tests/support` helper or a launch script
+reads `process.env` (other than one of Journal's own `JOURNAL_*` switches) or starts Electron
+without `fixtureEnv`. Do not run a desktop spec or screenshot script whose environment keeps the
+real PATH or HOME.

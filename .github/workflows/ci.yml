@@ -1,5 +1,6 @@
 # Fixture-only CI. It never uses real Claude Code or Codex logins, provider
 # requests or secrets. Native provider trials stay manual and local.
+# Journal targets macOS and Windows; Linux was dropped from CI on 5 October 2026.
 name: CI
 
 on:
@@ -19,13 +20,15 @@ env:
   JOURNAL_CI: '1'
 
 jobs:
-  test:
-    name: test (${{ matrix.os }})
+  # Unit tests, type check and build: once per OS.
+  unit:
+    name: unit (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -34,17 +37,6 @@ jobs:
           node-version: 24
           cache: npm
 
-      # node-pty builds with build-essential/python3 (preinstalled). Electron needs
-      # these shared libraries, and xvfb provides a display for headless runs.
-      - name: Install Linux Electron dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libnss3 libgtk-3-0 libgbm1 libxss1 libxtst6 xvfb
-          sudo apt-get install -y --no-install-recommends libasound2t64 \
-            || sudo apt-get install -y --no-install-recommends libasound2
-
       # postinstall downloads Electron and rebuilds node-pty for Electron.
       # On Windows this uses the Visual Studio toolchain on windows-latest.
       - run: npm ci
@@ -52,26 +44,49 @@ jobs:
       - run: npm run check
       - run: npm run build
 
+  # The desktop suite, split by spec file across parallel jobs (Playwright --shard). Each job
+  # builds the renderer it loads (vite build takes seconds); the unit job verifies the build.
+  desktop:
+    name: desktop (${{ matrix.os }}, ${{ matrix.shard }}/${{ matrix.shards }})
+    runs-on: ${{ matrix.os }}
+    # A hung desktop run fails here instead of holding a runner for six hours.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, shard: 1, shards: 2 }
+          - { os: macos-latest, shard: 2, shards: 2 }
+          # POSIX fixture CLIs skip on Windows, so one job runs the few Windows specs.
+          - { os: windows-latest, shard: 1, shards: 1 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
       - name: Desktop tests (macOS)
         if: runner.os == 'macOS'
-        run: npm run test:desktop
+        run: npm run test:desktop -- --shard=${{ matrix.shard }}/${{ matrix.shards }}
 
-      - name: Desktop tests (Linux)
-        if: runner.os == 'Linux'
-        run: xvfb-run -a -s '-screen 0 1920x1080x24' npm run test:desktop
-
-      # POSIX fixture CLIs skip on Windows, and Windows desktop support is
-      # experimental, so failures here do not fail the run.
+      # Windows desktop support is experimental, so failures here do not fail the run.
       - name: Desktop tests (Windows, experimental)
+        id: windows-desktop
         if: runner.os == 'Windows'
         continue-on-error: true
-        run: npm run test:desktop
+        run: npm run test:desktop -- --shard=${{ matrix.shard }}/${{ matrix.shards }}
 
+      # Also when the experimental Windows step failed (continue-on-error hides it from failure()).
       - name: Upload Playwright results
-        if: failure()
+        if: failure() || steps.windows-desktop.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ matrix.os }}
+          name: test-results-${{ matrix.os }}-${{ matrix.shard }}-of-${{ matrix.shards }}
           path: test-results/
           if-no-files-found: ignore
           retention-days: 7

@@ -22,7 +22,7 @@ The phases below were written before implementation. Status against today's code
 | 6 Timeline, terminal, diff, tests | DONE (scoped) | Hook-based commands/exit codes for Claude; unknown for Codex; no test-report parsing |
 | 7 Extraction and maintenance | PARTIAL | Deterministic inbox done; model-assisted extraction DEFERRED |
 | 8 Export, privacy, recovery | DONE (scoped) | Export/import, backups/restore, purge, retention; finite redaction |
-| 9 Release and pilot | PARTIAL / BLOCKED | Unsigned packaging, notices, staged release workflow; signing, CI activation and pilot blocked on external input |
+| 9 Release and pilot | PARTIAL / BLOCKED | Packaging, notices and the release workflow (draft pre-releases); fixture CI active since 4 October 2026; Windows signing and the pilot blocked on external input |
 
 ## Execution principles
 

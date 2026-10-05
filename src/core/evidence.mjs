@@ -59,8 +59,12 @@ function sourceFile(root, path, { tracked = true } = {}) {
   return { path, content, contentHash: createHash('sha256').update(bytes).digest('hex') };
 }
 
+// The current content of an evidence file under the same rules as capture and
+// validation (symlinks, size, binary content, sensitive names, tracked in Git).
+export const readEvidenceFile = (root, path, options) => sourceFile(root, path, options);
+
 export function captureEvidence(project, input) {
-  if (!input || typeof input !== 'object') throw new Error('Knowledge requires a source');
+  if (!input || typeof input !== 'object') throw new Error('A note needs a source');
   if (input.kind === 'user' || input.kind === 'import') {
     const note = text(input.note, `${input.kind} source`); refuseCredentials(note);
     return { kind: input.kind, note, capturedAt: new Date().toISOString() };

@@ -2,7 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
-import { launchTarget, resolveExecutable } from './process.mjs';
+import { childEnv, launchTarget, resolveExecutable, runFile, testProviderAllowed } from './process.mjs';
 
 // Cursor Agent CLI ("agent", legacy alias "cursor-agent") as a native provider.
 // Only documented commands and flags are used:
@@ -25,7 +25,8 @@ export function installCommand(platform = process.platform, env = process.env) {
   }
   const command = 'curl https://cursor.com/install -fsS | bash';
   // No startup files: --noprofile/--norc, and BASH_ENV/ENV are removed by the caller.
-  return { display: command, file: '/bin/bash', args: ['--noprofile', '--norc', '-c', command] };
+  // pipefail: a failed download fails the run instead of bash exiting 0 on empty input.
+  return { display: command, file: '/bin/bash', args: ['--noprofile', '--norc', '-o', 'pipefail', '-c', command] };
 }
 export const installEnv = env => { const next = { ...env }; delete next.BASH_ENV; delete next.ENV; delete next.ELECTRON_RUN_AS_NODE; return next; };
 
@@ -38,15 +39,8 @@ export function knownLocations(platform = process.platform, env = process.env, h
   return [posix.join(home, '.local', 'bin', 'agent'), posix.join(home, '.local', 'bin', 'cursor-agent')];
 }
 
-// Child processes never inherit Electron's Node mode, and never open a browser.
-const childEnv = env => { const next = { ...env, NO_OPEN_BROWSER: '1' }; delete next.ELECTRON_RUN_AS_NODE; return next; };
-// Asynchronous, so detection never stalls the runtime's terminals or the UI.
-const run = (path, args, env, { platform = process.platform, cwd, timeout = 8000 } = {}) => new Promise((resolve, reject) => {
-  let target;
-  try { target = launchTarget(path, args, { env, platform }); } catch (error) { error.unlaunchable = true; reject(error); return; }
-  execFile(target.file, target.args, { cwd, timeout, encoding: 'utf8', windowsHide: true, maxBuffer: 256 * 1024, env: childEnv(env) },
-    (error, stdout, stderr) => error ? reject(Object.assign(error, { stdout, stderr })) : resolve(`${stdout}`));
-});
+// Asynchronous, so detection never stalls the runtime's terminals or the UI (src/core/process.mjs).
+const run = runFile;
 
 // What one executable is: Cursor (and which documented features it has) or not.
 // Any program called "agent" could be on PATH, so a Cursor build version and
@@ -73,9 +67,12 @@ export async function inspectCursor(path, env = process.env, { platform = proces
 }
 
 // PATH first (agent, then cursor-agent), then the documented install locations.
-export async function findCursor(env = process.env, { platform = process.platform, home = homedir(), runner = run } = {}) {
-  const onPath = ['agent', 'cursor-agent'].map(name => resolveExecutable(name, env, platform)).filter(Boolean);
-  const candidates = [...new Set([...onPath, ...knownLocations(platform, env, home).filter(path => existsSync(path))])];
+// inspect: false (headless tests without probes) looks for nothing and runs nothing.
+export async function findCursor(env = process.env, { platform = process.platform, home = homedir(), runner = run, inspect = true } = {}) {
+  // A test run's guard: a CLI outside its fixture folder is never inspected or run.
+  const allowed = path => inspect && !!path && testProviderAllowed(path, env);
+  const onPath = ['agent', 'cursor-agent'].map(name => resolveExecutable(name, env, platform)).filter(allowed);
+  const candidates = [...new Set([...onPath, ...knownLocations(platform, env, home).filter(path => existsSync(path) && allowed(path))])];
   let impostor = null; let unlaunchable = null;
   for (const path of candidates) {
     const info = await inspectCursor(path, env, { platform, runner });
@@ -117,6 +114,7 @@ export function cursorAuth(path, env = process.env, timeout = 20000) {
 // as it appears and the process (and its children) is then ended.
 export function createChat(path, cwd, env = process.env, timeout = 20000, platform = process.platform) {
   return new Promise(resolve => {
+    if (!testProviderAllowed(path, env)) { resolve(null); return; }
     let target; try { target = launchTarget(path, ['create-chat'], { env, platform }); } catch { resolve(null); return; }
     let child; try { child = spawn(target.file, target.args, { cwd, env: childEnv(env), stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, detached: platform !== 'win32' }); } catch { resolve(null); return; }
     let output = ''; let done = false;

@@ -4,6 +4,7 @@ import { relative, resolve, sep } from 'node:path';
 import { isSensitivePath } from './evidence.mjs';
 import { relativePath } from './validation.mjs';
 import { realPath } from './paths.mjs';
+import { gitEnv } from './git-env.mjs';
 
 // Read-only Git views for a session: what changed in the checkout since the
 // session started. Concurrent sessions in one checkout share a working tree,
@@ -11,7 +12,7 @@ import { realPath } from './paths.mjs';
 
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const MAX_FILES = 500; const MAX_DIFF = 200 * 1024;
-const raw = (root, args, maxBuffer = 8 * 1024 * 1024) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', timeout: 8000, maxBuffer, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1' } });
+const raw = (root, args, maxBuffer = 8 * 1024 * 1024) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', timeout: 8000, maxBuffer, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], env: gitEnv() });
 const quiet = (action, fallback) => { try { return action(); } catch { return fallback; } };
 
 // Paths with uncommitted changes, so pre-existing edits are labelled later.

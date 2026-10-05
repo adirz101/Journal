@@ -1,7 +1,9 @@
 import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, existsSync, readFileSync } from 'node:fs';
-import { resolve, delimiter } from 'node:path';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { currentProject, newSession, projectContextMenu, sessionStatus, startSession } from './support/ui';
+import { fixtureEnv } from './support/env';
 
 test.skip(process.platform === 'win32', 'POSIX fixture CLIs');
 
@@ -25,20 +27,24 @@ fs.appendFileSync(${JSON.stringify(ledger)},JSON.stringify({pid:process.pid,argv
 console.log('PTY_READY '+JSON.stringify(process.argv.slice(2,4)));process.stdin.setRawMode(true);process.stdin.resume();`;
   for (const p of ['claude', 'codex']) { writeFileSync(resolve(bin, p), fixture); chmodSync(resolve(bin, p), 0o755); }
   writeFileSync(resolve(root, 'package.json'), '{"type":"commonjs"}\n');
-  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)), PATH: `${bin}${delimiter}${process.env.PATH}`, JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = fixtureEnv({ root, bin, extra: { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop' } });
   const launches = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').trim().split('\n').map(l => JSON.parse(l)) : [];
   const app = await electron.launch({ args: ['.'], env });
   try {
     await app.evaluate(({ dialog, shell }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); (shell as any).showItemInFolder = (p: string) => { (globalThis as any).__revealed = p; }; }, project);
     const page = await app.firstWindow();
-    await page.getByRole('button', { name: 'Open project', exact: true }).first().click();
-    const projectButton = page.locator('.project-link').first();
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
+    // The switcher has no project menu until the project has opened.
+    await expect(currentProject(page)).toHaveText('menu project');
+    const projectButton = projectContextMenu(page);
     // Project menu: rename, pin, copy path, reveal, add folder.
     await menu(app, 'rename'); await projectButton.click({ button: 'right' });
-    expect(await lastMenu(app)).toEqual(['open', 'rename', 'pin', 'manage', 'addFolder', 'reveal', 'copyPath', 'remove']);
+    expect(await lastMenu(app)).toEqual(['open-project', 'manage', 'rename', 'pin', 'addFolder', 'reveal', 'copyPath', 'remove']);
     await page.getByLabel('Display name').fill('Menu Renamed'); await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(projectButton).toContainText('Menu Renamed');
-    await menu(app, 'pin'); await projectButton.click({ button: 'right' }); await expect(projectButton.locator('.pin-mark')).toBeAttached();
+    await menu(app, 'pin'); await projectButton.click({ button: 'right' });
+    // Pin order shows in the switcher menu, labelled.
+    await expect.poll(async () => { await menu(app, null); await projectButton.click(); return (await app.evaluate(() => ((globalThis as any).__lastMenu as any[]).find(i => String(i.id).startsWith('project:'))?.label)); }).toBe('Menu Renamed · Pinned · Current');
     await menu(app, 'copyPath'); await projectButton.click({ button: 'right' });
     await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(project);
     await menu(app, 'reveal'); await projectButton.click({ button: 'right' });
@@ -47,8 +53,7 @@ console.log('PTY_READY '+JSON.stringify(process.argv.slice(2,4)));process.stdin.
     await menu(app, 'addFolder'); await projectButton.click({ button: 'right' });
     await expect(page.getByLabel('Workspace')).toContainText('Folder · extra');
     // Session menu while running: stop/interrupt, no resume.
-    await page.getByLabel('Initial task').fill('Write the release notes');
-    await page.getByRole('button', { name: 'Start Claude', exact: true }).click();
+    await startSession(page, 'claude', { task: 'Write the release notes' });
     await expect(page.locator('.terminal-surface')).toContainText('PTY_READY');
     const sessionButton = page.getByRole('button', { name: /^Claude Code: Write the release notes/ });
     await menu(app, null); await sessionButton.click({ button: 'right' });
@@ -71,7 +76,7 @@ console.log('PTY_READY '+JSON.stringify(process.argv.slice(2,4)));process.stdin.
     await menu(app, 'unarchive'); await renamed.click({ button: 'right' });
     await expect(renamed.locator('.archived-badge')).toHaveCount(0);
     await menu(app, 'stop'); await renamed.click({ button: 'right' });
-    await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await expect(sessionStatus(page)).toContainText('Stopped');
     await menu(app, null); await renamed.click({ button: 'right' });
     expect(await lastMenu(app)).toContain('resume'); expect(await lastMenu(app)).not.toContain('stop');
     await menu(app, 'resume'); await renamed.click({ button: 'right' });
@@ -79,10 +84,9 @@ console.log('PTY_READY '+JSON.stringify(process.argv.slice(2,4)));process.stdin.
     await expect.poll(() => launches().length).toBe(2);
     expect(launches()[1].argv.slice(0, 2)).toEqual(['--resume', nativeId]);
     await expect(page.getByRole('button', { name: /^Claude Code: Resume · Notes draft/ })).toBeVisible();
-    await page.getByRole('button', { name: 'Stop terminal' }).click(); await expect(page.locator('.terminal-label')).toContainText('stopped');
+    await page.getByRole('button', { name: 'Stop', exact: true }).click(); await expect(sessionStatus(page)).toContainText('Stopped');
     // Cancel changes nothing; "Stop and remove" stops the agent first, then removes it.
-    await page.getByLabel('Initial task').fill('Throwaway run');
-    await page.getByRole('button', { name: 'Start Codex', exact: true }).click();
+    await startSession(page, 'codex', { task: 'Throwaway run' });
     const throwaway = page.getByRole('button', { name: /^Codex: Throwaway run/ });
     await expect(throwaway).toBeVisible(); await expect.poll(() => launches().length).toBe(3);
     const throwawayPid = launches()[2].pid;
@@ -95,7 +99,7 @@ console.log('PTY_READY '+JSON.stringify(process.argv.slice(2,4)));process.stdin.
     await expect(renamed).toHaveCount(0);
     expect(await app.evaluate(() => (globalThis as any).__lastDialog.buttons)).toEqual(['Remove from Journal', 'Remove and delete history', 'Cancel']);
     await answer(app, 0); await menu(app, 'remove'); await projectButton.click({ button: 'right' });
-    await expect(page.locator('.project-link')).toHaveCount(0);
+    await expect(projectButton).toHaveAccessibleName('No project open');
     expect(existsSync(resolve(project, 'README.md')) && existsSync(resolve(project, '.git')) && existsSync(extra)).toBe(true);
   } finally { await app.close(); rmSync(root, { recursive: true, force: true }); }
 });

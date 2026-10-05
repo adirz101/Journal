@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkOutcome, menuTemplate, PROJECT_URL } from '../src/desktop/menu.mjs';
+import { accelerator, checkOutcome, menuTemplate, PROJECT_URL } from '../src/desktop/menu.mjs';
+import { shortcutKeys } from '../src/desktop/shortcuts.mjs';
 
 const find = (items, id) => items.flatMap(item => [item, ...(item.submenu ?? [])]).find(item => item.id === id);
 
@@ -12,7 +13,7 @@ test('Check for Updates… sits in the app menu on macOS and in Help on Windows'
   assert.deepEqual(mac[0].submenu.filter(item => item.role).map(item => item.role), ['about', 'services', 'hide', 'hideOthers', 'unhide', 'quit'], 'The standard app menu stays');
   assert.deepEqual(mac.slice(1, 5).map(item => item.role), ['fileMenu', 'editMenu', 'viewMenu', 'windowMenu']);
   const win = menuTemplate({ ...options, platform: 'win32' });
-  assert.deepEqual(win.map(item => item.role), ['fileMenu', 'editMenu', 'viewMenu', 'windowMenu', 'help']);
+  assert.deepEqual(win.map(item => item.role ?? item.label), ['File', 'editMenu', 'viewMenu', 'windowMenu', 'help']);
   assert.equal(win[4].submenu[0].label, 'Check for Updates…');
   find(mac, 'check-for-updates').click(); find(win, 'check-for-updates').click(); assert.deepEqual(calls, ['check', 'check']);
   win[4].submenu.at(-2).click(); win[4].submenu.at(-1).click(); assert.deepEqual(opened, [PROJECT_URL, `${PROJECT_URL}/releases`]);
@@ -27,4 +28,77 @@ test('menu check results', () => {
   assert.equal(checkOutcome({ ...base, status: 'available', version: '0.2.0-alpha.4' }).kind, 'available');
   assert.deepEqual(checkOutcome({ ...base, status: 'error', message: 'offline' }), { kind: 'error', message: 'Could not check for updates.', detail: 'offline' });
   assert.equal(checkOutcome({ ...base, status: 'checking' }), null);
+});
+
+test('released builds have no Reload or developer tools in the View menu', () => {
+  const options = { name: 'Journal', checkForUpdates() {}, openUrl() {}, packaged: true };
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    const template = menuTemplate({ ...options, platform });
+    assert.ok(!template.some(item => item.role === 'viewMenu'), platform);
+    const view = template.find(item => item.label === 'View');
+    assert.deepEqual(view.submenu.filter(item => item.role).map(item => item.role), ['resetZoom', 'zoomIn', 'zoomOut', 'togglefullscreen'], platform);
+  }
+  assert.ok(menuTemplate({ ...options, platform: 'win32', packaged: false }).some(item => item.role === 'viewMenu'), 'Development builds keep the default View menu');
+  for (const platform of ['darwin', 'win32']) {
+    const view = menuTemplate({ ...options, platform, devTools: true }).find(item => item.label === 'View');
+    assert.equal(view.submenu.at(-1).role, 'toggleDevTools', platform);
+    assert.ok(!view.submenu.some(item => item.role === 'reload'), platform);
+  }
+});
+
+test('Settings… sits in the app menu on macOS and in File on Windows and Linux', () => {
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    let opened = 0;
+    const template = menuTemplate({ name: 'Journal', checkForUpdates() {}, openUrl() {}, openSettings: () => opened++, platform });
+    const settings = find(template, 'settings');
+    assert.equal(settings.label, 'Settings…', platform);
+    assert.equal(settings.accelerator, 'CmdOrCtrl+,', platform);
+    assert.equal(settings.registerAccelerator, false, `${platform}: the shortcut router owns the key`);
+    settings.click(); assert.equal(opened, 1, platform);
+    const parent = template.find(item => item.submenu?.includes(settings));
+    if (platform === 'darwin') {
+      assert.equal(parent, template[0], 'macOS: the app menu');
+      const items = parent.submenu.map(item => item.role ?? item.label ?? item.type);
+      assert.deepEqual(items.slice(0, 4), ['about', 'Check for Updates…', 'Settings…', 'separator']);
+      assert.equal(template[1].role, 'fileMenu');
+    } else {
+      assert.equal(parent.label, 'File', platform);
+      assert.deepEqual(parent.submenu.map(item => item.id ?? item.role ?? item.type), ['settings', 'separator', 'quit'], platform);
+    }
+  }
+});
+
+test('no notification checkboxes remain in the menu', () => {
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    const template = menuTemplate({ name: 'Journal', checkForUpdates() {}, openUrl() {}, platform });
+    assert.equal(find(template, 'notify-approval'), undefined, platform); assert.equal(find(template, 'notify-command'), undefined, platform);
+    assert.ok(!template.flatMap(item => item.submenu ?? []).some(item => item.type === 'checkbox'), platform);
+  }
+  // The Window menu is the standard one again.
+  assert.equal(menuTemplate({ name: 'Journal', checkForUpdates() {}, openUrl() {}, platform: 'win32' })[3].submenu, undefined);
+});
+
+test('Command Palette… and Open File… sit in View on every platform, with the router\'s keys', () => {
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    for (const packaged of [false, true]) {
+      const sent = [];
+      const template = menuTemplate({ name: 'Journal', checkForUpdates() {}, openUrl() {}, command: id => sent.push(id), platform, packaged });
+      const view = template.find(item => item.role === 'viewMenu' || item.label === 'View');
+      for (const [id, label] of [['command-palette', 'Command Palette…'], ['open-file', 'Open File…']]) {
+        const item = find(template, id);
+        assert.ok(view.submenu.includes(item), `${platform} ${packaged}: ${id} is in View`);
+        assert.equal(item.label, label);
+        assert.equal(item.accelerator, accelerator(shortcutKeys(platform)[id].aria), `${platform} ${id}`);
+        assert.equal(item.registerAccelerator, false, `${platform}: the shortcut router owns the key`);
+        item.click();
+      }
+      assert.deepEqual(sent, ['command-palette', 'open-file'], `${platform}: a click sends the same command as the key`);
+      // Development builds keep the standard View items after them.
+      if (!packaged) assert.deepEqual(view.submenu.filter(item => item.role).map(item => item.role), ['reload', 'forceReload', 'toggleDevTools', 'resetZoom', 'zoomIn', 'zoomOut', 'togglefullscreen'], platform);
+    }
+  }
+  assert.equal(accelerator(shortcutKeys('darwin')['command-palette'].aria), 'Cmd+K');
+  assert.equal(accelerator(shortcutKeys('darwin')['open-file'].aria), 'Cmd+P');
+  assert.equal(accelerator(shortcutKeys('win32')['command-palette'].aria), 'Ctrl+Shift+P');
+  assert.equal(accelerator(shortcutKeys('linux')['open-file'].aria), 'Ctrl+Shift+O');
 });

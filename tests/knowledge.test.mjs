@@ -68,7 +68,7 @@ test('project briefs retain source freshness, branch boundaries and explicit rev
   f.store.setMemoryStatus(revised.id, 'active'); assert.equal(f.store.prepareContext(f.project.id, '').items[0]?.revision, 2);
   assert.equal(f.store.getReceipt(original.id).items[0].statement, brief.statement);
   f.store.setMemoryStatus(revised.id, 'archived'); assert.equal(f.store.prepareContext(f.project.id, '').items.length, 0);
-  assert.throws(() => f.propose({ category: 'brief', area: 'src' }), /whole checkout/);
+  assert.throws(() => f.propose({ category: 'brief', area: 'src' }), { message: 'A project summary applies to the whole project; leave the area empty' });
 });
 test('project orientation is prioritized and bounded without hiding dropped briefs', t => {
   const f = fixture(t);
@@ -158,7 +158,10 @@ test('proposing requires a real source, valid area and allowed enum values', t =
     assert.throws(() => f.propose(extra));
   }
   const m = f.propose(); writeFileSync(resolve(f.repo, 'tests.md'), 'changed');
-  assert.throws(() => f.store.setMemoryStatus(m.id, 'active'), /evidence/i);
+  assert.throws(() => f.propose({ source: null }), { message: 'A note needs a source' });
+  assert.throws(() => f.store.setMemoryStatus(m.id, 'active'), { message: 'Evidence or branch changed; revise the note before remembering it' });
+  f.store.setMemoryStatus(m.id, 'rejected');
+  assert.throws(() => f.store.setMemoryStatus(m.id, 'active'), { message: 'Only a note waiting for review can be remembered' });
 });
 
 test('untracked wildcard filenames cannot impersonate a tracked source', t => {
@@ -186,4 +189,64 @@ test('an evidence file replaced by a symlink between validation and Git lookup i
   writeFileSync(resolve(shimDir, 'git'), script); chmodSync(resolve(shimDir, 'git'), 0o755);
   const oldPath = process.env.PATH; process.env.PATH = `${shimDir}${delimiter}${oldPath}`; t.after(() => { process.env.PATH = oldPath; });
   assert.throws(() => f.propose(), /changed|symlink|source/i);
+});
+
+test('a context preview is not stored as a receipt; a launch receipt still is', t => {
+  const f = fixture(t); const memory = f.propose(); f.store.setMemoryStatus(memory.id, 'active');
+  const before = f.store.listReceipts(f.project.id).length;
+  const preview = f.store.prepareContext(f.project.id, 'Docker', { persist: false });
+  assert.equal(preview.items.length, 1);
+  assert.equal(preview.preview, true);
+  assert.equal(preview.state, 'prepared', 'The UI keeps treating it as a prepared packet');
+  assert.equal(f.store.listReceipts(f.project.id).length, before, 'A preview writes nothing');
+  assert.throws(() => f.store.getReceipt(preview.id), /Unknown receipt/);
+  const stored = f.store.prepareContext(f.project.id, 'Docker');
+  assert.equal(f.store.getReceipt(stored.id).state, 'prepared', 'The default still stores');
+});
+
+test('stored previews from older versions are kept but not listed; a launch receipt is listed before delivery', t => {
+  const f = fixture(t);
+  // Before previews stopped being stored, each one left a prepared receipt that no session refers to.
+  const legacy = f.store.prepareContext(f.project.id, 'Docker');
+  const listed = () => f.store.listReceipts(f.project.id).map(r => r.id);
+  assert.deepEqual(listed(), []);
+  assert.equal(f.store.getReceipt(legacy.id).id, legacy.id, 'Receipts are immutable: it is not deleted');
+  // A launch saves its session (which names the receipt) before delivery records the session id.
+  const launch = f.store.prepareContext(f.project.id, 'Docker');
+  f.store.saveSession({ id: 's1', projectId: f.project.id, provider: 'claude', status: 'starting', receiptId: launch.id, createdAt: new Date().toISOString() });
+  assert.deepEqual(listed(), [launch.id]);
+  f.store.updateReceiptState(launch.id, 'submitted', 's1', 'Docker');
+  const failed = f.store.prepareContext(f.project.id, 'Docker'); f.store.updateReceiptState(failed.id, 'failed', null);
+  assert.deepEqual(listed(), [failed.id, launch.id]);
+});
+test('listMemoryPage: category, counts and other branches', t => {
+  const f = fixture(t);
+  const note = (statement, category, extra = {}) => f.store.proposeMemory(f.project.id, { statement, category, scope: 'checkout', area: '', source: { kind: 'user', note: 'Fixture' }, ...extra });
+  const lessons = [note('Docker caches layers between runs', 'lesson'), note('Retries need jitter', 'lesson')];
+  note('We chose SQLite for storage', 'decision'); const rule = note('Integration tests need Docker running', 'constraint');
+  f.store.setMemoryStatus(rule.id, 'active');
+  const page = options => f.store.listMemoryPage(f.project.id, options);
+  const lessonPage = page({ category: 'lesson' });
+  assert.deepEqual(lessonPage.items.map(item => item.id).sort(), lessons.map(item => item.id).sort());
+  assert.equal(lessonPage.total, 2);
+  assert.deepEqual(lessonPage.categoryCounts, { all: 4, brief: 0, decision: 1, constraint: 1, convention: 0, lesson: 2, issue: 0 });
+  assert.deepEqual(page({ search: 'docker', category: 'decision' }).categoryCounts, { all: 2, brief: 0, decision: 0, constraint: 1, convention: 0, lesson: 1, issue: 0 });
+  assert.deepEqual(page({ filter: 'active' }).categoryCounts, { all: 1, brief: 0, decision: 0, constraint: 1, convention: 0, lesson: 0, issue: 0 });
+  assert.equal(page().otherBranch, 0);
+
+  f.git('switch', '-c', 'feature/x');
+  const elsewhere = note('Feature flags live in flags.ts', 'lesson', { scope: 'branch' });
+  f.git('switch', 'main');
+  const all = page();
+  assert.equal(all.otherBranch, 1); assert.equal(all.total, 5);
+  assert.deepEqual(page({ otherBranch: true }).items.map(item => item.id), [elsewhere.id]);
+  assert.equal(page({ otherBranch: true, category: 'decision' }).items.length, 0);
+  assert.equal(page({ otherBranch: true, category: 'decision' }).otherBranch, 1, 'The toggle count ignores the category');
+  assert.equal(page({ otherBranch: true }).categoryCounts.lesson, 1);
+  assert.deepEqual(page({ ids: [rule.id, elsewhere.id] }).items.map(item => item.id).sort(), [rule.id, elsewhere.id].sort());
+  assert.equal(page({ ids: [rule.id] }).total, 1);
+  assert.throws(() => page({ category: 'nope' }), /category/);
+  assert.throws(() => page({ ids: Array.from({ length: 201 }, (_, i) => `id-${i}`) }), /Invalid note list/);
+  assert.throws(() => page({ otherBranch: 'yes' }), /Invalid filter/);
+  assert.deepEqual(page().items.map(item => item.id), page({ category: 'all', otherBranch: false, ids: null }).items.map(item => item.id));
 });

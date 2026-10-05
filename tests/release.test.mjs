@@ -1,13 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { auditEntries, checkTag, checksumLines, configArtifacts, expectedArtifacts, LEAKS, loadConfig, productionPackages, readVersion, tagFor, UPDATE_FILES } from '../scripts/release-lib.mjs';
-import { dataDirectory, guiPathEntries, unpackedPath, withGuiPath } from '../src/desktop/environment.mjs';
+import { auditEntries, isProfilingBundle, checkTag, checksumLines, configArtifacts, expectedArtifacts, LEAKS, loadConfig, productionPackages, readVersion, tagFor, UPDATE_FILES } from '../scripts/release-lib.mjs';
+import { dataDirectory, guiPathEntries, isNetworkPath, unpackedPath, withGuiPath } from '../src/desktop/environment.mjs';
 import { removeLater } from './support/cleanup.mjs';
+import { APP_USER_MODEL_ID } from '../src/desktop/notify.mjs';
 
 const require = createRequire(import.meta.url);
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
@@ -26,6 +27,8 @@ test('one version source: tag, package.json and artifact names agree', () => {
 test('packaging config: stable ID, platforms, per-user installer, data kept, update feed', () => {
   const config = withEnv({ CSC_LINK: undefined, APPLE_API_KEY: undefined }, () => loadConfig());
   assert.equal(config.appId, 'io.github.adirz101.journal'); assert.equal(config.productName, 'Journal');
+  // Windows attributes toasts to the AppUserModelId main.mjs sets; it must be the packaged appId.
+  assert.equal(APP_USER_MODEL_ID, config.appId);
   // The update feed: electron-updater reads it from app-update.yml. Builds never upload; the release workflow does.
   assert.deepEqual(config.publish, [{ provider: 'github', owner: 'adirz101', repo: 'Journal' }]); assert.equal(config.detectUpdateChannel, false);
   assert.deepEqual(UPDATE_FILES, { mac: ['latest-mac.yml'], win: ['latest.yml'] });
@@ -64,10 +67,12 @@ test('packaging config: stable ID, platforms, per-user installer, data kept, upd
 });
 
 test('notices cover everything that ships', () => {
-  const notices = readFileSync('THIRD_PARTY_NOTICES.md', 'utf8');
+  const notices = readFileSync('THIRD_PARTY_NOTICES.md', 'utf8').replace(/\r\n/g, '\n'); // CRLF on a Windows checkout
   const shipped = productionPackages(JSON.parse(readFileSync('package-lock.json', 'utf8'))).map(path => path.split('node_modules/').at(-1));
   assert.ok(shipped.includes('electron-updater') && shipped.includes('sax'), 'Updater dependencies, including deduplicated ones');
   for (const name of [...pkg.journal.rendererBundle, ...shipped, 'node-pty', 'electron']) assert.match(notices, new RegExp(`^## ${name.replace(/[/@.]/g, '\\$&')} `, 'm'), name);
+  assert.match(notices, /^## @fontsource\/jetbrains-mono .*\n\nLicense: OFL-1\.1$/m, 'The bundled monospace font');
+  assert.match(notices, /^## Provider marks \(Simple Icons\)\n\nLicense: CC0-1\.0$/m, 'Artwork copied into the source');
 });
 
 test('the node-pty spawn-helper path fix is applied once and fails closed on change', t => {
@@ -86,7 +91,8 @@ test('the node-pty spawn-helper path fix is applied once and fails closed on cha
 
 test('package audit: allow-list, forbidden files and leaks', () => {
   assert.deepEqual(auditEntries(['dist/index.html', 'dist/assets/index-abc.js', 'src/core/store.mjs', 'src/desktop/main.mjs', 'src/runtime/runtime.mjs', 'package.json', 'THIRD_PARTY_NOTICES.md',
-    'node_modules/node-pty/lib/index.js', 'node_modules/node-pty/build/Release/pty.node', 'node_modules/node-pty/build/Release/spawn-helper', 'assets/branding/journal-app-icon.png']), []);
+    'node_modules/node-pty/lib/index.js', 'node_modules/node-pty/build/Release/pty.node', 'node_modules/node-pty/build/Release/spawn-helper', 'assets/branding/journal-app-icon.png',
+    'dist/assets/jetbrains-mono-latin-400-normal-V6pRDFza.woff2']), []);
   for (const bad of ['.env', 'src/core/.env.local', 'data/journal.sqlite', 'runtime-stderr.log', 'dist/assets/index.js.map', '.cache/tmp/x', 'tests/a.test.mjs', 'fixtures/x.json', 'docs/a.md', 'src/ui/App.tsx', 'certs/dev.p12'])
     assert.equal(auditEntries([bad]).length, 1, bad);
   assert.match(auditEntries(['node_modules/react/index.js'])[0], /not on the allow-list/);
@@ -125,4 +131,19 @@ test('packaged environment: GUI PATH, data folder and unpacked paths', () => {
   assert.equal(unpackedPath('/A/Journal.app/Contents/Resources/app.asar/src/runtime/runtime.mjs', '/'), '/A/Journal.app/Contents/Resources/app.asar.unpacked/src/runtime/runtime.mjs');
   assert.equal(unpackedPath('C:\\J\\resources\\app.asar\\src\\desktop\\hook.mjs', '\\'), 'C:\\J\\resources\\app.asar.unpacked\\src\\desktop\\hook.mjs');
   assert.equal(unpackedPath('/dev/src/runtime/runtime.mjs', '/'), '/dev/src/runtime/runtime.mjs', 'Development paths are unchanged');
+});
+
+test('a dropped Windows network path (UNC) is refused before any file system call', () => {
+  for (const path of ['\\\\host\\share', '\\\\host\\share\\repo', '//host/share/repo', '\\\\?\\UNC\\host\\share', '\\/host/share']) assert.equal(isNetworkPath(path, 'win32'), true, path);
+  for (const path of ['C:\\Users\\me\\repo', 'D:/work/repo', '\\Users\\me']) assert.equal(isNetworkPath(path, 'win32'), false, path);
+  // POSIX has no UNC paths: // is the root there.
+  for (const path of ['/Users/me/repo', '//Users/me/repo']) assert.equal(isNetworkPath(path, 'darwin'), false, path);
+  assert.equal(isNetworkPath(undefined, 'win32'), false);
+});
+
+test('the package audit recognizes a React profiling build, and the production build is not one', () => {
+  assert.equal(isProfilingBundle('function x(e){e.actualDuration=0;e.treeBaseDuration=0}'), true);
+  assert.equal(isProfilingBundle('function x(e){e.actualDuration=0}'), false);
+  const assets = new URL('../dist/assets/', import.meta.url);
+  if (existsSync(assets)) for (const name of readdirSync(assets).filter(file => file.endsWith('.js'))) assert.equal(isProfilingBundle(readFileSync(new URL(name, assets), 'utf8')), false, name);
 });

@@ -83,4 +83,7 @@ export function auditEntries(entries, packages = []) {
   return problems;
 }
 // Text that must never ship: local absolute paths and key material.
+// A React profiling build (npm run build:profile, for tests/desktop-performance.spec.ts) must never
+// ship: its renderer keeps per-fiber timing fields that the production build compiles out.
+export const isProfilingBundle = text => /\btreeBaseDuration\b/.test(text);
 export const LEAKS = [/\/Users\/[A-Za-z0-9._-]+\//, /\/home\/(?!runner\b)[A-Za-z0-9._-]+\//, /[A-Z]:\\\\Users\\\\[A-Za-z0-9._-]+\\\\/, /-----BEGIN [A-Z ]*PRIVATE KEY-----/];

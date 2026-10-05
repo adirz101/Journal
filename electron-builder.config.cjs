@@ -45,6 +45,8 @@ module.exports = {
     'dist/**', 'src/**', 'assets/branding/journal-app-icon.png', 'package.json', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md',
     // The renderer ships from dist/ (no source maps); its TypeScript sources do not.
     '!src/ui/**', '!**/*.map', '!**/*.{test,spec}.{mjs,ts,js}',
+    // Type declarations for the renderer's TypeScript (src/core/*.d.mts) are not needed at run time.
+    '!src/**/*.d.{ts,mts}',
     ...ptyCommon,
   ],
   asar: true,

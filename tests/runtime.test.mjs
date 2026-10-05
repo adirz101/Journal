@@ -59,7 +59,7 @@ test('the runtime refuses clients that cannot prove the token, and never receive
   const exchange = messages => new Promise(resolvePromise => {
     const socket = net.connect(runtime.path); socket.setEncoding('utf8'); let text = '';
     socket.on('data', d => { text += d; if (text.includes('\n') && messages.length) socket.write(frame(messages.shift())); }); socket.on('close', () => resolvePromise(text));
-    socket.on('connect', () => socket.write(frame({ id: 1, method: 'hello', params: { protocol: 3, nonce: 'n'.repeat(48) } })));
+    socket.on('connect', () => socket.write(frame({ id: 1, method: 'hello', params: { protocol: 4, nonce: 'n'.repeat(48) } })));
     setTimeout(() => socket.destroy(), 500);
   });
   const reply = await exchange([{ id: 2, method: 'auth', params: { proof: 'f'.repeat(64) } }]);
@@ -83,7 +83,7 @@ test('a client refuses a server that cannot prove the token', async t => {
   const seen = [];
   const impostor = net.createServer(socket => { socket.setEncoding('utf8'); socket.on('data', d => { seen.push(d); socket.write(frame({ id: 0, value: { challenge: 'c'.repeat(48), proof: '0'.repeat(64) } })); }); });
   await new Promise(r => impostor.listen(impostorPath, r)); t.after(() => impostor.close());
-  writeFileSync(join(f.dataDir, 'runtime.json'), JSON.stringify({ socket: impostorPath, token: 'secret-token-value', protocol: 3 }));
+  writeFileSync(join(f.dataDir, 'runtime.json'), JSON.stringify({ socket: impostorPath, token: 'secret-token-value', protocol: 4 }));
   const c = new RuntimeClient({ dataDir: f.dataDir, launch: () => null, connectTimeoutMs: 600 }); t.after(() => c.close());
   await assert.rejects(c.connect(), /Could not start/);
   assert.ok(seen.length && seen.every(text => !text.includes('secret-token-value') && !/"auth"/.test(text)));
@@ -100,6 +100,7 @@ test('four concurrent sessions keep input and output separate; a fifth is refuse
   const sessions = [];
   for (let i = 0; i < 4; i++) sessions.push((await c.call('start', { projectId: f.project.id, provider: i % 2 ? 'codex' : 'claude', task: `Task ${i}` })).session);
   await assert.rejects(c.call('start', { projectId: f.project.id, provider: 'claude', task: 'fifth' }), /up to 4 sessions/);
+  assert.deepEqual(sessions.map(s => s.slot), [1, 2, 3, 4]);
   assert.equal(new Set(sessions.map(s => s.id)).size, 4);
   await c.call('write', { id: sessions[1].id, data: 'only-b' });
   assert.deepEqual(fake.procs.map(p => p.inputs), [[], ['only-b'], [], []]);
@@ -205,6 +206,12 @@ test('Claude hook observations become redacted commands, exit codes and file eve
   assert.equal(events.find(e => e.kind === 'file').body.path, 'src/a.mjs');
   assert.equal(f.store.getSession(session.id).activity, 'permission');
   assert.ok(!events.some(e => e.kind === 'turn-end'), 'Forged observations are ignored');
+  // A new turn clears the open Write prompt; the next one shows its redacted command.
+  line({ event: 'UserPromptSubmit' });
+  line({ event: 'PermissionRequest', tool: 'Bash', toolUseId: 't9', command: 'API_KEY=abcd1234 rm x' });
+  await until(() => f.store.getSession(session.id).pending?.tool === 'Bash');
+  assert.equal(f.store.getSession(session.id).pending.command, 'API_KEY=[redacted] rm x');
+  assert.ok(!JSON.stringify(f.store.getSession(session.id)).includes('abcd1234'));
 });
 
 test('archiving a live session hides it but keeps it running; releasing still needs a stop', async t => {
@@ -377,4 +384,92 @@ test('the runtime lock records a real identity and recognizes a live owner', { s
   let identity; await until(async () => (identity = await processIdentity(child.pid)));
   writeFileSync(join(f.dataDir, 'runtime.lock'), JSON.stringify({ pid: child.pid, identity }));
   await assert.rejects(acquireLock(f.dataDir, join(f.dataDir, 'none.sock')), /already running/);
+});
+
+test('the SLOTS_FULL code reaches the client with the unchanged message; hello reports protocol 4', async t => {
+  const f = fixture(t); await f.boot(); const c = client(f, t);
+  const hello = await c.connect();
+  assert.equal(hello.protocol, 4);
+  for (let i = 0; i < 4; i++) await c.call('start', { projectId: f.project.id, provider: 'claude', task: `Task ${i}` });
+  const error = await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'fifth' }).catch(e => e);
+  assert.equal(error.code, 'SLOTS_FULL');
+  assert.equal(error.message, 'Journal runs up to 4 sessions at once. Stop one before starting another.');
+  const plain = await c.call('nope').catch(e => e);
+  assert.equal(plain.message, 'Unknown runtime operation'); assert.equal(plain.code, undefined);
+  const listed = await c.call('list');
+  assert.deepEqual(listed.map(s => s.slot).sort(), [1, 2, 3, 4]);
+});
+
+test('the proposals event names the session and reports zero', async t => {
+  const f = fixture(t); const { fake } = await f.boot(); const c = client(f, t); await c.connect();
+  const events = []; c.on('event', e => { if (e.type === 'proposals') events.push(e); });
+  const plain = (await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'Nothing to keep here' })).session;
+  const ruled = (await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'Ship it.\nRule: Release tags must be signed by CI.' })).session;
+  fake.procs[0].exit({ exitCode: 0 }); fake.procs[1].exit({ exitCode: 0 });
+  await until(() => events.length === 2, 5000);
+  const by = id => events.find(e => e.sessionId === id);
+  assert.deepEqual(by(plain.id), { type: 'proposals', projectId: f.project.id, sessionId: plain.id, count: 0 });
+  assert.deepEqual(by(ruled.id), { type: 'proposals', projectId: f.project.id, sessionId: ruled.id, count: 1 });
+});
+
+test('the proposals event says when generating suggestions failed', async t => {
+  const f = fixture(t); f.store.generateProposals = () => { throw new Error('disk full'); };
+  const { fake } = await f.boot(); const c = client(f, t); await c.connect();
+  const events = []; c.on('event', e => { if (e.type === 'proposals') events.push(e); });
+  const session = (await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'Ship it.\nRule: Release tags must be signed by CI.' })).session;
+  fake.procs[0].exit({ exitCode: 0 });
+  await until(() => events.length === 1, 5000);
+  assert.deepEqual(events[0], { type: 'proposals', projectId: f.project.id, sessionId: session.id, count: 0, failed: true });
+});
+
+// Phase 8: recovery in the hello.
+test('the hello reports sessions recovered from a crashed runtime', async t => {
+  const f = fixture(t);
+  // A live session of a runtime that is gone (no process): recovery marks it interrupted.
+  f.store.saveSession({ id: 'crashed', projectId: f.project.id, provider: 'claude', nativeId: '44444444-4444-4444-8444-444444444444', nativeIdConfirmed: true, status: 'running', receiptId: 'r', runtimeId: 'gone', title: 'x', createdAt: new Date().toISOString() });
+  const { runtime } = await f.boot(); const c = client(f, t);
+  const hello = await c.connect();
+  assert.equal(hello.protocol, 4, 'an optional field: no protocol change');
+  assert.equal(hello.recovery.runtimeId, runtime.runtimeId); assert.ok(!Number.isNaN(Date.parse(hello.recovery.at)));
+  assert.deepEqual(hello.recovery.sessions, [{ id: 'crashed', status: 'interrupted', identityVerified: null }]);
+  assert.equal(hello.recovery.total, 1);
+  assert.equal(c.info.recovery.sessions[0].status, 'interrupted');
+  assert.equal(f.store.getSession('crashed').status, 'interrupted');
+});
+
+test('acknowledging recovery clears it for the next client, and a stale at is ignored', async t => {
+  const f = fixture(t);
+  f.store.saveSession({ id: 'crashed', projectId: f.project.id, provider: 'codex', status: 'running', receiptId: 'r', runtimeId: 'gone', title: 'x', createdAt: new Date().toISOString() });
+  await f.boot();
+  const first = client(f, t); const { recovery } = await first.connect();
+  assert.equal(recovery.sessions.length, 1);
+  assert.deepEqual(await first.call('acknowledgeRecovery', { at: '2000-01-01T00:00:00.000Z' }), { cleared: false });
+  assert.deepEqual(await first.call('acknowledgeRecovery', {}), { cleared: false });
+  // A later client (a restarted app) still sees it.
+  await first.close(); const second = client(f, t);
+  assert.deepEqual((await second.connect()).recovery, recovery);
+  assert.deepEqual(await second.call('acknowledgeRecovery', { at: recovery.at }), { cleared: true });
+  await second.close(); const third = client(f, t);
+  assert.equal((await third.connect()).recovery, null);
+  assert.deepEqual(await third.call('acknowledgeRecovery', { at: recovery.at }), { cleared: false });
+});
+
+test('a clean start has no recovery', async t => {
+  const f = fixture(t); await f.boot(); const c = client(f, t);
+  assert.equal((await c.connect()).recovery, null);
+});
+
+test('after a runtime crash, the next hello carries the interrupted session until acknowledged', async t => {
+  const f = fixture(t); const first = await f.boot(); const c = client(f, t); await c.connect();
+  const { session } = await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'Do not resend me' });
+  // Simulated crash, as in the crash test above: no shutdown bookkeeping.
+  c.close(); first.runtime.manager.disposed = true; await Promise.race([new Promise(resolve => first.runtime.server.close(resolve)), wait(2000)]); await wait(50);
+  const second = await f.boot(); const next = client(f, t);
+  const hello = await next.connect();
+  assert.equal(hello.runtimeId, second.runtime.runtimeId);
+  assert.deepEqual(hello.recovery.sessions, [{ id: session.id, status: 'interrupted', identityVerified: null }]);
+  assert.equal(second.fake.procs.length, 0, 'nothing was started or resent');
+  await next.call('acknowledgeRecovery', { at: hello.recovery.at });
+  await next.close(); const later = client(f, t);
+  assert.equal((await later.connect()).recovery, null);
 });
