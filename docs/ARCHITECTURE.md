@@ -8,7 +8,7 @@ A practical map for contributors. For the product contract, see [TERMINAL-FIRST-
 Renderer (React, sandboxed)  ──IPC──>  Electron main (app)  ──local socket + token──>  Runtime (Node mode)
   src/ui/*                             src/desktop/main.mjs                            src/runtime/runtime.mjs
                                        ├─ StoreClient → worker → SQLite                ├─ TerminalManager (≤ 4 PTYs)
-                                       └─ RuntimeClient                                ├─ Observers (Claude hooks)
+                                       └─ RuntimeClient                                ├─ Observers (agent hooks)
                                                                                        └─ StoreClient → worker → SQLite
 ```
 
@@ -101,13 +101,13 @@ See [PROVIDERS.md](PROVIDERS.md) for versions and the full matrix.
 
 | | Claude Code | Codex |
 | --- | --- | --- |
-| Exact resume | Preassigned `--session-id`, `--resume <UUID>` | `codex resume <UUID>` after confirming the exit-banner hint |
-| Status | Per-launch hooks: working, idle, waiting for permission | Running or exited only |
+| Exact resume | Preassigned `--session-id`, `--resume <UUID>` | `codex resume <UUID>`; ID reported by its hooks, or the exit-banner hint after confirmation |
+| Status | Per-launch hooks: working, idle, waiting for permission | Per-launch hooks (`-c hooks.*`, trusted once in Codex): working, idle, waiting for permission, interrupted; otherwise running or exited only |
 | Commands and exit codes | Bash commands with exit code and duration (foreground only; background commands report unknown) | Unknown |
 | File edits | Edit, Write, MultiEdit and NotebookEdit paths | Visible only through the Changes view (Git) |
 | Interrupt | Ctrl+C to the PTY | Ctrl+C to the PTY |
 
-Journal never installs global hooks, changes provider settings, reads credentials or passes permission-bypass flags. Hooks are added per launch through `--settings` and only observe.
+Journal never reads credentials or passes permission- or trust-bypass flags, and changes no provider configuration on its own. The one persistent change, Cursor turn status (Journal's entries in the user's `~/.cursor/hooks.json`), is made only after the user has seen the exact change and confirmed it. Hooks are added per launch (`--settings`, `-c hooks.*`, `--plugin-dir`), run one launcher that always exits 0, and only observe. Cursor's plugin reports activity; see PROVIDERS.md.
 
 ## Knowledge
 

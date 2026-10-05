@@ -32,7 +32,26 @@ export function mergeEvents(stored: TimelineEvent[], live: TimelineEvent[], sess
     const k = eventKey(event); if (index.keys.has(k) || keys.has(k)) continue;
     if (event.id !== undefined) ids.add(event.id); keys.add(k); merged.push(event);
   }
-  return merged.sort((a, b) => a.at.localeCompare(b.at));
+  return collapseTurns(merged.sort((a, b) => a.at.localeCompare(b.at)));
+}
+
+// One entry per turn: turn ends that name the same turn (a stronger outcome reported after the
+// first, or a repeat) collapse into the first, with the strongest outcome. The runtime records
+// each for audit; turn ends without a turn key (Claude) are left as they are.
+const PRECEDENCE: Record<string, number> = { completed: 1, error: 2, interrupted: 3 };
+export function collapseTurns(events: TimelineEvent[]): TimelineEvent[] {
+  const first = new Map<string, number>(); const out: TimelineEvent[] = [];
+  for (const event of events) {
+    const turn = event.kind === 'turn-end' && typeof event.body?.turn === 'string' ? event.body.turn : null;
+    if (turn === null) { out.push(event); continue; }
+    const at = first.get(turn);
+    if (at === undefined) { first.set(turn, out.length); out.push(event); continue; }
+    const kept = out[at]; const outcome = String(event.body.outcome ?? ''); const before = String(kept.body.outcome ?? '');
+    const late = !!kept.body.late && !!event.body.late;
+    out[at] = { ...kept, body: { ...kept.body, outcome: (PRECEDENCE[outcome] ?? 0) > (PRECEDENCE[before] ?? 0) ? outcome : before, ...(late ? { late: true } : {}) } };
+    if (!late) delete out[at].body.late;
+  }
+  return out;
 }
 
 // The status bar's delivery summary for the session's own receipt.

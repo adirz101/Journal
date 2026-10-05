@@ -32,6 +32,20 @@ No provider argv, native setting or permission, exact-ID resume, reviewed eviden
 
 Verification uses local checks on the user's Mac and fixture-only GitHub Actions (CI on macOS and experimental Windows, Linux dropped on 5 October 2026; packaging and smoke tests on macOS and Windows). CI never uses provider logins. Authenticated native trials and usefulness benchmarks are manual and local.
 
+
+## Codex and Cursor lifecycle hooks (5 October 2026, branch `claude/provider-hooks`)
+
+Plan: [2026-10-05-codex-cursor-hooks.md](superpowers/plans/2026-10-05-codex-cursor-hooks.md). Uncommitted at the time of writing.
+
+- **Shared observer.** Provider adapters (`src/runtime/adapters/`) register per-launch hooks and normalize payloads. One launcher at `<data>/hooks/journal-hook` runs every hook, always exits 0 and prints only the neutral response (nothing, or `{}` for Cursor); per-launch target and token travel in the environment, so the command is the same for every launch (Codex trusts hooks by their definition).
+- **Turns and identity.** Events bind to the launch, the native ID and the turn (Codex `turn_id`, Cursor `generation_id`). Late, duplicate and out-of-order events never finish a newer turn; one outcome per turn (interrupted > error > completed, no time window); children never bind identity, end the parent's turn or clear its approval wait.
+- **Observation state.** `observation` (pending, live, unobserved, lost) with `lastObserved`. Silence never marks observation lost; unavailable needs positive evidence. On exit and on a quit that stops sessions, the observer drains final events (Codex can first report its ID in SessionEnd) within a bounded deadline; drained events record only identity and the clean end.
+- **Codex.** `-c hooks.<Event>=…` per event from 0.131 (events by version), skipped when `codex features list` shows hooks off; the first launch shows Codex's own hook review. States: Working, Needs approval, Your turn, interrupted.
+- **Cursor.** A per-launch plugin (`--plugin-dir`, `"version": 1`) when the CLI lists the flag: activity and the clean end. **Cursor turn status** in Settings shows the exact change to `~/.cursor/hooks.json` (entries for `stop` and `afterAgentResponse`) and makes it only on confirmation; Remove takes out only Journal's entries. Approval waits are not observable.
+- **Interface.** Session states, Needs you, the approval banner and notifications follow what each session's hooks report (`observes`); the composer explains how Journal follows Codex and Cursor.
+- **Tests (fixture only).** Adapter mapping and hygiene, launcher safety, turn rules, observation transitions, the exit and shutdown drains, Codex and Cursor end to end through the runtime with fixture CLIs, the reviewed Cursor file change, and the Settings flow against a fixture home. `tests/isolation.test.mjs` now also forbids Electron's home path, which ignores `HOME`.
+- **Native.** Observed on 5 October 2026 with Codex 0.159.3 and Cursor 2026.10.01 in a throwaway repository (plan section 3); the integrated feature itself is not yet checked natively (see NATIVE-VALIDATION.md, To verify).
+
 ## Implemented before the redesign
 
 **Runtime and sessions** ([architecture](ARCHITECTURE.md))
@@ -55,7 +69,7 @@ Verification uses local checks on the user's Mac and fixture-only GitHub Actions
 
 **Cursor provider** ([providers](PROVIDERS.md))
 - Cursor Agent CLI (`agent`) as a third native provider: genuine-CLI detection (Cursor build version and help text; `cursor-agent` and the installers' locations when `PATH` has not caught up), not-installed, not-Cursor, unsupported-version and login-required states, and visible, confirmed installation and sign-in with Cursor's official commands. Journal never handles Cursor credentials.
-- Sessions use a chat created with `create-chat` and open it with `--resume=<UUID>` (exact identity at launch and exact resume); Research maps to `--mode=ask` and Plan to `--mode=plan`; context, receipts, worktrees, references (always copied, never typed) and up to four mixed-provider sessions work as for Claude and Codex. Hooks are not used, so Cursor activity is unknown.
+- Sessions use a chat created with `create-chat` and open it with `--resume=<UUID>` (exact identity at launch and exact resume); Research maps to `--mode=ask` and Plan to `--mode=plan`; context, receipts, worktrees, references (always copied, never typed) and up to four mixed-provider sessions work as for Claude and Codex. Since 5 October 2026 a per-launch plugin reports Cursor's activity (see Codex and Cursor lifecycle hooks below).
 - Checked with an authenticated Cursor CLI 2026.10.01 on macOS: chat creation, first turn, exit hint and exact resume. **Manual validation remaining** in Journal's UI: the steps in [PROVIDERS.md](PROVIDERS.md#manual-validation-remaining-cursor-needs-the-users-cursor-login).
 
 **Packaging and releases** ([releasing](RELEASING.md))
@@ -69,7 +83,7 @@ Verification uses local checks on the user's Mac and fixture-only GitHub Actions
 - Research mode starts Claude in plan mode or Codex in its read-only sandbox. It is a starting intent, not enforcement: both can be changed natively inside the session.
 
 **Observability** ([providers](PROVIDERS.md))
-- Claude per-launch hooks report status, permission waits, redacted Bash commands with working directory, exit code and duration, and edited paths. Codex activity beyond Journal's own events is unknown.
+- Claude per-launch hooks report status, permission waits, redacted Bash commands with working directory, exit code and duration, and edited paths. Codex and Cursor report through their own hooks since 5 October 2026 (see Codex and Cursor lifecycle hooks below).
 - Activity view with a test-command exit summary (exit status only) and a virtualized timeline. Changes view against the session's starting commit with safe diffs and Open-or-reveal.
 
 **Knowledge**
@@ -122,7 +136,7 @@ Branch `claude/ux-redesign`; the master plan is [docs/superpowers/plans/2026-10-
 ### Phase 2: honest session model
 
 - Stable slots: each live session keeps its slot (1-4) until it ends, across reloads and when another stops; the slot keys follow them. A fifth start is refused with `SLOTS_FULL`. Runtime protocol 4.
-- Honest states (`sessionState.ts`): Claude reports Working, Needs approval (with the redacted command or path) and Your turn through its hooks; Codex and Cursor report no state, so Journal shows Running with the time of their last output ("output just now", "quiet 2m") and marks it Limited status.
+- Honest states (`sessionState.ts`): Claude reports Working, Needs approval (with the redacted command or path) and Your turn through its hooks; Codex and Cursor sessions show the states their hooks report (see Codex and Cursor lifecycle hooks below); without a live observer Journal shows Running with the time of their last output ("output just now", "quiet 2m") and marks it Limited status.
 - Next needs-you (⌘J, Ctrl+Shift+J) jumps to the next session waiting for approval, then orphaned ones.
 - One OS notification per approval episode while the window is unfocused (the command only if the user opts in); clicking it selects the session. The Dock badge and the Windows taskbar flash count sessions waiting for approval and orphaned sessions. Headless test runs never reach the OS notification, badge or taskbar. The preferences live in Settings.
 

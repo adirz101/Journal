@@ -560,3 +560,9 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
   .palette mark{forced-color-adjust:none;background:Mark;color:MarkText}
   .palette-search:focus-within{box-shadow:none;border-bottom:2px solid Highlight}
 }
+/* === Cursor turn status (Settings): the exact change shown before it is made === */
+.settings-section .settings-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.cursor-hooks-plan{margin-top:10px;display:flex;flex-direction:column;gap:6px;font-size:12px}
+.cursor-hooks-plan code{overflow-wrap:anywhere;color:var(--tx2)}
+.cursor-hooks-label{font-size:11px;font-weight:600;color:var(--tx2)}
+.cursor-hooks-text{margin:0;max-height:180px;overflow:auto;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--term);font-size:11px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--tx)}

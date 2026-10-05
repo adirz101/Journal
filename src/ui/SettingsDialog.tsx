@@ -1,3 +1,4 @@
+import { CursorHooksSetting } from './CursorHooksSetting';
 import { useEffect, useRef, useState } from 'react';
 import { api, type Preferences, type Project, type UpdateState } from './types';
 import { UpdateSettings } from './UpdateNotice';
@@ -40,6 +41,7 @@ export function SettingsDialog({ appearance, onAppearance, update, project, onCl
       <p className="muted small-print" id="settings-command-hint">{shell.notifyCommandHint}</p></section>
     {/* Its own section, headed Updates. */}
     <UpdateSettings state={update} />
+    <CursorHooksSetting onError={failed} />
     <section className="settings-section" aria-labelledby="settings-data"><h3 id="settings-data">{shell.dataAndBackups}</h3>
       <p className="muted">Everything stays on this device. Terminal output is never stored; timelines of sessions that ended more than 90 days ago are trimmed automatically. Project memory is never pruned.</p>
       {info && <dl className="receipt-facts"><dt>Database</dt><dd>{mb(info.database)} + {mb(info.wal)} write-ahead log</dd>

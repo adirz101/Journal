@@ -57,7 +57,7 @@ export async function inspectCursor(path, env = process.env, { platform = proces
     const version = String(await runner(path, ['--version'], env, { platform })).trim().match(VERSION)?.[1] ?? null;
     const help = String(await runner(path, ['--help'], env, { platform }));
     const cursor = !!version && /\bcursor\b/i.test(help);
-    result = { path, version, cursor, supports: { resume: /--resume\b/.test(help), createChat: /\bcreate-chat\b/.test(help), mode: /--mode\b/.test(help), login: /\blogin\b/.test(help) } };
+    result = { path, version, cursor, supports: { resume: /--resume\b/.test(help), createChat: /\bcreate-chat\b/.test(help), mode: /--mode\b/.test(help), login: /\blogin\b/.test(help), pluginDir: /--plugin-dir\b/.test(help) } };
   } catch (error) {
     // "Cannot be started" is not "not Cursor": say which, with the reason.
     result = { path, version: null, cursor: false, supports: {}, unlaunchable: error.unlaunchable ? String(error.message).slice(0, 300) : null };

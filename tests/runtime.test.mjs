@@ -11,6 +11,7 @@ import { RuntimeClient } from '../src/desktop/runtime-client.mjs';
 import { frame } from '../src/runtime/protocol.mjs';
 import { processIdentity, isAlive } from '../src/core/process.mjs';
 import { removeLater } from './support/cleanup.mjs';
+import { fileURLToPath } from 'node:url';
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 async function until(check, timeout = 3000) {
@@ -188,7 +189,11 @@ test('Claude hook observations become redacted commands, exit codes and file eve
   const settings = JSON.parse(readFileSync(observer.proc.argv[observer.proc.argv.indexOf('--settings') + 1], 'utf8'));
   for (const event of ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest']) assert.ok(settings.hooks[event], event);
   const target = join(f.dataDir, 'observers', `${session.id}.events.jsonl`);
-  const token = settings.hooks.Stop[0].hooks[0].command.match(/['"]([0-9a-f]{48})['"]/)[1];
+  // The hook command is the same for every launch; the target and token travel in the agent's environment.
+  const { env } = observer.proc.options;
+  assert.equal(env.JOURNAL_HOOK_TARGET, target); assert.equal(env.JOURNAL_SESSION_ID, session.id); assert.match(env.JOURNAL_HOOK_TOKEN, /^[0-9a-f]{48}$/);
+  const token = env.JOURNAL_HOOK_TOKEN;
+  for (const event of Object.keys(settings.hooks)) assert.ok(!settings.hooks[event][0].hooks[0].command.includes(token), event);
   const line = extra => appendFileSync(target, JSON.stringify({ token, id: session.id, nativeId: session.nativeId, cwd: f.repo, at: Date.now(), ...extra }) + '\n');
   line({ event: 'PreToolUse', tool: 'Bash', toolUseId: 't1', command: 'API_KEY=abcd1234 npm test' });
   line({ event: 'PostToolUseFailure', tool: 'Bash', toolUseId: 't1', exit: 3, durationMs: 1200 });
@@ -349,8 +354,7 @@ test('observer files rotate after consumption and report lost observation at the
   const seen = []; const lost = [];
   const observers = new Observers({ dataDir: dir, hookScript: 'hook.mjs', execPath: 'node', ingest: (id, e) => seen.push(e.n), lost: id => lost.push(id) });
   assert.deepEqual((await import('node:fs')).readdirSync(join(dir, 'observers')), [], 'Files from a previous runtime are swept');
-  const settings = observers.settings({ id: 's1' }, { root: repo });
-  const token = JSON.parse(readFileSync(settings, 'utf8')).hooks.Stop[0].hooks[0].command.match(/['"]([0-9a-f]{48})['"]/)[1];
+  const token = observers.prepare({ id: 's1', provider: 'claude' }, { root: repo }).env.JOURNAL_HOOK_TOKEN;
   const target = join(dir, 'observers', 's1.events.jsonl');
   const line = n => JSON.stringify({ token, id: 's1', cwd: repo, event: 'Stop', n, pad: 'p'.repeat(900) }) + '\n';
   let text = ''; for (let n = 0; n < 400; n++) text += line(n); writeFileSync(target, text);
@@ -472,4 +476,262 @@ test('after a runtime crash, the next hello carries the interrupted session unti
   await next.call('acknowledgeRecovery', { at: hello.recovery.at });
   await next.close(); const later = client(f, t);
   assert.equal((await later.connect()).recovery, null);
+});
+
+// Hooks plan 4.7 and shutdown: final hook events that land after the process exited are read.
+// A fixture CLI (never a provider) runs Journal's installed launcher through `sh -c` with a
+// payload, about one second late (longer than the old 500 ms release, inside the drain grace).
+// Claude registers through --settings; a Codex-style launch, whose ID only a hook can report,
+// uses a fixture registration (Codex's own registration is Phase 2) with Codex's normalization.
+const CODEX_ID = '01a0f661-908b-7193-8520-6ac6f3b44aeb';
+function fixtureCli(root, { when, event, delay = 1 }) {
+  const script = join(root, `fixture-${when}.cjs`);
+  writeFileSync(script, `const { spawn } = require('node:child_process'); const fs = require('node:fs');
+const a = process.argv; const claude = a.includes('--settings');
+const command = claude ? JSON.parse(fs.readFileSync(a[a.indexOf('--settings') + 1], 'utf8')).hooks.Stop[0].hooks[0].command
+  : JSON.parse(fs.readFileSync(process.env.JOURNAL_HOOK_TARGET.replace(/\\.events\\.jsonl$/, '.fixture.json'), 'utf8')).command;
+const id = claude ? a[a.indexOf(a.includes('--resume') ? '--resume' : '--session-id') + 1] : ${JSON.stringify(CODEX_ID)};
+const fire = done => { const hook = spawn('/bin/sh', ['-c', 'sleep ${delay}; ' + command], { detached: true, stdio: ['pipe', 'ignore', 'ignore'] }); hook.unref();
+  hook.stdin.end(JSON.stringify({ hook_event_name: claude ? 'Stop' : ${JSON.stringify(event)}, session_id: id, turn_id: 'turn-1', cwd: process.cwd(), prompt: 'PROMPT_TEXT', user_email: 'person@example.test' }), done); };
+${when === 'exit' ? 'fire(() => process.exit(0));' : when === 'sigterm' ? "process.on('SIGTERM', () => fire(() => process.exit(0))); setInterval(() => {}, 1000);" : 'fire(() => {}); setInterval(() => {}, 1000);'}\n`);
+  return script;
+}
+function cliSpawner(script) {
+  const procs = [];
+  const spawn = (executable, argv, options) => {
+    const child = spawnChild(process.execPath, [script, ...argv], { cwd: options.cwd, env: options.env, stdio: 'ignore' });
+    const proc = { pid: child.pid, child, argv, options, onData() {}, onExit(fn) { child.on('exit', (code, signal) => fn({ exitCode: code, signal })); }, write() {}, resize() {}, kill(signal) { try { child.kill(signal); } catch {} } };
+    procs.push(proc); return proc;
+  };
+  return { spawn, procs };
+}
+async function hookRuntime(t, f, when, { event = 'SessionEnd', ...extra } = {}) {
+  const { ADAPTERS } = await import('../src/runtime/adapters/index.mjs');
+  const codex = { ...ADAPTERS.codex, register: ({ dir, session, command }) => { const file = join(dir, `${session.id}.fixture.json`); writeFileSync(file, JSON.stringify({ command })); return { settingsFile: null, files: [file] }; } };
+  const fake = cliSpawner(fixtureCli(f.root, { when, event }));
+  t.after(() => { for (const p of fake.procs) try { p.child.kill('SIGKILL'); } catch {} });
+  const hookScript = fileURLToPath(new URL('../src/desktop/hook.mjs', import.meta.url));
+  const { runtime } = await f.boot(fake, { hookScript, execPath: process.execPath, observerMs: 60_000, drainGraceMs: 2500, launcherTimeoutSeconds: 2, adapters: { ...ADAPTERS, codex }, ...extra });
+  return { runtime, procs: fake.procs };
+}
+
+test('the observer drains a late final event after exit: Claude\'s ID is observed, the session stays ended, later lines are rejected', { skip: process.platform === 'win32' }, async t => {
+  const f = fixture(t); const { runtime, procs } = await hookRuntime(t, f, 'exit');
+  const c = client(f, t); await c.connect();
+  const { session } = await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'final event' });
+  assert.equal(session.nativeIdSource, 'preassigned');
+  const { env } = procs[0].options;
+  assert.ok(env.JOURNAL_HOOK_TARGET && env.JOURNAL_HOOK_TOKEN, 'The launch carries its observer in the environment');
+  await until(() => f.store.getSession(session.id).status === 'exited', 5000);
+  // Read about a second after the exit: the hook's ID is seen; the Stop changes no state.
+  await until(() => f.store.getSession(session.id).nativeIdSource === 'preassigned-observed', 5000);
+  await until(() => !runtime.observers.sessions.has(session.id), 5000);
+  const ended = f.store.getSession(session.id);
+  assert.deepEqual([ended.status, ended.activity, ended.nativeId, ended.nativeIdConfirmed], ['exited', null, session.nativeId, true]);
+  assert.ok(!f.store.listEvents(session.id).some(e => e.kind === 'turn-end'), 'A drained turn end never reopens or changes the session');
+  assert.ok(!JSON.stringify(f.store.listEvents(session.id)).includes('PROMPT_TEXT'));
+  // After the drain the observer is closed: this launch's late line is never read and its file goes.
+  const late = { token: env.JOURNAL_HOOK_TOKEN, id: session.id, provider: 'claude', nativeId: session.nativeId, event: 'UserPromptSubmit', cwd: f.repo, at: Date.now() };
+  appendFileSync(env.JOURNAL_HOOK_TARGET, `${JSON.stringify(late)}\n`); runtime.observers.poll();
+  assert.equal((await import('node:fs')).existsSync(env.JOURNAL_HOOK_TARGET), false);
+  assert.equal(f.store.getSession(session.id).status, 'exited');
+  // Exact-ID resume is offered and used: a new launch, a new token; the old launch's lines are rejected there.
+  const resumed = (await c.call('start', { projectId: f.project.id, provider: 'claude', resumeId: session.id })).session;
+  assert.deepEqual(procs[1].argv.slice(0, 2), ['--resume', session.nativeId]);
+  const next = procs[1].options.env; assert.notEqual(next.JOURNAL_HOOK_TOKEN, env.JOURNAL_HOOK_TOKEN);
+  appendFileSync(next.JOURNAL_HOOK_TARGET, `${JSON.stringify({ ...late, id: resumed.id })}\n`); runtime.observers.poll();
+  assert.ok(!f.store.listEvents(resumed.id).some(e => e.kind === 'prompt'), 'Another launch\'s token is rejected');
+  await until(() => f.store.getSession(resumed.id).status === 'exited', 5000);
+});
+
+test('a native ID first reported by a drained SessionEnd is bound, confirmed and offered for exact resume', { skip: process.platform === 'win32' }, async t => {
+  const f = fixture(t); const { runtime, procs } = await hookRuntime(t, f, 'exit');
+  const c = client(f, t); await c.connect();
+  const { session } = await c.call('start', { projectId: f.project.id, provider: 'codex', task: 'codex final event' });
+  assert.deepEqual([session.nativeId, session.observation], [null, 'pending']);
+  await until(() => f.store.getSession(session.id).status === 'exited', 5000);
+  assert.equal(f.store.getSession(session.id).nativeId ?? null, null, 'Not known at the exit');
+  await until(() => !runtime.observers.sessions.has(session.id), 6000);
+  const ended = f.store.getSession(session.id);
+  assert.deepEqual([ended.status, ended.nativeId, ended.nativeIdConfirmed, ended.nativeIdSource, ended.lastObserved?.fact], ['exited', CODEX_ID, true, 'hook', 'session-end']);
+  await c.call('start', { projectId: f.project.id, provider: 'codex', resumeId: session.id });
+  assert.deepEqual(procs[1].argv.slice(0, 2), ['resume', CODEX_ID]);
+});
+
+test('quit with "stop": shutdown drains final events before closing; the session stays stopped with its ID', { skip: process.platform === 'win32' }, async t => {
+  const f = fixture(t); let exited = 0;
+  const { runtime } = await hookRuntime(t, f, 'sigterm', { exit: () => { exited = Date.now(); } });
+  const c = client(f, t); await c.connect();
+  const { session } = await c.call('start', { projectId: f.project.id, provider: 'codex', task: 'stopped by quit' });
+  await wait(300); // the fixture installs its SIGTERM handler
+  const started = Date.now();
+  await c.call('shutdown', { stopSessions: true });
+  // While it drains, a relaunched app is told the runtime is closing and waits: it never launches over it.
+  let launched = 0; const probe = new RuntimeClient({ dataDir: f.dataDir, launch: () => { launched++; return null; }, connectTimeoutMs: 400 }); t.after(() => probe.close());
+  assert.deepEqual(await probe.attempt(), { closing: true });
+  await assert.rejects(probe.connect(), /Could not start/); assert.equal(launched, 0);
+  await until(() => exited, 15_000);
+  assert.ok(exited - started < 5000 + 2500 + 1500, `Bounded: ${exited - started} ms`);
+  assert.equal(runtime.observers.sessions.size, 0, 'Every observer closed');
+  const { JournalStore } = await import('../src/core/store.mjs');
+  const store = new JournalStore(join(f.dataDir, 'journal.sqlite')); t.after(() => store.close());
+  const stopped = store.getSession(session.id);
+  assert.deepEqual([stopped.status, stopped.nativeId, stopped.nativeIdConfirmed, stopped.nativeIdSource], ['stopped', CODEX_ID, true, 'hook']);
+});
+
+test('quit with "keep running": the desktop disconnects and observation goes on in the runtime', { skip: process.platform === 'win32' }, async t => {
+  const f = fixture(t); const { runtime } = await hookRuntime(t, f, 'later', { event: 'UserPromptSubmit', observerMs: 50 });
+  const c = client(f, t); await c.connect();
+  const { session } = await c.call('start', { projectId: f.project.id, provider: 'codex', task: 'keeps running' });
+  // The app quits without stopping its sessions: it only closes its connection (main.mjs, policy keep).
+  await c.close({ shutdown: false });
+  await until(() => f.store.getSession(session.id).observation === 'live', 6000);
+  const live = f.store.getSession(session.id);
+  assert.deepEqual([live.status, live.activity, live.nativeId], ['running', 'working', CODEX_ID]);
+  assert.ok(runtime.observers.sessions.has(session.id), 'Its observer stays open');
+});
+
+// Phase 2: Codex's own registration end to end. A fixture `codex` reads Journal's `-c hooks.*`
+// overrides from its argv (as Codex would), runs each event's command through the shell with a
+// Codex-shaped payload, then exits. Fixture CLI only; native behaviour is in docs/NATIVE-VALIDATION.md.
+function codexFixture(root) {
+  const script = join(root, 'fixture-codex.cjs');
+  writeFileSync(script, `const { spawnSync } = require('node:child_process');
+const a = process.argv.slice(2); const hooks = {};
+for (let i = 0; i < a.length - 1; i++) if (a[i] === '-c') { const m = /^hooks\\.([A-Za-z]+)=\\[\\{hooks=\\[\\{type="command",command=("(?:[^"\\\\\\\\]|\\\\\\\\.)*"),timeout=(\\d+)\\}\\]\\}\\]$/.exec(a[i + 1]); if (m) hooks[m[1]] = JSON.parse(m[2]); }
+require('node:fs').writeFileSync(${JSON.stringify(join(root, 'codex-hooks.json'))}, JSON.stringify(Object.keys(hooks)));
+const id = ${JSON.stringify(CODEX_ID)}; const cwd = process.cwd();
+const fire = (event, extra = {}) => { if (hooks[event]) spawnSync('/bin/sh', ['-c', hooks[event]], { input: JSON.stringify({ hook_event_name: event, session_id: id, cwd, model: 'm', ...extra }), stdio: ['pipe', 'ignore', 'ignore'], timeout: 5000 }); };
+const steps = [
+  ['SessionStart', { source: 'startup' }],
+  ['UserPromptSubmit', { turn_id: 't1', prompt: 'PROMPT_TEXT' }],
+  ['PermissionRequest', { turn_id: 't1', tool_name: 'Bash', tool_input: { command: 'rm x', description: 'remove' } }],
+  ['PostToolUse', { turn_id: 't1', tool_name: 'Bash', tool_use_id: 'u1', tool_input: { command: 'rm x' }, tool_response: { exit_code: 0, output: 'TOOL_OUTPUT' } }],
+  ['SubagentStart', { turn_id: 't1', agent_id: 'child-1', agent_type: 'worker' }],
+  ['SubagentStop', { turn_id: 't1', agent_id: 'child-1', agent_type: 'worker' }],
+  ['Stop', { turn_id: 't1', last_assistant_message: 'ASSISTANT_TEXT' }],
+  ['UserPromptSubmit', { turn_id: 't2', prompt: 'PROMPT_TEXT' }],
+  ['Interrupt', { turn_id: 't2' }],
+  ['Stop', { turn_id: 't1' }],
+  ['SessionEnd', { reason: 'other' }],
+];
+for (const [event, extra] of steps) fire(event, extra);
+setTimeout(() => process.exit(0), 200);\n`);
+  return script;
+}
+
+test('Codex registers Journal\'s hooks per launch and its events drive the session: identity, permission, turns, children, interrupt', { skip: process.platform === 'win32' }, async t => {
+  const f = fixture(t); const fake = cliSpawner(codexFixture(f.root));
+  t.after(() => { for (const p of fake.procs) try { p.child.kill('SIGKILL'); } catch {} });
+  const hookScript = fileURLToPath(new URL('../src/desktop/hook.mjs', import.meta.url));
+  const { runtime } = await f.boot(fake, { hookScript, execPath: process.execPath, observerMs: 50, launcherTimeoutSeconds: 2 });
+  const c = client(f, t); await c.connect();
+  const { session } = await c.call('start', { projectId: f.project.id, provider: 'codex', task: 'observe me', cliVersion: 'codex-cli 0.159.3' });
+  assert.deepEqual([session.nativeId, session.observation], [null, 'pending']);
+  const argv = fake.procs[0].argv; const values = argv.filter((_, i) => argv[i - 1] === '-c');
+  assert.equal(values.length, 9, 'Every 0.159.3 hook event is registered');
+  assert.ok(!argv.some(arg => /dangerously|notify|trusted_hash/.test(arg)));
+  await until(() => f.store.getSession(session.id).status === 'exited', 8000);
+  await until(() => !runtime.observers.sessions.has(session.id), 8000);
+  assert.deepEqual(JSON.parse(readFileSync(join(f.root, 'codex-hooks.json'), 'utf8')).sort(), ['Interrupt', 'PermissionRequest', 'PostToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'SubagentStart', 'SubagentStop', 'UserPromptSubmit']);
+  const ended = f.store.getSession(session.id);
+  assert.deepEqual([ended.nativeId, ended.nativeIdConfirmed, ended.nativeIdSource, ended.identityMismatch ?? false], [CODEX_ID, true, 'hook', false], 'Bound from the first parent event; the child never rebinds it');
+  const events = f.store.listEvents(session.id);
+  assert.ok(events.some(e => e.kind === 'permission'), 'The approval wait was observed');
+  const ends = events.filter(e => e.kind === 'turn-end').map(e => typeof e.body === 'string' ? JSON.parse(e.body) : e.body);
+  assert.deepEqual(ends.filter(b => !b.late).map(b => [b.turn, b.outcome]), [['t1', 'completed'], ['t2', 'interrupted']], 'One outcome per turn; the late Stop(t1) never finishes t2');
+  const text = JSON.stringify(events);
+  for (const secret of ['PROMPT_TEXT', 'ASSISTANT_TEXT', 'TOOL_OUTPUT']) assert.ok(!text.includes(secret), secret);
+  // Exact resume registers the same hooks again, with the bound ID.
+  await c.call('start', { projectId: f.project.id, provider: 'codex', resumeId: session.id, cliVersion: 'codex-cli 0.159.3' });
+  const resumeArgv = fake.procs[1].argv;
+  assert.deepEqual(resumeArgv.slice(0, 2), ['resume', CODEX_ID]);
+  assert.deepEqual(resumeArgv.filter((_, i) => resumeArgv[i - 1] === '-c'), values, 'Identical definitions: trusted once, trusted again');
+});
+
+test('Codex without hook support, or with hooks turned off, launches exactly as before and stays unobserved', { skip: process.platform === 'win32' }, async t => {
+  const f = fixture(t); const fake = cliSpawner(codexFixture(f.root));
+  t.after(() => { for (const p of fake.procs) try { p.child.kill('SIGKILL'); } catch {} });
+  const hookScript = fileURLToPath(new URL('../src/desktop/hook.mjs', import.meta.url));
+  await f.boot(fake, { hookScript, execPath: process.execPath, observerMs: 50, launcherTimeoutSeconds: 2 });
+  const c = client(f, t); await c.connect();
+  for (const [i, extra] of [{ cliVersion: 'codex-cli 0.120.0' }, { cliVersion: 'codex-cli 0.159.3', hooksEnabled: false }, {}].entries()) {
+    const { session } = await c.call('start', { projectId: f.project.id, provider: 'codex', task: `plain ${i}`, ...extra });
+    assert.equal(session.observation, 'unobserved', JSON.stringify(extra));
+    assert.ok(!fake.procs[i].argv.includes('-c'), 'No overrides: Codex keeps its shared background server');
+    assert.equal(fake.procs[i].options.env.JOURNAL_HOOK_TARGET, undefined);
+    await until(() => f.store.getSession(session.id).status === 'exited', 8000);
+  }
+});
+
+// Phase 3: Cursor's plugin (level 1) and Journal's entries in a fixture home's hooks.json (level 2).
+// The fixture `agent` reads --plugin-dir's hooks/hooks.json and the home's .cursor/hooks.json and runs
+// each matching command, as the CLI would. Fixture CLI and fixture home only.
+const CURSOR_ID = '5b1f0d3e-8c4a-4e2b-9f6a-1c2d3e4f5a6b';
+function cursorFixture(root, home) {
+  const script = join(root, 'fixture-agent.cjs');
+  writeFileSync(script, `const { spawnSync } = require('node:child_process'); const fs = require('node:fs'); const path = require('node:path');
+const a = process.argv.slice(2); const commands = {};
+const read = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
+const plugin = a.includes('--plugin-dir') ? read(path.join(a[a.indexOf('--plugin-dir') + 1], 'hooks', 'hooks.json')) : null;
+const user = read(${JSON.stringify(join(home, '.cursor', 'hooks.json'))});
+for (const config of [plugin, user]) if (config && config.version === 1) for (const [event, list] of Object.entries(config.hooks || {})) for (const entry of list) (commands[event] ||= []).push(entry.command);
+// Cursor gates its turn events on the user's (or project's) own file.
+const gated = ['stop', 'afterAgentResponse', 'beforeSubmitPrompt'];
+fs.writeFileSync(${JSON.stringify(join(root, 'cursor-hooks.json'))}, JSON.stringify(Object.keys(commands)));
+const id = ${JSON.stringify(CURSOR_ID)}; const cwd = process.cwd();
+const fire = (event, extra = {}) => { if (gated.includes(event) && !(user && user.hooks && user.hooks[event])) return;
+  for (const command of commands[event] || []) spawnSync('/bin/sh', ['-c', command], { input: JSON.stringify({ hook_event_name: event, conversation_id: id, session_id: id, workspace_roots: [cwd], user_email: 'person@example.test', ...extra }), stdio: ['pipe', 'ignore', 'ignore'], timeout: 5000 }); };
+fire('sessionStart', { generation_id: id });
+fire('afterShellExecution', { generation_id: 'g1', command: 'echo hi', output: 'TOOL_OUTPUT', duration: 12 });
+fire('stop', { generation_id: 'g1', status: 'completed' });
+fire('postToolUse', { generation_id: 'g2', tool_name: 'Shell', tool_input: { command: 'ls' } });
+fire('stop', { generation_id: 'g2', status: 'aborted' });
+fire('stop', { generation_id: 'g2', status: 'error' });
+fire('stop', { generation_id: 'g1', status: 'completed' });
+fire('sessionEnd', { generation_id: id, reason: 'completed', final_status: 'completed' });
+setTimeout(() => process.exit(0), 200);\n`);
+  return script;
+}
+async function cursorRuntime(t, f, home) {
+  const fake = cliSpawner(cursorFixture(f.root, home));
+  t.after(() => { for (const p of fake.procs) try { p.child.kill('SIGKILL'); } catch {} });
+  const hookScript = fileURLToPath(new URL('../src/desktop/hook.mjs', import.meta.url));
+  const cursor = { find: async () => ({ path: '/fixture/agent', cursor: true, version: '2026.10.01-e373342', supports: { resume: true, createChat: true, mode: true, login: true, pluginDir: true } }), createChat: async () => CURSOR_ID };
+  const { runtime } = await f.boot(fake, { hookScript, execPath: process.execPath, observerMs: 50, launcherTimeoutSeconds: 2, home, cursor });
+  return { runtime, fake };
+}
+const turnEnds = (f, id) => f.store.listEvents(id).filter(e => e.kind === 'turn-end').map(e => typeof e.body === 'string' ? JSON.parse(e.body) : e.body).filter(b => !b.late).map(b => [b.turn, b.outcome]);
+
+test('Cursor level 1: the plugin reports tool activity and the end, never a turn end; nothing is written to the home', { skip: process.platform === 'win32' }, async t => {
+  const f = fixture(t); const home = join(f.root, 'home'); mkdirSync(home);
+  const { runtime, fake } = await cursorRuntime(t, f, home);
+  const c = client(f, t); await c.connect();
+  const { session } = await c.call('start', { projectId: f.project.id, provider: 'cursor', task: 'level one' });
+  assert.deepEqual(session.observes, { turns: false, approvals: false });
+  const argv = fake.procs[0].argv; assert.equal(argv[argv.indexOf('--plugin-dir') + 1], join(f.dataDir, 'hooks', 'cursor-plugin'));
+  await until(() => f.store.getSession(session.id).status === 'exited', 8000);
+  await until(() => !runtime.observers.sessions.has(session.id), 8000);
+  assert.deepEqual(JSON.parse(readFileSync(join(f.root, 'cursor-hooks.json'), 'utf8')).sort(), ['afterFileEdit', 'afterMCPExecution', 'afterShellExecution', 'postToolUse', 'postToolUseFailure', 'sessionEnd', 'sessionStart', 'subagentStop']);
+  const ended = f.store.getSession(session.id);
+  assert.deepEqual([ended.nativeId, ended.identityMismatch ?? false], [CURSOR_ID, false]);
+  assert.deepEqual(turnEnds(f, session.id), [], 'No stop fires without the user\'s own entries');
+  assert.equal((await import('node:fs')).existsSync(join(home, '.cursor')), false, 'Level 1 never writes the user\'s files');
+  const text = JSON.stringify(f.store.listEvents(session.id));
+  for (const secret of ['person@example.test', 'TOOL_OUTPUT']) assert.ok(!text.includes(secret), secret);
+});
+
+test('Cursor level 2: with Journal\'s reviewed entries, turns end, and an aborted+error pair is one interruption', { skip: process.platform === 'win32' }, async t => {
+  const f = fixture(t); const home = join(f.root, 'home'); mkdirSync(home);
+  const { runtime } = await cursorRuntime(t, f, home);
+  const { planCursorInstall, applyCursorPlan } = await import('../src/core/cursor-hooks.mjs');
+  const launcher = runtime.observers.launcher;
+  const plan = planCursorInstall(home, runtime.observers.command('cursor'), launcher);
+  assert.deepEqual(applyCursorPlan(home, plan), { applied: true });
+  const c = client(f, t); await c.connect();
+  const { session } = await c.call('start', { projectId: f.project.id, provider: 'cursor', task: 'level two' });
+  assert.deepEqual(session.observes, { turns: true, approvals: false });
+  await until(() => f.store.getSession(session.id).status === 'exited', 8000);
+  await until(() => !runtime.observers.sessions.has(session.id), 8000);
+  assert.deepEqual(turnEnds(f, session.id), [['g1', 'completed'], ['g2', 'interrupted']], 'One outcome per generation; the late stop for g1 changes nothing');
 });

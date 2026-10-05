@@ -119,3 +119,12 @@ test('the guard: detection never runs a CLI outside the test provider folder', {
     assert.deepEqual(ran, []);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('the app never asks Electron for the home folder: it ignores HOME, so a fixture home would not hold', () => {
+  for (const dir of ['src/desktop', 'src/runtime', 'src/core']) {
+    for (const name of readdirSync(dir)) {
+      if (!/\.(?:mjs|cjs|js|ts)$/.test(name)) continue;
+      assert.ok(!/getPath\(\s*['"]home['"]\s*\)/.test(readFileSync(join(dir, name), 'utf8')), `${dir}/${name} uses app.getPath('home'); use os.homedir()`);
+    }
+  }
+});

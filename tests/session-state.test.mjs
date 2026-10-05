@@ -29,13 +29,18 @@ const PROVIDERS = ['claude', 'codex', 'cursor'];
 const STATUSES = ['starting', 'running', 'waiting', 'stopping', 'stopped', 'exited', 'failed', 'interrupted', 'orphaned'];
 const ACTIVITIES = ['idle', 'working', 'permission', null];
 const LIVE = new Set(['starting', 'running', 'waiting', 'stopping']);
+// undefined: a session from a runtime before observation states (Claude shows its state as then).
+const OBSERVATIONS = [undefined, 'pending', 'live', 'unobserved', 'lost'];
+const current = ({ provider, observation }) => provider === 'claude' && (observation === 'live' || observation === undefined);
 
-// The state table of the Phase 2 plan (board B8), written out independently.
-function expected({ provider, status, activity, exitCode }, connected) {
+// The state table of the Phase 2 plan (board B8), written out independently, with the
+// observation rule of the hooks plan (4.4): a current state only while the observer is live.
+function expected({ provider, status, activity, exitCode, observation }, connected) {
   if (LIVE.has(status) && !connected) return { word: 'Disconnected', tone: 'muted', limited: false };
-  if (provider === 'claude' && status === 'waiting') return { word: 'Needs approval', tone: 'attention', limited: false };
-  if (provider === 'claude' && status === 'running') return activity === 'idle' ? { word: 'Your turn', tone: 'active', limited: false } : { word: 'Working', tone: 'active', limited: false };
-  if (provider !== 'claude' && (status === 'running' || status === 'waiting')) return { word: 'Running', tone: 'active', limited: true };
+  if (current({ provider, observation }) && status === 'waiting') return { word: 'Needs approval', tone: 'attention', limited: false };
+  // An unknown activity (no hook has said what the agent is doing) is never presented as current.
+  if (current({ provider, observation }) && status === 'running' && activity) return activity === 'idle' ? { word: 'Your turn', tone: 'active', limited: false } : { word: 'Working', tone: 'active', limited: false };
+  if (status === 'running' || status === 'waiting') return { word: 'Running', tone: 'active', limited: true };
   const rest = {
     starting: { word: 'Starting', tone: 'neutral' }, stopping: { word: 'Stopping', tone: 'neutral' },
     exited: exitCode ? { word: `Exited ${exitCode}`, tone: 'error' } : { word: 'Exited 0', tone: 'neutral' },
@@ -45,20 +50,48 @@ function expected({ provider, status, activity, exitCode }, connected) {
   return { ...rest[status], limited: false };
 }
 
-test('stateFor follows the state table for every provider, status, activity and connection', async t => {
+test('stateFor follows the state table for every provider, status, activity, observation and connection', async t => {
   const { stateFor } = await load(t);
   let cases = 0;
-  for (const provider of PROVIDERS) for (const status of STATUSES) for (const activity of ACTIVITIES) for (const connected of [true, false]) for (const exitCode of status === 'exited' ? [0, null, 2] : [undefined]) {
-    const input = session({ provider, status, activity, exitCode, lastOutputAt: ago(1000) });
+  for (const provider of PROVIDERS) for (const status of STATUSES) for (const activity of ACTIVITIES) for (const observation of OBSERVATIONS) for (const connected of [true, false]) for (const exitCode of status === 'exited' ? [0, null, 2] : [undefined]) {
+    const input = session({ provider, status, activity, exitCode, observation, lastOutputAt: ago(1000) });
     const state = stateFor(input, NOW, connected);
-    const label = `${provider} ${status} ${activity} ${connected ? 'connected' : 'disconnected'} ${exitCode}`;
+    const label = `${provider} ${status} ${activity} ${observation} ${connected ? 'connected' : 'disconnected'} ${exitCode}`;
     assert.deepEqual({ word: state.word, tone: state.tone, limited: state.limited }, expected(input, connected), label);
     // An orphan is "still running outside Journal" for every provider; nothing else of Codex or Cursor asks for attention.
     if (provider !== 'claude' && status !== 'orphaned') assert.notEqual(state.tone, 'attention', `${label}: Codex and Cursor never need approval`);
-    if (provider === 'claude') assert.equal(state.limited, false, `${label}: Claude has full status`);
+    if (current(input) && (status !== 'running' || activity)) assert.equal(state.limited, false, `${label}: a live Claude observer gives full status`);
+    // Without a live observer a state is never presented as current.
+    if (!current(input)) assert.ok(!['Working', 'Your turn', 'Needs approval'].includes(state.word), `${label}: no current state without a live observer`);
     cases++;
   }
-  assert.ok(cases >= 3 * 9 * 4 * 2, `${cases} cases`);
+  assert.ok(cases >= 3 * 9 * 4 * 5 * 2, `${cases} cases`);
+});
+
+test('without a live observer: output time or how long the state is unknown, then the last observed fact', async t => {
+  const { stateFor, limitedDetail } = await load(t);
+  const fact = (name, ms) => ({ fact: name, at: ago(ms) });
+  // Pending before any hook: the limited model, as for Codex today.
+  assert.deepEqual(stateFor(session({ observation: 'pending', lastOutputAt: ago(2000) }), NOW, true), { word: 'Running', tone: 'active', detail: 'output just now', limited: true });
+  // Unobserved: the same, never Working.
+  assert.equal(stateFor(session({ observation: 'unobserved', activity: 'working', lastOutputAt: ago(5 * 60_000) }), NOW, true).detail, 'quiet 5m');
+  // Working that went stale is unknown since its last fact, and never becomes Your turn.
+  for (const activity of ['working', 'idle']) {
+    const lost = stateFor(session({ observation: 'lost', activity, lastOutputAt: ago(16 * 60_000), lastObserved: fact('turn-start', 16 * 60_000) }), NOW, true);
+    assert.deepEqual(lost, { word: 'Running', tone: 'active', detail: 'state unknown for 16m · last seen: prompt sent, 16m ago', limited: true }, activity);
+  }
+  // A lost waiting session is not presented as Needs approval either.
+  assert.equal(stateFor(session({ status: 'waiting', observation: 'lost', lastObserved: fact('permission-wait', 90_000) }), NOW, true).detail, 'state unknown for 1m · last seen: approval asked, 1m ago');
+  assert.equal(limitedDetail(session({ observation: 'unobserved', lastOutputAt: ago(1000), lastObserved: fact('turn-completed', 30_000) }), NOW), 'output just now · last seen: turn finished, <1m ago');
+  assert.equal(limitedDetail(session({ observation: 'lost', lastObserved: { fact: 'tool-end', at: 'not a time' }, lastOutputAt: null }), NOW), 'no output yet');
+  // Live but silent (a long tool run or approval wait): confidence ages, the state is kept and never declared finished.
+  const quiet = stateFor(session({ observation: 'live', activity: 'working', lastObserved: fact('tool-start', 20 * 60_000) }), NOW, true);
+  assert.deepEqual(quiet, { word: 'Working', tone: 'active', detail: 'no hook activity for 20m', limited: false });
+  assert.equal(stateFor(session({ observation: 'live', activity: 'working', lastObserved: fact('tool-start', 4 * 60_000) }), NOW, true).detail, null);
+  const asking = stateFor(session({ status: 'waiting', observation: 'live', activity: 'permission', lastObserved: fact('permission-wait', 3 * 3600_000), pending: { tool: 'Bash', command: 'npm publish', path: null, at: ago(3 * 3600_000) } }), NOW, true);
+  assert.deepEqual(asking, { word: 'Needs approval', tone: 'attention', detail: 'npm publish', limited: false });
+  // Live again: the current state returns.
+  assert.equal(stateFor(session({ observation: 'live', activity: 'idle', lastObserved: fact('turn-completed', 1000) }), NOW, true).word, 'Your turn');
 });
 
 test('details: disconnected says the state is unknown; Codex and Cursor show output time', async t => {
@@ -185,4 +218,34 @@ test('a failed desktop request carries only a bounded string code', () => {
   for (const code of [42, { nested: 'SLOTS_FULL' }, null, undefined, ['SLOTS_FULL']]) assert.deepEqual(settledError(coded(code)), { ok: false, error: 'nope' }, String(code));
   assert.deepEqual(settledError('plain'), { ok: false, error: 'Operation failed' });
   assert.deepEqual(settledError(null), { ok: false, error: 'Operation failed' });
+});
+
+test('Codex and Cursor states follow what their live hooks report (plan 4.4, Phase 4)', async t => {
+  const { stateFor, needsYou, outputOnly } = await load(t);
+  const both = { turns: true, approvals: true };
+  const codex = fields => session({ provider: 'codex', observation: 'live', observes: both, lastObserved: { fact: 'turn-start', at: ago(1000) }, ...fields });
+  assert.equal(stateFor(codex({ status: 'running', activity: 'working' }), NOW, true).word, 'Working');
+  assert.equal(stateFor(codex({ status: 'running', activity: 'idle' }), NOW, true).word, 'Your turn');
+  const waiting = codex({ status: 'waiting', activity: 'permission', pending: { tool: 'Bash', command: 'rm x' } });
+  assert.deepEqual([stateFor(waiting, NOW, true).word, stateFor(waiting, NOW, true).detail, needsYou(waiting)], ['Needs approval', 'rm x', true]);
+  // Not live (no hooks yet, untrusted, lost): the limited model, never a current state.
+  for (const observation of ['pending', 'unobserved', 'lost']) {
+    const s = codex({ observation, status: 'waiting', activity: 'permission' });
+    assert.equal(stateFor(s, NOW, true).limited, true, observation); assert.equal(needsYou(s), false, observation); assert.equal(outputOnly(s), true);
+  }
+  // No capabilities reported (an older runtime): limited.
+  assert.equal(stateFor(codex({ observes: undefined, status: 'running', activity: 'idle' }), NOW, true).limited, true);
+  // Cursor level 1: live tool events, but no turn end: never Working or Your turn, the last fact shown instead.
+  const level1 = session({ provider: 'cursor', observation: 'live', observes: { turns: false, approvals: false }, status: 'running', activity: 'working', lastObserved: { fact: 'tool-end', at: ago(120_000) } });
+  const shown = stateFor(level1, NOW, true);
+  assert.equal(shown.limited, true); assert.match(shown.detail, /2m/);
+  assert.equal(outputOnly(level1), true);
+  // Cursor level 2: turn end reported; approvals never (a waiting status is not shown as an approval).
+  const level2 = fields => session({ provider: 'cursor', observation: 'live', observes: { turns: true, approvals: false }, ...fields });
+  assert.equal(stateFor(level2({ status: 'running', activity: 'idle' }), NOW, true).word, 'Your turn');
+  const cursorWaiting = stateFor(level2({ status: 'waiting', activity: 'permission' }), NOW, true);
+  assert.notEqual(cursorWaiting.word, 'Needs approval'); assert.equal(cursorWaiting.limited, true);
+  assert.equal(needsYou(level2({ status: 'waiting', activity: 'permission' })), false);
+  // Claude keeps reporting both, with or without the field.
+  assert.equal(stateFor(session({ observation: 'live', status: 'waiting', activity: 'permission' }), NOW, true).word, 'Needs approval');
 });

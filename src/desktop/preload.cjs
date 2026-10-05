@@ -10,6 +10,7 @@ allowed.add('markOrientationShown');
 allowed.add('searchFiles');
 allowed.add('acknowledgeRecovery');
 allowed.add('reconnectRuntime');
+for (const action of ['cursorHooksStatus', 'cursorHooksPlan', 'cursorHooksApply']) allowed.add(action);
 // contextBridge copies only the message of an Error thrown across it, so the
 // renderer's api() uses settle(), which returns the error code as plain data.
 const settle = async (action, input = {}) => {

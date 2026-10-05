@@ -1,7 +1,7 @@
 // The command palette's rules (Phase 8, board 7). Pure: CommandPalette.tsx renders
 // them and tests/palette.test.mjs checks them. Nothing here starts, approves or sends.
 import { isLive, PROVIDER_NAMES, type CommandId, type Memory, type Session } from './types';
-import { outputDetail, resumable, slotOrder, stateFor } from './sessionState';
+import { outputDetail, outputOnly, resumable, slotOrder, stateFor } from './sessionState';
 import { endedTime, relativeTime, sessionName } from './sidebarModel';
 import { category, palette as words } from './copy';
 
@@ -75,7 +75,7 @@ export function sessionMatches(sessions: Session[], projectId: string | null, te
 // or more, quietest first. Claude reports its own state, so it is never listed.
 export function quietSessions(sessions: Session[], now: number): Session[] {
   const since = (s: Session) => Date.parse(s.lastOutputAt ?? s.createdAt);
-  return sessions.filter(s => !s.removed && isLive(s) && s.provider !== 'claude' && now - since(s) >= QUIET_MS)
+  return sessions.filter(s => !s.removed && isLive(s) && outputOnly(s) && now - since(s) >= QUIET_MS)
     .sort((a, b) => since(a) - since(b) || a.id.localeCompare(b.id));
 }
 // While disconnected nothing is known about output, so no session is called quiet.

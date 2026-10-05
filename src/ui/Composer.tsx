@@ -182,6 +182,8 @@ export function Composer(props: ComposerProps) {
         <span className="start-reason" id="start-reason" role="status">{shown}</span>
       </div>
       <p className="field-help native-stays">{composer.nativeStays}</p>
+      {/* How Journal follows this agent (plan 4.6): Codex asks once to review Journal's hooks; Cursor reports activity. */}
+      {provider !== 'claude' && !(provider === 'codex' && agent?.supports?.hooks === false) && <p className="field-help">{provider === 'codex' ? composer.codexObserved : composer.cursorObserved}</p>}
     </form>
     <ContextPreview view={view} error={preview.error} taskNotes={taskNotes.current.count} project={project} mac={mac} hasTask={task.trim().length > 0} mark={props.mark} justRemembered={props.justRemembered}
       onLeaveOut={leaveOut} onRestore={restore} onInspect={inspect} />

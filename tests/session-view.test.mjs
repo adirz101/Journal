@@ -73,3 +73,37 @@ test('activityVisible: Claude only', async t => {
   const { activityVisible } = await load(t);
   assert.deepEqual(['claude', 'codex', 'cursor'].map(provider => activityVisible({ provider })), [true, false, false]);
 });
+
+// Hooks plan 4.3: the timeline shows one entry per turn. Turn ends recorded by the runtime for
+// a Cursor-style aborted + error pair (either order), a repeat and a late end collapse by turn key.
+test('turn ends collapse to one entry per turn with the strongest outcome', async t => {
+  const { mergeEvents, collapseTurns } = await load(t);
+  const { TerminalManager } = await import('../src/core/terminal.mjs');
+  const { JournalStore } = await import('../src/core/store.mjs');
+  const { execFileSync } = await import('node:child_process');
+  const { tmpdir } = await import('node:os');
+  for (const order of [['aborted', 'error'], ['error', 'aborted']]) {
+    const root = mkdtempSync(resolve(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'collapse-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+    execFileSync('git', ['init', '-b', 'main', root], { stdio: 'pipe' });
+    const store = new JournalStore(':memory:'); t.after(() => store.close()); const project = store.openProject(root);
+    const chat = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const manager = new TerminalManager({ store, trackMs: 0, observationMs: 0, identify: () => null, table: () => null, makeObserver: () => ({ settingsFile: null, env: {} }),
+      cursor: { find: async () => ({ path: '/bin/agent', cursor: true, supports: { resume: true, createChat: true, mode: true } }), createChat: async () => chat },
+      spawn: () => ({ onData() {}, onExit() {}, write() {}, resize() {}, kill() {} }) });
+    t.after(() => { manager.disposed = true; });
+    const live = []; manager.on('event', e => { if (e.type === 'timeline') live.push(e.event); });
+    const { session } = await manager.start({ projectId: project.id, provider: 'cursor', task: 'x' });
+    const send = fields => manager.ingest(session.id, { event: 'stop', nativeId: chat, cwd: root, ...fields });
+    for (const status of order) send({ turn: 'g1', status });
+    send({ turn: 'g1', status: 'aborted' });
+    send({ turn: 'g2', status: 'completed' });
+    // Stored and live copies merge to one entry per turn.
+    const ends = mergeEvents(store.listEvents(session.id), live, session.id).filter(e => e.kind === 'turn-end');
+    assert.deepEqual(ends.map(e => [e.body.turn, e.body.outcome]), [['g1', 'interrupted'], ['g2', 'completed']], order.join(','));
+  }
+  // A late end merges into its turn's entry; the entry is late only when every record is.
+  const at = n => `2026-10-04T10:00:0${n}Z`;
+  const collapsed = collapseTurns([{ at: at(1), kind: 'turn-end', body: { turn: 'a', outcome: 'completed' } }, { at: at(2), kind: 'turn-end', body: {} }, { at: at(3), kind: 'turn-end', body: {} },
+    { at: at(4), kind: 'turn-end', body: { turn: 'a', outcome: 'error', late: true } }, { at: at(5), kind: 'turn-end', body: { turn: 'b', outcome: 'error', late: true } }]);
+  assert.deepEqual(collapsed.map(e => e.body), [{ turn: 'a', outcome: 'error' }, {}, {}, { turn: 'b', outcome: 'error', late: true }]);
+});

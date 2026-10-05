@@ -37,12 +37,18 @@ export function writePreferences(file, patch) {
 }
 
 const truncate = value => value.length > DETAIL_MAX ? `${value.slice(0, DETAIL_MAX - 1)}…` : value;
-const claudeWaiting = session => session.provider === 'claude' && session.status === 'waiting';
-// The badge means "a live agent is blocked or unaccounted for": Claude waiting
+// An approval wait Journal observes now: a live observer whose hooks report approvals (Claude and
+// Codex; Cursor has no approval event). A runtime from before observation states sends neither
+// field for Claude, which reported approvals then. Mirrors src/ui/sessionState.ts.
+const observedNow = session => session.observation === 'live' || (session.observation === undefined && session.provider === 'claude');
+const reportsApprovals = session => session.provider === 'claude' ? session.observes?.approvals !== false : !!session.observes?.approvals;
+const approvalWaiting = session => session.status === 'waiting' && observedNow(session) && reportsApprovals(session);
+const AGENT_NAMES = { claude: 'Claude', codex: 'Codex', cursor: 'Cursor' };
+// The badge means "a live agent is blocked or unaccounted for": an agent waiting
 // for approval, or a process still running outside Journal. Failed and
 // survivor sessions stay in the app's "needs you" list but not on the badge,
 // which would otherwise never clear.
-const counts = session => !session.removed && (claudeWaiting(session) || session.status === 'orphaned');
+const counts = session => !session.removed && (approvalWaiting(session) || session.status === 'orphaned');
 
 export function createNotifier({ Notification, isSupported = () => true, isFocused, onClick, setBadge, titleFor = session => session.title, preferences }) {
   const sessions = new Map();   // id -> latest session seen
@@ -63,14 +69,15 @@ export function createNotifier({ Notification, isSupported = () => true, isFocus
   const show = async (session, episode) => {
     let title;
     try { title = await titleFor(session); } catch { title = null; }
-    if (typeof title !== 'string' || !title) title = session.title ?? 'Claude session';
-    title = redact(String(title), 200) || 'Claude session';
+    const agent = AGENT_NAMES[session.provider] ?? 'Agent';
+    if (typeof title !== 'string' || !title) title = session.title ?? `${agent} session`;
+    title = redact(String(title), 200) || `${agent} session`;
     // The episode may have ended (or the notifier closed) while the name was read.
     if (disposed || episodes.get(session.id) !== episode) return;
     const prefs = preferences();
     const detail = prefs.notificationCommand ? session.pending?.command ?? session.pending?.path ?? null : null;
     try {
-      const notification = new Notification({ title: 'Claude needs approval', body: detail ? `${title}\n${truncate(String(detail))}` : title, silent: false });
+      const notification = new Notification({ title: `${agent} needs approval`, body: detail ? `${title}\n${truncate(String(detail))}` : title, silent: false });
       notification.on('click', () => onClick(session.id));
       // Held until the episode ends: Windows drops the click of a collected notification.
       episode.notification = notification;
@@ -88,7 +95,7 @@ export function createNotifier({ Notification, isSupported = () => true, isFocus
   };
   const apply = (session, { notify }) => {
     sessions.set(session.id, session);
-    const waiting = claudeWaiting(session) && !session.removed;
+    const waiting = approvalWaiting(session) && !session.removed;
     if (waiting && !episodes.has(session.id)) enter(session, { notify });
     else if (!waiting && episodes.has(session.id)) endEpisode(session.id);
   };

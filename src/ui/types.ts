@@ -52,9 +52,17 @@ export interface Session { id: string; projectId: string; provider: Provider; na
   slot?: 1 | 2 | 3 | 4 | null; lastOutputAt?: string | null; pending?: PendingApproval | null;
   // The CLI version main detected when this session launched (Phase 3 B); missing for older sessions.
   cliVersion?: string | null;
-  nativeIdSource?: 'preassigned' | 'preassigned-observed' | 'create-chat' | 'exit-banner' | 'user' | null; identityMismatch?: boolean;
+  nativeIdSource?: 'preassigned' | 'preassigned-observed' | 'create-chat' | 'exit-banner' | 'hook' | 'user' | null; identityMismatch?: boolean;
+  // What Journal observes of this launch (src/core/terminal.mjs OBSERVATIONS): a state is current only while 'live'.
+  // lastObserved: the last applied hook fact, shown as past evidence; children: sub-agents seen (bounded). Missing from older runtimes.
+  observation?: Observation; lastObserved?: LastObserved | null; children?: number;
+  // What this launch's hooks can report: turn end and approval waits (null: not observed).
+  observes?: { turns: boolean; approvals: boolean } | null;
   // Phase 6: the end snapshot (taken once by the runtime when the session exits) and how it ended.
   changeStats?: ChangeStats | null; signal?: string | number | null; }
+export type Observation = 'pending' | 'live' | 'unobserved' | 'lost';
+export type ObservedFact = 'session-start' | 'turn-start' | 'turn-progress' | 'tool-start' | 'tool-end' | 'permission-wait' | 'turn-completed' | 'turn-interrupted' | 'turn-error' | 'session-end';
+export interface LastObserved { fact: ObservedFact; at: string }
 // Changes in the session's checkout since it started, counted once when it ended (D11). paths: files the
 // session changed (not those already changed at its start), at most 200; from: a rename's old path.
 export interface ChangeStats { available: boolean; additions: number; deletions: number; files: number; preexisting: number;
@@ -120,7 +128,7 @@ export type AuthState = 'unchecked' | 'signed-in' | 'signed-out' | 'unknown';
 // A visible one-off process (src/desktop/processes.mjs): one per provider and kind.
 export type ProcessKind = 'install' | 'login';
 export interface AgentInfo { provider: Provider; available: boolean; version: string | null; path?: string | null; state?: 'ready' | 'checking' | 'missing' | 'not-cursor' | 'unlaunchable' | 'unsupported' | 'login-required'; unlaunchable?: { path: string; reason: string } | null; auth?: AuthState; onPath?: boolean; impostor?: string | null;
-  supports?: { resume?: boolean; createChat?: boolean; mode?: boolean; login?: boolean; authStatus?: boolean }; capabilities?: { exactResume: string; status: string[]; commands: string; fileEdits: boolean; modes?: string };
+  supports?: { resume?: boolean; createChat?: boolean; mode?: boolean; login?: boolean; authStatus?: boolean; hooks?: boolean | null; pluginDir?: boolean }; capabilities?: { exactResume: string; status: string[]; commands: string; fileEdits: boolean; modes?: string };
   // Display strings from main's constant table (PROVIDER_COMMANDS); the renderer never builds argv.
   commands?: { login: string | null; install: string | null; installPage: string | null } }
 // What an "About this project" draft was made from (Git only; nothing left this computer). counted: false

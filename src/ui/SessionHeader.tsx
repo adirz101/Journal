@@ -1,5 +1,5 @@
 import { isLive, PROVIDER_NAMES, type Session } from './types';
-import { resumable, type SessionState } from './sessionState';
+import { resumable, type SessionState, observed, reports } from './sessionState';
 import { relativeTime } from './sidebarModel';
 import { copy, shell, tip } from './copy';
 import { ProviderMark } from './ProviderMark';
@@ -45,16 +45,18 @@ export function SessionHeader({ session, state, connected, busy, canStart, now, 
   </header>;
 }
 
-// Claude's open permission prompt (board B4). Journal names what it asks and
-// never answers it: the user answers in the terminal. Codex and Cursor report no prompts.
+// An observed permission prompt (Claude and Codex; board B4). Journal names what it asks and
+// never answers it: the user answers in the terminal. Cursor reports no prompts.
 // The status region stays mounted while a session is shown, so the banner's text is
 // announced when it appears (a live region inserted with its text often is not).
+// The banner names the agent the way the notifications do.
+const AGENT_SHORT: Record<string, string> = { claude: 'Claude', codex: 'Codex', cursor: 'Cursor' };
 export function AttentionBanner({ session }: { session: Session }) {
-  const shown = session.provider === 'claude' && session.status === 'waiting';
+  const shown = session.status === 'waiting' && observed(session) && reports(session, 'approvals');
   const pending = session.pending; const target = pending?.command ?? pending?.path;
   return <div className="attention-live" role="status">{shown && <div className="attention-banner">
     <span className="attention-icon" aria-hidden="true">!</span>
-    <p><b>{shell.approvalTitle}</b>{target && <> · {pending?.tool ? `${pending.tool}: ` : ''}<code title={pending?.inferred ? 'Inferred from the last command Claude started' : undefined}>{target}</code></>}
+    <p><b>{shell.approvalTitle(AGENT_SHORT[session.provider] ?? PROVIDER_NAMES[session.provider])}</b>{target && <> · {pending?.tool ? `${pending.tool}: ` : ''}<code title={pending?.inferred ? shell.inferredCommand : undefined}>{target}</code></>}
       {' '}{shell.answerInTerminal}<span className="banner-extra"> {shell.neverApproves}</span></p>
   </div>}</div>;
 }

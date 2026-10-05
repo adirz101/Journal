@@ -18,6 +18,10 @@ export const copy = {
     running: 'Running', starting: 'Starting', stopping: 'Stopping', exited: (code: number) => `Exited ${code}`, failed: 'Failed to start',
     stopped: 'Stopped', interrupted: 'Interrupted', orphaned: 'Still running outside Journal',
     noOutput: 'no output yet', outputNow: 'output just now', quiet: (span: string) => `quiet ${span}`, limited: 'limited status',
+    // Without a live observer (sessionState.ts): what was last seen, as past evidence.
+    unknownSince: (span: string) => `state unknown for ${span}`, noHookActivity: (span: string) => `no hook activity for ${span}`, lastSeen: (fact: string, span: string) => `last seen: ${fact}, ${span} ago`,
+    facts: { 'session-start': 'session started', 'turn-start': 'prompt sent', 'turn-progress': 'agent replied', 'tool-start': 'tool started', 'tool-end': 'tool finished',
+      'permission-wait': 'approval asked', 'turn-completed': 'turn finished', 'turn-interrupted': 'turn interrupted', 'turn-error': 'turn failed', 'session-end': 'session ended' } as Record<string, string>,
   },
   // Phase 5: a note card's trust lines (src/ui/noteCardModel.ts composes them). Never "used": Journal sees delivery only.
   trust: {
@@ -62,6 +66,8 @@ export const composer = {
     'read-only': 'The agent can read but is asked not to change files (Claude plan mode, Codex read-only sandbox, Cursor Ask). You can switch inside the session.' },
   separateCopyHelp: 'Isolated from your other sessions. Journal never stashes, copies or force-removes your work.',
   start: (name: string) => `Start ${name}`, nativeStays: 'Your native login, settings and approvals stay with the CLI.',
+  codexObserved: 'Journal follows Codex through hooks that only report. The first time, Codex asks you to review them; choose to trust them there, or Journal shows output only.',
+  cursorObserved: 'Journal follows Cursor’s activity. To see when a turn ends, set up Cursor turn status in Settings.',
   installed: (version: string | null) => version ? `Installed · ${version}` : 'Installed', signedIn: 'Signed in', signInNeeded: 'Sign in needed',
   notInstalled: 'Not installed', signInUnknown: 'Sign-in unknown', checking: 'Checking…', unsupported: 'Unsupported version',
   notCursor: 'Not the Cursor CLI', cantLaunch: 'Can’t launch',
@@ -105,7 +111,7 @@ export const shell = {
   moreProjects: (n: number) => `${count(n, 'more project')} not listed · use Open project… to reach one`,
   // B: header, banner, status bar, inspector
   buildMode: 'Build mode', planMode: 'Plan mode', started: (ago: string) => `Started ${ago} ago`, limitedStatus: 'Limited status',
-  interrupt: 'Interrupt', approvalTitle: 'Claude is waiting for your approval', answerInTerminal: 'Answer in the terminal.',
+  interrupt: 'Interrupt', approvalTitle: (agent: string) => `${agent} is waiting for your approval`, inferredCommand: 'Inferred from the last command the agent started', answerInTerminal: 'Answer in the terminal.',
   neverApproves: 'Journal never approves for you.',
   agentGot: (n: number, size: string) => `Agent got ${count(n, 'note')} · ${size}`, agentGotNone: 'Agent got no notes',
   deliveryUncertain: (n: number, size: string) => `Delivery uncertain · ${count(n, 'note')} · ${size}`, notSent: 'Nothing was sent',
@@ -140,7 +146,7 @@ export const wrapUp = {
   identity: {
     observed: 'Same conversation · ID confirmed by Claude', preassigned: 'ID set by Journal at start; Claude didn’t report it back',
     createChat: 'Chat created by Journal before the start', exitBanner: 'From Codex’s exit message · confirm before continuing',
-    user: 'Confirmed by you', mismatch: 'Claude reported a different conversation. Confirm the ID before continuing.', none: 'No conversation ID yet',
+    user: 'Confirmed by you', hook: 'Same conversation · ID reported by the agent', mismatch: 'Claude reported a different conversation. Confirm the ID before continuing.', none: 'No conversation ID yet',
   },
   worthKeeping: 'Worth keeping from this session?', nothingKept: 'Nothing is kept unless you choose. Remembered notes reach future sessions where they apply.',
   looking: 'Looking for suggestions…', noSuggestions: 'No suggestions from this session.',
@@ -386,3 +392,24 @@ export function warningText(text: string) {
   for (const [pattern, render] of WARNINGS) { const match = pattern.exec(text); if (match) return render(...match.slice(1)); }
   return text;
 }
+
+// Cursor level 2 (Settings): Journal's entries in the user's ~/.cursor/hooks.json, after review.
+export const cursorHooks = {
+  title: 'Cursor turn status',
+  intro: 'Cursor tells Journal when a turn ends only when your own Cursor hooks file lists those events. Journal can add two entries for that; your other entries stay. The entries run on every Cursor turn, also in the Cursor app, and report nothing outside Journal. Remove them here before you uninstall Journal. Journal saves the file with its own formatting.',
+  installed: 'Journal’s entries are in your Cursor hooks file.',
+  notInstalled: 'Not set up. Cursor sessions show their activity, not when a turn ends.',
+  unavailable: 'Not available: Journal’s hook launcher path cannot be used in a Cursor hook on this computer.',
+  refusedState: {
+    invalid: 'Your Cursor hooks file is not valid JSON, so Journal leaves it alone.',
+    'no-version': 'Your Cursor hooks file has no version, so Cursor ignores it. Journal leaves it alone so your hooks stay off.',
+    symlink: 'Your Cursor hooks file is a link to another file, so Journal leaves it alone.',
+    unreadable: 'Journal could not read your Cursor hooks file.',
+    'no-launcher': 'Journal’s hook launcher path cannot be used in a Cursor hook on this computer.',
+    changed: 'The file changed since the change was shown. Show it again.',
+  } as Record<string, string>,
+  show: 'Show the change…', showRemoval: 'Remove Journal’s entries…',
+  file: 'File', before: 'Now', after: 'After the change', created: '(the file is created)',
+  apply: 'Make this change', applyRemoval: 'Remove these entries', cancel: 'Cancel',
+  nothingToChange: 'Nothing to change.', done: 'Done. New Cursor sessions report when a turn ends.', removed: 'Removed. Your other entries are unchanged.',
+};

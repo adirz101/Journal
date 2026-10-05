@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { resolve, dirname, isAbsolute, join, sep } from 'node:path';
@@ -20,6 +21,9 @@ import { launchTarget, resolveExecutable, testProviderAllowed } from '../core/pr
 import { RootWatcher } from './watch.mjs';
 import { Updater, updateMode } from './updater.mjs';
 import { checkOutcome, menuTemplate } from './menu.mjs';
+import { fixedLauncher, launcherCommand } from '../runtime/observers.mjs';
+import { cursorHookCommand } from '../runtime/adapters/cursor.mjs';
+import { applyCursorPlan, cursorJournalInstalled, planCursorInstall, planCursorRemove, readCursorHooks } from '../core/cursor-hooks.mjs';
 import { APP_USER_MODEL_ID, createNotifier, readPreferences, systemSurface, writePreferences } from './notify.mjs';
 import { dialogKeyHold, matchShortcut, OPENS_DIALOG, shortcutKeys, shouldDispatch } from './shortcuts.mjs';
 import { settledError } from './ipc-error.mjs';
@@ -57,6 +61,10 @@ let appearance = lastAppearance();
 const tellRuntimeAppearance = () => { void runtime?.call('setAppearance', { appearance }).catch(() => {}); };
 // Notification preferences (two booleans; see notify.mjs). Local to this device, read without a store round trip.
 const preferencesFile = join(userData, 'preferences.json');
+// The hook launcher the runtime installs (runtime/observers.mjs) and Cursor's command for it.
+const cursorLauncher = fixedLauncher(userData, process.platform);
+const cursorCommand = () => cursorHookCommand(launcherCommand(cursorLauncher, process.platform, 'cursor'), cursorLauncher, process.platform);
+const cursorPlans = new Map(); // the one plan last shown to the user, by ID
 let preferences = readPreferences(preferencesFile);
 if (!app.requestSingleInstanceLock()) app.quit();
 // modalOpen: the renderer reports whether a modal dialog is open (setModalOpen).
@@ -330,6 +338,28 @@ const actions = {
     if (typeof open !== 'boolean') throw new Error('Invalid dialog state');
     modalOpen = open; dialogKeys.release();
   },
+  // Cursor level 2 (plan 4.6): Journal's entries in the user's ~/.cursor/hooks.json, only after the
+  // user has seen the exact change. The window asks for a plan, shows its before and after text,
+  // and applies it by ID: it never sends file content, and a plan whose file changed is refused.
+  cursorHooksStatus: () => {
+    // The user's home as Cursor resolves it (os.homedir() honours HOME). Never Electron's home path,
+    // which ignores HOME, so a test run with a fixture home would reach the real one.
+    const home = homedir(); const file = readCursorHooks(home);
+    const state = file.state === 'ok' || file.state === 'missing' ? (cursorJournalInstalled(home, cursorCommand()) ? 'installed' : 'not-installed') : file.state;
+    return { state, path: file.path, available: !!cursorCommand() };
+  },
+  cursorHooksPlan: ({ action } = {}) => {
+    if (action !== 'install' && action !== 'remove') throw new Error('Unknown change');
+    const home = homedir(); const command = cursorCommand();
+    const plan = action === 'install' ? (command ? planCursorInstall(home, command) : { action, path: readCursorHooks(home).path, refused: 'no-launcher' }) : planCursorRemove(home, cursorCommand() ?? '');
+    const id = randomUUID(); cursorPlans.clear(); cursorPlans.set(id, plan);
+    return { id, action, path: plan.path, before: plan.before ?? null, after: plan.after ?? null, refused: plan.refused ?? null, changed: !!plan.changed };
+  },
+  cursorHooksApply: ({ id } = {}) => {
+    const plan = typeof id === 'string' ? cursorPlans.get(id) : null; cursorPlans.delete(id);
+    if (!plan) throw new Error('This change was not shown or is out of date. Show it again.');
+    return applyCursorPlan(homedir(), plan);
+  },
   // Notification preferences (Settings). writePreferences accepts only known keys with boolean values.
   preferences: () => preferences,
   setPreference: ({ key, value }) => { if (typeof key !== 'string') throw new Error('Invalid preference'); preferences = writePreferences(preferencesFile, { [key]: value }); return preferences; },
@@ -600,8 +630,10 @@ const actions = {
     // never let it silently run in the wrong workspace or mode.
     if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.plan || input.provider === 'cursor' || input.disabled?.length || input.references?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, read-only or plan mode, Cursor, leave-out or file references.');
     // The CLI version comes from main's own provider detection, and the appearance from main, never from the renderer.
-    const { cliVersion: _ignored, appearance: _alsoIgnored, ...request } = input;
-    return runtime.call('start', { ...request, appearance, cliVersion: agents.find(agent => agent.provider === input.provider)?.version ?? null });
+    const { cliVersion: _ignored, appearance: _alsoIgnored, hooksEnabled: _detected, ...request } = input;
+    const row = agents.find(agent => agent.provider === input.provider);
+    // What detection read, never what the window says: the version and whether the CLI's hooks are on.
+    return runtime.call('start', { ...request, appearance, cliVersion: row?.version ?? null, hooksEnabled: typeof row?.supports?.hooks === 'boolean' ? row.supports.hooks : null });
   },
   // ----- Provider CLIs: install and sign in run visibly, only after the user asks. The renderer
   // names a provider; the executable comes from detection and the argv from PROVIDER_COMMANDS. -----

@@ -76,9 +76,9 @@ export function identityLine(identity: SessionSummary['identity'], provider: Pro
   const confirmed = identity.confirmed;
   if (identity.source === 'exit-banner' && !confirmed) return { text: t.exitBanner, tone: 'amber', canContinue: false, needsConfirm: true };
   const text = identity.source === 'preassigned-observed' ? t.observed : identity.source === 'preassigned' ? t.preassigned
-    : identity.source === 'create-chat' ? t.createChat : identity.source === 'user' ? t.user : identity.source === 'exit-banner' ? t.exitBanner : t.none;
+    : identity.source === 'create-chat' ? t.createChat : identity.source === 'user' ? t.user : identity.source === 'hook' ? t.hook : identity.source === 'exit-banner' ? t.exitBanner : t.none;
   if (!confirmed) return { text, tone: 'amber', canContinue: false, needsConfirm: true };
-  return { text, tone: identity.source === 'preassigned-observed' || identity.source === 'user' ? 'ok' : 'quiet', canContinue: true, needsConfirm: false };
+  return { text, tone: identity.source === 'preassigned-observed' || identity.source === 'user' || identity.source === 'hook' ? 'ok' : 'quiet', canContinue: true, needsConfirm: false };
 }
 
 // "c7d2…81af"; the full ID goes in a title.
