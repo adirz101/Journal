@@ -6,7 +6,7 @@ Date: 1 October 2026. User authorized investigation followed directly by impleme
 
 Inspected dev3 checkout `ff63aa8a5ab7982f5b56672dd488ed49e06b607b` (2267 source files). Sources: `src/shared/agent-adapters/{claude,codex}.ts`, `src/bun/pane-session-capture.ts`, `src/bun/task-terminal-backend.ts`, `src/bun/terminal-backend/native-backend.ts`, `src/bun/native-terminal-registry/shell-launch.ts`, `src/bun/codex-config.ts`, `package.json`, LICENSE and NOTICE. Snapshot is available at https://github.com/h0x91b/dev-3.0/tree/ff63aa8a5ab7982f5b56672dd488ed49e06b607b.
 
-Extending dev3 retains its working shell but couples Journal to Electrobun/Bun, task management, shared task DTOs, native host image staging, coordinator/registry and application configuration. Extracting its full native backend brings those dependencies too. The user subsequently rejected any dev3 vendoring or code reuse and explicitly allowed original implementation or reuse from another source. No dev3 code is retained. Write Journal's narrow launcher against official CLI contracts, and reuse independent PTY/emulator libraries. Do not copy Superset's ELv2 code.
+Extending dev3 retains its working shell but couples Journal to Electrobun/Bun, task management, shared task DTOs, native host image staging, coordinator/registry and application configuration. Extracting its full native backend brings those dependencies too. The user subsequently rejected any dev3 vendoring or code reuse and explicitly allowed original implementation or reuse from another source. No dev3 code is retained. Write Journal's narrow launcher against official CLI contracts, and reuse independent PTY/emulator libraries. Do not copy code from other agent workspaces.
 
 ## Decision
 

@@ -93,6 +93,7 @@ Verification uses local checks on the user's Mac and fixture-only GitHub Actions
 **Release and repository**
 - Unsigned electron-builder configuration with `Journal-<version>-<os>-<arch>` artifacts and generated `THIRD_PARTY_NOTICES.md`, bundled and verified in a packaged macOS build.
 - Staged release workflow with checksums and draft pre-releases; [RELEASING](RELEASING.md).
+- Licensing: source-available under the Elastic License 2.0 since 4 October 2026 (previously Apache-2.0); `package.json` uses the SPDX identifier `Elastic-2.0`.
 - CONTRIBUTING, SECURITY, templates, [ARCHITECTURE](ARCHITECTURE.md), [PROVIDERS](PROVIDERS.md) and the [Windows audit](WINDOWS.md).
 - Benchmark harness with frozen suites, conditions A–D, Wilson intervals and GO/MODIFY criteria ([BENCHMARK](BENCHMARK.md)).
 

@@ -15,7 +15,7 @@ function installEntryPoint(bundle) {
   const manifest = resolve(directory, 'package.json');
   const entry = resolve(directory, 'entry.mjs');
   const entryContent = `import ${JSON.stringify(pathToFileURL(resolve(root, 'src/desktop/main.mjs')).href)};\n`;
-  const content = JSON.stringify({ name: 'journal-desktop', productName: 'Journal', version: '0.1.0', license: 'Apache-2.0', type: 'module', main: 'entry.mjs' }, null, 2) + '\n';
+  const content = JSON.stringify({ name: 'journal-desktop', productName: 'Journal', version: '0.1.0', license: 'Elastic-2.0', type: 'module', main: 'entry.mjs' }, null, 2) + '\n';
   if (existsSync(manifest) && readFileSync(manifest, 'utf8') === content && existsSync(entry) && readFileSync(entry, 'utf8') === entryContent) return;
   mkdirSync(directory, { recursive: true }); writeFileSync(entry, entryContent); writeFileSync(manifest, content);
 }

@@ -12,7 +12,7 @@
 
 ## Global constraints
 
-Keep native settings/permissions, exact-ID resume, immutable receipts, source admission and output limits. No dev3 code, paid inference or trust/login acceptance. Do not recreate HANDOFF.md. Disable hosted workflow before pushing; remove its file and document local-only verification. Update existing PR #1 without merging.
+Keep native settings/permissions, exact-ID resume, immutable receipts, source admission and output limits. No third-party application code, paid inference or trust/login acceptance. Do not recreate HANDOFF.md. Disable hosted workflow before pushing; remove its file and document local-only verification. Update existing PR #1 without merging.
 
 ## Review focus
 

@@ -39,7 +39,7 @@ Switching agents should not mean rediscovering architecture decisions, constrain
 - **Exact native resume:** explicitly resume a confirmed native session instead of selecting the latest conversation. Codex requires confirmation of its native UUID.
 - **Persistent local storage:** knowledge, source excerpts, tasks, session metadata, and receipts stay in Journal's local data directory. Native CLIs send supplied context to their providers according to their own settings.
 - **Desktop controls:** blue-accented light/dark themes, keyboard shortcuts, and resizable sidebars retain the live terminal when appearance or layout changes.
-- **Apache-2.0 licensing:** Journal's code is licensed under the [Apache License 2.0](LICENSE).
+- **Source-available:** free to use locally, and free to inspect, modify, and self-host under the [Elastic License 2.0](LICENSE).
 
 ## Download and install
 
@@ -178,10 +178,10 @@ Journal uses Electron and React for the app, a separate local runtime process wi
 
 ## Contributing
 
-Contributions, issues, and feedback are welcome. Contribution guidelines will be added as the project stabilizes.
+Contributions, issues, and feedback are welcome; see [contributing](CONTRIBUTING.md). Contributions are accepted under the same Elastic License 2.0 terms as the rest of Journal.
 
 ## License
 
-Journal is licensed under the [Apache License 2.0](LICENSE).
+Journal is source-available under the [Elastic License 2.0 (ELv2)](LICENSE). You can use it for free, inspect and modify the code, and self-host it. ELv2 does not allow offering Journal itself to third parties as a hosted or managed service, and modified copies must keep the license and copyright notices. Journal is not open source in the OSI sense. Third-party components keep their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).
 
 Copyright 2026 Adir Zak
