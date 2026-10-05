@@ -113,7 +113,10 @@ test('a chat is created in the session folder; exit hints are captured but never
   writeFileSync(join(root, 'bin', 'hang-chat'), ''); const started = Date.now();
   assert.equal(await createChat(path, cwd, EMPTY), CHAT); assert.ok(Date.now() - started < 5000, 'Does not wait for exit');
   const pid = Number(readFileSync(join(root, 'bin', 'chat-pid'), 'utf8'));
-  await new Promise(r => setTimeout(r, 300)); assert.throws(() => process.kill(pid, 0), /ESRCH/, 'The lingering process is ended');
+  // Ending it is asynchronous (on Windows a taskkill of its tree): wait for it, up to 5 s, rather than a fixed 300 ms.
+  const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  for (const until = Date.now() + 5000; alive() && Date.now() < until;) await new Promise(r => setTimeout(r, 50));
+  assert.throws(() => process.kill(pid, 0), /ESRCH/, 'The lingering process is ended');
   rmSync(join(root, 'bin', 'hang-chat'));
   writeFileSync(join(root, 'bin', 'fail-chat'), ''); assert.equal(await createChat(path, cwd, EMPTY), null);
   assert.equal(captureCursorId(`bye\n\x1b[2mTo resume this session: cursor-agent --resume=${CHAT}\x1b[0m`), CHAT);
