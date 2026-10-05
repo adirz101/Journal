@@ -64,7 +64,7 @@ test('level 2: the exact change adds Journal\'s two entries and keeps every othe
   assert.equal(cursorJournalInstalled(dir, COMMAND), false);
   assert.deepEqual(applyCursorPlan(dir, plan), { applied: true });
   assert.equal(readFileSync(join(dir, '.cursor', 'hooks.json'), 'utf8'), plan.after);
-  assert.equal(statSync(join(dir, '.cursor', 'hooks.json')).mode & 0o777, 0o640, 'The file keeps its mode');
+  if (process.platform !== 'win32') assert.equal(statSync(join(dir, '.cursor', 'hooks.json')).mode & 0o777, 0o640, 'The file keeps its mode');
   assert.equal(cursorJournalInstalled(dir, COMMAND), true);
   // Installing again changes nothing (no duplicate entries).
   assert.equal(planCursorInstall(dir, COMMAND).changed, false);

@@ -118,7 +118,8 @@ function launcherFixture(t, { script = null, timeoutSeconds = 1 } = {}) {
   const run = (provider, { env = {}, input = '{}' } = {}) => {
     const started = Date.now();
     const result = posix ? spawnSync('/bin/sh', ['-c', `'${launcher}' ${provider}`], { input, env: { ...baseEnv(), ...env }, encoding: 'utf8', timeout: 10_000 })
-      : spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/c', `"${launcher}" ${provider}`], { input, env: { ...baseEnv(), ...env }, encoding: 'utf8', timeout: 10_000 });
+      // Verbatim, as a provider passes a command line to cmd: Node would otherwise quote the quoted path again.
+      : spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `""${launcher}" ${provider}"`], { input, env: { ...baseEnv(), ...env }, encoding: 'utf8', timeout: 10_000, windowsVerbatimArguments: true });
     return { ...result, ms: Date.now() - started };
   };
   return { dir, data, launcher, run, target: join(dir, 'events.jsonl') };
@@ -261,7 +262,8 @@ test('the hooks folder is private; a launcher that cannot be replaced is written
 });
 
 test('Windows: a data folder whose path cmd.exe would read is not used for hooks', t => {
-  for (const name of ['a&b', 'x(1)', 'p%q', 'a^b', 'a|b', 'a@b', 'a!b']) {
+  // '|' cannot be part of a folder name on Windows itself; it is still refused where it can.
+  for (const name of ['a&b', 'x(1)', 'p%q', 'a^b', ...(process.platform === 'win32' ? [] : ['a|b']), 'a@b', 'a!b']) {
     const dir = join(temp(t, 'win-'), name); mkdirSync(dir);
     assert.throws(() => installLauncher({ dataDir: dir, execPath: 'C:\\J\\Journal.exe', hookScript: 'C:\\J\\hook.mjs', platform: 'win32' }), /cannot be used/, name);
     const observers = new Observers({ dataDir: dir, hookScript: 'h', execPath: 'e', platform: 'win32', ingest: () => {} });

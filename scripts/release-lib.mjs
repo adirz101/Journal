@@ -59,6 +59,8 @@ export async function checksumLines(paths) {
 export const ALLOWED = [
   /^dist\/(?:index\.html|assets\/[^/]+)$/,
   /^src\/(?:core|desktop|runtime)\/[^/]+\.(?:mjs|cjs)$/,
+  // Provider hook adapters (the runtime and the hook script import them).
+  /^src\/runtime\/adapters\/[^/]+\.mjs$/,
   /^assets\/branding\/journal-app-icon\.png$/,
   /^(?:package\.json|LICENSE|NOTICE|THIRD_PARTY_NOTICES\.md)$/,
   /^node_modules\/node-pty\/(?:package\.json|LICENSE|lib\/.+\.js|build\/Release\/(?:pty\.node|spawn-helper|conpty\.node|conpty_console_list\.node|winpty-agent\.exe|winpty\.dll|[^/]+\.(?:node|dll|exe)|conpty\/(?:conpty\.dll|OpenConsole\.exe)))$/,
