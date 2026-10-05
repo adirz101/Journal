@@ -18,14 +18,15 @@ Other versions may work. The Welcome screen's agent rows and the New session age
 | Exact resume | `--resume <UUID>`; ID known at launch | `codex resume <UUID>`; the ID is reported by Codex's hooks (confirmed), or the exit-banner hint needs confirmation | `--resume=<UUID>`; ID known at launch. If the chat cannot be created first, the exit hint `To resume this session: agent --resume=<UUID>` needs confirmation. Never `resume`, `--continue` or `ls` |
 | Research mode (starting mode, not enforcement) | `--permission-mode plan`; can be left in-session | `--sandbox read-only`; approvals may escalate under approval-capable profiles | `--mode=ask` (Ask: read-only exploration); Plan uses `--mode=plan`. Builds without `--mode` cannot start in these modes |
 | Status | *Working*, *Needs approval* (naming what it asks) and *Your turn*, from hooks | The same from Codex's hooks once the user has trusted them in Codex; until then *Running · output…*, marked *Limited status* | Activity from Journal's plugin; *Your turn* and interruptions only with Cursor turn status (Settings); approval waits never (no event). Otherwise *Running · output…*, *Limited status* |
-| Commands | Bash command text (redacted), working directory, exit code, duration for foreground commands; background commands report unknown | Unknown | Unknown |
-| File edits | Edit, Write, MultiEdit, NotebookEdit paths | Unknown (the Changes view shows Git state) | Unknown (the Changes view shows Git state) |
-| Tests | Exit status of recognized test commands; no report parsing | Unknown | Unknown |
+| Commands | Bash command text (redacted), working directory, exit code, duration for foreground commands, Claude's one-line description; background commands report unknown | Shell commands when they end (PostToolUse), with `exit_code` | Commands from `afterShellExecution`, exit status unknown |
+| File edits | Edit, Write, MultiEdit, NotebookEdit paths | `apply_patch` header paths (add, update, delete), never the patch | `afterFileEdit` paths |
+| Tests | Exit status of recognized test commands; no report parsing | Same, from the exit code | Recognized, result unknown |
+| Plan | TodoWrite items (titles and statuses); TaskCreate/TaskUpdate unverified natively | None | None |
 | Interrupt | Ctrl+C to the PTY (native interrupt) | Ctrl+C to the PTY (native interrupt) | Ctrl+C to the PTY (native interrupt) |
 | Permissions | Native prompts in the terminal; Journal never answers them | Native prompts and sandbox profile | Native prompts and Cursor's own permission config; Journal never passes `--force`, `--yolo`, `--sandbox` or `--approve-mcps` |
 | Context delivery | Initial prompt argument; receipt records exact text; not acknowledged by the model | Same | Same |
 
-Claude's hooks are added per launch through `--settings`; Codex's through `-c hooks.*` and Cursor's through a per-launch plugin (see *Lifecycle hooks* below). Existing user and project hooks are untouched.
+Claude's hooks are added per launch through `--settings`; Codex's through `-c hooks.*` and Cursor's through a per-launch plugin (see *Lifecycle hooks* below). Existing user and project hooks are untouched. The Session tab turns these events into a deterministic Story; its rules are in [STORY.md](STORY.md).
 
 ### File references in the terminal
 

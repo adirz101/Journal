@@ -453,3 +453,70 @@ test('a reference is typed into Codex only when its hooks report turns and appro
   assert.match(f.manager.paste(cursor.session.id, 'src/a.ts').reason, /cannot see when Cursor/);
   assert.ok(!cursor.proc.inputs.some(input => input.includes('src/a.ts')));
 });
+
+// ----- The Story's evidence (src/core/story): what each adapter extracts and the runtime records -----
+test('Story evidence: Claude descriptions, reads, sub-agents and plans; never content', () => {
+  const claude = ADAPTERS.claude; const cwd = '/w';
+  const bash = claude.extract({ hook_event_name: 'PreToolUse', session_id: 'n', cwd, tool_name: 'Bash', tool_use_id: 't1', tool_input: { command: 'npm test', description: '  Run   the test suite ' } });
+  assert.equal(bash.description, 'Run the test suite');
+  const read = claude.extract({ hook_event_name: 'PostToolUse', session_id: 'n', cwd, tool_name: 'Read', tool_use_id: 't2', tool_input: { file_path: '/w/src/a.ts' }, tool_response: { file: { content: 'SECRET CONTENT' } } });
+  assert.equal(read.readPath, 'src/a.ts'); assert.ok(!JSON.stringify(read).includes('SECRET'), 'Tool output never leaves the hook');
+  const agent = claude.extract({ hook_event_name: 'PostToolUse', session_id: 'n', cwd, tool_name: 'Agent', tool_use_id: 't3', tool_input: { description: 'Review the diff', prompt: 'LONG PROMPT' } });
+  assert.equal(agent.description, 'Review the diff'); assert.ok(!JSON.stringify(agent).includes('LONG PROMPT'));
+  const todos = claude.extract({ hook_event_name: 'PostToolUse', session_id: 'n', cwd, tool_name: 'TodoWrite', tool_use_id: 't4',
+    tool_input: { todos: [{ content: 'Investigate issue', status: 'completed', activeForm: 'Investigating' }, { content: 'Implement fix', status: 'in_progress' }, { content: 'bad', status: 'weird' }] } });
+  assert.deepEqual(todos.plan, { kind: 'todos', items: [{ id: '1', title: 'Investigate issue', status: 'completed' }, { id: '2', title: 'Implement fix', status: 'in_progress' }] });
+  const created = claude.extract({ hook_event_name: 'PostToolUse', session_id: 'n', cwd, tool_name: 'TaskCreate', tool_use_id: 't5', tool_input: { subject: 'Run tests', description: 'long' }, tool_response: { task: { id: '3' } } });
+  assert.deepEqual(created.plan, { kind: 'create', title: 'Run tests', id: '3' });
+  const updated = claude.extract({ hook_event_name: 'PostToolUse', session_id: 'n', cwd, tool_name: 'TaskUpdate', tool_use_id: 't6', tool_input: { taskId: '3', status: 'in_progress' } });
+  assert.deepEqual(updated.plan, { kind: 'update', id: '3', status: 'in_progress', title: null });
+  // Secrets in a description are redacted like commands.
+  assert.match(claude.extract({ hook_event_name: 'PreToolUse', session_id: 'n', cwd, tool_name: 'Bash', tool_use_id: 't7', tool_input: { command: 'x', description: 'use token=ghp_abcdefghijklmnopqrstuvwxyz0123456789' } }).description, /\[redacted\]/);
+});
+
+test('Story evidence: Codex apply_patch keeps only its header paths', () => {
+  const patch = '*** Begin Patch\n*** Update File: src/a.ts\n@@\n-const SECRET = 1;\n+const SECRET = 2;\n*** Add File: src/new.ts\n+export {};\n*** Delete File: old.ts\n*** End Patch';
+  const line = ADAPTERS.codex.extract({ hook_event_name: 'PostToolUse', session_id: CODEX_ID, turn_id: 't1', cwd: '/w', tool_name: 'apply_patch', tool_use_id: 'p1', tool_input: { input: patch } });
+  assert.deepEqual(line.patchFiles, [{ path: 'src/a.ts', op: 'update' }, { path: 'src/new.ts', op: 'add' }, { path: 'old.ts', op: 'delete' }]);
+  assert.ok(!JSON.stringify(line).includes('SECRET'), 'The patch content never leaves the hook');
+});
+
+test('Story evidence: Codex commands with their exit, apply_patch files; plans from Claude snapshots', async t => {
+  const f = setup(t, { makeObserver: session => ({ settingsFile: null, observes: { turns: true, approvals: true }, env: { JOURNAL_HOOK_TARGET: 'x', JOURNAL_HOOK_TOKEN: 'y' }, ...(session ? {} : {}) }) });
+  const c = await f.start('codex');
+  c.send('UserPromptSubmit', { turn: 't1' });
+  c.send('PostToolUse', { turn: 't1', tool: 'shell', toolUseId: 's1', command: 'npm test', exit: 1 });
+  c.send('PostToolUse', { turn: 't1', tool: 'shell', toolUseId: 's2', command: 'npm test', exit: 0 });
+  c.send('PostToolUse', { turn: 't1', tool: 'apply_patch', toolUseId: 'p1', patchFiles: [{ path: 'src/a.ts', op: 'update' }, { path: 'src/new.ts', op: 'add' }] });
+  const starts = c.kinds('command-start'); const ends = c.kinds('command-end');
+  assert.deepEqual(starts.map(e => [e.body.command, e.body.test]), [['npm test', true], ['npm test', true]]);
+  assert.deepEqual(ends.map(e => [e.body.status, e.body.exitCode]), [['failed', 1], ['succeeded', 0]]);
+  assert.deepEqual(c.kinds('file').map(e => [e.body.path, e.body.op]), [['src/a.ts', 'update'], ['src/new.ts', 'add']]);
+  // Claude: TaskCreate and TaskUpdate become whole-plan snapshots; Read and Agent are tools by name.
+  const cl = await f.start('claude');
+  cl.send('SessionStart');
+  cl.send('PostToolUse', { tool: 'TaskCreate', toolUseId: 'a', plan: { kind: 'create', title: 'Investigate', id: '1' } });
+  cl.send('PostToolUse', { tool: 'TaskCreate', toolUseId: 'b', plan: { kind: 'create', title: 'Fix', id: null } });
+  cl.send('PostToolUse', { tool: 'TaskUpdate', toolUseId: 'c', plan: { kind: 'update', id: '1', status: 'in_progress', title: null } });
+  cl.send('PostToolUse', { tool: 'TaskUpdate', toolUseId: 'd', plan: { kind: 'update', id: 'missing', status: 'completed', title: null } });
+  cl.send('PostToolUse', { tool: 'Read', toolUseId: 'e', readPath: 'src/a.ts' });
+  cl.send('PostToolUse', { tool: 'Agent', toolUseId: 'g', description: 'Review the diff' });
+  cl.send('PostToolUse', { tool: 'AskUserQuestion', toolUseId: 'h' });
+  assert.deepEqual(cl.kinds('plan').map(e => e.body.items.map(i => `${i.title}:${i.status}`)), [['Investigate:pending'], ['Investigate:pending', 'Fix:pending'], ['Investigate:in_progress', 'Fix:pending']]);
+  assert.deepEqual(cl.kinds('tool').map(e => e.body), [{ tool: 'Read', path: 'src/a.ts' }, { tool: 'Agent', description: 'Review the diff' }, { tool: 'AskUserQuestion' }]);
+  assert.equal(cl.kinds('command-start').length, 0, 'A Claude Bash end without its start records nothing new');
+});
+
+test('Story evidence: Cursor commands once (afterShellExecution, exit unknown), edits from afterFileEdit', async t => {
+  const f = setup(t); const c = await f.start('cursor');
+  c.send('sessionStart', {});
+  c.send('postToolUse', { tool: 'Shell', toolUseId: 'u1', command: 'npm test', turn: 'g1' });
+  c.send('afterShellExecution', { command: 'npm test', turn: 'g1', durationMs: 900 });
+  c.send('afterFileEdit', { filePath: 'src/a.ts', turn: 'g1' });
+  c.send('postToolUse', { tool: 'Edit', toolUseId: 'u2', turn: 'g1' });
+  c.send('postToolUse', { tool: 'Read', toolUseId: 'u3', turn: 'g1' });
+  assert.deepEqual(c.kinds('command-start').map(e => e.body.command), ['npm test'], 'One record per command');
+  assert.deepEqual(c.kinds('command-end').map(e => [e.body.status, e.body.exitCode, e.body.durationMs]), [['unknown', null, 900]]);
+  assert.deepEqual(c.kinds('file').map(e => e.body.path), ['src/a.ts']);
+  assert.deepEqual(c.kinds('tool').map(e => e.body.tool), ['Read']);
+});

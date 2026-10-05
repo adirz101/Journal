@@ -73,4 +73,5 @@ export function diffSummary(changes: Changes | null): { additions: number; delet
 }
 
 // Only Claude reports its commands, edits and prompts (hooks).
-export const activityVisible = (session: Session) => session.provider === 'claude';
+// Claude always reports its activity; Codex and Cursor only when this launch's hooks are registered.
+export const activityVisible = (session: Session) => session.provider === 'claude' || !!session.observes;

@@ -21,6 +21,33 @@ export function commandText(value) {
   return redact(text, 600);
 }
 
+// The Story's structured fields (src/core/story): short, redacted and bounded, never content.
+// A tool's one-line description as the provider sent it (Claude's Bash and Agent "description").
+export const describe = value => typeof value === 'string' && value.trim() ? redact(value.trim().replace(/\s+/g, ' '), 120) || null : null;
+const PLAN_STATUSES = new Set(['pending', 'in_progress', 'completed']);
+// A plan's items (Claude's TodoWrite todos): titles and statuses only, at most 50.
+export function planItems(list) {
+  if (!Array.isArray(list)) return null;
+  const items = list.slice(0, 50).map((item, index) => {
+    const value = object(item); const title = describe(value.content ?? value.subject ?? value.title);
+    return title && PLAN_STATUSES.has(value.status) ? { id: str(value.id, 40) ?? String(index + 1), title, status: value.status } : null;
+  }).filter(Boolean);
+  return items;
+}
+// The files an apply_patch names in its headers (*** Add/Update/Delete File: path). Only the
+// header lines are read; the patch content never leaves the hook.
+const PATCH_HEADER = /^\*\*\* (Add|Update|Delete) File: (.+)$/gm;
+export function patchFiles(input, cwd) {
+  const texts = Object.values(object(input)).filter(value => typeof value === 'string');
+  if (typeof input === 'string') texts.push(input);
+  const files = [];
+  for (const text of texts) for (const match of text.matchAll(PATCH_HEADER)) {
+    if (files.length >= 50) break;
+    const path = relativeTo(cwd, match[2].trim()); if (path) files.push({ path, op: match[1].toLowerCase() });
+  }
+  return files.length ? files : null;
+}
+
 // A file path relative to the hook's working directory ('..' parts allowed: the runtime
 // decides whether it is inside the session's folder). '' when missing, as before.
 export function relativeTo(cwd, file) {
@@ -33,7 +60,7 @@ export function relativeTo(cwd, file) {
 // provider sends beyond these (prompts, assistant text, tool output, transcript
 // paths, model parameters, account details) never reaches the events file.
 export const LINE_FIELDS = Object.freeze(['nativeId', 'event', 'cwd', 'tool', 'toolUseId', 'command', 'background', 'filePath', 'exit', 'interrupted', 'durationMs',
-  'turn', 'status', 'source', 'agentId', 'parentNativeId', 'childId']);
+  'turn', 'status', 'source', 'agentId', 'parentNativeId', 'childId', 'description', 'plan', 'patchFiles', 'readPath']);
 export function only(fields) {
   const line = {};
   for (const name of LINE_FIELDS) if (fields[name] !== undefined) line[name] = fields[name];
@@ -43,7 +70,9 @@ export function only(fields) {
 // The parts of an observation line every normalized event keeps (normalize()).
 export const carried = raw => ({ event: raw.event, nativeId: str(raw.nativeId) ?? null, cwd: typeof raw.cwd === 'string' ? raw.cwd : null,
   tool: str(raw.tool, 80), toolUseId: str(raw.toolUseId), command: typeof raw.command === 'string' ? raw.command : undefined,
-  filePath: typeof raw.filePath === 'string' ? raw.filePath : undefined, background: raw.background, exit: raw.exit, interrupted: raw.interrupted, durationMs: raw.durationMs });
+  filePath: typeof raw.filePath === 'string' ? raw.filePath : undefined, background: raw.background, exit: raw.exit, interrupted: raw.interrupted, durationMs: raw.durationMs,
+  description: typeof raw.description === 'string' ? raw.description.slice(0, 120) : undefined, readPath: typeof raw.readPath === 'string' ? raw.readPath.slice(0, 1000) : undefined,
+  plan: raw.plan && typeof raw.plan === 'object' && !Array.isArray(raw.plan) ? raw.plan : undefined, patchFiles: Array.isArray(raw.patchFiles) ? raw.patchFiles.slice(0, 50) : undefined });
 
 // A Windows hook command is the launcher's path unquoted, read the same way by PowerShell and cmd.
 // Only letters, digits and _ . : \ - are allowed; anything else (spaces, & ; $ ` ( ) % ! and so on)

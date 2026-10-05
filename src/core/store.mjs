@@ -1269,7 +1269,7 @@ export class JournalStore {
     const text = JSON.stringify(body ?? {});
     if (text.length > 4000) throw new Error('Timeline event is too large');
     const stamp = typeof at === 'string' && Number.isFinite(Date.parse(at)) ? new Date(at).toISOString() : now();
-    this.db.prepare('INSERT INTO events(session_id,at,kind,body) VALUES(?,?,?,?)').run(sessionId, stamp, choice(kind, ['start', 'resume', 'context', 'prompt', 'permission', 'turn-end', 'command-start', 'command-end', 'file', 'interrupt', 'stop', 'exit', 'error', 'recovered', 'cleanup', 'disconnected', 'reference'], 'event kind'), text);
+    this.db.prepare('INSERT INTO events(session_id,at,kind,body) VALUES(?,?,?,?)').run(sessionId, stamp, choice(kind, ['start', 'resume', 'context', 'prompt', 'permission', 'turn-end', 'command-start', 'command-end', 'file', 'interrupt', 'stop', 'exit', 'error', 'recovered', 'cleanup', 'disconnected', 'reference', 'tool', 'plan'], 'event kind'), text);
     this.eventCounts ??= new Map(); const count = (this.eventCounts.get(sessionId) ?? 0) + 1; this.eventCounts.set(sessionId, count);
     if (count % 50 === 0) this.db.prepare(`DELETE FROM events WHERE session_id=? AND id <= (SELECT id FROM events WHERE session_id=? ORDER BY id DESC LIMIT 1 OFFSET ${EVENT_LIMIT})`).run(sessionId, sessionId);
   }

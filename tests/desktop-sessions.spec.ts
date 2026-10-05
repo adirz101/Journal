@@ -231,7 +231,7 @@ test('a runtime crash is reported, recovered as interrupted, and never resends t
     await expect(sessionStatus(page)).toContainText('Interrupted');
     expect(f.launches()).toHaveLength(1);
     await inspectorTab(page, 'Session');
-    await page.getByRole('button', { name: 'Show full timeline' }).click();
+    await page.getByRole('button', { name: 'Details', exact: true }).click();
     await expect(page.getByText(/Recovered after the runtime stopped/)).toBeVisible();
   } finally { await closeApp(app); f.cleanup(); }
 });

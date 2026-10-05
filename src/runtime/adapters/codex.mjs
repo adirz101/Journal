@@ -1,4 +1,4 @@
-import { carried, commandText, object, only, plainWindowsPath, str } from './common.mjs';
+import { carried, commandText, object, only, patchFiles, plainWindowsPath, str } from './common.mjs';
 
 // Codex: lifecycle hooks (docs/superpowers/plans/2026-10-05-codex-cursor-hooks.md, 3.1 and 4.6).
 // Every supported launch registers Journal's hooks with `-c hooks.<Event>=[…]`: the session-flags
@@ -44,8 +44,8 @@ const KINDS = { SessionStart: 'session-start', UserPromptSubmit: 'turn-start', P
   Stop: 'turn-end', Interrupt: 'turn-end', SessionEnd: 'session-end', SubagentStart: 'child-start', SubagentStop: 'child-end' };
 // Session events are not part of a turn, even when the payload names one.
 const TURNLESS = new Set(['session-start', 'session-end']);
-// Shell tools whose tool_input.command is a command line. Any other tool's input is never kept:
-// apply_patch's input is the patch itself (file content). Tool names are unverified natively.
+// Shell tools whose tool_input.command is a command line. Any other tool's input is never kept
+// (apply_patch's input is the patch itself: only its header paths are). Tool names are unverified natively.
 const SHELL_TOOLS = /^(?:bash|shell|local_shell|exec_command|unified_exec|container\.exec)$/i;
 
 export default Object.freeze({
@@ -86,6 +86,8 @@ export default Object.freeze({
       tool: str(event.tool_name, 80), toolUseId: str(event.tool_use_id) };
     if (input.command !== undefined && SHELL_TOOLS.test(line.tool ?? '')) line.command = commandText(input.command);
     if (Number.isInteger(response.exit_code)) line.exit = response.exit_code;
+    // apply_patch: only the file paths in its headers (the Story's file changes), never the patch.
+    if (/^apply_patch$/i.test(line.tool ?? '')) line.patchFiles = patchFiles(event.tool_input, line.cwd) ?? undefined;
     return only(line);
   },
   // Sub-agent events carry the parent's session_id plus agent_id: they are children.

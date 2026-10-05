@@ -647,10 +647,7 @@ export class TerminalManager extends EventEmitter {
         if (event.tool === 'Bash' && event.toolUseId && entry.commands.size < 500) {
           const command = redact(event.command ?? '', 300);
           entry.commands.set(event.toolUseId, true);
-          // Working directory relative to the session's workspace ('.' at its root).
-          let cwd = null;
-          if (typeof event.cwd === 'string') { const rel = relative(session.cwd, canonical(event.cwd)); cwd = !rel ? '.' : rel.startsWith('..') || isAbsolute(rel) ? null : rel.split(sep).join('/').slice(0, 200); }
-          this.record(id, 'command-start', { toolUseId: event.toolUseId, command, cwd, background: !!event.background, test: isTestCommand(command) });
+          this.record(id, 'command-start', { toolUseId: event.toolUseId, command, cwd: this.commandCwd(session, event.cwd), background: !!event.background, test: isTestCommand(command), ...(event.description ? { description: event.description } : {}) });
         }
         break;
       case 'tool-end': {
@@ -666,7 +663,7 @@ export class TerminalManager extends EventEmitter {
         } else if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(event.tool) && event.filePath && !event.failed) {
           const path = this.relativePath(session, event.filePath, event.cwd);
           if (path) this.record(id, 'file', { path, tool: event.tool });
-        }
+        } else this.recordStoryTool(id, entry, event);
         break;
       }
       // The agent reported its own end; the process exit follows and decides the status.
@@ -713,6 +710,55 @@ export class TerminalManager extends EventEmitter {
     if (event.toolUseId) { entry.signatures.add(signature); bounded(entry.signatures, MAX_SIGNATURES); }
     if (event.kind === 'turn-end') settle(key, event.outcome);
     return verdict;
+  }
+  // Working directory relative to the session's workspace ('.' at its root), or null outside it.
+  commandCwd(session, cwd) {
+    if (typeof cwd !== 'string') return null;
+    const rel = relative(session.cwd, canonical(cwd));
+    return !rel ? '.' : rel.startsWith('..') || isAbsolute(rel) ? null : rel.split(sep).join('/').slice(0, 200);
+  }
+  // The Story's evidence from a finished tool that is not Claude's Bash or file tools
+  // (src/core/story): Codex and Cursor commands (they report a command only when it ends),
+  // Codex apply_patch and Cursor file edits, plan updates, and other tools by name. Bounded per session.
+  recordStoryTool(id, entry, event) {
+    const { session } = entry; entry.storyEvents = (entry.storyEvents ?? 0) + 1;
+    if (entry.storyEvents > 5000) return;
+    const adapter = this.adapter(session.provider);
+    // A command reported once, at its end: Codex PostToolUse (with its exit code), Cursor afterShellExecution.
+    const shell = session.provider === 'cursor' ? event.event === 'afterShellExecution' : adapter?.toolStarts === false && typeof event.command === 'string';
+    if (shell && typeof event.command === 'string' && event.command) {
+      const command = redact(event.command, 300); const toolUseId = event.toolUseId ?? `${session.provider}-${entry.storyEvents}`;
+      const status = event.interrupted ? 'interrupted' : Number.isInteger(event.exit) ? event.exit === 0 ? 'succeeded' : 'failed' : event.failed ? 'failed' : 'unknown';
+      this.record(id, 'command-start', { toolUseId, command, cwd: this.commandCwd(session, event.cwd), background: false, test: isTestCommand(command) });
+      this.record(id, 'command-end', { toolUseId, status, exitCode: status === 'succeeded' ? 0 : Number.isInteger(event.exit) ? event.exit : null, durationMs: Number.isFinite(event.durationMs) ? event.durationMs : null });
+      return;
+    }
+    if (session.provider === 'cursor' && (event.event === 'postToolUse' || event.event === 'postToolUseFailure') && /shell|terminal|edit|write|delete/i.test(event.tool ?? '')) return;
+    if (event.failed) return;
+    if (Array.isArray(event.patchFiles)) {
+      for (const file of event.patchFiles) { const path = this.relativePath(session, file?.path, event.cwd); if (path) this.record(id, 'file', { path, tool: 'apply_patch', op: file.op === 'add' ? 'add' : file.op === 'delete' ? 'delete' : 'update' }); }
+      return;
+    }
+    if (event.event === 'afterFileEdit' && event.filePath) { const path = this.relativePath(session, event.filePath, event.cwd); if (path) this.record(id, 'file', { path, tool: 'Edit' }); return; }
+    if (event.plan) { const items = this.planSnapshot(entry, event.plan); if (items) this.record(id, 'plan', { items }); return; }
+    if (!event.tool || event.tool === 'Bash' || /^(?:TodoWrite|TaskCreate|TaskUpdate|TaskList|TaskGet)$/.test(event.tool)) return;
+    const path = event.readPath ? this.relativePath(session, event.readPath, event.cwd) : null;
+    this.record(id, 'tool', { tool: event.tool, ...(path ? { path } : {}), ...(event.description ? { description: event.description } : {}) });
+  }
+  // The plan as a whole after one update: TodoWrite replaces it; TaskCreate adds an item and
+  // TaskUpdate changes one. null when the update names nothing known.
+  planSnapshot(entry, plan) {
+    entry.plan ??= new Map();
+    if (plan.kind === 'todos' && Array.isArray(plan.items)) { entry.plan = new Map(plan.items.map(item => [item.id, { ...item }])); }
+    else if (plan.kind === 'create' && plan.title) { const itemId = plan.id ?? String(entry.plan.size + 1); if (entry.plan.size < 50) entry.plan.set(itemId, { id: itemId, title: plan.title, status: 'pending' }); }
+    else if (plan.kind === 'update' && entry.plan.has(plan.id)) {
+      if (plan.status === 'deleted') entry.plan.delete(plan.id);
+      else { const item = entry.plan.get(plan.id); entry.plan.set(plan.id, { ...item, ...(plan.status ? { status: plan.status } : {}), ...(plan.title ? { title: plan.title } : {}) }); }
+    } else return null;
+    // A timeline event holds at most 4000 characters (store.appendEvent): the plan's first items that fit.
+    const items = [...entry.plan.values()];
+    while (items.length && JSON.stringify({ items }).length > 3800) items.pop();
+    return items;
   }
   // A child's (sub-agent's) event: a bounded count of the children seen, nothing else. It
   // never binds or replaces the parent's identity, starts or ends the parent's turn or
