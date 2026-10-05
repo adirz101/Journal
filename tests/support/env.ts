@@ -64,10 +64,14 @@ function systemTools(): Map<string, string> {
 // tools/ holds one link per tool (a hard link where Windows refuses symbolic links). Only when
 // neither link can be made (Windows, another volume) is the tool's own folder used instead;
 // assertNoRealProviders still checks every folder on the resulting PATH.
+// Git for Windows is always used from its own folder: its git.exe is a launcher that finds the
+// installation relative to its own path, so a linked copy fails, and every Git call Journal made
+// failed ("Select an existing Git checkout" when opening a project).
 function toolFolders(root: string): string[] {
   const folder = join(root, 'tools'); mkdirSync(folder, { recursive: true });
   const fallback = new Set<string>();
   for (const [name, target] of systemTools()) {
+    if (win && name.toLowerCase() === 'git.exe') { fallback.add(dirname(target)); continue; }
     const link = join(folder, name);
     if (existsSync(link)) continue;
     try { symlinkSync(target, link, 'file'); } catch {
