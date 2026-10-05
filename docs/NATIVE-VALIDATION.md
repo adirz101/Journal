@@ -105,6 +105,7 @@ settings, permissions and exact-ID resume; nothing here asks you to change them.
 - [ ] **Sign in from Journal.** **Sign in…** on a row or card, and **Open terminal** on the "can't start" card, run `claude auth login`, `codex login` and Cursor's login in Journal's visible terminal, including any browser hand-off; the row or card updates once the terminal exits, and **Check again** clears the card. Journal never sees the credentials.
 - [ ] **Install from Journal.** **Install…** runs the official command and the CLI is found afterwards (macOS, and Windows in PowerShell without a profile); a failed download is shown as failed. A removed Cursor CLI shows "Cursor isn’t installed" with Cursor's official install command.
 - [ ] **The "can't start" card.** A signed-out Claude Code or Codex shows the card with its login command while Start stays enabled and the CLI shows its own login; **Copy command** puts the exact command on the clipboard.
+- [ ] **The default agent with a slow check.** With real CLIs and a slow Claude Code sign-in check (for example on a slow network), the composer's default settles on Claude Code and its Start label never changes to another agent after typing begins; a card you chose, a hand-off and a remembered agent are never changed by a later check.
 - [ ] **Detection stays out of the way.** The first window appears before a slow CLI (for example one waiting on the network) finishes its version or help read, and a probe that times out leaves no `claude`, `codex` or `agent` child running.
 - [ ] **Opening a project by drag.** A folder dragged in from Finder opens as a project (on the Welcome screen, and on the sidebar with a project open); the dashed outline does not flicker while the pointer crosses the screen; two folders say "Drop one folder at a time."; a file says "Drop a folder from Finder or File Explorer."; a non-Git folder is refused plainly; a drop on a running terminal does nothing.
 - [ ] **Getting to know your project** on a detached HEAD (only the project card) and on a large monorepo (the top-level fallback; note how long drafting takes).
@@ -125,7 +126,7 @@ settings, permissions and exact-ID resume; nothing here asks you to change them.
 
 - [ ] **Conversation ID.** A real Claude Code exit shows "Same conversation · ID confirmed by Claude" and Continue resumes that exact conversation; a real Codex exit shows "From Codex’s exit message · confirm before continuing" and Continue stays disabled until the ID is confirmed.
 - [ ] **Tests run.** A real Claude test command (for example `npm test`) fills Tests run with its count and command; Codex and Cursor show "Not visible for Codex" or "Not visible for Cursor".
-- [ ] **Error exit.** An authenticated session that exits with an error (for example a bad Codex `config.toml`) leads with its real last output, and Copy output copies it.
+- [ ] **Error exit.** An authenticated session that exits with an error (for example a bad Codex `config.toml`) leads with its real last output, and Copy output copies it on macOS and on Windows.
 - [ ] **The first-note moment,** played at 0.2× in DevTools (from scale 0.96, the mascot tilting from -8°, nothing from scale 0) and looked at again the next day; with "Reduce motion" on it appears without motion. It never takes focus from the composer.
 
 ### Palette and states
@@ -147,7 +148,7 @@ settings, permissions and exact-ID resume; nothing here asks you to change them.
 
 - [ ] **The [Windows checklist](WINDOWS.md)** on real hardware: ConPTY keys, Alt menu-bar focus, Job Objects and the rest.
 - [ ] **App keys.** Ctrl+Shift+N, Alt+1-4, Ctrl+Shift+J, Ctrl+Shift+E, Alt+Shift+1-3, Ctrl+Shift+B, Ctrl+Shift+K, Ctrl+, and Ctrl+Shift+\ reach Journal while the terminal has focus; Ctrl+\, Ctrl+K, Ctrl+P, Ctrl+C and Ctrl+R still reach the CLI; Ctrl+O opens a project outside the terminal.
-- [ ] **Palette keys.** Ctrl+Shift+P opens the palette and Ctrl+Shift+O open-file from the terminal; inside the open palette Ctrl+Shift+P closes it and Ctrl+Shift+O switches to files with the text kept; Escape returns focus to the terminal. The View menu shows them without registering them.
+- [ ] **Palette keys** (Windows and Linux). Ctrl+Shift+P opens the palette and Ctrl+Shift+O open-file from the terminal; inside the open palette Ctrl+Shift+P closes it and Ctrl+Shift+O switches to files with the text kept; Escape returns focus to the terminal. The View menu shows them without registering them.
 - [ ] **Composer and first run.** Ctrl+Enter starts from the task box and remembers on Getting to know your project; Enter in a field moves to the next field; Delete on a focused note leaves it out; Open a project… shows Ctrl+O; the wrap-up's Ctrl+Enter and Ctrl+Shift+Enter work.
 - [ ] **Settings and layout.** The File menu's Settings… opens Settings; at the default window size the layout is medium (sidebar docked, inspector rail).
 - [ ] **Text and scaling.** The task box's underlines line up with the text under ClearType at 100 %, 125 % and 150 %, also after it scrolls.
