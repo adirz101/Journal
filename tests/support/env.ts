@@ -25,6 +25,8 @@ const KEEP = [
   // Windows system locations the loader and child processes rely on.
   'SystemRoot', 'SYSTEMROOT', 'windir', 'ComSpec', 'PATHEXT', 'SystemDrive', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)',
   'CommonProgramFiles', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'OS',
+  'ProgramW6432', 'CommonProgramW6432', 'CommonProgramFiles(x86)', 'ALLUSERSPROFILE', 'PUBLIC', 'COMPUTERNAME',
+  'USERDOMAIN', 'HOMEDRIVE', 'HOMEPATH', 'PSModulePath', 'PROCESSOR_IDENTIFIER',
   // Journal's own test switches (JOURNAL_HEADLESS=0 shows the windows) and CI detection.
   'JOURNAL_HEADLESS', 'CI',
 ];
@@ -72,7 +74,18 @@ function toolFolders(root: string): string[] {
       try { linkSync(target, link); } catch { fallback.add(dirname(target)); }
     }
   }
-  return [folder, ...fallback];
+  return [folder, ...fallback, ...systemFolders()];
+}
+
+// Windows keeps its own system folders (System32 and friends) on PATH: Electron and Chromium
+// expect them, and a desktop run with only tool links hung at launch on Windows CI.
+// assertNoRealProviders still refuses the environment if a provider CLI is reachable there.
+function systemFolders(): string[] {
+  if (win) {
+    const root = real.SystemRoot ?? real.SYSTEMROOT ?? 'C:\\Windows';
+    return [win32.join(root, 'System32'), root, win32.join(root, 'System32', 'Wbem'), win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0')];
+  }
+  return [];
 }
 
 const inside = (folder: string, path: string): boolean => {
@@ -139,6 +152,7 @@ export function fixtureEnv(first: FixtureEnvOptions | string, second?: string, t
   env.PATH = [bin, ...toolFolders(root)].join(win ? ';' : delimiter);
   env.HOME = home; env.USERPROFILE = home;
   env.LOCALAPPDATA = join(home, 'AppData', 'Local'); env.APPDATA = join(home, 'AppData', 'Roaming');
+  mkdirSync(env.LOCALAPPDATA, { recursive: true }); mkdirSync(env.APPDATA, { recursive: true });
   env.XDG_CONFIG_HOME = join(home, '.config'); env.XDG_DATA_HOME = join(home, '.local', 'share'); env.XDG_CACHE_HOME = join(home, '.cache');
   env.CODEX_HOME = join(home, '.codex'); env.CLAUDE_CONFIG_DIR = join(home, '.claude');
   env.JOURNAL_TEST_PROVIDER_DIR = root;
