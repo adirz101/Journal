@@ -107,3 +107,19 @@ export const COMMAND_IDS = [...new Set([...MAC, ...OTHER].map(row => row.id))];
 export function shouldDispatch(input) {
   return input?.type === 'keyDown' && !input.isComposing && !input.isAutoRepeat;
 }
+
+// Commands whose dialog the renderer guards against stray keys (review I5). The command reaches
+// the renderer as a message, while the next key goes straight to whatever has focus: on a busy
+// machine an Enter typed right after ⌘K could reach the terminal before the renderer even knows
+// a palette is coming. So the main process holds every key from the shortcut until the renderer
+// reports the dialog open, or DIALOG_WAIT_MS passes (the renderer's own wait, modal.ts).
+export const OPENS_DIALOG = new Set(['command-palette', 'open-file']);
+export const DIALOG_WAIT_MS = 1000;
+export function dialogKeyHold() {
+  let until = 0;
+  return {
+    start(now = Date.now()) { until = now + DIALOG_WAIT_MS; },
+    release() { until = 0; },
+    holds(now = Date.now()) { return now < until; },
+  };
+}

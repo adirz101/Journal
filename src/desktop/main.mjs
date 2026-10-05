@@ -21,7 +21,7 @@ import { RootWatcher } from './watch.mjs';
 import { Updater, updateMode } from './updater.mjs';
 import { checkOutcome, menuTemplate } from './menu.mjs';
 import { APP_USER_MODEL_ID, createNotifier, readPreferences, systemSurface, writePreferences } from './notify.mjs';
-import { matchShortcut, shortcutKeys, shouldDispatch } from './shortcuts.mjs';
+import { dialogKeyHold, matchShortcut, OPENS_DIALOG, shortcutKeys, shouldDispatch } from './shortcuts.mjs';
 import { settledError } from './ipc-error.mjs';
 import electronUpdater from 'electron-updater';
 import { dataDirectory, isNetworkPath, unpackedPath, withGuiPath } from './environment.mjs';
@@ -74,7 +74,7 @@ const recoveryFrom = hello => {
   return null;
 };
 // crashShown: the window shows the crash page (crash-page.mjs) after its renderer was lost.
-let window; let modalOpen = false; let crashShown = false;
+let window; let modalOpen = false; let crashShown = false; const dialogKeys = dialogKeyHold();
 // loadedSinceGone: a page finished loading since the renderer was last lost (rendererGoneAction).
 let loadedSinceGone = false; let store; let runtime; let updater; let updatePolicy = null; let closing = false; let closed = false; let runtimeState = 'connecting'; let runtimeWarning = null;
 // The development server (npm run dev, and the profiling build in tests/desktop-performance.spec.ts).
@@ -132,20 +132,24 @@ function createWindow() {
   // a modal dialog is open nothing is claimed: keys behave as usual inside it.
   window.webContents.on('before-input-event', (event, input) => {
     if (modalOpen) return;
+    // Keys after ⌘K / ⌘P wait for the palette instead of reaching the terminal first.
+    if (dialogKeys.holds()) { event.preventDefault(); return; }
     const id = matchShortcut(input, process.platform);
     if (!id) return;
     event.preventDefault();
-    if (shouldDispatch(input)) send({ type: 'command', id });
+    if (!shouldDispatch(input)) return;
+    if (OPENS_DIALOG.has(id) && !crashShown) dialogKeys.start(); // the crash page opens no dialog
+    send({ type: 'command', id });
   });
   // A reloading renderer re-attaches; until then the runtime keeps buffering.
-  window.webContents.on('did-start-loading', () => { modalOpen = false; void runtime?.call('detach', {}).catch(() => {}); });
+  window.webContents.on('did-start-loading', () => { modalOpen = false; dialogKeys.release(); void runtime?.call('detach', {}).catch(() => {}); });
   // A crashed or killed renderer never detaches its panes itself. Instead of a blank window it shows
   // the crash page (Something went wrong · Reload), or, when a page cannot help, a native message box
   // (rendererGoneAction). Sessions keep running in the runtime and reattach when the app loads again,
   // with nothing resent. Nothing reloads without the user asking.
   window.webContents.on('did-finish-load', () => { loadedSinceGone = true; });
   window.webContents.on('render-process-gone', (_event, details) => {
-    modalOpen = false; void runtime?.call('detach', {}).catch(() => {});
+    modalOpen = false; dialogKeys.release(); void runtime?.call('detach', {}).catch(() => {});
     const action = rendererGoneAction({ reason: details?.reason, quitting: closing || closed, destroyed: !window || window.isDestroyed() || window.webContents.isDestroyed(),
       crashPageShowing: crashShown, loadedSinceLastGone: loadedSinceGone });
     loadedSinceGone = false;
@@ -321,7 +325,7 @@ const actions = {
   },
   setModalOpen: ({ open }) => {
     if (typeof open !== 'boolean') throw new Error('Invalid dialog state');
-    modalOpen = open;
+    modalOpen = open; dialogKeys.release();
   },
   // Notification preferences (Settings). writePreferences accepts only known keys with boolean values.
   preferences: () => preferences,

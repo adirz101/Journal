@@ -156,3 +156,14 @@ test('⇧⌘K stays add-note', () => {
   assert.equal(matchShortcut(key('Meta+K'), 'darwin'), 'command-palette');
   for (const platform of ['win32', 'linux']) assert.equal(matchShortcut(key('Control+Shift+K'), platform), 'add-note', platform);
 });
+
+test('keys wait for the palette: held from ⌘K / ⌘P until the dialog opens or a second passes', async () => {
+  const { dialogKeyHold, DIALOG_WAIT_MS, OPENS_DIALOG } = await import('../src/desktop/shortcuts.mjs');
+  assert.deepEqual([...OPENS_DIALOG].sort(), ['command-palette', 'open-file']);
+  const hold = dialogKeyHold();
+  assert.equal(hold.holds(1000), false, 'Nothing held before a shortcut');
+  hold.start(1000);
+  assert.equal(hold.holds(1000), true); assert.equal(hold.holds(1000 + DIALOG_WAIT_MS - 1), true);
+  assert.equal(hold.holds(1000 + DIALOG_WAIT_MS), false, 'Never longer than the renderer waits');
+  hold.start(5000); hold.release(); assert.equal(hold.holds(5001), false, 'Released once the dialog is open');
+});

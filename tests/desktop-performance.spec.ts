@@ -47,7 +47,7 @@ function setup(name: string) {
   writeFileSync(resolve(root, 'package.json'), '{"type":"commonjs"}\n');
   const git = (...args: string[]) => execFileSync('git', ['-C', project, '-c', 'user.name=a', '-c', 'user.email=a@a', ...args], { stdio: 'pipe' });
   git('init', '-q', '-b', 'main'); writeFileSync(resolve(project, 'README.md'), '# Performance fixture\n'); git('add', '.'); git('commit', '-qm', 'init');
-  const done = resolve(root, 'flood-done');
+  const done = resolve(root, 'flood-done'); const started = resolve(root, 'flood-started');
   // flood <seconds>: about 2 MB/s of short lines in 4 KB chunks, then FLOOD_DONE (and a file, for when the terminal is not shown).
   const fixture = `#!${process.execPath}
 const fs=require('node:fs');
@@ -57,13 +57,13 @@ process.stdin.setRawMode(true);process.stdin.setEncoding('utf8');let input='';
 process.stdin.on('data',data=>{for(const char of data){
 if(char!=='\\r'&&char!=='\\n'){input+=char;continue}
 const command=input;input='';
-if(command.startsWith('flood ')){const end=Date.now()+Number(command.slice(6))*1000;const chunk=('flood-line \\x1b[32mgreen\\x1b[0m '+'x'.repeat(40)+'\\r\\n').repeat(64);console.log('FLOOD_START');
+if(command.startsWith('flood ')){const end=Date.now()+Number(command.slice(6))*1000;const chunk=('flood-line \\x1b[32mgreen\\x1b[0m '+'x'.repeat(40)+'\\r\\n').repeat(64);console.log('FLOOD_START');fs.writeFileSync(${JSON.stringify(started)},'1');
 const tick=()=>{if(Date.now()>=end){console.log('FLOOD_DONE');fs.writeFileSync(${JSON.stringify(done)},'1');return}process.stdout.write(chunk,()=>setTimeout(tick,2))};tick()}
 else console.log('ECHO '+command);
 }});`;
   for (const provider of ['claude', 'codex']) { writeFileSync(resolve(bin, provider), fixture); chmodSync(resolve(bin, provider), 0o755); }
   const env = fixtureEnv(root, bin, { JOURNAL_DATA_DIR: resolve(root, 'data'), JOURNAL_QUIT_POLICY: 'stop', JOURNAL_DEV_URL: url });
-  return { root, project, env, floodDone: () => existsSync(done), cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return { root, project, env, floodDone: () => existsSync(done), floodStarted: () => existsSync(started), cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
 async function launch(f: ReturnType<typeof setup>) {
@@ -110,7 +110,9 @@ test('a flooding session keeps the composer and its preview responsive; activity
       for (const region of document.querySelectorAll('[aria-live]:not([aria-live=off]),[role=status],[role=alert],[role=log]')) live.observe(region, { childList: true, subtree: true, characterData: true });
     });
     const floodStart = Date.now();
-    await expect(async () => { await typeLine(page, 'flood 8'); await expect(page.locator('.terminal-surface')).toContainText('FLOOD_START', { timeout: 2000 }); }).toPass({ timeout: 15000 });
+    // The fixture marks the start in a file: on a slow machine the flood scrolls FLOOD_START out of
+    // the visible rows before the page can be read, and typing again would start a second flood.
+    await expect(async () => { if (!f.floodStarted()) await typeLine(page, 'flood 8'); await expect.poll(f.floodStarted, { timeout: 4000 }).toBe(true); }).toPass({ timeout: 15000 });
     await page.waitForTimeout(2500);
     const visible = await page.evaluate(() => { const w = window as any; return { frames: w.__frames as number[], live: w.__liveMutations as number }; });
 

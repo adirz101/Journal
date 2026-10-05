@@ -67,7 +67,7 @@ test('packaging config: stable ID, platforms, per-user installer, data kept, upd
 });
 
 test('notices cover everything that ships', () => {
-  const notices = readFileSync('THIRD_PARTY_NOTICES.md', 'utf8');
+  const notices = readFileSync('THIRD_PARTY_NOTICES.md', 'utf8').replace(/\r\n/g, '\n'); // CRLF on a Windows checkout
   const shipped = productionPackages(JSON.parse(readFileSync('package-lock.json', 'utf8'))).map(path => path.split('node_modules/').at(-1));
   assert.ok(shipped.includes('electron-updater') && shipped.includes('sax'), 'Updater dependencies, including deduplicated ones');
   for (const name of [...pkg.journal.rendererBundle, ...shipped, 'node-pty', 'electron']) assert.match(notices, new RegExp(`^## ${name.replace(/[/@.]/g, '\\$&')} `, 'm'), name);
