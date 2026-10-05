@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { git, inspectProject } from './project.mjs';
 import { captureEvidence, validateEvidence } from './evidence.mjs';
@@ -9,7 +9,7 @@ import { aliasesFor, areaMatches, isDuplicate, possibleConflict, queryTerms } fr
 import { checkoutBaseline, fileDiff, openableFile, sessionChanges } from './changes.mjs';
 import { classifyFolder, folderStatus } from './projects.mjs';
 import { SESSION_USER_FIELDS, survivorScanPending } from './sessions.mjs';
-import { basename, join, relative, sep } from 'node:path';
+import { basename, isAbsolute, join, relative, sep } from 'node:path';
 import { applyRetention, backupTo, checkpoint, exportBrain, importBrain, purgeSession, storageInfo } from './maintenance.mjs';
 import { ruleProposals, statusProposal, testCommandProposals } from './proposals.mjs';
 import { addWorktree, creationNotices, listGitWorktrees, plannedPath, registered, removalBlockers, removeWorktree, resolveBase, validateBranchName, workspaceView } from './workspaces.mjs';
@@ -709,6 +709,25 @@ export class JournalStore {
     return this.resolveReferences(projectId, workspaceId ?? null, this.view(projectId, workspaceId ?? null), [input])[0];
   }
   // One reference for a running session, relative to where that session runs.
+  // A file dropped from the operating system (Finder, File Explorer): its absolute path is mapped
+  // to the session's own copy (checkout or worktree) or one of the project's folders, then
+  // resolved like any reference (sensitive files refused). Outside the project it is refused, so
+  // a broken or misleading path is never inserted.
+  referenceForPath(sessionId, absolutePath) {
+    if (typeof absolutePath !== 'string' || !isAbsolute(absolutePath) || absolutePath.length > 4096) throw new Error('This file cannot be referenced');
+    const session = this.getSession(sessionId);
+    const real = value => { try { return realpathSync(value); } catch { return null; } };
+    const file = real(absolutePath); if (!file) throw new Error('That file no longer exists');
+    const own = this.fileRoot(session.projectId, session.workspaceId ?? 'checkout');
+    const folders = (this.project(session.projectId).roots ?? []).map(root => { try { return this.fileRoot(session.projectId, `root:${root.id}`); } catch { return null; } }).filter(Boolean);
+    for (const root of [own, ...folders]) {
+      const base = real(root.path); if (!base) continue;
+      const rel = relative(base, file);
+      if (rel === '') throw new Error('Drop a file or folder inside the project, not the project folder itself');
+      if (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)) return this.referenceFor(sessionId, { rootKey: root.key, path: rel.split(sep).join('/') });
+    }
+    throw Object.assign(new Error('That file is outside this project, so Journal does not insert it. Add its folder to the project, or type the path yourself.'), { code: 'OUTSIDE_PROJECT' });
+  }
   referenceFor(sessionId, input) {
     const session = this.getSession(sessionId);
     if (input?.projectId && input.projectId !== session.projectId) throw new Error('That file belongs to another project');

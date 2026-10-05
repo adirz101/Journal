@@ -22,7 +22,7 @@ const withKeys = (label: string, keys?: { label: string }) => keys ? `${label} (
 
 // Rail icons: inline, decorative (every rail button has its own accessible name).
 const Icon = ({ d, size = 18 }: { d: string; size?: number }) => <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d={d} /></svg>;
-const ICONS = { plus: 'M12 5v14M5 12h14', recent: 'M12 7v5l3 2M21 12a9 9 0 1 1-9-9 9 9 0 0 1 9 9Z', memory: 'M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3ZM5 17a3 3 0 0 1 3-3h11', expand: 'm9 6 6 6-6 6', updown: 'm8 9 4-4 4 4M8 15l4 4 4-4',
+const ICONS = { plus: 'M12 5v14M5 12h14', recent: 'M12 7v5l3 2M21 12a9 9 0 1 1-9-9 9 9 0 0 1 9 9Z', memory: 'M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3ZM5 17a3 3 0 0 1 3-3h11', expand: 'm9 6 6 6-6 6', search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14ZM20 20l-3.5-3.5', updown: 'm8 9 4-4 4 4M8 15l4 4 4-4',
   settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z' };
 // The last two folders of a path, so the project's own folder stays readable in a narrow sidebar (the full path is the tooltip).
 const shortPath = (path: string) => { const parts = path.split(/[\\/]/).filter(Boolean); return parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : path; };
@@ -32,11 +32,11 @@ const shortPath = (path: string) => { const parts = path.split(/[\\/]/).filter(B
 // all slots in use: the user can write the task while Start explains why it waits).
 // update: shown in the footer; the caller passes null while the session view's status bar shows it.
 export function Sidebar({ pane, inOverlay = false, projects, project, sessions, proposals, selectedId, connected, runtimeState, now, canCompose, shortcuts, appearance, update,
-  onSelect, onSessionMenu, onNew, onSwitchProject, onProjectMenu, onOpenMemory, onOpenSettings, onExpand, onShowRecent, onError }: {
+  onSelect, onSessionMenu, onNew, onSwitchProject, onProjectMenu, onOpenMemory, onOpenSettings, onSearch, onExpand, onShowRecent, onError }: {
   pane: Pane; inOverlay?: boolean; projects: Project[]; project: Project | null; sessions: Session[]; proposals: Proposal[];
   selectedId: string | null; connected: boolean; runtimeState: 'connected' | 'connecting' | 'disconnected'; now: number; canCompose: boolean;
   shortcuts: Keys; appearance: Appearance; update: UpdateState | null;
-  onSelect(session: Session): void; onSessionMenu(session: Session, at?: Point): void; onNew(): void;
+  onSelect(session: Session): void; onSessionMenu(session: Session, at?: Point): void; onNew(): void; onSearch?(): void;
   onSwitchProject(at?: Point): void; onProjectMenu(at?: Point): void; onOpenMemory(): void; onOpenSettings(): void;
   onExpand?(): void; onShowRecent?(): void; onError(error: unknown): void;
 }) {
@@ -77,6 +77,7 @@ export function Sidebar({ pane, inOverlay = false, projects, project, sessions, 
         onClick={event => switchProject(event.currentTarget)} onContextMenu={event => { if (!project) return; event.preventDefault(); onProjectMenu(menuPosition(event)); }}>
         <img className="brand-icon" src={mark} alt="" width={26} height={26} /></button>
       <button className="rail-tile" aria-label={withKeys(shell.newSession, shortcuts?.['new-session'])} title={withKeys(shell.newSession, shortcuts?.['new-session'])} aria-keyshortcuts={shortcuts?.['new-session']?.aria} disabled={!canCompose} onClick={onNew}><Icon d={ICONS.plus} /></button>
+      {onSearch && <button className="rail-tile" aria-label={withKeys(shell.search, shortcuts?.['command-palette'])} title={withKeys(shell.search, shortcuts?.['command-palette'])} aria-keyshortcuts={shortcuts?.['command-palette']?.aria} onClick={onSearch}><Icon d={ICONS.search} /></button>}
       <span className="rsep" aria-hidden="true" />
       {active.filter(s => isLive(s) && s.slot).map(session => {
         const state = stateFor(session, now, connected); const attention = needsYou(session) || state.tone === 'attention'; const slot = slotKeys(session, shortcuts);
@@ -104,6 +105,8 @@ export function Sidebar({ pane, inOverlay = false, projects, project, sessions, 
     </button>
     <button className="new-session" onClick={onNew} disabled={!canCompose} aria-keyshortcuts={shortcuts?.['new-session']?.aria} title={withKeys(shell.newSession, shortcuts?.['new-session'])}>
       <span aria-hidden="true">＋</span> {shell.newSession}{shortcuts?.['new-session'] && <kbd aria-hidden="true">{shortcuts['new-session'].label}</kbd>}</button>
+    {onSearch && <button className="sidebar-search" onClick={onSearch} aria-keyshortcuts={shortcuts?.['command-palette']?.aria} title={withKeys(shell.searchHint, shortcuts?.['command-palette'])}>
+      <Icon d={ICONS.search} size={16} /> {shell.search}{shortcuts?.['command-palette'] && <kbd aria-hidden="true">{shortcuts['command-palette'].label}</kbd>}</button>}
     <nav aria-label="Sessions" className="session-nav">
       <div className="side-heading"><span>{shell.active}</span><span className="slots-used">{shell.slotsUsed(used)}<span className="slot-meter" aria-hidden="true">{[1, 2, 3, 4].map(n => <span key={n} className={n <= used ? 'on' : ''} />)}</span></span></div>
       {active.length > 0 && <div className="session-group" role="group" aria-label="Active sessions">{active.map(row)}</div>}

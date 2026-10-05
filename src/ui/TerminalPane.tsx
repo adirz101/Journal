@@ -1,11 +1,14 @@
-import { useEffect, useImperativeHandle, useRef, type Ref } from 'react';
+import { useEffect, useImperativeHandle, useRef, type DragEvent, type Ref } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import '@xterm/xterm/css/xterm.css';
 import { api, errorCode, type OutputSnapshot, type TerminalEvent } from './types';
 import { modalDialogActive, TERMINAL_REPORT } from './modal';
+import { editingKey } from './terminalKeys';
+import { insertion, isFileDrag, JOURNAL_FILE, readJournalFile } from './fileDrag';
 import { MONO_FONT, monoFontFamily, terminalThemes, type Appearance } from './theme';
+import { copy } from './copy';
 
 // What a wrap-up can ask of an ended session's terminal (Phase 6): its last lines as text.
 export interface TerminalHandle { copyText(maxLines?: number): string }
@@ -47,6 +50,13 @@ export function TerminalPane({ sessionId, live, appearance, onError, onUnavailab
     // Unicode 11 widths keep CJK and emoji aligned with what CLIs assume.
     terminal.loadAddon(new Unicode11Addon()); terminal.unicode.activeVersion = '11';
     terminal.open(host.current);
+    // macOS editing keys (⌘⌫, ⌘←/→, ⌥⌫, ⌥←/→) become the control codes the CLIs read. terminal.input
+    // goes through onData, so the usual input rules (live session, no dialog open) still apply.
+    const mac = (window.journal?.platform ?? navigator.platform).toLowerCase().startsWith(window.journal?.platform ? 'darwin' : 'mac');
+    terminal.attachCustomKeyEventHandler(event => {
+      const sequence = editingKey(event, mac); if (sequence === null) return true;
+      event.preventDefault(); terminal.input(sequence, true); return false;
+    });
     terminal.parser.registerOscHandler(52, () => true); // Never accept terminal-originated clipboard writes.
     terminal.parser.registerOscHandler(8, () => true); // No automatic links to external applications.
     // Colour queries (OSC 10/11/12 with a ?) are answered by the runtime at once, shown or not
@@ -121,5 +131,24 @@ export function TerminalPane({ sessionId, live, appearance, onError, onUnavailab
     return () => { unfocus(); font.stop(); disposed = true; void api('detach', { id: sessionId }).catch(() => {}); cancelAnimationFrame(resizeFrame); observer.disconnect(); removeListener?.(); input.dispose(); terminalRef.current = null; terminal.dispose(); };
   }, [sessionId]);
   useEffect(() => { if (terminalRef.current) terminalRef.current.options.theme = terminalThemes[appearance]; }, [appearance]);
-  return <div ref={host} className="terminal-surface" role="group" aria-label="Agent terminal" />;
+  // Files dropped here become references at the cursor, as if pasted: never submitted.
+  const dragOver = (event: DragEvent<HTMLDivElement>) => { if (!liveRef.current || !isFileDrag(event.dataTransfer.types)) return; event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; };
+  const drop = (event: DragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(event.dataTransfer.types)) return;
+    event.preventDefault(); event.stopPropagation();
+    const terminal = terminalRef.current; if (!terminal || !liveRef.current) return;
+    const own = readJournalFile(event.dataTransfer.getData(JOURNAL_FILE));
+    const requests = own ? [{ sessionId, rootKey: own.rootKey, path: own.path }]
+      : Array.from(event.dataTransfer.files).slice(0, 10).map(file => ({ sessionId, absolutePath: window.journal?.pathForFile(file) ?? '' }));
+    if (!requests.length || requests.some(request => 'absolutePath' in request && !request.absolutePath)) { errorRef.current(copy.dropNotAFile); return; }
+    void (async () => {
+      const texts: string[] = [];
+      for (const request of requests) {
+        try { texts.push((await api<{ text: string }>('dropReference', request)).text); }
+        catch (error) { errorRef.current(error instanceof Error ? error.message : String(error)); return; }
+      }
+      terminal.paste(insertion(texts)); terminal.focus();
+    })();
+  };
+  return <div ref={host} className="terminal-surface" role="group" aria-label="Agent terminal" onDragOver={dragOver} onDrop={drop} />;
 }

@@ -3,6 +3,7 @@
 // always matches what a screen reader announces. Receipt and packet text from
 // core are immutable and never pass through here.
 export const copy = {
+  dropNotAFile: 'Drop files from the Files tab, Finder or File Explorer.',
   memory: 'Project memory', memoryTab: 'Memory', addNote: 'Add a note', addSummary: 'Add project summary',
   remember: 'Remember', remembered: 'Remembered', needsReview: 'Needs review', forget: 'Forget…', forgotten: 'Forgotten', suggestions: 'Suggestions',
   aboutProject: 'About this project', branchStands: 'Where this branch stands', projectSummary: 'Project summary',
@@ -97,7 +98,7 @@ export const count = (n: number, one: string, many = `${one}s`) => `${n} ${n ===
 // lines; a group adds new keys only in its own block.
 export const shell = {
   // A: sidebar and settings
-  newSession: 'New session', active: 'Active', slotsUsed: (n: number) => `${n} of 4`,
+  newSession: 'New session', search: 'Search', searchHint: 'Search sessions, commands and notes', active: 'Active', slotsUsed: (n: number) => `${n} of 4`,
   recent: 'Recent', today: 'Today', yesterday: 'Yesterday', earlier: 'Earlier', archived: 'Archived',
   suggestionCount: (n: number) => count(n, 'suggestion'), canContinue: 'Can continue', settings: 'Settings',
   runtimeConnected: 'Runtime connected · local only', runtimeStarting: 'Starting runtime…', runtimeDisconnected: 'Runtime disconnected',

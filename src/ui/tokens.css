@@ -21,7 +21,7 @@
   color-scheme:dark;
   --bg:#0F1115;--side:#13161B;--panel:#13161B;--raised:#1A1E25;--field:#0C0E12;--hover:#242A33;--sel:#1C2A40;--sel-hover:#1F2F47;--term:#0B0D10;
   --line:#242931;--line2:#30363F;--scroll-thumb:#3A414B;--line-field:#616A78;--accline:rgba(106,165,255,.35);
-  --tx:#E8EAEE;--tx2:#B3BAC6;--tx3:#8E97A6;
+  --tx:#E8EAEE;--tx2:#B3BAC6;--tx3:#99A2B0;
   --acc:#6AA5FF;--accbtn:#2D6BE6;--accbtn-hover:#2560D6;--accsoft:rgba(106,165,255,.13);--accsoft-hover:rgba(106,165,255,.22);--on-acc:#FFFFFF;
   --amb:#F2B957;--ambsoft:rgba(242,185,87,.12);--ambline:rgba(242,185,87,.35);
   --grn:#6CCB8D;--grnsoft:rgba(108,203,141,.12);
@@ -35,8 +35,9 @@
   /* Type: system UI; JetBrains Mono (bundled, see fonts.css) for code, paths, IDs and the terminal. */
   --font-ui:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
   --font-mono:"JetBrains Mono","SF Mono",ui-monospace,"Cascadia Mono",Menlo,Consolas,monospace;
-  /* Type scale, ratio about 1.2. Nothing renders below 11 px. */
-  --text-caption:11px;--text-meta:12px;--text-body:13px;--text-title:16px;--text-screen:22px;
+  /* Type scale. Secondary text stays secondary by colour and weight, but is never small:
+     nothing but a count badge or a marker renders below 12 px. */
+  --text-caption:12px;--text-meta:13px;--text-body:14px;--text-title:17px;--text-screen:23px;
   /* Motion (Phase 7): the strong ease-out for the one entrance Journal animates (the first-note moment). */
   --ease-out:cubic-bezier(0.23, 1, 0.32, 1);
 }

@@ -774,6 +774,7 @@ export default function App() {
       onSelect={next => { if (overlay || layout.inspector === 'overlay') layout.closeOverlays(false); void selectSession(next); }} onSessionMenu={(next, position) => void sessionMenu(next, position)} onNew={() => { if (overlay || layout.inspector === 'overlay') layout.closeOverlays(false); newSession(); }}
       onSwitchProject={position => void switcherMenu(position).catch(failed)} onProjectMenu={position => void projectMenu(position).catch(failed)}
       onOpenMemory={() => { setPanel('memory'); layout.showInspector(); }} onOpenSettings={() => setSettingsOpen(true)} onError={failed}
+      onSearch={() => { if (overlay || layout.inspector === 'overlay') layout.closeOverlays(false); command.current('command-palette'); }}
       onExpand={layout.toggleSidebar} onShowRecent={() => { layout.openSidebar(); requestAnimationFrame(() => document.getElementById('sidebar-recent')?.scrollIntoView({ block: 'start' })); }} />}>
 
     {/* === Region B: main column (session view) === */}

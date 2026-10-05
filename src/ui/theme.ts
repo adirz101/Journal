@@ -32,7 +32,7 @@ export function monoFontFamily(fonts: FontSet, onLoaded: () => void): { family: 
 export const terminalThemes: Record<Appearance, ITheme> = {
   dark: {
     background: '#0B0D10', foreground: '#E8EAEE', cursor: '#6AA5FF', cursorAccent: '#0B0D10', selectionBackground: '#21466A',
-    scrollbarSliderBackground: '#3A414B', scrollbarSliderHoverBackground: '#8E97A6', scrollbarSliderActiveBackground: '#8E97A6',
+    scrollbarSliderBackground: '#3A414B', scrollbarSliderHoverBackground: '#99A2B0', scrollbarSliderActiveBackground: '#99A2B0',
     black: '#2A2F37', red: '#F49A88', green: '#7DD39A', yellow: '#F2C46B', blue: '#7FB2FF', magenta: '#BBA9FF', cyan: '#7FD8B8', white: '#B3BAC6',
     brightBlack: '#7C8594', brightRed: '#F49A88', brightGreen: '#7DD39A', brightYellow: '#F2C46B', brightBlue: '#7FB2FF', brightMagenta: '#BBA9FF', brightCyan: '#7FD8B8', brightWhite: '#ECEEF2',
   },

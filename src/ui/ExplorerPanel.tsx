@@ -1,4 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { JOURNAL_FILE } from './fileDrag';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { hotkeysCoreFeature, searchFeature, selectionFeature, syncDataLoaderFeature, type ItemInstance } from '@headless-tree/core';
 import { useTree } from '@headless-tree/react';
 import { menuPosition, showMenu, type MenuItem } from './menu';
@@ -11,12 +12,16 @@ import type { LineRange } from './FilePreview';
 // No editing, no file operations.
 
 const FilePreview = lazy(() => import('./FilePreview'));
-const ROW = 24; const ROOT = '\u0000roots';
+const ROW = 30; const ROOT = '\u0000roots';
 const LETTER: Record<GitKind, string> = { conflict: '!', deleted: 'D', modified: 'M', renamed: 'R', typechange: 'T', added: 'A', untracked: 'U', submodule: 'S', ignored: '' };
 const DESCRIBE: Record<GitKind, string> = { conflict: 'conflict', deleted: 'deleted', modified: 'modified', renamed: 'renamed', typechange: 'type changed', added: 'added', untracked: 'untracked', submodule: 'submodule changed', ignored: 'ignored by Git' };
 
 interface Item { id: string; rootKey: string; path: string; name: string; type: 'root' | 'directory' | 'file' | 'symlink' | 'other' | 'more'; sensitive: boolean; }
 const idOf = (rootKey: string, path: string) => `${rootKey}\u0000${path}`;
+// A row dragged onto a session's terminal becomes a reference there (TerminalPane, fileDrag.ts).
+const dragFile = (event: DragEvent<HTMLElement>, rootKey: string, path: string) => {
+  event.dataTransfer.setData(JOURNAL_FILE, JSON.stringify({ rootKey, path })); event.dataTransfer.effectAllowed = 'copy';
+};
 // Phase 8: the last palette request handled, kept across remounts (the Files tab mounts this
 // panel each time it is shown), so an old request never opens its file again.
 let revealHandled = 0;
@@ -357,7 +362,7 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
       {changedRows.slice(0, 500).map(({ root, entry }) => {
         const name = entry.path.split('/').pop() || root.label; const dir = entry.path.split('/').slice(0, -1).join('/');
         const item: Item = { id: idOf(root.key, entry.path), rootKey: root.key, path: entry.path, name, type: entry.directory ? 'directory' : 'file', sensitive: !!entry.sensitive };
-        return <li key={item.id}><button className="changed-row" disabled={(entry.directory && entry.kind !== 'untracked') || !!entry.submodule} onClick={() => { if (entry.directory) { setFilter('all'); return; } void openPreview(root.key, entry.path, entry.kind === 'deleted' ? 'diff' : 'file'); }}
+        return <li key={item.id}><button className="changed-row" draggable={!entry.directory && entry.kind !== 'deleted'} onDragStart={event => { if (entry.directory || entry.kind === 'deleted') { event.preventDefault(); return; } dragFile(event, root.key, entry.path); }} disabled={(entry.directory && entry.kind !== 'untracked') || !!entry.submodule} onClick={() => { if (entry.directory) { setFilter('all'); return; } void openPreview(root.key, entry.path, entry.kind === 'deleted' ? 'diff' : 'file'); }}
           onContextMenu={event => { event.preventDefault(); void itemMenu(item, menuPosition(event)); }} title={`${DESCRIBE[entry.kind]}${entry.from ? ` from ${entry.from}` : ''}${entry.staged ? ' · staged' : ''}${entry.unstaged ? ' · unstaged' : ''}`}>
           <span className={`tree-name git-${entry.kind}`}>{name}{entry.directory ? '/' : ''}</span><span className="tree-dir">{visible.length > 1 ? `${root.label}${dir ? ' / ' : ''}` : ''}{dir}</span>
           <span className={`git-letter git-${entry.kind}`} aria-label={DESCRIBE[entry.kind]}>{LETTER[entry.kind]}</span></button></li>;
@@ -376,9 +381,15 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
           return <div {...item.getProps()} key={item.getId()} aria-label={label} aria-selected={item.getId() === selectedId}
             className={`tree-row${item.isFocused() ? ' focused' : ''}${item.getId() === selectedId ? ' selected' : ''}${data.type === 'root' ? ' tree-root' : ''}${data.type === 'more' ? ' tree-more' : ''}`}
             style={{ top: meta.index * ROW, paddingLeft: 6 + meta.level * 12 }}
+            // Files and folders can be dragged onto a session's terminal as a reference (never sensitive ones).
+            draggable={(data.type === 'file' || data.type === 'directory') && !data.sensitive}
+            onDragStart={event => { if ((data.type !== 'file' && data.type !== 'directory') || data.sensitive) { event.preventDefault(); return; } dragFile(event, data.rootKey, data.path); }}
             onContextMenu={event => { event.preventDefault(); item.setFocused(); void itemMenu(data, menuPosition(event)); }}
             onClick={event => { item.getProps().onClick?.(event); if (data.type === 'file' && !data.sensitive) void openPreview(data.rootKey, data.path); }}>
-            <span className="tree-twisty" aria-hidden="true">{folder ? item.isExpanded() ? '▾' : '▸' : ''}</span>
+            <span className="tree-twisty" aria-hidden="true">{folder && <svg viewBox="0 0 24 24" focusable="false"><path d={item.isExpanded() ? 'M6 9l6 6 6-6' : 'M9 6l6 6-6 6'} /></svg>}</span>
+            {data.type !== 'root' && data.type !== 'more' && <span className={`tree-icon${folder ? ' folder' : ''}`} aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false">{folder
+              ? <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.2l2 2h8.8A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" />
+              : <path d="M6 3h8l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM14 3v4h4" />}</svg></span>}
             <span className={`tree-name${kind ? ` git-${kind}` : ''}${data.sensitive ? ' sensitive' : ''}`}>{data.name}</span>
             {data.type === 'root' && <span className="tree-dir">{rootFor(data.rootKey)?.family === 'folder' ? 'folder' : rootFor(data.rootKey)?.branch ? `⑂ ${rootFor(data.rootKey)!.branch}` : ''}</span>}
             {data.sensitive && <span className="tree-badge" aria-hidden="true" title="May contain credentials: not previewed"><svg viewBox="0 0 24 24" width="11" height="11" focusable="false"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg></span>}

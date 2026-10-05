@@ -231,3 +231,36 @@ test('references are typed into a running Claude session only when it is known t
   assert.throws(() => f.store.referenceFor(session.id, { projectId: 'someone-else', rootKey: 'checkout', path: 'src/a.ts' }), /another project/);
   exit?.({ exitCode: 0 });
 });
+
+test('a dropped absolute path becomes a project reference, or is refused clearly', async t => {
+  const f = fixture(t); let exit;
+  const manager = new TerminalManager({ store: f.store, trackMs: 0, identify: () => null, table: () => null,
+    spawn: () => ({ onData() {}, onExit(cb) { exit = cb; }, write() {}, resize() {}, kill() {} }) });
+  t.after(() => { manager.disposed = true; exit?.({ exitCode: 0 }); });
+  const { session } = await manager.start({ projectId: f.project.id, provider: 'claude', task: 'x' });
+  mkdirSync(join(f.repo, 'my docs')); writeFileSync(join(f.repo, 'my docs', 'read me (1).md'), 'x\n');
+  writeFileSync(join(f.repo, '..notes'), 'x\n'); writeFileSync(join(f.repo, '.env'), 'TOKEN=1\n');
+  const at = path => f.store.referenceForPath(session.id, path);
+  assert.equal(at(join(f.repo, 'src', 'a.ts')).display, 'src/a.ts');
+  assert.equal(formatReference('claude', at(join(f.repo, 'src', 'a.ts'))), '@src/a.ts');
+  assert.equal(formatReference('codex', at(join(f.repo, 'src', 'a.ts'))), 'src/a.ts');
+  const spaced = at(join(f.repo, 'my docs', 'read me (1).md'));
+  assert.equal(spaced.display, 'my docs/read me (1).md');
+  assert.equal(formatReference('claude', spaced), '"my docs/read me (1).md"', 'Quoted, so the agent reads one path');
+  assert.equal(formatReference('claude', at(join(f.repo, 'src'))), '@src/', 'A folder');
+  assert.equal(at(join(f.repo, '..notes')).display, '..notes', 'A name starting with two dots is inside the project');
+  assert.throws(() => at(join(f.repo, '.env')), /Sensitive/);
+  assert.throws(() => at(f.repo), /not the project folder itself/);
+  const outside = join(f.root, 'elsewhere.txt'); writeFileSync(outside, 'x\n');
+  assert.throws(() => at(outside), err => err.code === 'OUTSIDE_PROJECT' && /outside this project/.test(err.message));
+  assert.throws(() => at(join(f.repo, 'missing.ts')), /no longer exists/);
+  assert.throws(() => at('src/a.ts'), /cannot be referenced/, 'Only absolute paths');
+  // A symlink inside the project that points outside is judged by its target.
+  symlinkSync(outside, join(f.repo, 'link.txt'));
+  assert.throws(() => at(join(f.repo, 'link.txt')), err => err.code === 'OUTSIDE_PROJECT');
+  // A folder added to the project is inside it.
+  const extra = join(f.root, 'extra'); mkdirSync(extra); writeFileSync(join(extra, 'b.md'), 'x\n');
+  f.store.addProjectRoot(f.project.id, extra);
+  const folder = at(join(extra, 'b.md'));
+  assert.match(folder.rootKey, /^root:/); assert.equal(folder.path, 'b.md');
+});
