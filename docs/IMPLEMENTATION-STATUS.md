@@ -357,6 +357,8 @@ Plan: [docs/superpowers/plans/2026-10-04-ux-redesign.md](superpowers/plans/2026-
   - M4: the agent's launch environment drops `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the other `REPO_ENV` variables (`tests/terminal.test.mjs`); argv and settings unchanged.
   - M5: the profiling-build freshness check tolerates deleted files, and `release:audit` fails a renderer bundle that is a React profiling build (`isProfilingBundle`, unit-tested on samples and on `dist/`).
   - M6: `scripts/readme-screenshot.mjs` uses the system temporary folder. M7: `JOURNAL_DEV_URL` is ignored by packaged builds.
+  - Merged with `claude/ux-redesign` again (the terminal colours fix): the agent environment comes from `agentTerminalEnv` and then drops the `REPO_ENV` variables; the M4 test checks both.
+  - Results on the merged code (local macOS, 5 October 2026): `npm test` 633 passed; `npm run check` and `npm run build` passed; the full `npx playwright test` 131 passed and 1 skipped (the Windows/Linux-only Ctrl+O check), exit 0, twice in a row (6.4 and 6.3 minutes), headless. Second run's performance report (not asserted without `JOURNAL_PERF_STRICT=1`; hidden window): typing p95 5.0 ms (max 5.6 ms), preview 303 ms, 2 activity events 5.0 s apart, largest commit per switch p50 0.5 ms and p95 0.9 ms, no long frames, 0 live-region changes.
 
 Still needs a human: Windows 11 hardware (the [Windows checklist](WINDOWS.md), Ctrl+Shift and Alt+1-4 keys, toasts); VoiceOver and NVDA by ear (names were checked in the DOM, not spoken); the usability round with real people on the built app; and real provider sessions (approvals, the banner's command, Codex and Cursor activity).
 
