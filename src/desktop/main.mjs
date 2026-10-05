@@ -255,7 +255,7 @@ const fileListing = async (projectId, rootKey) => {
   const root = await fileRoot(projectId, rootKey);
   return listings.get(`${projectId}\u0000${rootKey}`, root);
 };
-const ROOT_CHANGES = new Set(['addProjectFolder', 'removeProjectFolder', 'removeProject', 'openProject', 'openProjectPath', 'createWorkspace', 'importWorkspace', 'removeWorkspace', 'forgetWorkspace']);
+const ROOT_CHANGES = new Set(['addProjectFolder', 'removeProjectFolder', 'removeProject', 'openProject', 'openProjectPath', 'createWorkspace', 'importWorkspace', 'removeWorkspace', 'forgetWorkspace', 'switchBranch']);
 const EDITORS = { code: line => file => ['--goto', `${file}:${line}`], cursor: line => file => ['--goto', `${file}:${line}`], zed: line => file => [`${file}:${line}`], subl: line => file => [`${file}:${line}`] };
 let editor;
 const findEditor = () => {
@@ -457,6 +457,10 @@ const actions = {
   // ----- Explorer (read-only). Roots resolve from Journal's records; the
   // renderer only names a root key and a relative path. -----
   fileRoots: ({ projectId }) => store.fileRoots(text(projectId, 'project ID', 100)),
+  // Branches of one repository root, named by its root key (never a renderer path). Switching is a
+  // plain git switch in that root; the store refuses while a session runs there.
+  branches: ({ projectId, rootKey }) => store.listBranches(text(projectId, 'project ID', 100), text(rootKey, 'root', 100)),
+  switchBranch: ({ projectId, rootKey, kind, name }) => store.switchBranch(text(projectId, 'project ID', 100), text(rootKey, 'root', 100), { kind: kind === 'remote' ? 'remote' : 'local', name: text(name, 'branch', 250) }),
   listDirectory: async ({ projectId, rootKey, path }) => listDirectory((await fileRoot(projectId, rootKey)).path, path ?? ''),
   fileStatus: async ({ projectId, rootKey }) => {
     const root = await fileRoot(projectId, rootKey);

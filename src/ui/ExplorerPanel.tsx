@@ -3,7 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import { hotkeysCoreFeature, searchFeature, selectionFeature, syncDataLoaderFeature, type ItemInstance } from '@headless-tree/core';
 import { useTree } from '@headless-tree/react';
 import { menuPosition, showMenu, type MenuItem } from './menu';
-import { copy, shell, tip } from './copy';
+import { branches as branchWords, copy, shell, tip } from './copy';
 import { api, isLive, type DirectoryListing, type FilePreviewData, type FileReference, type FileRoot, type FileStatus, type GitKind, type Project, type Session } from './types';
 import type { LineRange } from './FilePreview';
 
@@ -38,10 +38,12 @@ function lookup(status: FileStatus | undefined) {
   };
 }
 
-export function ExplorerPanel({ project, session, rootsVersion, revealLabel, focusSignal, onFocusHandled, onPreviewing, onAddReference, onSaveEvidence, onError, reveal, onRoot }: {
+export function ExplorerPanel({ project, session, rootsVersion, revealLabel, focusSignal, onFocusHandled, onPreviewing, onAddReference, onSaveEvidence, onError, reveal, onRoot, onSwitchBranch }: {
   project: Project; session: Session | null; rootsVersion: string; revealLabel: string; focusSignal: number; onFocusHandled?: () => void;
   // Phase 8 review M2: the root shown (the palette searches it), and null on unmount.
   onRoot?: (projectId: string, rootKey: string | null) => void;
+  // Opens the branch picker on a repository root (the shown checkout or worktree, or a Git folder).
+  onSwitchBranch?: (rootKey: string) => void;
   // Phase 8: a file opened from the palette (seq increases per request); previewed once its root is shown.
   reveal?: { projectId: string; rootKey: string; path: string; seq: number } | null;
   onPreviewing: (previewing: boolean) => void; onAddReference: (reference: FileReference) => Promise<void>;
@@ -64,7 +66,8 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
   const primaryKey = roots?.primary.some(root => root.key === (override ?? followKey)) ? override ?? followKey : 'checkout';
   const primary = roots?.primary.find(root => root.key === primaryKey) ?? null;
   const visible = useMemo(() => primary ? [primary, ...(roots?.folders.filter(root => root.exists !== false) ?? [])] : [], [primary, roots]);
-  const visibleKey = visible.map(root => root.key).join('|');
+  // A root's branch is part of the key: after a branch switch its listings are read again.
+  const visibleKey = visible.map(root => `${root.key}\u0000${root.branch ?? ''}`).join('|');
   const onRootRef = useRef(onRoot); onRootRef.current = onRoot;
   useEffect(() => { if (primary) onRootRef.current?.(project.id, primaryKey); }, [project.id, primaryKey, primary]);
   useEffect(() => () => onRootRef.current?.(project.id, null), [project.id]);
@@ -251,6 +254,8 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
       { id: 'refSession', label: liveSession ? `Reference ${folder ? 'Folder ' : ''}in Session` : 'Reference in Session (no running session)', enabled: !!liveSession && !blocked && !!item.path },
       { id: 'refNext', label: folder ? 'Focus Next Task on This Folder' : 'Add to Next Task', enabled: !blocked && !!item.path },
       { separator: true },
+      item.type === 'root' && root?.git && onSwitchBranch && { id: 'branch', label: branchWords.menu },
+      item.type === 'root' && root?.git && onSwitchBranch && { separator: true },
       { id: 'copyRel', label: 'Copy Relative Path' }, { id: 'copyAbs', label: 'Copy Path' },
       { id: 'reveal', label: revealLabel },
       !folder && { id: 'editor', label: 'Open in Editor', enabled: !blocked },
@@ -261,6 +266,7 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
     else if (choice === 'refSession') void referenceInSession(target);
     else if (choice === 'refNext') void addToTask(target);
     else if (choice === 'copyRel' || choice === 'copyAbs') act(() => api('copyFilePath', { projectId: project.id, rootKey: item.rootKey, path: item.path, absolute: choice === 'copyAbs' }));
+    else if (choice === 'branch') onSwitchBranch?.(item.rootKey);
     else if (choice === 'reveal') act(() => api('revealFile', { projectId: project.id, rootKey: item.rootKey, path: item.path }));
     else if (choice === 'editor') act(() => api('openInEditor', { projectId: project.id, rootKey: item.rootKey, path: item.path }));
   }
@@ -313,8 +319,10 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
     <div className="explorer-header">
       <label className="explorer-root"><span className="visually-hidden">Root</span>
         <select aria-label="Explorer root" value={primaryKey} onChange={event => setOverride(event.target.value === followKey ? null : event.target.value)}>
-          {roots?.primary.map(root => <option key={root.key} value={root.key}>{root.kind === 'checkout' ? `Checkout · ${root.branch ?? 'detached'}` : `${root.kind === 'managed' ? copy.separateCopy : 'Existing worktree'} · ${root.branch ?? 'detached'}`}</option>)}
+          {roots?.primary.map(root => <option key={root.key} value={root.key}>{root.kind === 'checkout' ? 'Checkout' : `${root.kind === 'managed' ? copy.separateCopy : 'Existing worktree'} · ${root.branch ?? 'detached'}`}</option>)}
         </select></label>
+      {primary && onSwitchBranch && <button type="button" className="branch-trigger" aria-haspopup="dialog" aria-label={branchWords.trigger(primary.label, primary.branch)} title={branchWords.title(primary.label)}
+        onClick={() => onSwitchBranch(primary.key)}><span aria-hidden="true">⑂</span><span className="branch-trigger-name">{primary.branch ?? branchWords.detached}</span><span className="branch-trigger-chevron" aria-hidden="true">▾</span></button>}
       <div className="explorer-tools" role="group" aria-label="Show">
         <button aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>All</button>
         <button aria-pressed={filter === 'changed'} title={tip.uncommitted} onClick={() => setFilter('changed')}>{shell.uncommitted}{changedRows.length ? ` ${changedRows.length}` : ''}</button>
@@ -391,7 +399,7 @@ export function ExplorerPanel({ project, session, rootsVersion, revealLabel, foc
               ? <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.2l2 2h8.8A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" />
               : <path d="M6 3h8l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM14 3v4h4" />}</svg></span>}
             <span className={`tree-name${kind ? ` git-${kind}` : ''}${data.sensitive ? ' sensitive' : ''}`}>{data.name}</span>
-            {data.type === 'root' && <span className="tree-dir">{rootFor(data.rootKey)?.family === 'folder' ? 'folder' : rootFor(data.rootKey)?.branch ? `⑂ ${rootFor(data.rootKey)!.branch}` : ''}</span>}
+            {data.type === 'root' && <span className="tree-dir">{rootFor(data.rootKey)?.branch ? `⑂ ${rootFor(data.rootKey)!.branch}` : rootFor(data.rootKey)?.family === 'folder' ? 'folder' : ''}</span>}
             {data.sensitive && <span className="tree-badge" aria-hidden="true" title="May contain credentials: not previewed"><svg viewBox="0 0 24 24" width="11" height="11" focusable="false"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg></span>}
             {data.type === 'symlink' && <span className="tree-badge" aria-hidden="true" title="Link: not followed">↪</span>}
             {kind && kind !== 'ignored' ? <span className={`git-letter git-${kind}`} aria-hidden="true">{LETTER[kind]}</span>

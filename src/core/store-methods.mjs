@@ -55,6 +55,8 @@ export const STORE_METHODS = [
   'previewSelection',
   'fileRoots',
   'fileRoot',
+  'listBranches',
+  'switchBranch',
   'referenceFor', 'referenceForPath',
   'describeReference',
   'getReceipt',
