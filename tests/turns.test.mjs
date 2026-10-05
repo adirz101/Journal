@@ -460,7 +460,7 @@ test('Story evidence: Claude descriptions, reads, sub-agents and plans; never co
   const bash = claude.extract({ hook_event_name: 'PreToolUse', session_id: 'n', cwd, tool_name: 'Bash', tool_use_id: 't1', tool_input: { command: 'npm test', description: '  Run   the test suite ' } });
   assert.equal(bash.description, 'Run the test suite');
   const read = claude.extract({ hook_event_name: 'PostToolUse', session_id: 'n', cwd, tool_name: 'Read', tool_use_id: 't2', tool_input: { file_path: '/w/src/a.ts' }, tool_response: { file: { content: 'SECRET CONTENT' } } });
-  assert.equal(read.readPath, 'src/a.ts'); assert.ok(!JSON.stringify(read).includes('SECRET'), 'Tool output never leaves the hook');
+  assert.equal(read.readPath.replace(/\\/g, '/'), 'src/a.ts', 'Relative to the hook\'s folder (the runtime normalizes Windows separators)'); assert.ok(!JSON.stringify(read).includes('SECRET'), 'Tool output never leaves the hook');
   const agent = claude.extract({ hook_event_name: 'PostToolUse', session_id: 'n', cwd, tool_name: 'Agent', tool_use_id: 't3', tool_input: { description: 'Review the diff', prompt: 'LONG PROMPT' } });
   assert.equal(agent.description, 'Review the diff'); assert.ok(!JSON.stringify(agent).includes('LONG PROMPT'));
   const todos = claude.extract({ hook_event_name: 'PostToolUse', session_id: 'n', cwd, tool_name: 'TodoWrite', tool_use_id: 't4',
