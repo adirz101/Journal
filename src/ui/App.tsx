@@ -446,14 +446,17 @@ export default function App() {
   }), []);
   // Windows and Linux: Ctrl+O is not routed, because the CLI owns it while the
   // terminal has focus (xterm stops the event there). Elsewhere it opens a project.
+  // The platform comes from the preload, not bootstrap: Welcome shows before bootstrap
+  // answers, and a Ctrl+O pressed then must not be lost (⌘O, routed by main, never is).
+  const keyPlatform = window.journal?.platform ?? bootstrap?.platform;
   useEffect(() => {
-    if (!bootstrap || bootstrap.platform === 'darwin') return;
+    if (!keyPlatform || keyPlatform === 'darwin') return;
     const open = (event: KeyboardEvent) => {
       if (event.repeat || event.isComposing || !event.ctrlKey || event.shiftKey || event.altKey || event.metaKey || keyLetter(event.key, event.code) !== 'o') return;
       event.preventDefault(); command.current('open-project');
     };
     window.addEventListener('keydown', open); return () => window.removeEventListener('keydown', open);
-  }, [bootstrap]);
+  }, [keyPlatform]);
   async function start(provider: Provider, resumeFrom?: Session) {
     const projectId = resumeFrom?.projectId ?? state?.project.id; if (!projectId) return;
     // Take the task now so text typed while this start finishes is never cleared.

@@ -111,7 +111,10 @@ function launchRuntime() {
 }
 
 function createWindow() {
-  window = new BrowserWindow({ title: 'Journal', icon: displayIcon, width: 1440, height: 920, minWidth: 900, minHeight: 640, backgroundColor: WINDOW_BACKGROUND[lastAppearance()],
+  // The size is the page's (useContentSize): Windows counts its frame borders in a window's
+  // width, so a 1440-wide window gave the page about 1424 px there and opened in the medium
+  // layout (inspector folded) instead of the wide one macOS and Linux get.
+  window = new BrowserWindow({ title: 'Journal', icon: displayIcon, width: 1440, height: 920, useContentSize: true, minWidth: 900, minHeight: 640, backgroundColor: WINDOW_BACKGROUND[lastAppearance()],
     show: !headless,
     // Hidden test windows keep their size on small CI screens (macOS clamps to the display otherwise).
     enableLargerThanScreen: headless,
@@ -120,7 +123,7 @@ function createWindow() {
   // Test runs: macOS clamps a new window to the screen (CI runners have a 1024x768
   // virtual display) even with enableLargerThanScreen; resizing after creation keeps
   // the requested size, so tests see the same layout everywhere.
-  if (headless) window.setSize(1440, 920);
+  if (headless) window.setContentSize(1440, 920);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   // The page never navigates. On the crash page, Reload's request is the one navigation that means
   // something: it is cancelled like every other and the app is loaded again.

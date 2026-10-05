@@ -32,4 +32,6 @@ contextBridge.exposeInMainWorld('journal', {
   },
   // Electron removed File.path; '' for a file that did not come from the OS (a synthetic drop).
   pathForFile: file => { try { return webUtils.getPathForFile(file); } catch { return ''; } },
+  // Known at once, unlike bootstrap: the renderer's Ctrl+O must work as soon as the window shows.
+  platform: process.platform,
 });

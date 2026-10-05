@@ -183,6 +183,8 @@ test('welcome lists agents and opens a project', async () => {
     await expect(page.getByText('Everything stays on this computer.', { exact: false })).toBeVisible();
     const open = page.getByRole('button', { name: 'Open a project…', exact: true });
     expect(await open.getAttribute('aria-keyshortcuts')).toBe(process.platform === 'darwin' ? 'Meta+O' : 'Control+O');
+    // The preload names the platform at once, so the renderer's Ctrl+O works before bootstrap answers.
+    expect(await page.evaluate(() => window.journal?.platform)).toBe(process.platform);
     await openDialogReturns(app, f.project); await open.click();
     await expect(taskBox(page)).toBeVisible();
     await expect(page.locator('.project-switcher .project-name')).toHaveText('project');
@@ -190,7 +192,9 @@ test('welcome lists agents and opens a project', async () => {
     await expect(page.locator('.sidebar')).toContainText('No sessions yet.');
     await expect(page.locator('.sidebar')).toContainText('Your first session will appear here.');
     const empty = page.locator('.terminal-empty');
-    await expect(empty).toContainText(`Start an agent with ${process.platform === 'darwin' ? '⌘N' : 'Ctrl+N'}.`);
+    // New session is ⌘N on macOS and Ctrl+Shift+N on Windows and Linux (src/desktop/shortcuts.mjs):
+    // the CLIs own Ctrl+N there.
+    await expect(empty).toContainText(`Start an agent with ${process.platform === 'darwin' ? '⌘N' : 'Ctrl+Shift+N'}.`);
     await expect(empty.locator('img')).toHaveAttribute('alt', '');
     // No remembered task notes yet: the Relevant box explains itself beside the mascot (board 3).
     const relevantEmpty = contextPreview(page).locator('.preview-empty');

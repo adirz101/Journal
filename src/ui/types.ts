@@ -153,7 +153,9 @@ declare global {
   interface Window { journal?: { request: (action: string, input?: object) => Promise<unknown>; settle: (action: string, input?: object) => Promise<Settled>;
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;
     // The OS path of a dropped file or folder (Electron webUtils.getPathForFile); '' when it did not come from the OS.
-    pathForFile: (file: File) => string }; }
+    pathForFile: (file: File) => string;
+    // process.platform, known before bootstrap answers (keys pressed as the window appears need it).
+    platform?: string }; }
 }
 // Knowledge writes still in flight. A launch or context preview waits for
 // them, so what the agent receives always includes what the user just did
