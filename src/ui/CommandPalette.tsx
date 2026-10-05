@@ -212,7 +212,8 @@ export const CommandPalette = memo(function CommandPalette(props: CommandPalette
           {group.id === 'none' ? <div className="palette-fallbacks">{group.items.map(option)}</div> : group.items.map(option)}
         </div>)}
       </div>
-      {(fileNote || truncated) && <p className="palette-note" role="status">{fileNote ?? truncated}</p>}
+      {/* Always mounted, so "No file name matches…" is announced even after a list of results (Phase 9). */}
+      <p className={`palette-note${fileNote || truncated ? '' : ' empty'}`} role="status">{fileNote ?? truncated ?? ''}</p>
       {/* The number of results, announced politely once the current query has settled (review I3). */}
       <p className="visually-hidden" role="status" aria-live="polite">{settledCount}</p>
       {none && <p className="palette-note">{words.searches}</p>}

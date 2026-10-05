@@ -14,7 +14,8 @@ export async function tabTo(page: Page, target: Locator, { max = 60, back = fals
 }
 
 // What is wrong with the focused element's focus indicator, or null when it has a visible one.
-// The focused element (and a tab's label, which carries the ring for tabs) is read with focus and
+// The focused element (and a tab's label, which carries the ring for tabs, or the palette's search
+// row, which draws the ring for its input with :focus-within) is read with focus and
 // again after blur(); an outline, a box-shadow ring or the border must change, and the new colour
 // must be opaque enough and reach 3:1 (WCAG 1.4.11) against the background it is drawn on.
 export function focusRingProblem(page: Page): Promise<string | null> {
@@ -32,7 +33,7 @@ export function focusRingProblem(page: Page): Promise<string | null> {
       let rgb = (parse(getComputedStyle(document.body).backgroundColor) ?? [0, 0, 0, 1]).slice(0, 3);
       for (const layer of layers.reverse()) rgb = over(layer, rgb); return rgb;
     };
-    const targets = [el, el.querySelector<HTMLElement>('.panel-tab-label')].filter(Boolean) as HTMLElement[];
+    const targets = [el, el.querySelector<HTMLElement>('.panel-tab-label'), el.closest<HTMLElement>('.palette-search')].filter(Boolean) as HTMLElement[];
     const read = (t: HTMLElement) => { const s = getComputedStyle(t); return { outline: `${s.outlineStyle} ${s.outlineWidth} ${s.outlineColor} ${s.outlineOffset}`, outlineStyle: s.outlineStyle, outlineWidth: parseFloat(s.outlineWidth), outlineColor: s.outlineColor, offset: parseFloat(s.outlineOffset), shadow: s.boxShadow, border: `${s.borderTopColor} ${s.borderTopWidth}`, borderColor: s.borderTopColor, borderWidth: parseFloat(s.borderTopWidth) }; };
     const focused = targets.map(read);
     el.blur(); const blurred = targets.map(read); el.focus({ preventScroll: true });
@@ -57,7 +58,7 @@ export async function expectVisibleFocus(page: Page) {
 export type Audit = { unnamed: string[]; contrast: string[]; terminalLive: string[]; liveRegions: number };
 
 // Names, contrast and live regions of what is visible now.
-// - unnamed: buttons, links, tabs, radios, checkboxes, text fields and named regions without an accessible name;
+// - unnamed: buttons, links, tabs, radios, checkboxes, comboboxes, listboxes, options, text fields and named regions without an accessible name;
 // - contrast: visible text under 4.5:1 (3:1 at 18.66 px bold / 24 px) against its composited background;
 // - terminalLive: live regions inside the terminal (they would speak every chunk).
 export function audit(page: Page): Promise<Audit> {
@@ -74,7 +75,7 @@ export function audit(page: Page): Promise<Audit> {
       }
       return ((el as HTMLElement).innerText || el.getAttribute('title') || '').trim();
     };
-    const controls = 'button,a[href],[role=button],[role=tab],[role=radio],[role=checkbox],[role=switch],[role=menuitem],[role=option],input:not([type=hidden]),textarea,select,[role=dialog],[role=region],section[aria-label],section[aria-labelledby],[role=list][aria-label]';
+    const controls = 'button,a[href],[role=button],[role=tab],[role=radio],[role=checkbox],[role=switch],[role=menuitem],[role=option],[role=combobox],[role=listbox],input:not([type=hidden]),textarea,select,[role=dialog],dialog[open],[role=region],section[aria-label],section[aria-labelledby],[role=list][aria-label]';
     const unnamed = [...document.querySelectorAll(controls)].filter(el => visible(el) && !el.closest('.xterm') && !nameOf(el)).map(describe);
 
     // Contrast: composite each ancestor's background (and opacity) down to the window.

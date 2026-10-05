@@ -125,6 +125,9 @@ export function Composer(props: ComposerProps) {
   const problem = startProblem({ provider, agent, error: startError });
   const problemCard = problem && (startError ? !((problem.kind === 'missing' || problem.kind === 'unsupported') && agentReady(agent)) : problem.kind === 'signed-out') ? problem : null;
   const shown = block ?? (startError && !problemCard ? startError.message : null);
+  // When the card goes with focus on one of its buttons (Check again found the agent ready),
+  // focus moves to Start when it can be pressed, otherwise to the task box (Phase 9).
+  const errorSlot = useKeepFocus<HTMLDivElement>(root => root.closest('form')?.querySelector<HTMLElement>('.start-button:not(:disabled)') ?? document.getElementById('task'));
   // === End Phase 8 ===
 
   return <div className="composer">
@@ -171,8 +174,8 @@ export function Composer(props: ComposerProps) {
         {worktree && <p className="field-help">{composer.separateCopyHelp}</p>}
       </div>
 
-      {problemCard && <StartError problem={problemCard} alert={!!startError}
-        onOpenTerminal={problemCard.kind === 'signed-out' && agent?.supports?.login ? () => props.providers.onLogin(provider) : problemCard.kind === 'missing' && problemCard.command ? () => props.providers.onInstall(provider) : null} />}
+      <div className="start-error-slot" ref={errorSlot}>{problemCard && <StartError problem={problemCard} alert={!!startError}
+        onOpenTerminal={problemCard.kind === 'signed-out' && agent?.supports?.login ? () => props.providers.onLogin(provider) : problemCard.kind === 'missing' && problemCard.command ? () => props.providers.onInstall(provider) : null} />}</div>
       <div className="start-row">
         <button type="submit" className="primary start-button" disabled={block !== null} aria-describedby="start-reason" aria-keyshortcuts={mac ? 'Meta+Enter' : 'Control+Enter'}>
           {composer.start(PROVIDER_NAMES[provider])} <kbd aria-hidden="true">{startKeys}</kbd></button>

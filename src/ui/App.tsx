@@ -20,6 +20,12 @@ import { CommandPalette } from './CommandPalette';
 import { RuntimeBanner } from './RuntimeBanner'; // Phase 8
 import { RecoveryPanel } from './RecoveryPanel'; // Phase 8
 import { recoveryView } from './statesModel'; // Phase 8
+import { firstEnabled, useKeepFocus } from './useKeepFocus';
+
+// The main column's place for keyboard focus when a banner or panel above it goes away.
+const mainFocusTarget = () => document.querySelector<HTMLElement>('main.workspace .terminal-surface .xterm-helper-textarea')
+  ?? document.querySelector<HTMLElement>('#wrapup-title') ?? document.getElementById('task')
+  ?? document.querySelector<HTMLElement>('main.workspace button:not(:disabled)');
 import { PALETTE_ACTIONS, type PaletteActionId } from './paletteModel'; // Phase 8
 import { expectModalDialog } from './modal'; // Phase 8 review I5
 import { Inspector } from './Inspector';
@@ -709,6 +715,11 @@ export default function App() {
   }, []);
   // Once every row is resolved (continued, removed or archived), the panel closes and acknowledges.
   useEffect(() => { if (recovery && recoveryLoadedAt === recovery.at && !recoveryShown) acknowledgeRecovery(recovery.at); }, [recovery, recoveryLoadedAt, recoveryShown, acknowledgeRecovery]);
+  // When the banner or the recovery panel goes (or a resolved row leaves it) with focus inside, focus
+  // moves to the panel's next control, else to the session: the live terminal, the wrap-up's heading,
+  // or the task box (Phase 9). It never falls to the page.
+  const runtimeSlot = useKeepFocus<HTMLDivElement>(mainFocusTarget);
+  const recoverySlot = useKeepFocus<HTMLDivElement>(root => firstEnabled(root) ?? mainFocusTarget());
   // === End Phase 8 ===
   const projectBranchChanged = session && state && !session.workspaceId && session.projectId === state.project.id && isLive(session) && session.branch !== undefined && session.branch !== state.project.branch;
   // One timeline fetch and one changes source per session, shared by the header, status bar and inspector.
@@ -751,10 +762,13 @@ export default function App() {
     {/* === Region B: main column (session view) === */}
     <main className="workspace" aria-busy={busy || undefined}>
       {/* === Phase 8: runtime disconnected and crash recovery (board 9) === */}
-      {runtime.state === 'disconnected' && <RuntimeBanner runtime={runtime} onReconnect={() => api('reconnectRuntime')} />}
+      {/* The banner sits in a status region that stays mounted, so it is announced when it appears (Phase 9). */}
+      <div className="runtime-live" role="status" ref={runtimeSlot}>{runtime.state === 'disconnected' && <RuntimeBanner runtime={runtime} onReconnect={() => api('reconnectRuntime')} />}</div>
       {runtime.warning && runtime.state !== 'disconnected' && <div className="error-banner" role="status"><span>{runtime.warning}</span></div>}
-      {recovery && recoveryShown && <RecoveryPanel recovery={recovery} view={recoveryShown} busy={busy} onContinue={target => void start(target.provider, target)}
-        onSelect={target => void selectSession(target)} onDone={() => acknowledgeRecovery(recovery.at)} />}
+      {/* The recovery panel is a region, not a live one: this always-present region says once that it appeared. */}
+      <p className="visually-hidden recovery-live" role="status">{recovery && recoveryShown ? `${statesCopy.crashTitle}. ${statesCopy.crashBody(recovery)}` : ''}</p>
+      <div ref={recoverySlot}>{recovery && recoveryShown && <RecoveryPanel recovery={recovery} view={recoveryShown} busy={busy} onContinue={target => void start(target.provider, target)}
+        onSelect={target => void selectSession(target)} onDone={() => acknowledgeRecovery(recovery.at)} />}</div>
       {/* === End Phase 8 === */}
       {error && <div className="error-banner" role="alert"><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
       {/* Phase 7: the first-note moment (its text is announced by this always-present region), then Welcome or Getting to know your project. */}
