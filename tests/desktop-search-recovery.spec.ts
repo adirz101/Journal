@@ -42,11 +42,13 @@ console.log('TASK '+(process.argv.at(-1)||'').split('\\n').at(-1));process.stdin
   return { root, project, env, launches, runtimeInfo, cleanup };
 }
 
-async function open(env: Record<string, string>, project: string): Promise<{ app: ElectronApplication; page: Page }> {
+// reopen: a restart of the same data folder. Its project is already known and the app may show it
+// at once (the remembered project), taking Welcome's Open a project… away, so nothing is clicked.
+async function open(env: Record<string, string>, project: string, { reopen = false } = {}): Promise<{ app: ElectronApplication; page: Page }> {
   const app = await electron.launch({ args: ['.'], env });
   await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, project);
   const page = await app.firstWindow();
-  await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
+  if (!reopen) await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
   return { app, page };
 }
 const closeApp = async (app: ElectronApplication) => {
@@ -141,7 +143,7 @@ test('after a forced runtime kill, bootstrap and the runtime event carry the rec
     // A restarted app connecting to the same runtime gets no recovery either.
     const runtimeId = f.runtimeInfo().runtimeId;
     await closeApp(app);
-    ({ app, page } = await open(env, f.project));
+    ({ app, page } = await open(env, f.project, { reopen: true }));
     await projectId(page);
     expect(f.runtimeInfo().runtimeId).toBe(runtimeId);
     expect((await request(page, 'bootstrap')).recovery).toBeNull();
