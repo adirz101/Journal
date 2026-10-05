@@ -105,7 +105,10 @@ export default function App() {
   const rememberedAgent = useRef<string | null | undefined>(undefined);
   if (rememberedAgent.current === undefined) rememberedAgent.current = (() => { try { const value = localStorage.getItem('journal-agent'); return isProvider(value) ? value : null; } catch { return null; } })();
   const [provider, setProviderState] = useState<Provider>(() => defaultProvider(undefined, rememberedAgent.current ?? null));
-  const chooseProvider = (next: Provider) => { setProviderState(next); setStartError(null); rememberedAgent.current = next; try { localStorage.setItem('journal-agent', next); } catch { /* optional */ } };
+  // Until the user (or a hand-off) picks an agent, the default follows detection: an agent still
+  // being checked when bootstrap answered must not lose its place to a later one (Phase 9).
+  const providerAuto = useRef(true);
+  const chooseProvider = (next: Provider) => { providerAuto.current = false; setProviderState(next); setStartError(null); rememberedAgent.current = next; try { localStorage.setItem('journal-agent', next); } catch { /* optional */ } };
   // === End Phase 4: composer state ===
   const [processView, setProcessView] = useState<{ id: string; title: string; command?: string; provider: Provider; kind: ProcessKind } | null>(null);
   // === Phase 7: first run state ===
@@ -273,6 +276,7 @@ export default function App() {
       if (event.type === 'proposals') { setKnowledgeVersion(v => v + 1); return; }
       if (event.type === 'providers') {
         latestAgents.current = event.agents; setBootstrap(current => current ? { ...current, agents: event.agents } : current);
+        if (providerAuto.current && !rememberedAgent.current) setProviderState(defaultProvider(event.agents, null));
         // After an install or sign-in exits, main checks that provider again and tags the result.
         const after = event.after; const next = after && event.agents.find(a => a.provider === after.provider);
         if (after && next) setProviderNotes(notes => ({ ...notes, [after.provider]: providerNote(after.provider, after.kind, next) }));
@@ -363,7 +367,7 @@ export default function App() {
   // The agent is preselected for this hand-off only; the remembered default agent is not changed.
   function handoff(prefill: HandoffPrefill) {
     newSession(); setTask(prefill.task); setReferences(prefill.references); setWorkspaceId(prefill.workspaceId); setDisabled([]);
-    setProviderState(prefill.provider); setMode(prefill.mode); setStartError(null);
+    providerAuto.current = false; setProviderState(prefill.provider); setMode(prefill.mode); setStartError(null);
     requestAnimationFrame(() => { const field = taskRef.current; if (field) field.setSelectionRange(field.value.length, field.value.length); });
   }
   // === End Phase 6 ===
