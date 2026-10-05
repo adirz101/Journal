@@ -26,6 +26,7 @@ import { settledError } from './ipc-error.mjs';
 import electronUpdater from 'electron-updater';
 import { dataDirectory, isNetworkPath, unpackedPath, withGuiPath } from './environment.mjs';
 import { WINDOW_BACKGROUND } from './window-colors.mjs';
+import { crashPageUrl, isReloadRequest } from './crash-page.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../..');
@@ -72,7 +73,8 @@ const recoveryFrom = hello => {
   runtime.call('acknowledgeRecovery', { at: hello.recovery.at }).catch(() => {});
   return null;
 };
-let window; let modalOpen = false; let store; let runtime; let updater; let updatePolicy = null; let closing = false; let closed = false; let runtimeState = 'connecting'; let runtimeWarning = null;
+// crashShown: the window shows the crash page (crash-page.mjs) after its renderer was lost.
+let window; let modalOpen = false; let crashShown = false; let store; let runtime; let updater; let updatePolicy = null; let closing = false; let closed = false; let runtimeState = 'connecting'; let runtimeWarning = null;
 // The development server (npm run dev, and the profiling build in tests/desktop-performance.spec.ts).
 // A released build always loads its own dist/, whatever the environment says.
 const devUrl = app.isPackaged ? undefined : process.env.JOURNAL_DEV_URL;
@@ -118,7 +120,9 @@ function createWindow() {
   // the requested size, so tests see the same layout everywhere.
   if (headless) window.setSize(1440, 920);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  window.webContents.on('will-navigate', event => event.preventDefault());
+  // The page never navigates. On the crash page, Reload's request is the one navigation that means
+  // something: it is cancelled like every other and the app is loaded again.
+  window.webContents.on('will-navigate', (event, url) => { event.preventDefault(); if (crashShown && isReloadRequest(url)) loadApp(); });
   window.webContents.on('will-attach-webview', event => event.preventDefault());
   // App shortcuts work while the terminal has focus (BUG-7): matched here, before
   // the page sees the key, and sent as commands. A held key is claimed on every
@@ -133,13 +137,27 @@ function createWindow() {
   });
   // A reloading renderer re-attaches; until then the runtime keeps buffering.
   window.webContents.on('did-start-loading', () => { modalOpen = false; void runtime?.call('detach', {}).catch(() => {}); });
-  // A crashed or killed renderer never detaches its panes itself.
-  window.webContents.on('render-process-gone', () => { modalOpen = false; void runtime?.call('detach', {}).catch(() => {}); });
+  // A crashed or killed renderer never detaches its panes itself. Instead of a blank window it shows
+  // the crash page (Something went wrong · Reload); sessions keep running in the runtime and
+  // reattach when the app loads again, with nothing resent. No automatic reload: a renderer that
+  // crashes on load would loop, and the page says what happened.
+  window.webContents.on('render-process-gone', (_event, details) => {
+    modalOpen = false; void runtime?.call('detach', {}).catch(() => {});
+    if (details?.reason === 'clean-exit' || closing || !window || window.isDestroyed()) return;
+    crashShown = true; void window.loadURL(crashPageUrl(appearance)).catch(() => {});
+  });
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   window.on('closed', () => { window = null; });
   // Windows and Linux flash the taskbar while something waits; looking at Journal stops it.
   window.on('focus', () => { if (process.platform !== 'darwin' && !headless) window?.flashFrame(false); });
-  if (devUrl) window.loadURL(devUrl); else window.loadFile(resolve(root, 'dist/index.html'));
+  loadApp();
+}
+
+// Loads the renderer (at start and from the crash page's Reload).
+function loadApp() {
+  if (!window || window.isDestroyed()) return;
+  crashShown = false;
+  void (devUrl ? window.loadURL(devUrl) : window.loadFile(resolve(root, 'dist/index.html'))).catch(() => {});
 }
 
 // Do not top-level-await readiness: Electron waits for its entry module to finish

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import ts from 'typescript';
 import * as copyModule from '../src/ui/copy.ts';
+import { CRASH_COPY, crashPageHtml, isReloadRequest, RELOAD_URL } from '../src/desktop/crash-page.mjs';
 import { composer, copy, excludedReason, firstRun, memoryState, palette, providers, selectionReason, shell, states, tip, warningText, wrapUp } from '../src/ui/copy.ts';
 
 // Plain-language vocabulary (design board B8). The technical term may stay in a
@@ -427,4 +428,28 @@ test('Phase 8: a truncated file search names its reason, and the crash count cov
   assert.equal(states.crashBody({ total: 3, sessions: mixed }), '2 sessions were interrupted. 1 session is still running outside Journal. Nothing was resent to the agents.');
   assert.equal(states.crashBody({ total: 2, sessions: [{ status: 'orphaned' }, { status: 'orphaned' }] }), '2 sessions are still running outside Journal. Nothing was resent to the agents.');
   assert.equal(states.crashBody({ total: 140, sessions: [...sessions.slice(0, 99), { status: 'orphaned' }] }), '139 sessions were interrupted. 1 session is still running outside Journal. Nothing was resent to the agents.');
+});
+
+// Phase 9: the page main shows after a renderer crash (src/desktop/crash-page.mjs) follows the same
+// voice: plain words, no exclamation mark, emoji, first person or double space; one sentence and one
+// next step; the text is escaped into a static page without script.
+test('the renderer-crash page uses the plain voice and has one next step', () => {
+  const EMOJI = /\p{Emoji_Presentation}|\p{Extended_Pictographic}\uFE0F/u;
+  for (const [key, text] of Object.entries(CRASH_COPY)) {
+    assert.doesNotMatch(text, OLD_TERMS, key); assert.doesNotMatch(text, CAPS_RUN, key); assert.doesNotMatch(text, /!/, key);
+    assert.doesNotMatch(text, EMOJI, key); assert.ok(!FIRST_PERSON.test(text), key); assert.doesNotMatch(text, / {2}/, key);
+  }
+  assert.equal(CRASH_COPY.title, 'Something went wrong'); assert.equal(CRASH_COPY.reload, 'Reload');
+  assert.equal(CRASH_COPY.body.split(/[.!?](?:\s|$)/).filter(Boolean).length, 1, 'one sentence');
+  for (const theme of ['dark', 'light']) {
+    const html = crashPageHtml(theme);
+    assert.equal((html.match(/<button/g) ?? []).length, 1, 'one next step');
+    assert.match(html, /<button type="submit" autofocus>Reload<\/button>/);
+    assert.doesNotMatch(html, /<script|\son[a-z]+=/i, 'no script');
+    assert.match(html, /Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"/);
+    assert.doesNotMatch(html, /animation|transition/, 'nothing animates');
+    assert.ok(html.includes('Journal’s window stopped unexpectedly'));
+  }
+  assert.ok(isReloadRequest(RELOAD_URL) && isReloadRequest(`${RELOAD_URL}?`));
+  assert.ok(!isReloadRequest('https://journal.invalid/reload/x') && !isReloadRequest('https://example.invalid/') && !isReloadRequest(undefined));
 });
