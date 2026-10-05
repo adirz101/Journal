@@ -421,7 +421,10 @@ export class TerminalManager extends EventEmitter {
   paste(id, text, reference = {}) {
     const entry = this.owned(id); const { session } = entry;
     if (typeof text !== 'string' || !text || text.length > 2048 || /[\x00-\x1f\x7f]/.test(text)) throw new Error('This reference cannot be typed into the terminal');
-    const reason = session.provider !== 'claude' ? `Journal cannot see when ${PROVIDER_NAMES[session.provider]} is ready for input`
+    // Typed only where Journal can see both the agent's turns and its approval prompts: Claude, and
+    // Codex with its hooks live. Cursor's approval waits are not observable, so it is copied instead.
+    const sees = session.provider === 'claude' ? session.observes?.approvals !== false : !!(session.observes?.turns && session.observes?.approvals);
+    const reason = !sees ? `Journal cannot see when ${PROVIDER_NAMES[session.provider]} is ready for input`
       : session.activity === 'permission' || session.status === 'waiting' ? 'The agent is waiting for a permission answer'
       : session.status !== 'running' || entry.stopping ? 'The agent is not ready for input'
       // Without a live observer the last state may be out of date.

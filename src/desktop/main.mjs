@@ -496,6 +496,23 @@ const actions = {
   unwatchRoot: () => { watcher.close(); },
   // Types a reference into a running session's input (never submitted) when
   // the agent is known to be ready; otherwise copies it for the user to paste.
+  // A file dropped on a session's terminal: from the Files tab (rootKey and path, from Journal's own
+  // records) or from Finder or File Explorer (absolutePath, mapped to a project folder). Returns the
+  // reference text for the window to paste at the cursor (never submitted); refused outside the
+  // project, for sensitive files, and while the agent waits for a permission answer Journal can see.
+  dropReference: async ({ sessionId, rootKey, path, absolutePath }) => {
+    const id = text(sessionId, 'session ID', 100);
+    const live = (runtimeState === 'connected' ? await runtime.call('list').catch(() => []) : []).find(session => session.id === id);
+    if (!live || !['running', 'waiting'].includes(live.status)) throw new Error('This session is not running');
+    if (live.status === 'waiting') throw new Error('The agent is waiting for a permission answer. Answer it first, then drop the file again.');
+    const reference = typeof absolutePath === 'string' ? await store.referenceForPath(id, absolutePath)
+      : await store.referenceFor(id, { rootKey, path });
+    const textValue = formatReference(reference.provider, { path: reference.display, kind: reference.kind, startLine: null, endLine: null });
+    const event = referenceEvent({ ...reference, text: textValue }, 'inserted'); const at = new Date().toISOString();
+    await store.appendEvent(id, 'reference', event, at).catch(() => {});
+    send({ type: 'timeline', event: { sessionId: id, kind: 'reference', at, body: event } });
+    return { text: textValue };
+  },
   referenceInSession: async ({ sessionId, projectId, rootKey, path, startLine, endLine }) => {
     const id = text(sessionId, 'session ID', 100);
     const reference = await store.referenceFor(id, { projectId, rootKey, path, startLine, endLine });

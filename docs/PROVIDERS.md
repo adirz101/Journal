@@ -25,7 +25,16 @@ Other versions may work. The Welcome screen's agent rows and the New session age
 | Permissions | Native prompts in the terminal; Journal never answers them | Native prompts and sandbox profile | Native prompts and Cursor's own permission config; Journal never passes `--force`, `--yolo`, `--sandbox` or `--approve-mcps` |
 | Context delivery | Initial prompt argument; receipt records exact text; not acknowledged by the model | Same | Same |
 
-Claude's hooks are added per launch through `--settings`; Codex's through `-c hooks.*` and Cursor's through a per-launch plugin (see *Lifecycle hooks* below). Existing user and project hooks are untouched; File Explorer references for Codex and Cursor are therefore always copied for the user to paste, never typed.
+Claude's hooks are added per launch through `--settings`; Codex's through `-c hooks.*` and Cursor's through a per-launch plugin (see *Lifecycle hooks* below). Existing user and project hooks are untouched.
+
+### File references in the terminal
+
+- **Reference in Session** (Files tab) types the reference at the agent's prompt only where Journal sees both its turns and its approval prompts, and only after the turn has been idle for a moment: Claude, and Codex when its hooks are live (registered and trusted in Codex). Otherwise, and always for Cursor, whose approval waits are not observable, the reference is copied for the user to paste. It is never submitted.
+- **Drag and drop** onto the terminal, from a Files tab row or from Finder or File Explorer, inserts at the cursor like a paste (bracketed paste when the agent asks for it), followed by a space and never Enter. The user is dropping deliberately while watching the terminal, so it works for all three agents, except while Journal sees an approval wait. Up to 10 files per drop.
+  - Claude: `@relative/path` (folders `@dir/`), which Claude Code resolves as a file mention. A path with spaces or other characters outside `[A-Za-z0-9_./@+-]` is inserted as a quoted relative path, since an `@` mention ends at a space.
+  - Codex and Cursor: the plain relative path (quoted when needed). Journal does not invent an `@` syntax for them; both agents read a relative path in the prompt from their working directory.
+  - Refused with a message: sensitive files (the same rule as the Files tab), files outside the project and its added folders (by real path, so a link pointing outside counts as outside), the project folder itself, and a drop that carries no file path.
+- **Paste** of text uses the Edit menu's Paste (⌘V on macOS). Pasting an image or a screenshot from the clipboard is not supported yet: the terminal receives text only. Follow-up.
 
 ## Lifecycle hooks (Codex and Cursor)
 Journal observes Codex and Cursor through hooks that only report (plan: `docs/superpowers/plans/2026-10-05-codex-cursor-hooks.md`). Every hook runs one launcher in Journal's data folder (`hooks/journal-hook`, `.cmd` on Windows); per-launch values travel in the environment, so the command is the same for every launch.

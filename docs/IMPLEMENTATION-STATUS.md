@@ -236,6 +236,16 @@ Branch `claude/ux-redesign-p9b`. Fixture acceptance only; no contract above chan
   - M2: waiting buttons with `aria-disabled` (Reconnecting…, Checking…, a busy Continue) look unavailable without fading the focus ring and ignore hover (`tests/styles.test.mjs`). M3: the crash page's Reload is described by its sentence (`aria-describedby`). M6: no page for a quitting window or destroyed contents.
 - **Docs.** This record, the README's screens (the window-crash page) and verification paragraph, and the [To verify](NATIVE-VALIDATION.md#to-verify) checklist regrouped by area without duplicates.
 
+### Terminal keys, file drops and readability
+
+Branch `claude/terminal-and-readability`. Fixture acceptance only.
+
+- **macOS editing keys** in the terminal (`src/ui/terminalKeys.ts`): ⌘⌫ deletes to the start of the line (`^U`), ⌘← and ⌘→ go to its start and end (`^A`, `^E`), ⌥⌫ deletes the previous word (`^W`), ⌥← and ⌥→ move by word (`ESC b`, `ESC f`). Windows and Linux keys are unchanged. `tests/terminal-keys.test.mjs`; `tests/desktop-terminal-keys.spec.ts` checks the exact bytes the agent receives, that pasted text arrives, and that typing and plain arrows are unchanged.
+- **File drops** onto the terminal and **Reference in Session for Codex**: see [PROVIDERS](PROVIDERS.md#file-references-in-the-terminal). `store.referenceForPath` maps a dropped absolute path to the session's own root or an added folder; `tests/explorer.test.mjs`, `tests/turns.test.mjs`, `tests/file-drag.test.mjs` and `tests/desktop-terminal-drop.spec.ts` (a synthetic drop: Finder and File Explorer drops need a person).
+- **Readability**: the type scale moved up one step (caption 12, meta 13, body 14, title 17, screen 23 px); secondary text in the dark theme is lighter (`--tx3` #99A2B0, still within the token contrast tests); the file tree has 30 px rows, chevrons and file and folder icons. Badges, counts and keycaps stay at 11 px. The terminal's own colours are unchanged.
+- **Sidebar menu**: New session and Search sit in their own menu at the top of the sidebar, above the project switcher (the collapsed sidebar has the same order). Search opens the command palette and shows its key (⌘K, Ctrl+Shift+P). `tests/desktop-palette.spec.ts`.
+- **Small fixes**: the empty Memory tab shows the notebook icon used for Project memory instead of a ◇ character; the agent cards' state line uses the caption size so "Signed in · version" fits at the larger scale.
+
 ## Verification
 
 | Check | Result |

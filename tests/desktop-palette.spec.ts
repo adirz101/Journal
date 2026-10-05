@@ -328,3 +328,21 @@ test('opening and closing has no transition', async () => {
     await page.keyboard.press('Escape');
   } finally { await closeApp(app); f.cleanup(); }
 });
+
+test('Search in the sidebar opens the palette and names its key', async () => {
+  const f = setup('palette-search'); const { app, page } = await open(f.env, f.project);
+  try {
+    const search = page.getByRole('complementary', { name: 'Sidebar' }).getByRole('button', { name: 'Search', exact: true });
+    await expect(search).toHaveAttribute('aria-keyshortcuts', mac ? 'Meta+K' : 'Control+Shift+P');
+    await expect(search.locator('kbd')).toHaveText(mac ? '⌘K' : 'Ctrl+Shift+P');
+    await search.click();
+    await expect(paletteDialog(page)).toBeVisible();
+    await expect(combobox(page)).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(paletteDialog(page)).toHaveCount(0);
+    // By keyboard too.
+    await search.focus(); await page.keyboard.press('Enter');
+    await expect(combobox(page)).toBeFocused();
+    await page.keyboard.press('Escape');
+  } finally { await closeApp(app); f.cleanup(); }
+});

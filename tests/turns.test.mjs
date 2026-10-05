@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { JournalStore } from '../src/core/store.mjs';
-import { IDENTITY_CHANGED, TerminalManager } from '../src/core/terminal.mjs';
+import { IDENTITY_CHANGED, IDLE_SETTLE_MS, TerminalManager } from '../src/core/terminal.mjs';
 import { ADAPTERS } from '../src/runtime/adapters/index.mjs';
 import { KINDS } from '../src/runtime/adapters/common.mjs';
 import { removeLater } from './support/cleanup.mjs';
@@ -428,4 +428,28 @@ test('Cursor (no turn-start event): a prompt sent at Your turn makes the state u
   const c = await start('codex'); c.send('Stop', { turn: 't0' }); c.send('UserPromptSubmit', { turn: 't0b' }); c.send('Stop', { turn: 't0b' });
   manager.write(c.session.id, 'next'); manager.write(c.session.id, '\r');
   assert.equal(c.state(), 'running/idle', 'UserPromptSubmit will report it');
+});
+
+// ----- File references typed into the prompt (drag and drop, Reference in Session) -----
+test('a reference is typed into Codex only when its hooks report turns and approvals; Cursor is always copied', async t => {
+  const observes = { codex: { turns: true, approvals: true }, cursor: { turns: true, approvals: false } };
+  const f = setup(t, { makeObserver: session => ({ settingsFile: null, observes: observes[session.provider] ?? null, env: { JOURNAL_HOOK_TARGET: 'target', JOURNAL_HOOK_TOKEN: 'token' } }) });
+  const settle = () => new Promise(r => setTimeout(r, IDLE_SETTLE_MS + 50));
+  const c = await f.start('codex');
+  c.send('SessionStart', { source: 'startup' }); await settle();
+  assert.deepEqual(f.manager.paste(c.session.id, "'src/my file.ts'", { kind: 'file', path: 'src/my file.ts' }), { inserted: true });
+  assert.ok(!c.proc.inputs.at(-1).includes('\r'), 'Never submitted');
+  assert.match(c.proc.inputs.at(-1), /'src\/my file\.ts' $/);
+  c.send('UserPromptSubmit', { turn: 't1' });
+  assert.match(f.manager.paste(c.session.id, 'src/a.ts').reason, /working/);
+  c.send('PermissionRequest', { turn: 't1', tool: 'Bash' });
+  assert.match(f.manager.paste(c.session.id, 'src/a.ts').reason, /permission/);
+  // Codex launched without Journal's hooks: Journal cannot see its approval prompts.
+  observes.codex = null;
+  const blind = await f.start('codex');
+  assert.match(f.manager.paste(blind.session.id, 'src/a.ts').reason, /cannot see when Codex/);
+  const cursor = await f.start('cursor');
+  cursor.send('sessionStart'); await settle();
+  assert.match(f.manager.paste(cursor.session.id, 'src/a.ts').reason, /cannot see when Cursor/);
+  assert.ok(!cursor.proc.inputs.some(input => input.includes('src/a.ts')));
 });
