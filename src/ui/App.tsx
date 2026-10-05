@@ -22,10 +22,6 @@ import { RecoveryPanel } from './RecoveryPanel'; // Phase 8
 import { recoveryView } from './statesModel'; // Phase 8
 import { firstEnabled, useKeepFocus } from './useKeepFocus';
 
-// The main column's place for keyboard focus when a banner or panel above it goes away.
-const mainFocusTarget = () => document.querySelector<HTMLElement>('main.workspace .terminal-surface .xterm-helper-textarea')
-  ?? document.querySelector<HTMLElement>('#wrapup-title') ?? document.getElementById('task')
-  ?? document.querySelector<HTMLElement>('main.workspace button:not(:disabled)');
 import { PALETTE_ACTIONS, type PaletteActionId } from './paletteModel'; // Phase 8
 import { expectModalDialog } from './modal'; // Phase 8 review I5
 import { Inspector } from './Inspector';
@@ -54,6 +50,11 @@ import { EndedTerminal, WrapUp } from './WrapUp'; // Phase 6
 import { endedView, type HandoffPrefill } from './wrapUpModel'; // Phase 6
 import { keyLetter } from './keys';
 import { api, errorCode, isLive, PROVIDER_NAMES, type AgentInfo, type Bootstrap, type CommandId, type FirstRunDrafts, type ProcessKind, type FileReference, type InspectorTab, type Memory, type Mode, type Project, type ProjectState, type Provider, type Receipt, type Recovery, type Session, type StatusDraft, type TimelineEvent, type WorkspaceList } from './types';
+
+// The main column's place for keyboard focus when a banner or panel above it goes away.
+const mainFocusTarget = () => document.querySelector<HTMLElement>('main.workspace .terminal-surface .xterm-helper-textarea')
+  ?? document.querySelector<HTMLElement>('#wrapup-title') ?? document.getElementById('task')
+  ?? document.querySelector<HTMLElement>('main.workspace button:not(:disabled)');
 
 const MAX_SESSIONS = 4;
 const NO_KEYS = {}; // Phase 8: the palette's keys before bootstrap
@@ -766,7 +767,7 @@ export default function App() {
       <div className="runtime-live" role="status" ref={runtimeSlot}>{runtime.state === 'disconnected' && <RuntimeBanner runtime={runtime} onReconnect={() => api('reconnectRuntime')} />}</div>
       {runtime.warning && runtime.state !== 'disconnected' && <div className="error-banner" role="status"><span>{runtime.warning}</span></div>}
       {/* The recovery panel is a region, not a live one: this always-present region says once that it appeared. */}
-      <p className="visually-hidden recovery-live" role="status">{recovery && recoveryShown ? `${statesCopy.crashTitle}. ${statesCopy.crashBody(recovery)}` : ''}</p>
+      <div className="visually-hidden recovery-live" role="status">{recovery && recoveryShown ? `${statesCopy.crashTitle}. ${statesCopy.crashBody(recovery)}` : ''}</div>
       <div ref={recoverySlot}>{recovery && recoveryShown && <RecoveryPanel recovery={recovery} view={recoveryShown} busy={busy} onContinue={target => void start(target.provider, target)}
         onSelect={target => void selectSession(target)} onDone={() => acknowledgeRecovery(recovery.at)} />}</div>
       {/* === End Phase 8 === */}
