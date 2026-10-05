@@ -31,7 +31,7 @@ Get-FileHash .\Journal-Setup-<version>-x64.exe -Algorithm SHA256
 
 ## Known limitations
 - Real Claude Code, Codex and Cursor behavior is verified manually on macOS; Windows provider behavior is unverified (see docs/WINDOWS.md).
-- Automatic updates work from 0.2.0-alpha.2 onward (macOS app and Windows installer); the Windows portable build links to new versions instead. Builds before 0.2.0-alpha.2 must be replaced by hand once.
+- Automatic updates work from 0.1.0-alpha onward (macOS app and Windows installer); the Windows portable build links to new versions instead. Earlier test builds (0.2.0-alpha.x) are not updated: install this version by hand once.
 
 ## Third-party notices
 `THIRD-PARTY-NOTICES.txt` (also inside the app).
