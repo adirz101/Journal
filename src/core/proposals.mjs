@@ -39,7 +39,7 @@ export function testCommandProposals(session, events) {
     seen.add(command);
     out.push({ kind: 'test-command', category: 'convention', scope: session.branch ? 'branch' : 'checkout',
       statement: `Tests run with \`${command}\` (exit 0 observed in a ${session.provider} session on ${end.at.slice(0, 10)}).`,
-      source: { kind: 'user', note: `Observed command exit status from Claude Code hooks in session ${session.id}.` },
+      source: { kind: 'user', note: `Observed command exit status from ${{ claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' }[session.provider] ?? 'agent'} hooks in session ${session.id}.` },
       fingerprint: fingerprint('test-command', session.projectId, command), evidence: { sessionId: session.id, eventId: end.id ?? null } });
   }
   return out;

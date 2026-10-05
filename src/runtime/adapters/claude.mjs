@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { carried, commandText, object, only, relativeTo, str } from './common.mjs';
+import { carried, commandText, describe, object, only, planItems, relativeTo, str } from './common.mjs';
 
 // Claude Code: per-launch hooks in a settings file passed with --settings; existing
 // user and project hooks stay native. Claude has no turn key, so every event is the
@@ -42,7 +42,18 @@ export default Object.freeze({
   extract(event, { absolutePaths = false } = {}) {
     const tool = str(event.tool_name, 80); const input = object(event.tool_input); const response = object(event.tool_response);
     const line = { nativeId: str(event.session_id), event: event.hook_event_name, cwd: str(event.cwd, 4096), tool, toolUseId: str(event.tool_use_id) };
-    if (tool === 'Bash') { line.command = commandText(String(input.command ?? '')); line.background = !!(input.run_in_background || response.backgroundTaskId); }
+    if (tool === 'Bash') { line.command = commandText(String(input.command ?? '')); line.background = !!(input.run_in_background || response.backgroundTaskId); line.description = describe(input.description) ?? undefined; }
+    // The Story's structured fields (src/core/story): a sub-agent's description, the file a Read
+    // opened, and the agent's plan. TodoWrite sends the whole list; TaskCreate and TaskUpdate one
+    // item each (field names unverified natively: docs/NATIVE-VALIDATION.md).
+    if (tool === 'Agent' || tool === 'Task') line.description = describe(input.description) ?? undefined;
+    if ((tool === 'Read' || tool === 'NotebookRead') && (input.file_path || input.notebook_path)) line.readPath = absolutePaths ? String(input.file_path ?? input.notebook_path).slice(0, 1000) : relativeTo(line.cwd, input.file_path ?? input.notebook_path);
+    if (tool === 'TodoWrite') { const items = planItems(input.todos); if (items) line.plan = { kind: 'todos', items }; }
+    if (tool === 'TaskCreate') { const title = describe(input.subject ?? input.content); if (title) line.plan = { kind: 'create', title, id: str(response.task?.id ?? response.id ?? response.taskId, 40) }; }
+    if (tool === 'TaskUpdate' && str(input.taskId ?? input.id, 40)) {
+      const status = ['pending', 'in_progress', 'completed'].includes(input.status) ? input.status : input.status === 'deleted' ? 'deleted' : null;
+      line.plan = { kind: 'update', id: str(input.taskId ?? input.id, 40), status, title: describe(input.subject) };
+    }
     if (FILE_TOOLS.includes(tool)) {
       const file = input.file_path ?? input.notebook_path ?? '';
       line.filePath = absolutePaths ? String(file).slice(0, 1000) : relativeTo(line.cwd, file);

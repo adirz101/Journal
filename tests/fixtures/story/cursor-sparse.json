@@ -1,0 +1,53 @@
+{
+ "description": "Cursor without turn status (level 1 plugin only): no prompts or turn ends, commands from afterShellExecution without an exit status, an edit from afterFileEdit and a Read by name. Built from the documented payload shapes.",
+ "events": [
+  {
+   "id": 1,
+   "kind": "start",
+   "at": "2026-10-06T11:00:02.000Z",
+   "body": {
+    "provider": "cursor",
+    "branch": "main"
+   }
+  },
+  {
+   "id": 2,
+   "kind": "tool",
+   "at": "2026-10-06T11:00:04.000Z",
+   "body": {
+    "tool": "Read"
+   }
+  },
+  {
+   "id": 3,
+   "kind": "file",
+   "at": "2026-10-06T11:00:06.000Z",
+   "body": {
+    "path": "src/a.ts",
+    "tool": "Edit"
+   }
+  },
+  {
+   "id": 4,
+   "kind": "command-start",
+   "at": "2026-10-06T11:00:08.000Z",
+   "body": {
+    "toolUseId": "cursor-1",
+    "command": "npm test",
+    "cwd": ".",
+    "background": false
+   }
+  },
+  {
+   "id": 5,
+   "kind": "command-end",
+   "at": "2026-10-06T11:00:08.000Z",
+   "body": {
+    "toolUseId": "cursor-1",
+    "status": "unknown",
+    "exitCode": null,
+    "durationMs": 1200
+   }
+  }
+ ]
+}

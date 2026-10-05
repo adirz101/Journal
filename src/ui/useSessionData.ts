@@ -25,8 +25,9 @@ export function useSessionEvents(sessionId: string | null, live: TimelineEvent[]
 const POLL_MS = 10_000;
 
 // One sessionChanges source for the status bar, the Files tab and its badge.
-// Claude's file and command-end events refresh it; Codex and Cursor report none, so a live
-// session of theirs is polled every 10 s while the window is visible.
+// File and command-end events refresh it (Claude's, and Codex's and Cursor's when their hooks
+// are registered); a live Codex or Cursor session is also polled every 10 s while the window is
+// visible, since an unobserved launch reports none.
 export function useSessionChanges(session: Session | null, fileEvents: number) {
   const [changes, setChanges] = useState<{ id: string; value: Changes } | null>(null); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
   const ticket = useRef(0); const id = session?.id ?? null;

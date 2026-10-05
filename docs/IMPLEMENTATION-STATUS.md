@@ -256,6 +256,26 @@ Branch `claude/terminal-and-readability`. Fixture acceptance only.
 - **Sidebar menu**: New session and Search sit in their own menu at the top of the sidebar, above the project switcher (the collapsed sidebar has the same order). Search opens the command palette and shows its key (⌘K, Ctrl+Shift+P). `tests/desktop-palette.spec.ts`.
 - **Small fixes**: the empty Memory tab shows the notebook icon used for Project memory instead of a ◇ character; the agent cards' state line uses the caption size so "Signed in · version" fits at the larger scale.
 
+### The Story (Session tab)
+
+Branch `claude/session-story`. Fixture acceptance only. "What it did" became a deterministic Story: no model, the same events always give the same rows, and titles come from a fixed vocabulary or the agent's own plan. The raw commands, exits, durations and the timeline are under Details. Rules, examples and limitations: [STORY.md](STORY.md).
+
+- **Engine** (`src/core/story/`, pure functions):
+  - a shell reader;
+  - a classifier with fixed categories;
+  - result attribution (what one exit status proves, so a piped `npm test | tail` is never called passed);
+  - grouping into turns and phases, or into the agent's plan items when there are any.
+- **Collection:**
+  - Claude: command descriptions, Read paths, sub-agent descriptions and plan snapshots;
+  - Codex: commands with their exit codes and `apply_patch` header paths, recorded for the first time;
+  - Cursor: commands (exit unknown) and file edits.
+
+  No prompt, reply, tool output or file content is kept. The store accepts two new event kinds, `tool` and `plan`.
+- **Tests:**
+  - `tests/story.test.mjs`: 16 tests, with a real Claude session on this repository as a fixture, and Codex and Cursor fixtures built from their documented payloads;
+  - collection tests in `tests/turns.test.mjs`;
+  - `tests/desktop-story.spec.ts`: two end-to-end tests through the real hook launcher.
+
 ## Verification
 
 | Check | Result |

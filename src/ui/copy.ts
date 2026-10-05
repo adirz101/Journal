@@ -122,7 +122,7 @@ export const shell = {
   sentUncertain: 'What was prepared (delivery uncertain)', // heading for an uncertain delivery (Phase 1 review note)
   inspector: 'Inspector', tabSession: 'Session', tabFiles: 'Files', tabMemory: 'Memory',
   whatThisAgentKnows: 'What this agent knows', atLaunch: (ago: string) => `at launch, ${ago} ago`,
-  whatItDid: 'What it did', fromHooks: 'from Claude hooks', showTimeline: 'Show full timeline',
+  whatItDid: 'What it did', fromHooks: (provider: string) => `from ${provider} hooks`,
   activityHidden: (provider: string) => `Activity isn't visible for ${provider}`,
   activityHiddenBody: (provider: string) => `${provider} doesn't report its commands or approval prompts to Journal. Its terminal shows everything. Changes are still tracked in Files.`,
   lastOutput: (detail: string) => `Last output: ${detail}`,
@@ -436,4 +436,16 @@ export const cursorHooks = {
   file: 'File', before: 'Now', after: 'After the change', created: '(the file is created)',
   apply: 'Make this change', applyRemoval: 'Remove these entries', cancel: 'Cancel',
   nothingToChange: 'Nothing to change.', done: 'Done. New Cursor sessions report when a turn ends.', removed: 'Removed. Your other entries are unchanged.',
+};
+
+// The Session tab's Story (src/ui/StoryPanel.tsx): fixed words around facts from src/core/story.
+export const story = {
+  plan: 'Plan', turn: (n: number) => `Turn ${n}`, details: 'Details', hideDetails: 'Hide details',
+  earlier: (n: number) => `Earlier turns (${n})`, hideEarlier: 'Hide earlier turns',
+  earlierItems: (n: number) => `${n} earlier ${n === 1 ? 'step' : 'steps'} in Details`,
+  itemsOf: (title: string) => `Steps: ${title}`,
+  approvals: (n: number) => `${n} ${n === 1 ? 'approval' : 'approvals'}`,
+  waiting: (label: string) => `Waiting for approval: ${label}`,
+  outcome: { interrupted: 'interrupted', error: 'ended with an error' } as Record<string, string>,
+  status: { passed: 'passed', done: 'done', failed: 'failed', active: 'in progress', pending: 'not started', removed: 'removed from the plan', unknown: 'result unknown' } as Record<string, string>,
 };

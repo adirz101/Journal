@@ -575,7 +575,7 @@ const actions = {
   getReceipt: ({ id }) => store.getReceipt(id),
   sessions: async () => ({ live: (await runtime.call('list')).map(fromRuntime), active: await store.activeSessions() }),
   getSession: ({ id }) => store.getSession(id),
-  sessionEvents: ({ id }) => store.listEvents(id, 500),
+  sessionEvents: ({ id }) => store.listEvents(id, 2000),
   sessionChanges: ({ id }) => store.sessionChanges(id),
   sessionFileDiff: ({ id, path }) => store.sessionFileDiff(id, path),
   // Opens a listed, regular, non-executable changed file with its default

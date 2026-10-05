@@ -145,6 +145,9 @@ these check Journal's integrated feature.
 - [ ] **Cursor in-session changes.** `/new` or `/resume` inside the Cursor TUI marks the identity as changed instead of rebinding silently.
 - [ ] **Cursor with a user stop hook that returns a follow-up.** The follow-up turn is shown as a new turn.
 - [ ] **Shell start-up.** A slow shell profile (Cursor runs hooks through `$SHELL -ilc`) never delays or blocks the agent beyond Cursor's 5 s timeout.
+- [ ] **Story, Codex.** A Codex session's commands appear in the Session tab's Story with their exit codes, and `apply_patch` edits as changed or created files (the shell tool names and the `apply_patch` input shape are taken from the documentation).
+- [ ] **Story, Cursor.** Cursor commands appear once (from `afterShellExecution`, result unknown) and edits from `afterFileEdit`.
+- [ ] **Story, Claude plan.** When Claude keeps a todo list (TodoWrite, or TaskCreate/TaskUpdate in newer versions), the Story shows its items as rows with the activity under the item in progress.
 - [ ] **Windows, both providers.** Hooks run (launcher `.cmd`), with a data folder path without spaces; a path with spaces leaves sessions on Limited status.
 
 ### Palette and states

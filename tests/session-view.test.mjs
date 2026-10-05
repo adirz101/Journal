@@ -69,9 +69,10 @@ test('diffSummary counts what the session changed', async t => {
   assert.deepEqual(diffSummary({ base: 'b', available: true, files: [] }), { additions: 0, deletions: 0, files: 0 });
 });
 
-test('activityVisible: Claude only', async t => {
+test('activityVisible: Claude, and Codex or Cursor when this launch registered their hooks', async t => {
   const { activityVisible } = await load(t);
   assert.deepEqual(['claude', 'codex', 'cursor'].map(provider => activityVisible({ provider })), [true, false, false]);
+  assert.deepEqual(['codex', 'cursor'].map(provider => activityVisible({ provider, observes: { turns: true, approvals: provider === 'codex' } })), [true, true]);
 });
 
 // Hooks plan 4.3: the timeline shows one entry per turn. Turn ends recorded by the runtime for

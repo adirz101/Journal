@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TimelineEvent } from './types';
-import { count, deliveryState, shell } from './copy';
+import { count, deliveryState } from './copy';
 
 interface Command { toolUseId: string; command: string; cwd: string | null; test: boolean; at: string; status: string; exitCode: number | null; durationMs: number | null; endedAt: string | null; }
 
@@ -15,7 +15,9 @@ const describe = (event: TimelineEvent) => {
     case 'turn-end': return `${b.outcome === 'interrupted' ? 'Turn interrupted' : b.outcome === 'error' ? 'Turn ended with an error' : 'Agent finished its turn'}${b.late ? ' (an earlier turn, reported late)' : ''}`;
     case 'command-start': return `$ ${b.command}`;
     case 'command-end': return `${b.status === 'succeeded' ? 'Exit 0' : b.exitCode !== null && b.exitCode !== undefined ? `Exit ${b.exitCode}` : b.status}${b.durationMs ? ` · ${(b.durationMs / 1000).toFixed(1)}s` : ''}`;
-    case 'file': return `${b.tool ?? 'Edited'} ${b.path}`;
+    case 'file': return `${b.op === 'add' ? 'Created' : b.op === 'delete' ? 'Deleted' : b.tool ?? 'Edited'} ${b.path}`;
+    case 'tool': return `${b.tool}${b.path ? ` ${b.path}` : ''}${b.description ? ` · ${b.description}` : ''}`;
+    case 'plan': return `Plan updated: ${count(Array.isArray(b.items) ? b.items.length : 0, 'item')}`;
     case 'interrupt': return 'Interrupt sent (Ctrl+C)';
     case 'stop': return `Stopped${b.survivors ? ` · ${b.survivors} child process${b.survivors === 1 ? '' : 'es'} still running` : ''}`;
     case 'exit': return `Process exited${b.exitCode !== null && b.exitCode !== undefined ? ` with code ${b.exitCode}` : ''}${b.survivors ? ` · ${b.survivors} child process${b.survivors === 1 ? '' : 'es'} still running` : ''}`;
@@ -62,18 +64,16 @@ export function commandsFrom(events: TimelineEvent[]) {
 const exitChip = (c: Command) => `${c.status === 'succeeded' ? 'exit 0' : c.exitCode !== null ? `exit ${c.exitCode}` : c.status}${c.durationMs !== null ? ` · ${(c.durationMs / 1000).toFixed(1)} s` : ''}`;
 const MAX_ROWS = 30;
 
-// "What it did" (Session tab): Claude's commands, edits and approval prompts,
-// newest last, at most 30; the full timeline and test summary on request.
-// observable false (Codex, Cursor): only Journal's own timeline, on request.
-// empty: what the list says before anything was observed (SessionTab explains it while the session runs).
-export function ActivitySummary({ events, observable = true, empty = 'No commands or edits observed yet.' }: { events: TimelineEvent[]; observable?: boolean; empty?: string }) {
-  const [full, setFull] = useState(false);
+// The raw evidence behind the Story (Session tab → Details): the newest commands, edits and
+// approval prompts with their exact text, exits and durations, the test commands' exits, and
+// the full timeline. Codex and Cursor commands appear once their hooks report them.
+export function RawActivity({ events }: { events: TimelineEvent[] }) {
   const commands = useMemo(() => commandsFrom(events), [events]);
   const byId = useMemo(() => new Map(commands.map(c => [c.toolUseId, c])), [commands]);
   const rows = useMemo(() => events.filter(e => e.kind === 'command-start' || e.kind === 'file' || e.kind === 'permission').slice(-MAX_ROWS), [events]);
   const tests = commands.filter(c => c.test);
-  return <>
-    {observable && (rows.length ? <ul className="did-list" aria-label="What it did">{rows.map((event, index) => {
+  return <div className="raw-activity">
+    {rows.length > 0 && <ul className="did-list" aria-label="Commands, edits and approvals">{rows.map((event, index) => {
       const b = event.body as Record<string, any>; const command = event.kind === 'command-start' ? byId.get(b.toolUseId) : undefined;
       return <li key={event.id ?? `${event.at}-${index}`}>
         <time dateTime={event.at}>{new Date(event.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
@@ -81,13 +81,10 @@ export function ActivitySummary({ events, observable = true, empty = 'No command
         <code title={command ? `${command.command}\nin ${command.cwd ?? 'unknown directory'} · output not stored` : undefined}>{event.kind === 'command-start' ? b.command : event.kind === 'file' ? b.path : b.command ?? b.path ?? b.tool ?? 'permission'}</code>
         {command && command.status !== 'running' && <span className={`chip command-status ${command.status}`}>{exitChip(command)}</span>}
       </li>;
-    })}</ul> : <p className="muted">{empty}</p>)}
-    <button className="text-button" aria-expanded={full} onClick={() => setFull(!full)}>{full ? 'Hide full timeline' : shell.showTimeline}</button>
-    {full && <>
-      {observable && <section aria-label="Tests" className="test-summary"><span className="eyebrow">Test commands</span>
-        {tests.length ? <p>{tests.filter(t => t.status === 'succeeded').length} exited 0 · {tests.filter(t => t.status === 'failed').length} failed · {tests.filter(t => !['succeeded', 'failed'].includes(t.status)).length} running or unknown</p> : <p className="muted">No test commands observed.</p>}
-        <small>Exit status only, from Claude Code hooks. Journal does not parse test reports or infer results from agent text, and does not store command output.</small></section>}
-      <section aria-label="Timeline" className="timeline-section"><span className="eyebrow">Timeline · {events.length}</span><Timeline events={events} /></section>
-    </>}
-  </>;
+    })}</ul>}
+    {tests.length > 0 && <section aria-label="Tests" className="test-summary"><span className="eyebrow">Test commands</span>
+      <p>{tests.filter(t => t.status === 'succeeded').length} exited 0 · {tests.filter(t => t.status === 'failed').length} failed · {tests.filter(t => !['succeeded', 'failed'].includes(t.status)).length} running or unknown</p>
+      <small>Exit status only, from the agent's hooks. Journal does not parse test reports or infer results from agent text, and does not store command output.</small></section>}
+    <section aria-label="Timeline" className="timeline-section"><span className="eyebrow">Timeline · {events.length}</span><Timeline events={events} /></section>
+  </div>;
 }

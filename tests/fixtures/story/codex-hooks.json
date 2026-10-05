@@ -1,0 +1,191 @@
+{
+ "description": "Codex as Journal records it from its hooks (PostToolUse: shell commands with exit_code, apply_patch header paths). Built from the documented payload shapes; no plan events.",
+ "events": [
+  {
+   "id": 1,
+   "kind": "start",
+   "at": "2026-10-06T09:00:02.000Z",
+   "body": {
+    "provider": "codex",
+    "branch": "main"
+   }
+  },
+  {
+   "id": 2,
+   "kind": "prompt",
+   "at": "2026-10-06T09:00:04.000Z",
+   "body": {}
+  },
+  {
+   "id": 3,
+   "kind": "command-start",
+   "at": "2026-10-06T09:00:06.000Z",
+   "body": {
+    "toolUseId": "codex-1",
+    "command": "sed -n 1,60p src/uploader.ts",
+    "cwd": ".",
+    "background": false
+   }
+  },
+  {
+   "id": 4,
+   "kind": "command-end",
+   "at": "2026-10-06T09:00:06.000Z",
+   "body": {
+    "toolUseId": "codex-1",
+    "status": "succeeded",
+    "exitCode": 0,
+    "durationMs": null
+   }
+  },
+  {
+   "id": 5,
+   "kind": "command-start",
+   "at": "2026-10-06T09:00:08.000Z",
+   "body": {
+    "toolUseId": "codex-2",
+    "command": "rg -n retry src",
+    "cwd": ".",
+    "background": false
+   }
+  },
+  {
+   "id": 6,
+   "kind": "command-end",
+   "at": "2026-10-06T09:00:08.000Z",
+   "body": {
+    "toolUseId": "codex-2",
+    "status": "succeeded",
+    "exitCode": 0,
+    "durationMs": null
+   }
+  },
+  {
+   "id": 7,
+   "kind": "command-start",
+   "at": "2026-10-06T09:00:10.000Z",
+   "body": {
+    "toolUseId": "codex-3",
+    "command": "cat src/client.ts",
+    "cwd": ".",
+    "background": false
+   }
+  },
+  {
+   "id": 8,
+   "kind": "command-end",
+   "at": "2026-10-06T09:00:10.000Z",
+   "body": {
+    "toolUseId": "codex-3",
+    "status": "succeeded",
+    "exitCode": 0,
+    "durationMs": null
+   }
+  },
+  {
+   "id": 9,
+   "kind": "file",
+   "at": "2026-10-06T09:00:12.000Z",
+   "body": {
+    "path": "src/uploader.ts",
+    "tool": "apply_patch",
+    "op": "update"
+   }
+  },
+  {
+   "id": 10,
+   "kind": "file",
+   "at": "2026-10-06T09:00:14.000Z",
+   "body": {
+    "path": "src/retry.ts",
+    "tool": "apply_patch",
+    "op": "add"
+   }
+  },
+  {
+   "id": 11,
+   "kind": "file",
+   "at": "2026-10-06T09:00:16.000Z",
+   "body": {
+    "path": "src/client.ts",
+    "tool": "apply_patch",
+    "op": "update"
+   }
+  },
+  {
+   "id": 12,
+   "kind": "command-start",
+   "at": "2026-10-06T09:00:18.000Z",
+   "body": {
+    "toolUseId": "codex-4",
+    "command": "npm test",
+    "cwd": ".",
+    "background": false
+   }
+  },
+  {
+   "id": 13,
+   "kind": "command-end",
+   "at": "2026-10-06T09:00:18.000Z",
+   "body": {
+    "toolUseId": "codex-4",
+    "status": "failed",
+    "exitCode": 1,
+    "durationMs": null
+   }
+  },
+  {
+   "id": 14,
+   "kind": "command-start",
+   "at": "2026-10-06T09:00:20.000Z",
+   "body": {
+    "toolUseId": "codex-5",
+    "command": "npm test",
+    "cwd": ".",
+    "background": false
+   }
+  },
+  {
+   "id": 15,
+   "kind": "command-end",
+   "at": "2026-10-06T09:00:20.000Z",
+   "body": {
+    "toolUseId": "codex-5",
+    "status": "succeeded",
+    "exitCode": 0,
+    "durationMs": null
+   }
+  },
+  {
+   "id": 16,
+   "kind": "command-start",
+   "at": "2026-10-06T09:00:22.000Z",
+   "body": {
+    "toolUseId": "codex-6",
+    "command": "git commit -am \"Add retry to the uploader\"",
+    "cwd": ".",
+    "background": false
+   }
+  },
+  {
+   "id": 17,
+   "kind": "command-end",
+   "at": "2026-10-06T09:00:22.000Z",
+   "body": {
+    "toolUseId": "codex-6",
+    "status": "succeeded",
+    "exitCode": 0,
+    "durationMs": null
+   }
+  },
+  {
+   "id": 18,
+   "kind": "turn-end",
+   "at": "2026-10-06T09:00:24.000Z",
+   "body": {
+    "turn": "t1",
+    "outcome": "completed"
+   }
+  }
+ ]
+}

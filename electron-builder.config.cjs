@@ -47,6 +47,8 @@ module.exports = {
     '!src/ui/**', '!**/*.map', '!**/*.{test,spec}.{mjs,ts,js}',
     // Type declarations for the renderer's TypeScript (src/core/*.d.mts) are not needed at run time.
     '!src/**/*.d.{ts,mts}',
+    // The Story (src/core/story) runs only in the window, which ships it bundled in dist/.
+    '!src/core/story/**',
     ...ptyCommon,
   ],
   asar: true,
