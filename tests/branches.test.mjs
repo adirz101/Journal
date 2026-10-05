@@ -82,7 +82,7 @@ test('a remote-only branch creates its local tracking branch', t => {
   const result = f.store.switchBranch(f.project.id, 'checkout', { kind: 'remote', name: 'origin/remote-only' });
   assert.equal(result.branch, 'remote-only'); assert.equal(result.created, true); assert.equal(result.from, 'origin/remote-only');
   assert.equal(git(f.repo, 'rev-parse', '--abbrev-ref', 'remote-only@{upstream}'), 'origin/remote-only');
-  assert.equal(readFileSync(join(f.repo, 'remote.txt'), 'utf8'), 'r\n');
+  assert.equal(readFileSync(join(f.repo, 'remote.txt'), 'utf8').replace(/\r\n/g, '\n'), 'r\n', 'Checked out from the remote branch (CRLF on Windows)');
   // Now tracked locally, the remote branch is no longer listed separately.
   assert.deepEqual(f.store.listBranches(f.project.id, 'checkout').remote, []);
   assert.ok(f.store.listAudit().some(a => a.action === 'branch-switched' && a.body.created === true && a.body.remote === 'origin/remote-only'));
