@@ -297,6 +297,69 @@ Branch `claude/runtime-switch`. **The bug:** after an update with sessions kept 
 - **Switch now…:** after a confirmation, it stops those sessions and switches at once; Continue resumes each conversation in the new version.
 - **Tests:** `tests/runtime-client.test.mjs`, and `tests/desktop-runtime-switch.spec.ts`, which uses a copy of the app whose runtime differs by one comment as the other build.
 
+### Isolated sessions (macOS MVP)
+
+Branch `claude/isolated-environments`. Design and prototype: [ISOLATED-AGENT-ENVIRONMENTS](ISOLATED-AGENT-ENVIRONMENTS.md), `experiments/isolated-environments/` (kept as reference). Fixture acceptance only; macOS only (Windows is out of this milestone).
+
+**Model.** A new session in Build mode can run **Isolated**. It gets:
+- its own Git worktree under Journal's data folder (`<data>/env/<project>/<id>`), detached at the branch's commit, which is recorded as the base;
+- private refs `refs/journal/env/<id>/{base,head,result}`, a Journal marker, and a Journal-owned lock;
+- a temp folder, a log folder and a 10-port block.
+
+The record is a workspace of kind `isolated` in the workspaces table, so a session in one gets its folder, Files and Changes from the existing workspace plumbing. Its lifecycle is a separate field with explicit, checked transitions:
+- `creating → ready ⇄ running ⇄ waiting → completed → integrating → integrated → cleanup_pending → removed`;
+- side branches: `conflict`, `abandoned`, `failed`;
+- restore: `abandoned` or `removed` back to `completed`.
+
+Isolated environments are not offered as workspaces to choose or import, and the Files tab's branch switcher refuses them.
+
+**Core** (`src/core/environments.mjs`, exposed as store methods):
+- `createEnvironment`, `attachEnvironmentSession`, `getEnvironment`, `listEnvironments`, `environmentsOverview` (running, waiting, completed, failed, unapplied, in conflict, cleanable);
+- `snapshotEnvironment`, `previewEnvironmentApply`, `applyEnvironment`, `updateEnvironmentFromBranch` (resolve in the environment);
+- `abandonEnvironment`, `restoreEnvironment`, `cleanupEnvironment`, `reconcileEnvironments`, `syncEnvironment`, `environmentLaunch`.
+
+Errors carry codes. Nothing needs the window.
+
+**Session.** Main creates the environment, then starts the session in it (an isolated `start`). The runtime launches the agent with its cwd in the environment and these variables: `JOURNAL_ENV_ID`, `JOURNAL_ENV_BASE`, `JOURNAL_LOGICAL_BRANCH`, `JOURNAL_PORT`, `JOURNAL_PORT_COUNT`, `JOURNAL_PORTS`, `JOURNAL_ENV_LOG_DIR`, `TMPDIR`, `TEMP`, `TMP`. The environment follows its session's status (running, waiting), and when the session ends its result is captured and it is `completed`. Continue makes it running again.
+
+**Apply** (the prototype's corrected order):
+1. A three-way preview with `git merge-tree --write-tree --merge-base`; nothing is written.
+2. A checkout overlap guard.
+3. One Apply per branch (a lock file).
+4. Take the checkout's own `index.lock`, and build a side index with `read-tree -m -u`.
+5. Move the branch by compare-and-swap (`update-ref`). On a race, put the files back; the real index never changed.
+6. Swap the side index in.
+
+The plan is durable, and reconcile finishes or rolls back a crash on either side of the landing.
+
+**Memory.**
+- Receipts record `environment: { id, base, logicalBranch }`.
+- The packet follows the environment's logical branch (`workspaceView` reports it for an isolated worktree), never the checkout's branch.
+- Notes proposed from an isolated session carry a structured `origin` (session, environment, logical branch, base, result), taken from Journal's records and never from the caller. Whether that work is applied is computed when read, and an unapplied note is labelled on its card.
+- Accepting a suggestion from such a session carries its origin. Conflicting proposals are both kept.
+
+**Window.**
+- The composer has an **Isolated** option (Build mode, a named branch).
+- The header shows "Isolated · ⑂ branch".
+- The Session tab's isolation panel shows:
+  - the state and the result;
+  - **Apply to <branch>…** with a preview: freshness, files, conflicts, overlapping uncommitted changes, sensitive files left out;
+  - **Keep for later**, **Abandon…**, **Restore**, **Resolve in this session** and **Try cleanup again**;
+  - internals only under Details.
+- Files browses the environment, and Changed compares with its base: "Isolated from feature/auth at abc1234", plus how far the branch moved.
+- The Story's isolation rows come from `environment` events.
+
+**Cleanup:**
+- Never `--force`, and never a repository-wide `git worktree prune`.
+- Only inside Journal's root, with the marker and Git registration matching, no live or orphaned session, the result captured, and no work added after it.
+- HEAD and the index are pointed at the result; untracked links are removed as links; then `git worktree remove`.
+- Otherwise `cleanup_pending`, retried at startup and every 10 minutes.
+
+**Tests:**
+- `tests/environments.test.mjs`: 16 tests on real Git through the store.
+- Isolation rows in `tests/story.test.mjs`; the isolation copy in `tests/copy.test.mjs`.
+- `tests/desktop-isolated.spec.ts`: 2 end-to-end tests, the isolated flow plus a conflict and a restart.
+
 ## Verification
 
 | Check | Result |

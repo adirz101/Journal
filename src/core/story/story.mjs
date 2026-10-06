@@ -281,6 +281,30 @@ function planMeta(atoms) {
 const PLAN_STATUS = { completed: 'done', in_progress: 'active', pending: 'pending', removed: 'removed' };
 
 // ---- Story ---------------------------------------------------------------------------------
+// An isolated session's environment, from its 'environment' events: fixed titles, facts only.
+const shortSha = sha => typeof sha === 'string' ? sha.slice(0, 7) : '';
+const countOf = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+export function isolationOf(events) {
+  const rows = [];
+  for (const event of Array.isArray(events) ? events : []) {
+    if (event?.kind !== 'environment') continue; const b = event.body ?? {};
+    const row = (title, meta, status = 'neutral') => rows.push({ key: `environment:${rows.length}`, kind: 'environment', title, status, meta: meta.filter(Boolean), summary: meta.filter(Boolean), at: event.at, items: [] });
+    switch (b.action) {
+      case 'created': row(`Isolated from ${b.logicalBranch ?? 'its branch'}`, [b.base ? `at ${shortSha(b.base)}` : null]); break;
+      case 'result': row('Result saved', [countOf(Number(b.files ?? 0), 'file'), b.excluded ? `${b.excluded} left out (sensitive names)` : null]); break;
+      case 'applied': row(`Applied to ${b.branch ?? 'its branch'}`, [b.commit ? `commit ${shortSha(b.commit)}` : null, countOf(Number(b.files ?? 0), 'file')], 'passed'); break;
+      case 'conflict': row('Conflict with its branch', [countOf(Number(b.paths ?? 0), 'file'), 'nothing applied'], 'failed'); break;
+      case 'updated': row('Took in its branch', [b.to ? `at ${shortSha(b.to)}` : null, b.conflicts ? `${countOf(Number(b.conflicts), 'conflict')} to resolve here` : 'no conflicts'], b.conflicts ? 'failed' : 'neutral'); break;
+      case 'abandoned': row('Set aside', ['result kept']); break;
+      case 'restored': row('Restored', ['ready to apply']); break;
+      case 'cleanup-pending': row('Cleanup waiting', [typeof b.reason === 'string' ? b.reason.slice(0, 80) : null]); break;
+      case 'cleaned': row('Folder cleaned up', ['result kept']); break;
+      default: break;
+    }
+  }
+  return rows;
+}
+
 export function buildStory(events) {
   const atoms = atomsOf(events);
   const turns = []; let turn = null; let hidden = 0;
@@ -315,5 +339,5 @@ export function buildStory(events) {
   }) : null;
   const storyTurns = turns.map(t => ({ index: t.index, at: t.at, endAt: t.endAt, outcome: t.outcome, approvals: t.approvals, phases: phasesOf(t.atoms) }));
   const commands = atoms.filter(a => a.command !== undefined).length;
-  return { plan: planRows?.length ? planRows : null, turns: storyTurns, waiting, counts: { events: Array.isArray(events) ? events.length : 0, commands, hidden } };
+  return { isolation: isolationOf(events), plan: planRows?.length ? planRows : null, turns: storyTurns, waiting, counts: { events: Array.isArray(events) ? events.length : 0, commands, hidden } };
 }

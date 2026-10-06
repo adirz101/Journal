@@ -59,6 +59,9 @@ export const tip = {
 
 // The New session composer (Phase 4, boards B5 and B13).
 export const composer = {
+  isolated: 'Isolated',
+  isolatedOn: (branch: string) => `Works in its own copy of ${branch}. Nothing reaches ${branch} until you apply it.`,
+  isolatedOff: 'Works directly in this checkout. Choose Isolated to run several agents on one branch without overlap.',
   newSession: 'New session', checkoutLine: (name: string, branch: string, sha: string) => `${name} · ${branch} at ${sha}`,
   task: 'Task', taskHint: 'optional, picks relevant notes', taskPlaceholder: 'What are you working on? Mention a module or path to include notes about it.',
   agent: 'Agent', mode: 'Mode', build: 'Build', plan: copy.plan, readOnly: copy.readOnly, workspace: 'Workspace', manage: 'Manage',
@@ -97,6 +100,9 @@ export const count = (n: number, one: string, many = `${one}s`) => `${n} ${n ===
 // Every key exists from the start so the three groups never edit the same
 // lines; a group adds new keys only in its own block.
 export const shell = {
+  isolatedFrom: (branch: string, sha: string) => `Isolated from ${branch} at ${sha}: its own copy, compared with where it started.`,
+  isolatedMoved: (branch: string, n: number) => `${branch} moved ${count(n, 'commit')} since this session started.`,
+  savedResult: 'Its folder was removed; these are the changes in its saved result.',
   // Another Git working tree inside the checkout that the session worked in (Files → Changed).
   otherTree: (path: string, branch: string | null, files: number, commits: number, base: string) =>
     `${count(files, 'file')} in the worktree ${path}${branch ? ` (${branch})` : ''}, compared with ${base}${commits ? `, the commit before the ${count(commits, 'commit')} made there since the session started` : ''}.`,
@@ -444,7 +450,7 @@ export const cursorHooks = {
 
 // The Session tab's Story (src/ui/StoryPanel.tsx): fixed words around facts from src/core/story.
 export const story = {
-  plan: 'Plan', turn: (n: number) => `Turn ${n}`, details: 'Details', hideDetails: 'Hide details',
+  plan: 'Plan', isolation: 'Isolation', turn: (n: number) => `Turn ${n}`, details: 'Details', hideDetails: 'Hide details',
   earlier: (n: number) => `Earlier turns (${n})`, hideEarlier: 'Hide earlier turns',
   earlierItems: (n: number) => `${n} earlier ${n === 1 ? 'step' : 'steps'} in Details`,
   itemsOf: (title: string) => `Steps: ${title}`,
@@ -452,4 +458,37 @@ export const story = {
   waiting: (label: string) => `Waiting for approval: ${label}`,
   outcome: { interrupted: 'interrupted', error: 'ended with an error' } as Record<string, string>,
   status: { passed: 'passed', done: 'done', failed: 'failed', active: 'in progress', pending: 'not started', removed: 'removed from the plan', unknown: 'result unknown' } as Record<string, string>,
+};
+
+// Isolated sessions (src/ui/EnvironmentPanel.tsx): fixed words around facts from the environment.
+export const isolation = {
+  heading: 'Isolated', from: (branch: string, sha: string) => `From ${branch} at ${sha}`,
+  state: (state: string, branch: string) => ({
+    creating: 'Setting up its own copy…', ready: `Works in its own copy of ${branch}; nothing reaches ${branch} until you apply it.`,
+    running: `Working in its own copy of ${branch}.`, waiting: `Waiting for you, in its own copy of ${branch}.`,
+    completed: `Done. Its changes are ready to apply to ${branch}.`, conflict: `Its changes conflict with ${branch}; nothing was applied.`,
+    integrating: `Applying to ${branch}…`, integrated: `Applied to ${branch}.`, abandoned: 'Set aside. Its result is kept; you can restore it.',
+    cleanup_pending: 'Its folder could not be removed yet; nothing was lost.', removed: 'Its folder was removed; its result is kept.', failed: 'Its copy could not be set up.',
+  } as Record<string, string>)[state] ?? state,
+  applied: (branch: string, sha: string) => `Applied to ${branch} as commit ${sha}.`,
+  result: (n: number) => `Result: ${count(n, 'file')} changed.`, excluded: (n: number) => `${count(n, 'file')} with sensitive names left out.`,
+  excludedList: (paths: string) => `Left out (sensitive names): ${paths}.`,
+  conflict: (branch: string, n: number) => `${count(n, 'file')} conflict with ${branch}:`,
+  resolveHere: 'Its branch is taken into its copy; continue the session to resolve the marked files.',
+  tookInConflicts: (branch: string, n: number) => `${branch} was taken into its copy; ${count(n, 'file')} to resolve there. Continue the session and ask the agent to resolve them.`,
+  tookInClean: (branch: string) => `${branch} was taken into its copy without conflicts. Apply again.`,
+  previewLabel: (branch: string) => `What applying to ${branch} would do`,
+  moved: (branch: string, n: number) => `${branch} moved ${count(n, 'commit')} since this session started.`, combined: 'Its changes are combined with them.',
+  rewritten: (branch: string) => `${branch} was rewritten since this session started; check the result carefully.`,
+  upToDate: (branch: string) => `${branch} has not moved since this session started.`,
+  changes: (n: number) => `${count(n, 'file')} would change:`, more: (n: number) => `and ${n} more`,
+  previewConflict: (n: number) => `${count(n, 'file')} conflict; nothing can be applied:`,
+  blocked: (n: number) => `Your uncommitted changes to ${count(n, 'file')} would be overwritten; commit or move them first:`,
+  apply: (branch: string) => `Apply to ${branch}…`, applyNow: (branch: string) => `Apply to ${branch}`, cancel: 'Cancel',
+  resolve: 'Resolve in this session', keep: 'Keep for later', keptForLater: (branch: string) => `Kept. You can apply it to ${branch} any time.`,
+  abandon: 'Abandon…', abandonConfirm: 'Remove its folder? Its result is kept and can be restored.', abandonNow: 'Abandon', restore: 'Restore', retryCleanup: 'Try cleanup again',
+  cleanupWaiting: (reason: string) => `Cleanup waiting: ${reason}.`,
+  details: 'Details', folder: 'Folder', removed: 'removed', base: 'Started at', resultId: 'Result', ports: 'Ports', refs: 'Saved as',
+  unappliedNote: (branch: string) => `From an isolated session whose changes are not on ${branch} yet.`,
+  notSandbox: 'Isolation keeps files, temp folders and ports apart. It is not a security sandbox: the agent runs as you.',
 };

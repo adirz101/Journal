@@ -105,7 +105,7 @@ test('the vocabulary itself avoids the old terms, except in tooltips', () => {
   // The composer's strings, nested help and functions called with sample arguments.
   const samples = { checkoutLine: ['Journal', 'main', 'abc1234'], start: ['Claude Code'], installed: ['2.1.0'], noPlan: ['Codex'], agentMissing: ['Codex'],
     notesMatch: [2], notesMatching: ['retry'], leaveOutTip: [true], previewFailed: ['the task looks like a credential'],
-    matchesTerms: [['retries', 'payment']], notIncludedChip: [2, 'out of date'], currentCheckout: ['main'], existingWorktree: ['main'], folder: ['docs'] };
+    matchesTerms: [['retries', 'payment']], notIncludedChip: [2, 'out of date'], currentCheckout: ['main'], existingWorktree: ['main'], folder: ['docs'], isolatedOn: ['feature/auth'] };
   const values = Object.entries(composer).flatMap(([key, value]) => typeof value === 'function' ? [[key, value(...(samples[key] ?? []))]]
     : typeof value === 'object' ? Object.entries(value).map(([inner, text]) => [`${key}.${inner}`, text]) : [[key, value]]);
   assert.ok(Object.entries(composer).filter(([, value]) => typeof value === 'function').every(([key]) => key in samples), 'every function has sample arguments');
@@ -452,4 +452,16 @@ test('the renderer-crash page uses the plain voice and has one next step', () =>
   }
   assert.ok(isReloadRequest(RELOAD_URL) && isReloadRequest(`${RELOAD_URL}?`));
   assert.ok(!isReloadRequest('https://journal.invalid/reload/x') && !isReloadRequest('https://example.invalid/') && !isReloadRequest(undefined));
+});
+
+test('the isolation copy uses the plain vocabulary and never names Git internals', async () => {
+  const { isolation } = await import('../src/ui/copy.ts');
+  const values = Object.entries(isolation).flatMap(([key, value]) => typeof value === 'function'
+    ? (key === 'state' ? ['creating', 'ready', 'running', 'waiting', 'completed', 'conflict', 'integrating', 'integrated', 'abandoned', 'cleanup_pending', 'removed', 'failed'].map(state => [`state.${state}`, value(state, 'feature/auth')])
+      : [[key, value('feature/auth', 2)], [key, value(2, 'abc1234')]]) : [[key, value]]);
+  for (const [key, text] of values) {
+    assert.equal(typeof text, 'string', key);
+    assert.doesNotMatch(text, OLD_TERMS, key);
+    assert.doesNotMatch(text, /detached|worktree|refs\/|HEAD\b/i, `${key}: no Git internals in the main view`);
+  }
 });

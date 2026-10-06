@@ -206,7 +206,7 @@ test('Codex without a plan still gives a useful story; Cursor with sparse events
   const cursor = buildStory(fixture('cursor-sparse.json').events);
   assert.deepEqual(phases(cursor).map(p => [p.title, p.status, p.summary.join(' · ')]).map(([t, s, m]) => [t, s, m.replace(/ · \d+s$/, '')]), [
     ['Investigated', 'neutral', '1 read'], ['Implemented changes', 'neutral', '1 file changed'], ['Ran tests', 'unknown', '1 run · result not visible']]);
-  assert.deepEqual(buildStory([]), { plan: null, turns: [], waiting: null, counts: { events: 0, commands: 0, hidden: 0 } });
+  assert.deepEqual(buildStory([]), { isolation: [], plan: null, turns: [], waiting: null, counts: { events: 0, commands: 0, hidden: 0 } });
   assert.deepEqual(atomsOf([null, { kind: 42 }, { kind: 'unknown-kind', at: at(), body: {} }]), []);
 });
 
@@ -264,4 +264,14 @@ test('rows keep their keys as events arrive; a running test says so', () => {
   const after = phases(buildStory([{ kind: 'start', at: at(), body: {} }, ...events, ...run('npm test', { status: 'running' })])).map(p => p.key);
   assert.deepEqual(after.slice(0, 2), before);
   assert.deepEqual(phases(buildStory([prompt(), ...run('npm test', { status: 'running' })]))[0].summary, ['1 run', 'running']);
+});
+
+test('isolation rows: fixed titles from the environment\'s events, facts only', () => {
+  const ev = (action, body = {}) => ({ kind: 'environment', at: at(), body: { action, ...body } });
+  const story = buildStory([ev('created', { logicalBranch: 'feature/auth', base: 'abc1234def' }), ev('result', { files: 3, excluded: 1 }), ev('conflict', { paths: 2 }),
+    ev('updated', { to: '0123456789', conflicts: 1 }), ev('result', { files: 3 }), ev('applied', { branch: 'feature/auth', commit: 'fedcba98', files: 3 }), ev('cleaned')]);
+  assert.deepEqual(story.isolation.map(r => `${r.status} ${r.title} — ${r.summary.join(' · ')}`), [
+    'neutral Isolated from feature/auth — at abc1234', 'neutral Result saved — 3 files · 1 left out (sensitive names)', 'failed Conflict with its branch — 2 files · nothing applied',
+    'failed Took in its branch — at 0123456 · 1 conflict to resolve here', 'neutral Result saved — 3 files', 'passed Applied to feature/auth — commit fedcba9 · 3 files', 'neutral Folder cleaned up — result kept']);
+  assert.deepEqual(buildStory([ev('created', { logicalBranch: 'x' })]).turns, [], 'isolation events are not turns');
 });

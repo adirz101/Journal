@@ -17,7 +17,9 @@ export function ChangesPanel({ session, changes, loading, error: loadError, refr
   }
   return <div className="panel-content changes-content">
     <div className="section-heading"><div><h2>{shell.changesSinceStart}</h2><small className="muted">base {(changes?.base ?? session.head ?? '').slice(0, 7) || 'none'}</small></div><button onClick={refresh} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button></div>
-    <p className="muted panel-intro">Working tree compared with the commit checked out when the session started. Other sessions and editors in this checkout can contribute changes too.</p>
+    {changes?.isolated ? <p className="muted panel-intro">{shell.isolatedFrom(changes.isolated.logicalBranch, changes.isolated.base.slice(0, 7))}{changes.isolated.moved ? ` ${shell.isolatedMoved(changes.isolated.logicalBranch, changes.isolated.moved)}` : ''}</p>
+      : changes?.saved ? <p className="muted panel-intro">{shell.savedResult}</p>
+      : <p className="muted panel-intro">Working tree compared with the commit checked out when the session started. Other sessions and editors in this checkout can contribute changes too.</p>}
     {(error || loadError) && <p className="form-error" role="alert">{error || loadError}</p>}
     {changes && !changes.available && <p className="hint">{changes.reason}</p>}
     {changes?.available && <>

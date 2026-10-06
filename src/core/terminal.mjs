@@ -214,6 +214,7 @@ export class TerminalManager extends EventEmitter {
       status: 'starting', receiptId: receipt.id, resumedFrom: prior?.id ?? null, createdAt: now, lastActivityAt: now,
       // An additional-folder session runs in that folder with its own Git identity (if any).
       branch: project.cwd ? project.cwdBranch ?? null : project.branch, head: project.cwd ? project.cwdHead ?? null : project.head, cwd, workspaceId, research, plan, baseline, runtimeId: this.runtimeId, activity: null,
+      ...(project.isolated ? { environmentId: project.isolated.id } : {}),
       slot, nativeIdSource, identityMismatch: false, lastOutputAt: null, pending: null,
       // What Journal observes of this launch (OBSERVATIONS); lastObserved: the last applied fact, as past evidence.
       observation: 'pending', lastObserved: null, children: 0,
@@ -244,7 +245,10 @@ export class TerminalManager extends EventEmitter {
       // The hook launcher reads the observer's target and token from here (the command is the same for every launch).
       // An inherited observer (Journal started from a Journal session's agent) is never passed on:
       // only an observed launch gets a target and token, its own.
-      const env = { ...agentTerminalEnv(process.env, { appearance: this.appearance, version: this.appVersion }), JOURNAL_SESSION_ID: session.id };
+      // An isolated session: its port block, temp and log folders and identity (development isolation,
+      // not a sandbox; agents may ignore the variables).
+      const isolation = project.isolated && this.store.environmentLaunch ? await this.store.environmentLaunch(project.isolated.id) : {};
+      const env = { ...agentTerminalEnv(process.env, { appearance: this.appearance, version: this.appVersion }), ...isolation, JOURNAL_SESSION_ID: session.id };
       delete env.ELECTRON_RUN_AS_NODE; delete env.JOURNAL_APP_VERSION; delete env.JOURNAL_HOOK_TARGET; delete env.JOURNAL_HOOK_TOKEN;
       Object.assign(env, observer?.env ?? {});
       // The agent works in session.cwd: Git variables that point at another repository are not passed on (git-env.mjs).

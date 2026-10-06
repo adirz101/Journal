@@ -3,15 +3,17 @@ import { isLive, PROVIDER_NAMES, type Session, type TimelineEvent } from './type
 import { activityVisible } from './sessionView';
 import { outputDetail } from './sessionState';
 import { StoryPanel } from './StoryPanel';
+import { EnvironmentPanel } from './EnvironmentPanel';
 import { firstRun, shell } from './copy';
 
 // The inspector's Session tab: what the agent knows (the context panel), then
 // what it did, as a Story. Claude reports its commands through hooks, Codex and Cursor when
 // their hooks are registered for the launch; otherwise the tab says so and shows when they last printed.
-export function SessionTab({ session, events, now, context, onShowSent }: { session: Session | null; events: TimelineEvent[]; now: number; context: ReactNode; onShowSent(): void }) {
+export function SessionTab({ session, events, now, context, onShowSent, onError }: { session: Session | null; events: TimelineEvent[]; now: number; context: ReactNode; onShowSent(): void; onError?(message: string): void }) {
   if (!session) return <>{context}</>;
   const name = PROVIDER_NAMES[session.provider];
   return <div className="session-tab">
+    {session.environmentId && <EnvironmentPanel key={session.environmentId} session={session} onError={onError ?? (() => {})} />}
     {context}
     <section className="panel-content did-section" aria-labelledby="what-it-did">
       <div className="section-heading"><div><h2 id="what-it-did">{shell.whatItDid}</h2>{activityVisible(session) && <small className="muted">{shell.fromHooks(name)}</small>}</div></div>

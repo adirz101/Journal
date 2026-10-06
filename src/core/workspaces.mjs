@@ -121,5 +121,9 @@ export function workspaceView(project, workspace) {
   if (!entry) throw new Error('This workspace is no longer a registered worktree of the project');
   const info = inspectProject(workspace.path);
   if (info.commonDir !== project.commonDir) throw new Error('Workspace belongs to another repository');
+  // An isolated session's worktree is detached; it works for its logical branch, which is what notes,
+  // receipts and the Changes view follow (never whatever branch the user's checkout is on).
+  if (workspace.kind === 'isolated') return { ...project, root: info.root, branch: workspace.logicalBranch, head: info.head, workspaceId: workspace.id, detached: true,
+    isolated: { id: workspace.id, logicalBranch: workspace.logicalBranch, base: workspace.base } };
   return { ...project, root: info.root, branch: info.branch, head: info.head, workspaceId: workspace.id };
 }

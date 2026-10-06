@@ -13,6 +13,7 @@ allowed.add('reconnectRuntime');
 for (const action of ['cursorHooksStatus', 'cursorHooksPlan', 'cursorHooksApply']) allowed.add(action);
 allowed.add('dropReference');
 allowed.add('switchRuntime');
+for (const action of ['environment', 'environments', 'previewEnvironmentApply', 'applyEnvironment', 'resolveInEnvironment', 'abandonEnvironment', 'restoreEnvironment', 'cleanupEnvironment']) allowed.add(action);
 for (const action of ['branches', 'switchBranch']) allowed.add(action);
 // contextBridge copies only the message of an Error thrown across it, so the
 // renderer's api() uses settle(), which returns the error code as plain data.
