@@ -263,14 +263,14 @@ test('preferences: defaults, booleans only, unknown keys ignored, private file',
   mkdirSync(resolve('.cache/tmp'), { recursive: true });
   const dir = mkdtempSync(resolve('.cache/tmp', 'prefs-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, 'preferences.json');
-  assert.deepEqual(PREFERENCE_DEFAULTS, { notifications: true, notificationCommand: false });
+  assert.deepEqual(PREFERENCE_DEFAULTS, { notifications: true, notificationCommand: false, coordinatedRuns: false });
   assert.deepEqual(readPreferences(file), PREFERENCE_DEFAULTS, 'A missing file gives the defaults');
   writeFileSync(file, '{not json'); assert.deepEqual(readPreferences(file), PREFERENCE_DEFAULTS);
   writeFileSync(file, JSON.stringify({ notifications: 'no', notificationCommand: 1, other: true })); assert.deepEqual(readPreferences(file), PREFERENCE_DEFAULTS);
   writeFileSync(file, '[]'); assert.deepEqual(readPreferences(file), PREFERENCE_DEFAULTS);
-  assert.deepEqual(writePreferences(file, { notificationCommand: true }), { notifications: true, notificationCommand: true });
-  assert.deepEqual(writePreferences(file, { notifications: false }), { notifications: false, notificationCommand: true });
-  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { notifications: false, notificationCommand: true }, 'Only the two preferences are stored');
+  assert.deepEqual(writePreferences(file, { notificationCommand: true }), { notifications: true, notificationCommand: true, coordinatedRuns: false });
+  assert.deepEqual(writePreferences(file, { notifications: false }), { notifications: false, notificationCommand: true, coordinatedRuns: false });
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { notifications: false, notificationCommand: true, coordinatedRuns: false }, 'Only known preferences are stored');
   assert.throws(() => writePreferences(file, { notifications: 'yes' }), /Invalid preference/);
   assert.throws(() => writePreferences(file, { history: true }), /Invalid preference/);
   if (process.platform !== 'win32') assert.equal(statSync(file).mode & 0o777, 0o600);

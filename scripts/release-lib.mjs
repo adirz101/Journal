@@ -59,6 +59,8 @@ export async function checksumLines(paths) {
 export const ALLOWED = [
   /^dist\/(?:index\.html|assets\/[^/]+)$/,
   /^src\/(?:core|desktop|runtime)\/[^/]+\.(?:mjs|cjs)$/,
+  /^src\/agent-tools\/[^/]+\.mjs$/,
+  /^src\/core\/orchestration\/[^/]+\.mjs$/,
   // Provider hook adapters (the runtime and the hook script import them).
   /^src\/runtime\/adapters\/[^/]+\.mjs$/,
   /^assets\/branding\/journal-app-icon\.png$/,

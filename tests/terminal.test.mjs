@@ -53,6 +53,42 @@ test('shutdown cannot write late native callbacks into a closed database', async
   assert.doesNotThrow(() => f.callbacks.exit({ exitCode: 0 }));
 });
 
+test('automation boundaries never infer an empty prompt from silence and human input revokes them before PTY write', async t => {
+  const f = runtime(t);
+  const { session } = await f.manager.start({ projectId: f.project.id, provider: 'claude', task: 'work' });
+  const entry = f.manager.entries.get(session.id);
+  f.manager.ingest(session.id, { event: 'Stop', nativeId: session.nativeId });
+  entry.activitySince = Date.now() - 1000;
+  assert.equal(f.manager.qualifyBoundary(session.id, 'delivery').reason, 'BOUNDARY_UNVERIFIED');
+  // Only a validated adapter contract may qualify the boundary. This fixture provides that proof.
+  f.manager.adapters = { ...f.manager.adapters, claude: { ...f.manager.adapters.claude, boundaries: { delivery: true, capture: true } } };
+  const reservation = f.manager.qualifyBoundary(session.id, 'delivery');
+  assert.equal(reservation.eligible, true);
+  entry.proc.write = () => {
+    assert.equal(entry.inputOwner, 'human');
+    assert.equal(f.manager.validateBoundary(reservation).eligible, false);
+  };
+  f.manager.write(session.id, 'unfinished draft');
+  f.manager.write(session.id, '\r');
+  f.manager.ingest(session.id, { event: 'Stop', nativeId: session.nativeId });
+  entry.activitySince = Date.now() - 1000;
+  assert.equal(f.manager.qualifyBoundary(session.id, 'delivery').reason, 'HUMAN_INPUT');
+});
+
+test('approval or a new hook invalidates a reserved automation boundary', async t => {
+  const f = runtime(t);
+  const { session } = await f.manager.start({ projectId: f.project.id, provider: 'claude', task: 'work' });
+  const entry = f.manager.entries.get(session.id);
+  f.manager.adapters = { ...f.manager.adapters, claude: { ...f.manager.adapters.claude, boundaries: { capture: true } } };
+  f.manager.ingest(session.id, { event: 'Stop', nativeId: session.nativeId });
+  entry.activitySince = Date.now() - 1000;
+  const reservation = f.manager.qualifyBoundary(session.id, 'capture');
+  assert.equal(reservation.eligible, true);
+  f.manager.ingest(session.id, { event: 'PermissionRequest', nativeId: session.nativeId, tool: 'Bash', command: 'fixture' });
+  assert.equal(f.manager.validateBoundary(reservation).eligible, false);
+  assert.equal(f.manager.qualifyBoundary(session.id, 'capture').reason, 'PENDING_APPROVAL');
+});
+
 test('resume refreshes context without replaying the previous initial task', async t => {
   const f = runtime(t); const task = 'INITIAL_UNIQUE_TASK';
   const started = await f.manager.start({ projectId: f.project.id, provider: 'claude', task });
@@ -1008,4 +1044,13 @@ test('the agent launch environment drops repository-redirecting Git variables an
   assert.equal(env.GIT_AUTHOR_NAME, 'Kept'); assert.equal(env.TERM, 'xterm-256color'); assert.equal(env.TERM_PROGRAM, 'Journal'); assert.ok(env.JOURNAL_SESSION_ID);
   assert.equal(cwd, project.root);
   await manager.dispose();
+});
+test('recovery retains tracked child writers and never treats a missing process scan as empty', async t => {
+  const f = runtime(t); const { session } = await f.manager.start({ projectId: f.project.id, provider: 'claude', task: 'Fixture' });
+  const child = { pid: 9002, ppid: 1, pgid: 9001, started: 'child-start', command: 'fixture-child' };
+  f.store.saveSession({ ...session, pid: 9001, identity: { started: 'root-start' }, processTracking: { descendants: [child] }, runtimeId: 'old' });
+  const next = new TerminalManager({ store: f.store, runtimeId: 'new', trackMs: 0, spawn() {}, identify: async () => null, alive: () => false, table: async () => [child] });
+  const [recovered] = await next.recover(); assert.equal(recovered.status, 'interrupted'); assert.equal(recovered.survivors.length, 1);
+  f.store.saveSession({ ...session, pid: 9001, runtimeId: 'old' }); next.table = async () => null;
+  const [unknown] = await next.recover(); assert.equal(unknown.survivors, null);
 });

@@ -49,12 +49,14 @@ module.exports = {
     '!src/**/*.d.{ts,mts}',
     // The Story (src/core/story) runs only in the window, which ships it bundled in dist/.
     '!src/core/story/**',
+    // Zod's compiled entrypoints ship; its source tree includes tests and benchmarks.
+    '!node_modules/zod/src/**',
     ...ptyCommon,
   ],
   asar: true,
   // Native modules and files a separate Node-mode process executes (the runtime,
   // the store worker and Claude hooks) must be real files, not app.asar entries.
-  asarUnpack: ['node_modules/node-pty/**', 'src/**'],
+  asarUnpack: ['node_modules/node-pty/**', 'node_modules/**', 'src/**'],
   npmRebuild: true,
   afterPack: './scripts/after-pack.cjs',
   icon: 'assets/branding/journal-app-icon.png',

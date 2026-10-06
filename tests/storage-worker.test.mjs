@@ -14,6 +14,7 @@ test('worker-backed storage persists approved knowledge and marks unfinished del
   const path = resolve(root, 'journal.sqlite'); let store = new StoreClient(path);
   t.after(async () => { await store.close(); removeLater(root); });
   const project = await store.openProject(root);
+  await assert.rejects(store.createEnvironment({ projectId: project.id, logicalBranch: '--invalid' }), error => error.code === (process.platform === 'win32' ? 'UNSUPPORTED_PLATFORM' : 'INVALID_BRANCH'));
   await assert.rejects(store.getReceipt('not-a-receipt'), /Unknown receipt/);
   const memory = await store.proposeMemory(project.id, { statement: 'Docker tests require a local engine', category: 'constraint', scope: 'branch',
     source: { kind: 'user', note: 'Fixture owner explicitly requires it' } });

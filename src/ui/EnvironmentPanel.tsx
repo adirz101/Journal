@@ -20,7 +20,7 @@ export function EnvironmentPanel({ session, onError }: { session: Session; onErr
   if (!id || !environment) return null;
   const run = async (action: () => Promise<unknown>) => { setBusy(true); try { await action(); } catch (error) { onError(error instanceof Error ? error.message : String(error)); } finally { setBusy(false); load(); } };
   const openPreview = () => run(async () => { setPreview(await api<ApplyPreview>('previewEnvironmentApply', { id })); setPreviewing(true); });
-  const apply = () => run(async () => { await api('applyEnvironment', { id, expect: preview?.result }); setPreviewing(false); setPreview(null); });
+  const apply = () => run(async () => { await api('applyEnvironment', { id, expect: preview?.expect }); setPreviewing(false); setPreview(null); });
   const branch = environment.logicalBranch; const state = environment.state;
   const done = state === 'completed' || state === 'conflict';
   const applied = !!environment.integration && environment.integration.phase === 'done';

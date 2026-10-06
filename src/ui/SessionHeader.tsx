@@ -42,7 +42,7 @@ export function SessionHeader({ session, state, connected, busy, canStart, now, 
       <span className="meta-workspace">{session.environmentId ? <><span title={isolationWords.label}>{isolationWords.heading}</span>{session.branch ? <> · ⑂ {session.branch}</> : ''}</>
         : session.workspaceId && !root ? <><span title={tip.separateCopy}>{copy.separateCopy}</span>{session.branch ? <> · {branchLabel(`⑂ ${session.branch}`)}</> : ''}</>
         : root ? `Folder · ${session.cwd?.split(/[\\/]/).pop() ?? 'folder'}` : session.branch !== undefined ? <>{moved ? 'started on ' : ''}{branchLabel(`⑂ ${session.branch ?? 'detached HEAD'}`)}</> : null}</span>
-      <span className="meta-mode" title={session.research ? tip.readOnly : session.plan ? tip.plan : undefined}>{session.research ? copy.readOnly : session.plan ? shell.planMode : shell.buildMode}</span>
+      <span className="meta-mode" title={session.research ? tip.readOnly : session.plan ? tip.plan : undefined}>{session.role === 'coordinator' ? 'Coordinate mode' : session.research ? copy.readOnly : session.plan ? shell.planMode : shell.buildMode}</span>
       <span className="meta-started" title={new Date(session.createdAt).toLocaleString()}>{shell.started(relativeTime(session.createdAt, now))}</span>
       <span className={`meta-state tone-${state.tone}`}>{state.word}{state.detail ? ` · ${state.detail}` : ''}</span>
       {state.limited && <span className="chip" title={tip.limitedStatus}>{shell.limitedStatus}</span>}

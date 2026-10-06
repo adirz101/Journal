@@ -1,6 +1,35 @@
 # Journal implementation status
 
-5 October 2026. Alpha; no public release.
+6 October 2026. Alpha; no public release.
+
+## Agent orchestration implementation (6 October 2026)
+
+Active development is on `codex/agent-orchestration` in a managed worktree. The full [implementation plan](AGENT-ORCHESTRATION-IMPLEMENTATION-PLAN.md) remains the target. The macOS implementation now includes the full Team workflow and additional recovery/isolated-verification paths. **M10b acceptance is not complete**: authenticated provider trials and usefulness evidence remain separate. Windows team work is deferred at the user's explicit request on 6 October 2026. See [Coordinated runs](COORDINATED-RUNS.md) for the implemented paths and capability boundaries. Settings exposes an off-by-default **Coordinated runs** experiment. This implementation is submitted for draft pull-request review at the user's request; no merge or release is authorized.
+
+Implemented code:
+- **Results and lifecycle:** immutable per-result refs and IDs; capture-envelope recovery; target-bound Apply previews; repeated Apply/base advancement; exact-result memory origins; runtime-owned environment lifecycle with old-runtime compatibility.
+- **Durable orchestration:** migration 9; runs, tasks, DAG dependencies, attempts, result records, messages, approvals, operations and events; request deduplication; launch/turn fences; separate work state and presence.
+- **Capacity:** one shared slot pool for ordinary sessions, coordinators and workers; durable fair queues, adaptive resource holds, measured footprint estimates, conservative fallbacks, launch pacing/backoff and optional guarded idle reclamation. Global limits persist and remain at most four pending calibration. Port intents are reserved atomically across storage owners.
+- **Tools and transport:** official MCP SDK plus a local CLI; per-launch HMAC credentials and role/run scope; durable pull receipts; capability-gated serialized push and Stop continuation; bounded digests and explicit uncertain-delivery resolution. Native permissions remain authoritative; Claude offers a per-run opt-in for Journal MCP tools only.
+- **Integration and workflows:** exact-result/policy/evidence approval binding; gates and guards; Apply audit events and landing recovery; dependency unblocking without automatic worker creation; retry/handoff safeguards, variants and winner selection; pinned result/branch review subjects; take-in/recheck operations and worker memory candidates that still require user review.
+- **UI:** Coordinate entry, nested run navigation, Team Plan/Workers/Results/Messages/Capacity/Policy/Story views, keyboard tab/tree navigation, task/worker controls, policy and capacity settings, approvals, result acceptance and variant selection, review/recheck and finish controls, explicit memory review, run decisions, coordinator resume and isolated result checks. Terminals remain mounted while the Team view is shown. The user-selected design skills informed keyboard/focus and dense layout choices.
+
+Validation: Node 25.6.1 on local macOS. Full unit/integration run: **884 passed, 2 skipped** (886 total). Type checking and build passed (the existing bundle-size warning remains). The final full `npm run test:desktop` run passed: **159 passed, 1 skipped**, exit 0 (7.8 minutes), using Electron-native node-pty. The focused Team desktop flow passed, including coordinator/worker launch, messages, pause, stopped-worker capture, isolated `npm test`, and awaited runtime shutdown. The rebuilt ad-hoc-signed macOS ARM64 package passed its content audit (785 packed and 743 unpacked files) and fixture launch/project/provider-detection/PTY/file-explorer/restart smoke test. Tests use fixtures, never provider CLIs or accounts. Whole-change review fixes have targeted regressions, including diagnostic-report environment exclusion and persisted orchestration text redaction.
+
+### Capability gates and remaining acceptance
+
+| Contract | Current state | Remaining evidence or work |
+| --- | --- | --- |
+| Automatic PTY delivery | Fixture path implemented; every production adapter disabled | Provider/version/platform proof of empty input, ownership and permission boundaries |
+| Stop continuation | Separate hook role, exact invocation correlation, response whitelist and deadline implemented; disabled for production adapters | Parallel/native hooks, receipt behavior and supported continuation format trials |
+| Capture/Apply/take-in with a live writer | Operation-specific qualification exists; production live paths remain unavailable | Coherent capture and serialized live-folder mutation contract; an idle timer is insufficient |
+| Stopped-worker integration and exact resume | Implemented with writer exclusion | Complete combined crash/fault matrix and authenticated workflow trials |
+| Isolated result verification | macOS deny-by-default Seatbelt executor, per-execution filesystem/network probes, private homes, immutable materialization, exact argv, timeout and interrupted-check recovery implemented and fixture-tested in Node and Electron Node mode | Packaged/native deployment acceptance; dependencies are not borrowed from mutable checkouts or installed over the network |
+| Windows orchestration | Deferred by the user on 6 October 2026; ordinary-terminal support remains | A separate future Windows implementation/acceptance task |
+| Higher concurrency | User limits up to four implemented | Two-machine/platform measurements before allowing higher values |
+| Full product acceptance | Not complete | Coordinator plus workers, review/fix/recheck, conflicts, intervention, process turnover, desktop absence and usefulness trial |
+
+Worker model/references/soft time limits, itemwise batch requests, Claude's run-specific Journal-tool permission opt-in, run-memory review and review freshness are implemented. Recovery now discovers sessions saved before attachment and reconciles take-in after durable merge/base/refresh checkpoints. A failure inside an uncheckpointed Git mutation remains explicitly held; no new writer may reuse the folder until reconciled. Production live mutation/input capabilities, full native fault drills, calibration and usefulness acceptance remain unaccepted. The Windows deferral is the only user-requested platform scope change.
 
 ## Summary
 

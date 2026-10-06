@@ -7,6 +7,8 @@ if (workerData.path !== ':memory:' && process.platform !== 'win32') chmodSync(wo
 const methods = new Set(STORE_METHODS);
 // SQLite reports a full disk tersely; say what it means for the user's work.
 const friendly = error => /database or disk is full|SQLITE_FULL/i.test(error.message) ? 'Disk full: Journal could not save this change. Free disk space; running terminals are unaffected, and nothing already saved was lost.' : error.message;
+const failure = (id, error) => ({ id, error: friendly(error),
+  ...(typeof error.code === 'string' ? { code: error.code } : {}), ...(error.detail ? { detail: error.detail } : {}) });
 parentPort.postMessage({ ready: true });
 parentPort.on('message', ({ id, method, args }) => {
   try {
@@ -15,6 +17,6 @@ parentPort.on('message', ({ id, method, args }) => {
     Promise.resolve(store[method](...args)).then(value => {
       parentPort.postMessage({ id, value });
       if (method === 'close') parentPort.close();
-    }, error => parentPort.postMessage({ id, error: friendly(error) }));
-  } catch (error) { parentPort.postMessage({ id, error: friendly(error) }); }
+    }, error => parentPort.postMessage(failure(id, error)));
+  } catch (error) { parentPort.postMessage(failure(id, error)); }
 });

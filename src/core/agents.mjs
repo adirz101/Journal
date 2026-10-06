@@ -14,7 +14,9 @@ export const PROVIDER_NAMES = { claude: 'Claude Code', codex: 'Codex', cursor: '
 // The only `-c` value shape Journal passes to Codex: one hooks.<Event> entry with one command handler.
 const CODEX_HOOK_VALUE = new RegExp(`^hooks\\.(?:${CODEX_EVENTS.join('|')})=\\[\\{hooks=\\[\\{type="command",command="(?:[^"\\\\]|\\\\.)*",timeout=\\d+\\}\\]\\}\\]$`);
 export function buildAgentLaunch(request) {
-  const { provider, nativeId, resume, prompt, settingsFile, hookArgs = [], research = false, plan = false, executable } = request;
+  const { provider, nativeId, resume, prompt, settingsFile, hookArgs = [], research = false, plan = false, executable, tools, model } = request;
+  if (model != null && (typeof model !== 'string' || model.length > 160 || !/^[A-Za-z0-9][A-Za-z0-9._:/ -]*$/.test(model))) throw new Error('Invalid model identifier');
+  const modelArgs = model ? ['--model', model] : [];
   if (!PROVIDERS.includes(provider)) throw new Error('Unknown agent provider');
   if ((resume || nativeId) && !UUID.test(nativeId ?? '')) throw new Error('An exact native session ID is required');
   if (provider === 'cursor') {
@@ -24,7 +26,7 @@ export function buildAgentLaunch(request) {
     const mode = research ? ['--mode=ask'] : plan ? ['--mode=plan'] : [];
     // Journal's observer plugin (per launch): exactly --plugin-dir and one absolute folder, nothing else.
     const plugin = Array.isArray(hookArgs) && hookArgs.length === 2 && hookArgs[0] === '--plugin-dir' && typeof hookArgs[1] === 'string' && isAbsolute(hookArgs[1]) ? hookArgs : [];
-    return { executable, argv: [...(nativeId ? [`--resume=${nativeId}`] : []), ...mode, ...plugin, ...(prompt ? ['--', prompt] : [])] };
+    return { executable, argv: [...(nativeId ? [`--resume=${nativeId}`] : []), ...mode, ...modelArgs, ...plugin, ...(prompt ? ['--', prompt] : [])] };
   }
   if (plan && provider === 'codex') throw new Error('Codex has no plan mode; use Read-only instead');
 
@@ -39,7 +41,13 @@ export function buildAgentLaunch(request) {
   // Research mode starts each CLI in its own stricter mode. It is an intent,
   // not enforcement: the user can leave plan mode or approve escalation natively.
   const researchArgs = !research && !plan ? [] : provider === 'claude' ? ['--permission-mode', 'plan'] : ['--sandbox', 'read-only'];
-  return { executable: provider, argv: [...sessionArgs, ...researchArgs, ...settingsArgs, ...codexHooks, ...(prompt ? ['--', prompt] : [])] };
+  const toolArgs = [];
+  if (tools && provider === 'claude' && isAbsolute(tools.file ?? '')) toolArgs.push('--mcp-config', tools.file);
+  if (tools && provider === 'codex' && isAbsolute(tools.command ?? '') && isAbsolute(tools.server ?? '')) {
+    const values = { command: tools.command, args: [tools.server], env_vars: ['JOURNAL_TOOL_ID', 'JOURNAL_TOOL_TOKEN', 'JOURNAL_TOOL_SOCKET'], 'env.ELECTRON_RUN_AS_NODE': '1' };
+    for (const [key, value] of Object.entries(values)) toolArgs.push('-c', `mcp_servers.journal.${key}=${JSON.stringify(value)}`);
+  }
+  return { executable: provider, argv: [...sessionArgs, ...modelArgs, ...researchArgs, ...settingsArgs, ...codexHooks, ...toolArgs, ...(prompt ? ['--', prompt] : [])] };
 }
 
 export function captureCodexId(output) {

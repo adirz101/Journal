@@ -95,7 +95,7 @@ test('payload hygiene: no account, prompt, assistant, output, transcript or mode
     assert.ok(line, label);
     assert.doesNotMatch(JSON.stringify(line), LEAKS, label);
     assert.doesNotMatch(JSON.stringify(line), /OLD|NEW|abcdefgh12345/, label);
-    for (const key of Object.keys(line)) assert.ok(['token', 'id', 'provider', 'at', 'nativeId', 'event', 'cwd', 'tool', 'toolUseId', 'command', 'background', 'filePath', 'exit', 'interrupted', 'durationMs', 'turn', 'status', 'source', 'agentId', 'parentNativeId', 'childId'].includes(key), `${label}: ${key}`);
+    for (const key of Object.keys(line)) assert.ok(['token', 'id', 'provider', 'at', 'hookInvocationId', 'nativeId', 'event', 'cwd', 'tool', 'toolUseId', 'command', 'background', 'filePath', 'exit', 'interrupted', 'durationMs', 'turn', 'status', 'source', 'agentId', 'parentNativeId', 'childId'].includes(key), `${label}: ${key}`);
   }
   // Cursor names its workspace instead of a working directory.
   const cursorEdit = observe(t, { hook_event_name: 'afterFileEdit', conversation_id: 'c', cwd: undefined, file_path: '/w/src/a.ts', workspace_roots: ['/w'] }, { provider: 'cursor' }).lines[0];
@@ -110,11 +110,11 @@ test('payload hygiene: no account, prompt, assistant, output, transcript or mode
 });
 
 // ----- The launcher -----
-function launcherFixture(t, { script = null, timeoutSeconds = 1 } = {}) {
+function launcherFixture(t, { script = null, timeoutSeconds = 1, allowContinuation = false } = {}) {
   const dir = temp(t, 'launcher-'); const data = join(dir, 'data'); mkdirSync(data);
   const hookScript = script === null ? hook : join(dir, 'hook-fixture.mjs');
   if (script !== null && script !== 'missing') writeFileSync(hookScript, typeof script === 'function' ? script(dir) : script);
-  const launcher = installLauncher({ dataDir: data, execPath: process.execPath, hookScript: script === 'missing' ? join(dir, 'no-such-hook.mjs') : hookScript, timeoutSeconds });
+  const launcher = installLauncher({ dataDir: data, execPath: process.execPath, hookScript: script === 'missing' ? join(dir, 'no-such-hook.mjs') : hookScript, timeoutSeconds, allowContinuation });
   const run = (provider, { env = {}, input = '{}' } = {}) => {
     const started = Date.now();
     const result = posix ? spawnSync('/bin/sh', ['-c', `'${launcher}' ${provider}`], { input, env: { ...baseEnv(), ...env }, encoding: 'utf8', timeout: 10_000 })
@@ -272,4 +272,12 @@ test('Windows: a data folder whose path cmd.exe would read is not used for hooks
   const script = launcherScript({ execPath: 'C:\\Program Files (x86)\\J & Co\\Journal.exe', hookScript: 'C:\\J\\100%\\hook.mjs', platform: 'win32' });
   assert.match(script, /setlocal DisableDelayedExpansion/);
   assert.ok(script.includes('"C:\\Program Files (x86)\\J & Co\\Journal.exe" "C:\\J\\100%%\\hook.mjs" %1'));
+});
+
+test('validated continuation launcher filters output and keeps permission fields neutral', { skip: !posix }, t => {
+  const good = launcherFixture(t, { allowContinuation: true, script: 'console.log(JSON.stringify({decision:"block",reason:"fixture"}))' });
+  assert.deepEqual(JSON.parse(good.run('claude', { env: { ...hookEnv(good), JOURNAL_CONTINUATION_ENABLED: '1' } }).stdout), { decision: 'block', reason: 'fixture' });
+  assert.equal(good.run('claude', { env: hookEnv(good) }).stdout, '');
+  const bad = launcherFixture(t, { allowContinuation: true, script: 'console.log(JSON.stringify({decision:"block",reason:"fixture",permissionDecision:"allow"}))' });
+  assert.equal(bad.run('claude', { env: { ...hookEnv(bad), JOURNAL_CONTINUATION_ENABLED: '1' } }).stdout, '');
 });

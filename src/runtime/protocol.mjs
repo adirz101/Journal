@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 // Windows named pipe. Both sides prove knowledge of the random token in
 // runtime.json (mode 0600) with HMAC challenges; the token itself is never
 // sent, so a process squatting on the socket path learns nothing.
-export const PROTOCOL = 4; // 4: session slot, pending, activity events and error codes
+export const PROTOCOL = 5; // 5: durable orchestration, role-scoped tools and result-bound integration
 export const nonce = () => randomBytes(24).toString('hex');
 export const proof = (token, role, a, b) => createHmac('sha256', token).update(`${role}:${a}:${b}`).digest('hex');
 export function proofMatches(expected, actual) {
@@ -34,6 +34,11 @@ export function socketPath(dataDir, platform = process.platform) {
 // Code identity of the process owner. A runtime from another build keeps its
 // sessions; the app reports the mismatch instead of silently mixing versions.
 const owned = ['runtime/runtime.mjs', 'runtime/protocol.mjs', 'runtime/observers.mjs', 'core/terminal.mjs', 'core/agents.mjs', 'core/process.mjs',
+  'runtime/environment-sync.mjs', 'core/environments.mjs', 'core/store.mjs', 'core/store-methods.mjs', 'core/store-worker.mjs', 'desktop/store-client.mjs',
+  'runtime/resources.mjs', 'runtime/verification.mjs', 'runtime/macos-verification.mjs', 'runtime/continuation.mjs', 'desktop/hook.mjs', 'runtime/continuation-response.mjs', 'runtime/workers.mjs', 'runtime/capacity.mjs', 'runtime/delivery.mjs', 'runtime/tool-router.mjs', 'runtime/tool-launch.mjs',
+  'core/orchestration/model.mjs', 'core/orchestration/schema.mjs', 'core/orchestration/runs.mjs', 'core/orchestration/messages.mjs', 'core/orchestration/prompts.mjs',
+  'core/orchestration/results.mjs', 'core/orchestration/gates.mjs', 'core/orchestration/workflows.mjs',
+  'agent-tools/server.mjs', 'agent-tools/client.mjs', 'agent-tools/definitions.mjs',
   'runtime/adapters/index.mjs', 'runtime/adapters/common.mjs', 'runtime/adapters/claude.mjs', 'runtime/adapters/codex.mjs', 'runtime/adapters/cursor.mjs'];
 export function buildId() {
   const hash = createHash('sha256');

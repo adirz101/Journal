@@ -15,7 +15,7 @@ const ELEMENT_CODE = new Set(['className', 'key', 'role', 'id', 'htmlFor', 'type
 const COMPONENT_CODE = new Set(['key', 'side', 'provider', 'kind', 'id', 'className']);
 // Calls whose string arguments are code: IPC actions, state values, storage keys, DOM queries.
 // Object literals passed to these calls are not scanned at all (IPC payloads are code).
-const CODE_CALLS = /^(?:api|setPanel|useState|useRef|getItem|setItem|addEventListener|removeEventListener|querySelector|includes|startsWith|has|get|set|CustomEvent|read)$/;
+const CODE_CALLS = /^(?:api|act|teamAct|setPanel|useState|useRef|getItem|setItem|addEventListener|removeEventListener|querySelector|includes|startsWith|has|get|set|CustomEvent|read)$/;
 // Code values that look like old terms: [file, text, position, why]. The position
 // (see where()) keeps the same word elsewhere in the file visible to the scan.
 // Each entry must still be present.

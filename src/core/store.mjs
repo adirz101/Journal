@@ -20,6 +20,9 @@ import { realPath } from './paths.mjs';
 import { MAX_REFERENCES, pathFromCwd, referencesBlock } from './references.mjs';
 import { deliveryCounts, memoryChecks, memoryOrigins, noteIds, sessionProposals, sessionSummary, staleNoteDiff, staleNotesForSession } from './insights.mjs';
 import { Environments, REF as ENV_REF } from './environments.mjs';
+import { migrateOrchestration } from './orchestration/schema.mjs';
+import { testEvidenceState } from './orchestration/results.mjs';
+import { Orchestration } from './orchestration/runs.mjs';
 
 const LIVE = "('starting','running','waiting','stopping')";
 const EVENT_LIMIT = 2000;
@@ -56,6 +59,7 @@ export class JournalStore {
       CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), body TEXT NOT NULL);`);
     this.migrate();
+    this.orchestration = new Orchestration(this);
   }
   // Ordered, idempotent migrations. The desktop app and the runtime open the
   // same file, so each step re-checks the version inside its own transaction.
@@ -113,6 +117,7 @@ export class JournalStore {
         for (const [id, approval] of latest) set.run(approval.at, approval.revision, id);
         this.db.prepare(RECORD_DELIVERIES).run();
       }],
+      [9, () => migrateOrchestration(this.db)],
     ];
     for (const [version, apply] of steps) {
       if (this.db.prepare('PRAGMA user_version').get().user_version >= version) continue;
@@ -230,6 +235,7 @@ export class JournalStore {
       this.db.prepare('DELETE FROM memories WHERE project_id=?').run(id);
       this.db.prepare('DELETE FROM events WHERE session_id IN (SELECT id FROM sessions WHERE project_id=?)').run(id);
       for (const table of ['sessions', 'receipts', 'deliveries', 'proposals', 'workspaces']) this.db.prepare(`DELETE FROM ${table} WHERE project_id=?`).run(id);
+      this.db.prepare('DELETE FROM orchestration_operations WHERE run_id IN (SELECT id FROM runs WHERE project_id=?)').run(id);
       this.db.prepare('DELETE FROM projects WHERE id=?').run(id);
       this.audit('project-removed', { id, deleteData: true, knowledge: revisionIds.length });
     });
@@ -303,7 +309,7 @@ export class JournalStore {
     if (session.projectId !== projectId) throw new Error('Session belongs to another project');
     let env = null; try { env = session.workspaceId ? this.getWorkspace(session.workspaceId) : null; } catch { /* not a workspace */ }
     if (env?.kind !== 'isolated') return { sessionId: session.id };
-    return { sessionId: session.id, environmentId: env.id, logicalBranch: env.logicalBranch, base: env.base, result: env.result?.sha ?? null };
+    return { sessionId: session.id, environmentId: env.id, logicalBranch: env.logicalBranch, base: env.base, result: env.result?.sha ?? null, resultId: env.result?.resultId ?? env.result?.sha ?? null, ...(session.runId ? { runId: session.runId, attemptId: session.attemptId } : {}) };
   }
   // Remembered notes a statement may contradict (at most 5), from SQLite alone.
   conflictsWith(projectId, id, { statement, scope, branch, area }) {
@@ -1331,7 +1337,84 @@ export class JournalStore {
   getEnvironment(id) { return this.environments.get(id); }
   listEnvironments(projectId) { this.project(projectId); return this.environments.list(projectId); }
   environmentsOverview(projectId) { this.project(projectId); return this.environments.overview(projectId); }
-  snapshotEnvironment(id) { return this.environments.snapshot(id); }
+  snapshotEnvironment(id, context) { return this.environments.snapshot(id, context); }
+  createRun(input) { return this.orchestration.createRun(input); }
+  requestWorkers(input) { return this.orchestration.workflows.requestMany(input); }
+  setRunPolicy(input) { return this.orchestration.workflows.policy(input); }
+  requestRunApproval(input) { return this.orchestration.workflows.approval(input); }
+  chooseResult(input) { return this.orchestration.workflows.choose(input); }
+  retireWorker(input) { return this.orchestration.workflows.retire(input); }
+  takeInWorker(input) { return this.orchestration.workflows.takeIn(input); }
+  makeRunDigest(id, at) { return this.orchestration.messages.digest(id, at); }
+  holdMessage(id, reason) { return this.orchestration.messages.hold(id, reason); }
+  activeRuns() { return this.db.prepare("SELECT body FROM runs WHERE state<>'finished'").all().map(row => JSON.parse(row.body)); }
+  capacitySamples() { return this.db.prepare('SELECT body FROM capacity_samples ORDER BY rowid DESC LIMIT 300').all().map(row => JSON.parse(row.body)).reverse(); }
+  recordCapacitySample(sample) { this.db.prepare('INSERT INTO capacity_samples VALUES(?,?)').run(new Date().toISOString(), JSON.stringify(sample)); this.db.prepare('DELETE FROM capacity_samples WHERE rowid NOT IN (SELECT rowid FROM capacity_samples ORDER BY rowid DESC LIMIT 300)').run(); return sample; }
+  recoverIntegrations() { return this.orchestration.gates.recover(); }
+  prepareRunOperation(kind, input, runId) { return this.orchestration.prepareExternal(kind, input, runId); }
+  finishRunOperation(id, outcome) { return this.orchestration.finishExternal(id, outcome); }
+  failRunOperation(id, error) { return this.orchestration.failExternal(id, error); }
+  recordResultCheck(id, check) {
+    return this.orchestration.atomic(() => {
+      const result = this.orchestration.row('results', id);
+      if (check.resultId !== id || check.treeOid !== result.treeOid || check.provenance !== 'isolated-verification') throw Object.assign(new Error('Check evidence does not match this tree'), { code: 'RESULT_CHANGED' });
+      const checks = [...(result.checks ?? []).filter(item => item.id !== check.id), check];
+      let hasConfiguredTest = false;
+      try { const env = this.environments.record(result.environmentId); hasConfiguredTest = typeof JSON.parse(git(this.project(env.projectId).root, ['show', `${result.resultCommit}:package.json`])).scripts?.test === 'string'; } catch { /* Unknown configuration cannot certify tests. */ }
+      const testsVerified = testEvidenceState(checks, hasConfiguredTest);
+      this.db.prepare('UPDATE results SET body=? WHERE id=?').run(JSON.stringify({ ...result, checks, testsVerified }), id); return check;
+    });
+  }
+  runOperationOutcome(kind, input) { return this.orchestration.operationOutcome(kind, input); }
+  requestResume(input) { return this.orchestration.requestResume(input); }
+  retryWorker(input) { return this.orchestration.retryWorker(input); }
+  previewResult(input) { return this.orchestration.gates.preview(input); }
+  applyResult(input) { return this.orchestration.gates.request(input); }
+  decideApproval(input) { return this.orchestration.gates.decide(input); }
+  updateTask(input) { return this.orchestration.updateTask(input); }
+  cancelTask(input) { return this.orchestration.cancelTask(input); }
+  completeTask(input) { return this.orchestration.completeTask(input); }
+  finishRun(input) { return this.orchestration.finishRun(input); }
+  recordDecision(input) { return this.orchestration.recordDecision(input); }
+  reportProgress(input) { return this.orchestration.reportProgress(input); }
+  sendMessage(input) { return this.orchestration.messages.send(input); }
+  getInbox(input) { return this.orchestration.messages.inbox(input); }
+  ackMessage(input) { return this.orchestration.messages.ack(input); }
+  reserveMessage(id, input) { return this.orchestration.messages.reserve(id, input); }
+  deliveryAllowed(id, deliveryId) { return this.orchestration.messages.allowed(id, deliveryId); }
+  recordMessageDelivery(id, input) { return this.orchestration.messages.record(id, input); }
+  cancelMessage(input) { return this.orchestration.messages.cancel(input); }
+  resolveMessageInput(id, input) { return this.orchestration.messages.resolve(id, input); }
+  resendMessage(input) { return this.orchestration.messages.resend(input); }
+  rebindMessage(input) { return this.orchestration.messages.rebind(input); }
+  recoverMessages() { return this.orchestration.messages.recover(); }
+  expireMessages(at) { return this.orchestration.messages.expire(at); }
+  pauseRun(input) { return this.orchestration.pauseRun(input); }
+  remindWorkers(at) { return this.orchestration.remindWorkers(at); }
+  queuedAttempts() { return this.orchestration.queuedAttempts(); }
+  queueAttempt(id, decision) { return this.orchestration.queueAttempt(id, decision); }
+  admitAttempt(id, intent) { return this.orchestration.admitAttempt(id, intent); }
+  failAttemptLaunch(id, failure) { return this.orchestration.failAttemptLaunch(id, failure); }
+  recoverOrchestration() { const count = this.orchestration.recoverOrchestration(); this.orchestration.workflows.recover(); return count; }
+  getRun(id) { return this.orchestration.getRun(id); }
+  listRuns(projectId) { return this.orchestration.listRuns(projectId); }
+  setRunState(id, state, patch) { return this.orchestration.setRunState(id, state, patch); }
+  runEvents(id, afterId, limit) { return this.orchestration.runEvents(id, afterId, limit); }
+  createTask(input) { return this.orchestration.createTask(input); }
+  listTasks(runId, filter) { return this.orchestration.listTasks(runId, filter); }
+  listAttempts(runId) { return this.orchestration.listAttempts(runId); }
+  addDependency(input) { return this.orchestration.addDependency(input); }
+  removeDependency(input) { return this.orchestration.removeDependency(input); }
+  requestWorker(input) { return this.orchestration.requestWorker(input); }
+  setAttemptState(id, state, patch) { return this.orchestration.setAttemptState(id, state, patch); }
+  setPresence(id, presence, binding) { return this.orchestration.setPresence(id, presence, binding); }
+  reportWorker(input) { return this.orchestration.reportWorker(input); }
+  settleAttempt(id, boundary) { return this.orchestration.settleAttempt(id, boundary); }
+  recordResult(input) { return this.orchestration.recordResult(input); }
+  getResult(id) { return this.orchestration.row('results', id); }
+  acceptResult(input) { return this.orchestration.acceptResult(input); }
+  listEnvironmentResults(id) { return this.environments.resultHistory(id); }
+  getEnvironmentResult(id, resultId) { return this.environments.resultById(id, resultId); }
   previewEnvironmentApply(id) { return this.environments.preview(id); }
   applyEnvironment(id, options) { return this.environments.apply(id, options); }
   updateEnvironmentFromBranch(id) { return this.environments.updateFromBranch(id); }
@@ -1346,7 +1429,9 @@ export class JournalStore {
   withOrigin(item) {
     if (!item?.origin?.environmentId) return item;
     let env = null; try { env = this.getWorkspace(item.origin.environmentId); } catch { /* gone */ }
-    const applied = !!env?.integration && env.integration.phase === 'done';
+    const integrations = [...(env?.integrations ?? []), ...(env?.integration ? [env.integration] : [])];
+    const applied = integrations.some(integration => integration.phase === 'done' &&
+      (item.origin.resultId ? (integration.resultId ?? integration.result) === item.origin.resultId : !!item.origin.result && integration.result === item.origin.result));
     return { ...item, origin: { ...item.origin, applied, environmentState: env?.lifecycle ?? 'unknown' } };
   }
   sessionChanges(sessionId) {

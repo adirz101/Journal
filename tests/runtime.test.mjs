@@ -8,10 +8,12 @@ import { execFileSync, spawn as spawnChild } from 'node:child_process';
 import { JournalStore } from '../src/core/store.mjs';
 import { startRuntime } from '../src/runtime/runtime.mjs';
 import { RuntimeClient } from '../src/desktop/runtime-client.mjs';
-import { frame } from '../src/runtime/protocol.mjs';
+import { StoreClient } from '../src/desktop/store-client.mjs';
+import { frame, PROTOCOL } from '../src/runtime/protocol.mjs';
 import { processIdentity, isAlive } from '../src/core/process.mjs';
 import { removeLater } from './support/cleanup.mjs';
 import { fileURLToPath } from 'node:url';
+import { ToolClient } from '../src/agent-tools/client.mjs';
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 async function until(check, timeout = 3000) {
@@ -43,7 +45,7 @@ function fixture(t, { dataDir } = {}) {
   const store = new JournalStore(dbPath); const project = store.openProject(repo);
   const runtimes = [];
   const boot = async (fake = fakeSpawner(), extra = {}) => {
-    const runtime = await startRuntime({ dataDir, store, spawn: fake.spawn, hookScript: '/dev/null', identify: () => null, table: () => null, observerMs: 20, idleMs: 3_600_000, ...extra });
+    const runtime = await startRuntime({ dataDir, store, spawn: fake.spawn, hookScript: '/dev/null', identify: () => null, table: () => null, observerMs: 20, idleMs: 3_600_000, capacitySample: async () => ({ availableBytes: 16e9, totalBytes: 24e9, freeDiskBytes: 20e9, pressure: 'normal', load: 0, cores: 8 }), ...extra });
     runtimes.push(runtime); return { runtime, fake };
   };
   t.after(async () => { for (const r of runtimes) { r.server.close(); r.manager.disposed = true; clearInterval(r.manager.tracker); } store.close(); removeLater(root); });
@@ -55,12 +57,60 @@ function client(f, t, launch = () => {}) {
   t.after(() => c.close()); return c;
 }
 
+test('runtime-only coordinator tools launch a worker and tool connections never replace the desktop', { skip: process.platform === 'win32' }, async t => {
+  const f = fixture(t); const { runtime, fake } = await f.boot();
+  const desktop = client(f, t); await desktop.connect();
+  const input = { callerId: 'desktop', requestId: 'run-fixture', projectId: f.project.id, logicalBranch: 'main', goal: 'Implement a fixture', provider: 'claude', journalToolsAllowed: true };
+  const run = await runtime.workers.startRun(input);
+  const env = fake.procs[0].options.env;
+  assert.ok(env.JOURNAL_TOOL_TOKEN); assert.ok(!fake.procs[0].argv.join(' ').includes(env.JOURNAL_TOOL_TOKEN));
+  const tool = new ToolClient({ socket: runtime.path, credentialId: env.JOURNAL_TOOL_ID, token: env.JOURNAL_TOOL_TOKEN }); t.after(() => tool.close());
+  await tool.connect(); assert.equal((await desktop.call('ping')).runtimeId, runtime.runtimeId);
+  const task = await tool.call('create_task', { requestId: 'task', title: 'Fixture worker' });
+  const attempt = await tool.call('create_worker', { requestId: 'worker', taskId: task.id, provider: 'claude', model: 'fixture-model', attachments: [{ path: 'README.md' }] });
+  await until(() => f.store.listAttempts(run.id).find(item => item.id === attempt.id)?.presence === 'live', 10000);
+  assert.equal(fake.procs.length, 2); assert.equal(runtime.manager.liveEntries().length, 2);
+  const workerEnv = fake.procs[1].options.env;
+  assert.equal(workerEnv.JOURNAL_TASK_ID, task.id); assert.equal(workerEnv.JOURNAL_RUN_ID, run.id);
+  assert.ok(fake.procs[1].argv.includes('fixture-model'));
+  const workerSession = f.store.getSession(f.store.listAttempts(run.id)[0].currentSessionId);
+  assert.match(f.store.getReceipt(workerSession.receiptId).packet, /README.md/);
+  assert.deepEqual(JSON.parse(readFileSync(join(f.dataDir, 'observers', `${workerSession.id}.settings.json`), 'utf8')).permissions, { allow: ['mcp__journal__*'] });
+  const worker = new ToolClient({ socket: runtime.path, credentialId: workerEnv.JOURNAL_TOOL_ID, token: workerEnv.JOURNAL_TOOL_TOKEN }); t.after(() => worker.close());
+  await assert.rejects(worker.call('create_worker', { requestId: 'denied', taskId: task.id, provider: 'claude' }), { code: 'FORBIDDEN' });
+  assert.equal((await desktop.call('ping')).runtimeId, runtime.runtimeId);
+  const grant = runtime.continuation.issue({ sessionId: run.coordinatorSessionId, launchId: runtime.manager.entry(run.coordinatorSessionId).launchId, runId: run.id, role: 'coordinator' });
+  const hook = new ToolClient({ role: 'hook', socket: runtime.path, credentialId: grant.id, token: grant.token }); t.after(() => hook.close());
+  await hook.connect();
+  assert.deepEqual(await hook.request('continue', { event: 'PermissionRequest', invocationId: 'fake' }), {});
+  await assert.rejects(hook.request('toolCall', { tool: 'create_task', args: { requestId: 'forbidden', title: 'No' } }), { code: 'FORBIDDEN' });
+  assert.equal((await desktop.call('ping')).runtimeId, runtime.runtimeId); hook.close();
+  tool.close(); worker.close(); await runtime.capacity.close();
+});
+
+test('an isolated session captures its result in the runtime without a desktop connection', { skip: process.platform === 'win32' }, async t => {
+  const f = fixture(t);
+  const env = await f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'main' });
+  const workerStore = new StoreClient(join(f.dataDir, 'journal.sqlite')); await workerStore.ready;
+  t.after(() => workerStore.close());
+  const { runtime, fake } = await f.boot(undefined, { store: workerStore });
+  const started = await runtime.manager.start({ projectId: f.project.id, workspaceId: env.id, provider: 'claude', task: 'fixture worker' });
+  await until(() => f.store.getEnvironment(env.id).state === 'running');
+  writeFileSync(join(env.details.path, 'README.md'), 'runtime-owned result\n');
+  fake.procs[0].exit({ exitCode: 0 });
+  await until(() => f.store.getEnvironment(env.id).state === 'completed');
+  const result = f.store.getEnvironment(env.id).result;
+  assert.ok(result.resultId);
+  assert.equal(f.store.getEnvironment(env.id).sessionId, started.session.id);
+  assert.equal(f.store.listEnvironmentResults(env.id).length, 1);
+});
+
 test('the runtime refuses clients that cannot prove the token, and never receives it', async t => {
   const f = fixture(t); const { runtime } = await f.boot();
   const exchange = messages => new Promise(resolvePromise => {
     const socket = net.connect(runtime.path); socket.setEncoding('utf8'); let text = '';
     socket.on('data', d => { text += d; if (text.includes('\n') && messages.length) socket.write(frame(messages.shift())); }); socket.on('close', () => resolvePromise(text));
-    socket.on('connect', () => socket.write(frame({ id: 1, method: 'hello', params: { protocol: 4, nonce: 'n'.repeat(48) } })));
+    socket.on('connect', () => socket.write(frame({ id: 1, method: 'hello', params: { protocol: PROTOCOL, nonce: 'n'.repeat(48) } })));
     setTimeout(() => socket.destroy(), 500);
   });
   const reply = await exchange([{ id: 2, method: 'auth', params: { proof: 'f'.repeat(64) } }]);
@@ -390,10 +440,10 @@ test('the runtime lock records a real identity and recognizes a live owner', { s
   await assert.rejects(acquireLock(f.dataDir, join(f.dataDir, 'none.sock')), /already running/);
 });
 
-test('the SLOTS_FULL code reaches the client with the unchanged message; hello reports protocol 4', async t => {
+test('the SLOTS_FULL code reaches the client with the unchanged message; hello reports the current protocol', async t => {
   const f = fixture(t); await f.boot(); const c = client(f, t);
   const hello = await c.connect();
-  assert.equal(hello.protocol, 4);
+  assert.equal(hello.protocol, PROTOCOL);
   for (let i = 0; i < 4; i++) await c.call('start', { projectId: f.project.id, provider: 'claude', task: `Task ${i}` });
   const error = await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'fifth' }).catch(e => e);
   assert.equal(error.code, 'SLOTS_FULL');
@@ -433,7 +483,7 @@ test('the hello reports sessions recovered from a crashed runtime', async t => {
   f.store.saveSession({ id: 'crashed', projectId: f.project.id, provider: 'claude', nativeId: '44444444-4444-4444-8444-444444444444', nativeIdConfirmed: true, status: 'running', receiptId: 'r', runtimeId: 'gone', title: 'x', createdAt: new Date().toISOString() });
   const { runtime } = await f.boot(); const c = client(f, t);
   const hello = await c.connect();
-  assert.equal(hello.protocol, 4, 'an optional field: no protocol change');
+  assert.equal(hello.protocol, PROTOCOL);
   assert.equal(hello.recovery.runtimeId, runtime.runtimeId); assert.ok(!Number.isNaN(Date.parse(hello.recovery.at)));
   assert.deepEqual(hello.recovery.sessions, [{ id: 'crashed', status: 'interrupted', identityVerified: null }]);
   assert.equal(hello.recovery.total, 1);

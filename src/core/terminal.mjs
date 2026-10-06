@@ -11,6 +11,7 @@ import { realPath } from './paths.mjs';
 import { REPO_ENV } from './git-env.mjs';
 import { agentTerminalEnv, APPEARANCES, QueryResponder, themeReport } from './terminal-queries.mjs';
 import { ADAPTERS } from '../runtime/adapters/index.mjs';
+import { SlotPool } from '../runtime/capacity.mjs';
 
 export const MAX_SESSIONS = 4;
 export const IDLE_SETTLE_MS = 750;
@@ -76,7 +77,7 @@ export const ERROR_CODES = Object.freeze({
 });
 const CODES = new Set(Object.values(ERROR_CODES));
 // The lifecycle states in which an isolated session's copy takes a new or continued session.
-const OPEN_ENVIRONMENT = ['ready', 'running', 'waiting', 'completed', 'conflict'];
+const OPEN_ENVIRONMENT = ['ready', 'running', 'waiting', 'completed', 'conflict', 'integrated'];
 // The code of the error event sent when a hook reports another native session ID
 // (src/ui/types.ts shares it by name).
 export const IDENTITY_CHANGED = 'IDENTITY_CHANGED';
@@ -133,14 +134,14 @@ export class TerminalManager extends EventEmitter {
     // Where a Claude or Codex CLI is now (PATH, PATHEXT on Windows), or null; checked before any
     // start. The runtime passes providerResolver(); unit tests with an injected spawn pass their own
     // or none (then the spawn alone decides, as before).
-    resolveProvider = null, env = process.env, unobservedGraceMs = UNOBSERVED_GRACE_MS, observationMs = OBSERVATION_CHECK_MS, adapters = ADAPTERS }) {
+    resolveProvider = null, env = process.env, unobservedGraceMs = UNOBSERVED_GRACE_MS, observationMs = OBSERVATION_CHECK_MS, adapters = ADAPTERS, prepareTools = () => null }) {
     super(); this.cursor = cursor; this.resolveProvider = resolveProvider; this.env = env; this.store = store; this.spawn = spawn; this.makeObserver = makeObserver; this.runtimeId = runtimeId; this.platform = platform;
-    this.unobservedGraceMs = unobservedGraceMs; this.adapters = adapters;
+    this.unobservedGraceMs = unobservedGraceMs; this.adapters = adapters; this.prepareTools = prepareTools;
     this.identify = identify; this.table = table; this.verifiedSignal = verifiedSignal; this.alive = alive; this.stopGraceMs = stopGraceMs;
     // Journal's light or dark appearance: main sends it with each start and on every switch.
     this.appearance = 'dark'; this.appVersion = appVersion;
     // Slots 1-4 are reserved synchronously at start so concurrent starts never share one.
-    this.entries = new Map(); this.reservedSlots = new Set(); this.flushPending = false; this.disposed = false; this.settling = new Set();
+    this.entries = new Map(); this.slots = new SlotPool(MAX_SESSIONS, () => this.liveEntries().map(entry => entry.session.slot)); this.flushPending = false; this.disposed = false; this.settling = new Set();
     this.tracker = trackMs ? setInterval(() => { void this.trackDescendants().catch(() => {}); void this.recheckOrphans().catch(() => {}); }, trackMs) : null; this.tracker?.unref?.();
     this.observationTimer = observationMs ? setInterval(() => this.checkObservation(), observationMs) : null; this.observationTimer?.unref?.();
   }
@@ -151,20 +152,24 @@ export class TerminalManager extends EventEmitter {
   // The lowest slot not held by a live session of this runtime or a start in progress.
   // Orphans hold no slot: they do not count toward MAX_SESSIONS.
   freeSlot() {
-    const used = new Set([...this.reservedSlots, ...this.liveEntries().map(entry => entry.session.slot)]);
-    for (let slot = 1; slot <= MAX_SESSIONS; slot++) if (!used.has(slot)) return slot;
-    return null;
+    return this.slots.free();
   }
   async start(request) {
     if (this.disposed) throw fail(ERROR_CODES.SHUTTING_DOWN, 'Journal is shutting down');
     // Live sessions and starts in progress (reserved) each hold one slot; a start
     // whose process already runs is in both sets but counts once.
-    const slot = this.freeSlot();
-    if (!slot) throw fail(ERROR_CODES.SLOTS_FULL, `Journal runs up to ${MAX_SESSIONS} sessions at once. Stop one before starting another.`);
-    this.reservedSlots.add(slot);
-    try { return await this.launch({ ...request, slot }); } finally { this.reservedSlots.delete(slot); }
+    const lease = this.slots.reserve('manual');
+    if (!lease) throw fail(ERROR_CODES.SLOTS_FULL, `Journal runs up to ${MAX_SESSIONS} sessions at once. Stop one before starting another.`);
+    return this.startReserved(request, lease);
   }
-  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, plan = false, disabled = [], references = [], slot = null, cliVersion = null, hooksEnabled = null, appearance }) {
+  async startReserved(request, lease) {
+    const slot = this.slots.validate(lease);
+    try {
+      if (this.disposed) throw fail(ERROR_CODES.SHUTTING_DOWN, 'Journal is shutting down');
+      return await this.launch({ ...request, slot });
+    } finally { this.slots.release(lease); }
+  }
+  async launch({ projectId, provider, task = '', resumeId, workspaceId = null, research = false, plan = false, disabled = [], references = [], slot = null, cliVersion = null, hooksEnabled = null, appearance, model = null, orchestration = null }) {
     if (!PROVIDERS.includes(provider)) throw new Error('Unknown agent provider');
     if (APPEARANCES.includes(appearance)) this.setAppearance(appearance);
     if (typeof research !== 'boolean' || typeof plan !== 'boolean') throw new Error('Invalid mode option');
@@ -174,6 +179,7 @@ export class TerminalManager extends EventEmitter {
     let prior = null;
     if (resumeId) {
       prior = await this.store.getSession(resumeId);
+      if (prior.runId && (orchestration?.runId !== prior.runId || orchestration?.attemptId !== prior.attemptId && prior.role === 'worker')) throw fail('MANAGED_SESSION', 'Continue this conversation through its team so its task and capacity remain tracked');
       if (prior.projectId !== projectId || prior.provider !== provider) throw new Error('Session belongs to another project or provider');
       // Native conversations are tied to their working directory: resume in place.
       workspaceId = prior.workspaceId ?? null; research = !!prior.research; plan = !research && !!prior.plan;
@@ -186,7 +192,7 @@ export class TerminalManager extends EventEmitter {
     // The cwd is a registered worktree of this project (or its checkout), never another session's.
     const project = await (this.store.view ? this.store.view(projectId, workspaceId) : this.store.project(projectId));
     // An isolated session's copy takes work only before its result is applied, set aside or cleaned up.
-    if (project.isolated && !OPEN_ENVIRONMENT.includes(project.isolated.lifecycle)) throw fail(ERROR_CODES.START_FAILED, `This isolated session is ${String(project.isolated.lifecycle).replace('_', ' ')}; its copy no longer takes new work. Start a new session instead.`);
+    if (project.isolated && (!OPEN_ENVIRONMENT.includes(project.isolated.lifecycle) || (project.isolated.lifecycle === 'integrated' && !prior))) throw fail(ERROR_CODES.START_FAILED, `This isolated session is ${String(project.isolated.lifecycle).replace('_', ' ')}; its copy no longer takes new work through a new conversation. Continue its exact conversation instead.`);
     // Cursor: the genuine CLI (found again now, never assumed), with the modes this build documents.
     let cursor = null;
     if (provider === 'cursor') {
@@ -213,8 +219,10 @@ export class TerminalManager extends EventEmitter {
     const nativeId = prior?.nativeId ?? (provider === 'claude' ? randomUUID() : provider === 'cursor' ? await this.cursor.createChat(cursor.path, cwd) : null);
     // Where the native ID came from: a resume keeps the prior session's source.
     const nativeIdSource = prior ? prior.nativeIdSource ?? null : provider === 'claude' ? 'preassigned' : provider === 'cursor' && nativeId ? 'create-chat' : null;
-    const session = { id: randomUUID(), projectId, provider, nativeId,
-      nativeIdConfirmed: provider === 'claude' || !!prior || (provider === 'cursor' && !!nativeId), title: generateTitle(task, prior),
+    const session = { id: randomUUID(), projectId, provider, model: model ?? prior?.model ?? null, nativeId,
+      ...(orchestration ? { journalToolsAllowed: orchestration.journalToolsAllowed === true, role: orchestration.role, runId: orchestration.runId, taskId: orchestration.taskId ?? null, attemptId: orchestration.attemptId ?? null } : {}),
+      launchId: orchestration?.launchId ?? randomUUID(), inputOwner: 'automation', inputGeneration: 0,
+      nativeIdConfirmed: provider === 'claude' || !!prior || (provider === 'cursor' && !!nativeId), title: orchestration?.title ? text(orchestration.title, 'title', 200) : generateTitle(task, prior),
       status: 'starting', receiptId: receipt.id, resumedFrom: prior?.id ?? null, createdAt: now, lastActivityAt: now,
       // An additional-folder session runs in that folder with its own Git identity (if any).
       branch: project.cwd ? project.cwdBranch ?? null : project.branch, head: project.cwd ? project.cwdHead ?? null : project.head, cwd, workspaceId, research, plan, baseline, runtimeId: this.runtimeId, activity: null,
@@ -232,7 +240,7 @@ export class TerminalManager extends EventEmitter {
     }
     // Checked again right before the session counts as live: an Apply, Abandon or cleanup may have
     // finished while the launch was being prepared (once saved, those wait for the session).
-    if (project.isolated) { const current = await this.store.getEnvironment(project.isolated.id); if (!OPEN_ENVIRONMENT.includes(current.state)) throw fail(ERROR_CODES.START_FAILED, `This isolated session is ${String(current.state).replace('_', ' ')}; its copy no longer takes new work. Start a new session instead.`); }
+    if (project.isolated) { const current = await this.store.getEnvironment(project.isolated.id); if (!OPEN_ENVIRONMENT.includes(current.state) || current.base !== project.isolated.base || (current.state === 'integrated' && !prior)) throw fail(ERROR_CODES.START_FAILED, 'This copy changed during launch preparation and no longer takes new work from this request. Refresh and continue its exact conversation.'); }
     await this.store.saveSession(session);
     this.record(session.id, prior ? 'resume' : 'start', { provider, resumedFrom: prior?.id ?? null, branch: project.branch, head: project.head });
     let entry = null;
@@ -246,7 +254,8 @@ export class TerminalManager extends EventEmitter {
       if (!observer) session.observation = 'unobserved';
       // What this launch's hooks can report (Cursor without level 2: no turn end; never approvals).
       session.observes = observer?.observes ?? null;
-      const launch = buildAgentLaunch({ provider, nativeId: session.nativeId, resume: !!prior, prompt, settingsFile: observer?.settingsFile ?? null, hookArgs: observer?.args ?? [], research, plan, executable: cursor?.path });
+      const tools = session.role ? await this.prepareTools(session) : null;
+      const launch = buildAgentLaunch({ provider, model: session.model, nativeId: session.nativeId, resume: !!prior, prompt, settingsFile: observer?.settingsFile ?? null, hookArgs: observer?.args ?? [], research, plan, executable: cursor?.path, tools: tools?.config });
       // The agent's terminal is Journal's, not the one Journal was started from: TERM_PROGRAM names
       // Journal, and COLORFGBG (read by Claude Code in theme Auto and by Cursor) is Journal's appearance.
       // The hook launcher reads the observer's target and token from here (the command is the same for every launch).
@@ -257,7 +266,9 @@ export class TerminalManager extends EventEmitter {
       const isolation = project.isolated && this.store.environmentLaunch ? await this.store.environmentLaunch(project.isolated.id) : {};
       const env = { ...agentTerminalEnv(process.env, { appearance: this.appearance, version: this.appVersion }), ...isolation, JOURNAL_SESSION_ID: session.id };
       delete env.ELECTRON_RUN_AS_NODE; delete env.JOURNAL_APP_VERSION; delete env.JOURNAL_HOOK_TARGET; delete env.JOURNAL_HOOK_TOKEN;
+      for (const name of ['JOURNAL_RUN_ID', 'JOURNAL_TASK_ID', 'JOURNAL_ATTEMPT_ID', 'JOURNAL_TOOL_ID', 'JOURNAL_TOOL_TOKEN', 'JOURNAL_TOOL_SOCKET', 'JOURNAL_CONTINUATION_ENABLED', 'JOURNAL_CONTINUATION_ID', 'JOURNAL_CONTINUATION_TOKEN', 'JOURNAL_CONTINUATION_SOCKET']) delete env[name];
       Object.assign(env, observer?.env ?? {});
+      Object.assign(env, tools?.env ?? {});
       // The agent works in session.cwd: Git variables that point at another repository are not passed on (git-env.mjs).
       for (const name of Object.keys(env)) if (REPO_ENV.has(name.toUpperCase())) delete env[name];
       const proc = this.spawn(launch.executable, launch.argv, { cwd: session.cwd, env, name: 'xterm-256color', ...PTY_SIZE });
@@ -267,7 +278,8 @@ export class TerminalManager extends EventEmitter {
         // Turns and observation: the current turn key, settled keys with their outcome, applied event
         // signatures, child IDs seen, when lastObserved was last sent and when a prompt was first submitted.
         currentTurn: null, settled: new Map(), signatures: new Set(), childIds: new Set(), observedSentAt: 0,
-        promptAt: prompt ? Date.now() : 0, typedText: false };
+        promptAt: prompt ? Date.now() : 0, typedText: false,
+        launchId: session.launchId, observationGeneration: 0, inputGeneration: 0, inputOwner: 'automation', boundary: null };
       this.entries.set(session.id, entry);
       session.status = 'running'; session.pid = Number.isInteger(proc.pid) ? proc.pid : null;
       // Identity is read asynchronously, and again on first output once the CLI is running.
@@ -292,7 +304,7 @@ export class TerminalManager extends EventEmitter {
       // ENOENT means a missing executable only when spawning failed; later it is some other file.
       const code = CODES.has(error.code) ? error.code : error.code === 'ENOENT' && !spawned ? ERROR_CODES.PROVIDER_MISSING : ERROR_CODES.START_FAILED;
       if (code === ERROR_CODES.SHUTTING_DOWN) throw fail(code, error.message);
-      throw fail(code, `Could not start ${provider}. Check that its CLI is installed and available on PATH. ${error.message}`);
+      throw Object.assign(fail(['ENOMEM', 'EAGAIN', 'EMFILE'].includes(error.code) ? error.code : code, `Could not start ${provider}. Check that its CLI is installed and available on PATH. ${error.message}`), { noProcess: !spawned });
     }
   }
   async refreshIdentity(entry) {
@@ -396,9 +408,67 @@ export class TerminalManager extends EventEmitter {
     if (!entry || entry.exited) throw fail(ERROR_CODES.NOT_LIVE, 'Terminal is not active or owned by this session');
     return entry;
   }
+  boundaryReason(entry, operation) {
+    const { session } = entry;
+    if (entry.exited || entry.stopping || !['running', 'waiting'].includes(session.status)) return 'NOT_RUNNING';
+    if (entry.pending.length || session.status === 'waiting' || session.activity === 'permission') return 'PENDING_APPROVAL';
+    if (entry.inputOwner !== 'automation') return entry.inputOwner === 'human' ? 'HUMAN_INPUT' : 'INPUT_UNCERTAIN';
+    // No production adapter declares these contracts until native validation. Quiet time is
+    // only a debounce; it proves neither an empty input buffer nor absence of background writers.
+    if (this.adapter(session.provider)?.boundaries?.[operation] !== true) return 'BOUNDARY_UNVERIFIED';
+    if (session.observation !== 'live') return 'OBSERVATION_LOST';
+    if (entry.tools.size || entry.commands.size || session.activity !== 'idle' || Date.now() - (entry.activitySince ?? 0) < IDLE_SETTLE_MS) return 'NOT_IDLE';
+    return null;
+  }
+  qualifyBoundary(id, operation) {
+    if (!['capture', 'delivery', 'apply', 'mutate'].includes(operation)) throw new Error('Unknown boundary operation');
+    const entry = this.owned(id); const reason = this.boundaryReason(entry, operation);
+    if (reason) return { eligible: false, reason };
+    const boundary = { eligible: true, reservationId: randomUUID(), operation, sessionId: id, launchId: entry.launchId,
+      turnId: entry.currentTurn, observationGeneration: entry.observationGeneration, inputGeneration: entry.inputGeneration };
+    entry.boundary = boundary;
+    return { ...boundary };
+  }
+  validateBoundary(boundary) {
+    const entry = this.entries.get(boundary?.sessionId);
+    if (!entry || !entry.boundary || entry.boundary.reservationId !== boundary.reservationId ||
+      ['operation', 'launchId', 'turnId', 'observationGeneration', 'inputGeneration'].some(key => entry.boundary[key] !== boundary[key]) ||
+      entry.launchId !== boundary.launchId || entry.observationGeneration !== boundary.observationGeneration || entry.inputGeneration !== boundary.inputGeneration) return { eligible: false, reason: 'BOUNDARY_CHANGED' };
+    const reason = this.boundaryReason(entry, boundary.operation);
+    return reason ? { eligible: false, reason } : { eligible: true };
+  }
+  claimInput(entry, owner = 'human') {
+    entry.inputOwner = owner; entry.inputGeneration++; entry.boundary = null;
+    entry.session.inputOwner = owner; entry.session.inputGeneration = entry.inputGeneration;
+    this.persist(entry.session, true);
+  }
+  stageAutomatic(boundary, text) {
+    if (!this.validateBoundary(boundary).eligible) throw fail('BOUNDARY_CHANGED', 'The automatic input boundary changed');
+    const entry = this.owned(boundary.sessionId); const transport = this.adapter(entry.session.provider)?.delivery;
+    if (!transport?.stage || !transport?.submit) throw fail('BOUNDARY_UNVERIFIED', 'This adapter has no validated delivery transport');
+    // Set before the first possible side effect, including a partially throwing PTY write.
+    entry.stagedInput = true;
+    transport.stage(entry, text);
+  }
+  submitAutomatic(boundary) {
+    if (!this.validateBoundary(boundary).eligible) throw fail('BOUNDARY_CHANGED', 'The automatic input boundary changed');
+    const entry = this.owned(boundary.sessionId);
+    this.adapter(entry.session.provider).delivery.submit(entry);
+    entry.stagedInput = false;
+    entry.boundary = null;
+  }
+  uncertainInput(id) { const entry = this.entries.get(id); if (entry) { this.claimInput(entry, 'uncertain'); this.emitStatus(entry.session); } }
+  resumeAutomatic(id) {
+    const entry = this.owned(id); const adapter = this.adapter(entry.session.provider);
+    if (entry.pending.length || adapter?.delivery?.handoff?.(entry) !== true) throw fail('HANDOFF_UNVERIFIED', 'This provider cannot yet prove that its input is empty. Use the addressed inbox.');
+    entry.stagedInput = false; this.claimInput(entry, 'automation'); this.emitStatus(entry.session);
+    return { inputOwner: entry.inputOwner };
+  }
   write(id, data) {
     if (typeof data !== 'string' || Buffer.byteLength(data) > 64 * 1024) throw new Error('Terminal input is too large');
     const entry = this.owned(id);
+    // Revoke before writing: a throwing or partial write cannot leave automation owning a draft.
+    this.claimInput(entry);
     // Claude's prompt answer keys: a digit selects, Enter confirms, Esc or Ctrl+C dismisses (deny with feedback ends with Enter).
     // Pasted text never counts. The only open prompt settles at once; with several, the next tool event settles one.
     const dismiss = data === '\x1b' || data === '\x03';
@@ -445,6 +515,7 @@ export class TerminalManager extends EventEmitter {
       // only a turn that has been idle for a moment counts as ready.
       : session.activity !== 'idle' || Date.now() - (entry.activitySince ?? 0) < IDLE_SETTLE_MS ? 'Journal does not know yet whether the agent is ready for input' : null;
     if (reason) return { inserted: false, reason };
+    this.claimInput(entry);
     entry.proc.write(entry.bracketedPaste ? `\x1b[200~${text} \x1b[201~` : `${text} `); entry.lastInputAt = Date.now();
     this.record(id, 'reference', referenceEvent(reference, 'inserted'));
     return { inserted: true };
@@ -502,6 +573,8 @@ export class TerminalManager extends EventEmitter {
         if (entry.descendants.size >= 200) break;
         entry.descendants.set(`${row.pid}:${row.started}`, row);
       }
+      const tracked = [...entry.descendants.values()].map(row => ({ pid: row.pid, started: row.started, command: redact(row.command, 120) }));
+      if (JSON.stringify(entry.session.processTracking?.descendants) !== JSON.stringify(tracked)) { entry.session.processTracking = { descendants: tracked }; this.persist(entry.session); }
     }
   }
   async confirmNativeId(id, nativeId) {
@@ -593,6 +666,7 @@ export class TerminalManager extends EventEmitter {
   ingest(id, raw) {
     const entry = this.entries.get(id); if (!entry) return;
     const event = this.adapter(entry.session.provider)?.normalize(raw); if (!event) return;
+    entry.observationGeneration++; entry.boundary = null;
     if (entry.exited) { this.drained(entry, event); return; }
     // Shut down with the process still running: its state was saved as interrupted and stays so.
     if (this.disposed) return;
@@ -618,6 +692,7 @@ export class TerminalManager extends EventEmitter {
       if (event.kind === 'tool-end' || event.kind === 'tool-start') this.observe(id, event.nativeId, 'running', 'working');
     }
     this.apply(id, entry, event);
+    if (event.kind === 'turn-end' && event.hookInvocationId) entry.lastStopInvocation = { id: event.hookInvocationId, turnId: entry.currentTurn };
     if (session.version !== version) entry.observedSentAt = now;
     // Becoming live, or a last fact the window has not had for a while, is sent on its own.
     else if (!wasLive || now - lastSent >= OBSERVED_REFRESH_MS) { entry.observedSentAt = now; this.emitStatus(session); }
@@ -883,6 +958,8 @@ export class TerminalManager extends EventEmitter {
   }
   // Every state change bumps a version so the UI can ignore older snapshots.
   emitStatus(session) {
+    const entry = this.entries.get(session.id);
+    if (entry) { session.turnId = entry.currentTurn; session.observationGeneration = entry.observationGeneration; }
     session.version = (session.version ?? 0) + 1; this.persist(session);
     if (!this.disposed) this.emit('event', { type: 'status', session: { ...session } });
   }
@@ -905,7 +982,8 @@ export class TerminalManager extends EventEmitter {
       const verified = !!session.identity && sameIdentity(current, session.identity);
       const unverified = !verified && !!session.pid && this.alive(session.pid) && (!current || !session.identity);
       const orphaned = verified || unverified;
-      const next = { ...session, status: orphaned ? 'orphaned' : 'interrupted', identityVerified: orphaned ? verified : undefined, activity: null, slot: null, pending: null, endedAt: orphaned ? null : new Date().toISOString(), recoveredAt: new Date().toISOString() };
+      const recoveredSurvivors = orphaned ? null : await this.recoveredSurvivors(session);
+      const next = { ...session, survivors: recoveredSurvivors, status: orphaned ? 'orphaned' : 'interrupted', identityVerified: orphaned ? verified : undefined, activity: null, slot: null, pending: null, endedAt: orphaned ? null : new Date().toISOString(), recoveredAt: new Date().toISOString() };
       await this.store.saveSession(next);
       const receipt = await Promise.resolve().then(() => this.store.getReceipt(session.receiptId)).catch(() => null);
       if (receipt && ['prepared', 'submitted'].includes(receipt.state)) await this.store.updateReceiptState(receipt.id, 'uncertain', session.id);
@@ -917,12 +995,19 @@ export class TerminalManager extends EventEmitter {
   }
   // Orphans end on their own; once the process is gone the session becomes
   // interrupted (and resumable) instead of staying blocked forever.
+  async recoveredSurvivors(session) {
+    const table = await Promise.resolve(this.table()).catch(() => null);
+    if (!table || !Array.isArray(session.processTracking?.descendants)) return null;
+    const tracked = survivors(session.processTracking.descendants, table) ?? [];
+    const grouped = Number.isInteger(session.pid) ? descendants(table, session.pid) ?? [] : [];
+    return [...new Map([...tracked, ...grouped].map(row => [`${row.pid}:${row.started}`, { pid: row.pid, started: row.started, command: redact(row.command, 120) }])).values()];
+  }
   async recheckOrphans() {
     for (const session of await this.store.activeSessions?.() ?? []) {
       if (session.status !== 'orphaned') continue;
       const running = session.identityVerified === false ? this.alive(session.pid) : sameIdentity(await this.identify(session.pid), session.identity);
       if (running) continue;
-      const next = { ...session, status: 'interrupted', endedAt: new Date().toISOString() };
+      const next = { ...session, survivors: await this.recoveredSurvivors(session), status: 'interrupted', endedAt: new Date().toISOString() };
       await this.store.saveSession(next); this.record(session.id, 'recovered', { status: 'interrupted', previousStatus: 'orphaned' }); this.emitStatus(next);
     }
   }

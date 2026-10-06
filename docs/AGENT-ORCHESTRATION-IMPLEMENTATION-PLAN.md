@@ -1,6 +1,36 @@
 # Agent orchestration: implementation plan
 
-Status: **plan only; no production code yet.** It derives from [AGENT-ORCHESTRATION](AGENT-ORCHESTRATION.md) (the spec, "§" references below point there) and from the repository as of `main` at 0.1.2-alpha (6 October 2026). Each phase is meant to be executable by a separate implementer without redesigning the architecture: it names the files, the functions to extend, the new modules, the migrations, the tests and what is out of scope.
+> Delivery scope update, 6 October 2026: the user deferred Windows and requested completion of the macOS implementation with a pull request. Windows requirements below remain future work. Native capability gates and the separate M10b acceptance requirements still apply.
+> **For agentic workers:** Use the executing-plans skill when implementation is authorized; work task by task with the unchecked acceptance gates below. This document update itself is not implementation authorization.
+
+**Goal:** Deliver the complete hierarchical orchestration capability, in validated stages that share one production architecture.
+
+**Architecture:** Provider sessions own reasoning; Journal owns durable state, immutable results, guarded delivery, admission and integration. Runtime-owned services continue without the desktop, using the existing store and isolated environments. Later capabilities extend these foundations rather than replace a temporary prototype.
+
+**Tech stack:** Existing Electron/React, Node >=24, SQLite, Git, node-pty and provider adapters; evaluate the official MCP SDK before choosing the protocol implementation.
+
+**Spec:** [AGENT-ORCHESTRATION.md](AGENT-ORCHESTRATION.md), including its full-scope staging contract (§35).
+
+Status: **implementation started with the user's authorization on 6 October 2026.** The macOS implementation spans M0–M9 with recovery work throughout; production capability gates and final M10b acceptance remain explicit. See [implementation status](IMPLEMENTATION-STATUS.md#agent-orchestration-implementation-6-october-2026) for exact coverage, validation and remaining gates. The plan derives from [AGENT-ORCHESTRATION](AGENT-ORCHESTRATION.md) (the spec, "§" references below point there) and `main` at 0.1.2-alpha. Each phase names the files, interfaces, migrations, tests and remaining scope.
+
+## Global constraints
+
+- Repository documents and authored text use English; no external product names or copied source.
+- Node >=24. Required implementation checks: `npm test`, `npm run check`, `npm run build`; desktop changes additionally require `npm run test:desktop` with Electron-native node-pty.
+- Every Electron test/launcher uses `fixtureEnv({ root, bin, extra })`; no real provider executable, login, request or secret in automated checks. Native trials are separate, manual and local.
+- Preserve native settings/permissions, exact-ID resume, reviewed evidence and immutable receipts.
+- Product platforms are macOS and Windows. Existing fixture CI only; no Linux, scheduled jobs or release expansion.
+- UI work follows the user-selected local design skill: keyboard access, clear focus, dense readable state, no decorative keyboard animation, reduced motion and pointer-gated hover.
+- Preserve the full capability set. A later stage is required remaining work, not an implicit scope deletion.
+
+## Review focus
+
+Each failure class has an owning milestone and explicit acceptance below:
+- Human drafts, permission transitions and partial input: M0/M4.
+- Old launch hooks, concurrent tool calls and desktop absence: M1/M2/M5.
+- Lost historical result refs and interrupted base advance: M1.
+- Unbound test passes, stale review subjects and approval reuse: M7/M9.
+- Capacity reservation races and process survival during handoff: M3/M8.
 
 ## 1. Implementation principles
 
@@ -10,14 +40,14 @@ Non-negotiable in every phase:
 2. **Journal owns deterministic state, safety and resources:** state machines, snapshots, verified evidence, delivery timing, admission, gates, conflict detection, persistence, recovery.
 3. **No completion by session exit.** Process lifetime is *presence* (`live`/`paused`/`lost`), separate from work state.
 4. **No state from free text.** Only hooks, Git, process facts and tool calls change state. Terminal output and `last_assistant_message` are at most claims shown to the coordinator.
-5. **Messages only at safe boundaries:** a turn-end continuation or a verified idle moment. Never during a pending approval, and never into a terminal whose approvals Journal cannot see (Cursor).
+5. **Messages require an operation-specific contract:** a validated adapter, target launch, input ownership and boundary reservation; a quiet timer or Stop alone is insufficient. Never during a pending approval, and never into a terminal whose approvals Journal cannot see (Cursor).
 6. **A blocked task is not a queued worker.** Unmet dependencies mean no attempt exists. Only a launch already requested and queued for capacity may start without a new request.
-7. **Ready needs an explicit report.** A captured result without `report_result` is `result_available`, which is visible and recoverable, never `ready` by inference.
+7. **Ready needs an explicit report or acceptance.** A captured result without `report_result` is `result_available` until a current-turn report or `accept_result` for that exact result ID; never `ready` by inference.
 8. **Workers integrate through Journal.** A worker's brief forbids push, merge, pull requests and branch switching unless the task has `hostingAllowed`.
 9. **Git hosting is shell work.** No pull request, CI or merge subsystem is built.
 10. **No real provider accounts in automated tests.** Every spec and helper uses `fixtureEnv` (AGENTS.md, `tests/isolation.test.mjs`). Real logins are for manual validation only.
 11. **Additive.** A normal Build, Research or Plan session, and today's single isolated session, keep working exactly as today, apart from the deliberate M1 improvement.
-12. **Repository rules:** English; no competitor names; Node ≥ 24; `npm test`, `npm run check`, `npm run build` and `npm run test:desktop` (headless) for every desktop change; CI stays on free runners.
+12. **Repository rules:** follow the global constraints above. Basic recovery ships with every stateful milestone; M10 completes system-wide fault coverage rather than introducing persistence late.
 
 ## 2. Repository map
 
@@ -36,7 +66,7 @@ Non-negotiable in every phase:
 | Story | `src/core/story/story.mjs` (`buildStory`, `isolationOf`), `classify.mjs`, `shell.mjs`, `story.d.mts` | Deterministic session Story | Run Story (M6), worker rows | **Extend**; new `run-story.mjs` |
 | Files / Changes | `src/core/changes.mjs`, `store.sessionChanges`, `savedEnvironmentChanges`, `src/ui/ChangesPanel.tsx`, `FilesTab.tsx` | Diffs per session | Worker Changes unchanged | **Reuse** |
 | Memory | `store.prepareContext`, `retrieval.mjs`, `proposals.mjs`, `store.prepareMemory`, `originFor`, `withOrigin` | Packets, receipts, proposals, origins | Task packets, run memory, discovery candidates (M5/M9) | **Extend** |
-| Main process | `src/desktop/main.mjs` (IPC `actions`, `startSession`, isolated `start`, `followEnvironment`, `reconcileEnvironments` interval, `removeSession` dialog, notifier) | App orchestration and IPC | Run IPC, coordinator start, capacity UI wiring | **Extend** |
+| Main process | `src/desktop/main.mjs` (IPC `actions`, `startSession`, isolated `start`, `followEnvironment`, `reconcileEnvironments` interval, `removeSession` dialog, notifier) | App orchestration and IPC | Forward run commands; UI and notifications only | **Refactor**: move launch/followEnvironment/reconcile ownership to surviving runtime services |
 | Preload | `src/desktop/preload.cjs` (`allowed` set) | IPC allow-list | New actions | **Extend** |
 | Runtime client | `src/desktop/runtime-client.mjs` | Socket client from main | New runtime methods | **Extend** |
 | Notifications | `src/desktop/notify.mjs` | Attention and dock badge | Only user decisions raise attention | **Extend** |
@@ -49,91 +79,95 @@ Non-negotiable in every phase:
 New modules (by milestone):
 - `src/core/orchestration/` (`model.mjs` for state machines; `runs.mjs`, `tasks.mjs`, `attempts.mjs`, `messages.mjs`, `results.mjs`, `gates.mjs`, `events.mjs`);
 - `src/runtime/capacity.mjs` and `src/runtime/probes/macos.mjs`;
-- `src/runtime/delivery.mjs`;
+- `src/runtime/delivery.mjs`, `src/runtime/workers.mjs`, `src/runtime/environment-sync.mjs`;
 - `src/agent-tools/` (`server.mjs` for MCP over stdio, `cli.mjs`, `client.mjs` for the runtime socket with a token, `tools.mjs` for definitions and role checks);
 - `src/core/story/run-story.mjs`;
 - in the UI: `src/ui/runTreeModel.ts`, `TeamTab.tsx`, `WorkerHeader.tsx`, `MessageBox.tsx`.
 
-## 3. Dependency graph between milestones
+## 3. Staged delivery and milestone dependencies
+
+Milestone IDs describe capabilities, not a mandate to finish all of M3 before M4. Preserve M1–M10's full scope; introduce M0 and explicit sub-milestones. The first useful team is a validation checkpoint, never the declaration that the full product is complete.
 
 ```
-M1 Ready without exit ───────────────────────────────────────────┐
-  ↓                                                               │
-M2 Durable orchestration model (schema, state machines, events)   │
-  ├──► M3 Capacity manager ──────────┐                            │
-  └──► M4 Message engine ────────────┤                            │
-                                     ↓                            │
-                         M5 ToolServer + worker spawning ◄────────┘
-                                     ↓
-              ┌──────────────────────┼──────────────────────┐
-              ↓                      ↓                      ↓
-   M6 GUI hierarchy + Team   M7 Coordinator-managed   M8 Dependencies, conflicts,
-                                integration              retries, handoffs
-                                     ↓                      ↓
-                                     └──────► M9 Review ◄────┘
-                                                  ↓
-                                     M10 Recovery hardening + real validation
+M0 Contract proof
+  → M1 immutable live results + runtime-owned environment lifecycle
+  → M2 durable model + operation deduplication
+  → M3a fixed-cap admission/queue + M4a durable guarded delivery
+  → M5 tools/spawning + essential M6 UI
+  → M7 integration + M8a dependencies/conflicts + M9a pinned review
+  → first useful team checkpoint
+  → M3b/c/d adaptive capacity/caps/reclamation + M4b continuation
+     + complete M6 + M8b retries/handoffs/variants + M9b whole-run review
+  → M10b complete fault matrix and full-product acceptance
+
+M10a = recovery delivered and tested inside every owning milestone above.
 ```
 
-**Safe in parallel:**
-- M3 and M4, after M2: they touch different runtime areas (capacity vs delivery) and share only the run-event writer.
-- M6, M7 and M8, after M5: UI, gates and the workflow tools are separate modules. M6's Team tab can start against M2's projections earlier, with mocked data.
-- M1's UI part and M2's schema work have no shared files beyond `environments.mjs`. Do M1 first anyway: it changes the semantics M2 builds on.
+| Stage | Deliverable | Exit gate | Still required afterward |
+| --- | --- | --- | --- |
+| A — Foundations | M0/M1/M2/M3a/M4a with M10a | Identity, immutable refs, human takeover, partial outcomes, cap-4 durable queue, restart cases | First useful team and all later capabilities |
+| B — Useful team | M5 + essential M6 + M7 + M8a + M9a | Coordinator + two workers; one dependency, review/fix/recheck, conflict, intervention and desktop restart | Full capacity, variants/handoffs, complete UI/review/continuation |
+| C — Full capabilities | Remaining M3/M4/M6/M8/M9 | Milestone tests and provider/platform gates | Final combined validation |
+| D — Full acceptance | M10b | Spec §37/§38, native trials and usefulness evidence | Separate release decision |
 
-## 4. M1 — Ready without exit
+The cap remains four through Stage B, including coordinator and ordinary sessions. Use the fourth slot or a sequential reviewer. No temporary second state model, unsafe messaging path or special prototype launcher.
 
-Scope: single isolated sessions (no runs). Shippable on its own; it fixes "Apply appears only after the agent exits".
+### 3.1 M0 — Prove the contracts before enabling dependent paths
 
-**Migration risk: none.** M1 needs no new table. Its changes:
-- **Isolated `workspaces` body (JSON):** `result.report` stays absent in M1; `lastTurnSnapshotAt`; `appliedResult` (the result the base advanced to).
-- **`environments.mjs`:** two transitions are added to `TRANSITIONS`.
+**Files:** extend `tests/terminal.test.mjs`, `tests/turns.test.mjs`, `tests/hook.test.mjs`, `tests/environments.test.mjs`; add `tests/delivery.test.mjs` fixtures and isolated support helpers as needed. Record the capability matrix and native evidence in the implementation-status document when trials actually occur; never pre-mark native behavior as verified.
 
-### 4.1 Changes
+**Interfaces to establish:**
+- Boundary identity: `{ sessionId, launchId, turnId, observationGeneration, inputGeneration }`.
+- Delivery target: `{ runId, attemptId?, sessionId, launchId }`; ownership `automation | human | uncertain`.
+- `qualifyBoundary(sessionId, operation)` → eligible reservation or typed held/refused reason; operations distinguish capture, delivery, Apply and folder mutation.
+- Provider capabilities independently gate idle delivery, continuation and live folder mutation. No inferred universal continuation JSON or empty-prompt signal.
 
-1. **Settled turn end → snapshot.**
-   - In `TerminalManager.apply()` (`turn-end` case), after `observe(... 'idle')`, schedule a check after `IDLE_SETTLE_MS`.
-   - If the session is still `running` + `idle` with no `entry.pending` and no `entry.tools`, emit a new runtime event `{ type: 'turn-settled', sessionId, environmentId }`. Only for sessions with `environmentId` and `observation === 'live'`.
-   - Main (`followEnvironment` in `src/desktop/main.mjs`) handles it: `store.environments.syncFromSession(session, { boundary: 'turn' })`.
-2. **`Environments.syncFromSession(session, { boundary })`:**
-   - **New branch:** `boundary === 'turn'` with a live session in `running/waiting` → `snapshot(id)`, then `transition(id, 'completed')`. The session is not required to have ended.
-   - **Next turn:** `turn-start` (status `running`, activity `working`) moves `completed → running`, which is already allowed. `integrated → running` is new: add it to `TRANSITIONS.integrated`.
-   - **Ended session:** unchanged.
-3. **Apply while live but idle.**
-   - In `Environments.apply()`, replace the `liveSessions(id).length` refusal with an "idle at a boundary" check. Every live session in the environment must be `status === 'running' && activity === 'idle'` with no pending approval, read from the session record.
-   - Otherwise refuse with `NOT_IDLE` ("The agent is working; apply when its turn ends").
-   - `apply()` still re-snapshots first, and `expect` (already implemented) protects against a change after the preview.
-   - `updateFromBranch`, `abandon` and `cleanup` keep requiring no live session in M1. Cleanup never stops a live session.
-4. **Result superseding.** This already works: `snapshot()` is idempotent and creates a new result commit when the tree changes. Add `supersededAt` to the previous result in the body (history), and emit the environment event `result` with `supersedes`.
-5. **Base advance after Apply.** After `integrated`, set `env.base = env.result.sha` (the applied result) and `appliedResult = { sha, commit }`, and `update-ref REF(id,'base')`. The next preview uses `--merge-base=<applied result>`.
-   - Unit-test that a follow-up previews only the new work, and that the branch's other changes are not reverted.
-6. **Follow-up after Apply.** `integrated → running` on `turn-start` (point 2); the next turn end produces `completed` with a new result.
-7. **Cleanup interplay.** `main.mjs` `applyEnvironment` currently calls `cleanupEnvironment` right after an Apply. In M1, skip cleanup when a session is live (presence live); clean up when the session ends and the environment is `integrated`, which `reconcile` already handles.
-8. **GUI** (`EnvironmentPanel.tsx`, `copy.ts`):
-   - show **Apply** when `state === 'completed' && folder` regardless of session liveness, and disable it with "Applies when the agent's turn ends" while the session is `working`;
-   - after an Apply, show "Applied. The agent can continue; its next changes will show here.";
-   - for unobserved providers (`session.observation !== 'live'`), show "Journal can't see when this agent finishes a turn. Its result is saved when the session ends, or with **Save result now**." The **Save result now** button calls `snapshotEnvironment`, which exists.
-9. **Recovery.** `reconcile()` keeps working: `running/waiting` with no live session → snapshot + `completed`. A `completed` environment with a live session after a restart stays `completed`; the next `turn-start` moves it.
-10. **Providers without reliable turn hooks:**
-    - Cursor without level 2, and Codex with untrusted hooks: no `turn-settled` events, so the behaviour is as today plus **Save result now**.
-    - Claude: full M1.
-    - Codex with trusted hooks: full M1, with `Stop`/`Interrupt` as the turn end.
+- [ ] Add fixture cases for a human draft, delayed/parallel Stop hooks, approval between paste and Enter, late events from an old launch, cancellation and partial input.
+- [ ] Add live-result cases for shell/background writes, two captures, a moved target and interruption after landing but before base advance.
+- [ ] Run focused fixture checks; document what each can prove. Use Node >=24 and the repository's isolation rules.
+- [ ] Separately validate native provider/version/platform contracts only in the authorized local trial. Keep unsupported transports disabled; pull/held messages remain available.
+- [ ] Gate M1 live behavior and M4 automatic delivery on the relevant evidence, not solely on 750 ms elapsing.
 
-### 4.2 Acceptance tests
+### 3.2 Implementation cycle for each milestone
 
-- **Unit, `tests/environments.test.mjs`:**
-  - a live session, a turn-settled snapshot → `completed`;
-  - Apply while live and idle → `integrated`;
-  - a follow-up turn → `running` → turn end → `completed` with a new result whose preview lists only the new file;
-  - a second Apply → `integrated`;
-  - the branch's own commits made between the two Applies are kept;
-  - Apply while working → `NOT_IDLE`, nothing written;
-  - Apply with a stale `expect` → `RESULT_CHANGED`;
-  - `integrated → running` allowed; cleanup refuses while live.
-- **Unit, `tests/terminal.test.mjs` / `turns.test.mjs`:**
-  - `turn-settled` emitted once per settled turn end;
-  - not emitted with a pending approval, an in-flight tool, an unobserved session, or a new turn within the settle time.
-- **Desktop, `tests/desktop-isolated.spec.ts`** (a new test, using the hook-playing helper from `desktop-notify.spec.ts`): the fixture agent stays alive, the test plays `UserPromptSubmit`/`Stop`, the panel shows Apply, Apply lands, the test plays another turn, a second Apply lands, and the terminal is still running throughout.
-- **Regression:** all existing isolated tests pass. "Worker trying to work after Apply" is covered by the `integrated → running` test plus "the new result previews only new work".
+- [ ] Add its named failure/regression fixtures; run the focused `node --test tests/<owning-file>.test.mjs` and confirm the new case fails for the intended reason.
+- [ ] Implement the stated interface in the owning files, preserving existing behavior outside the approved scope.
+- [ ] Run the focused cases, then the required global checks; desktop cases use `npx playwright test tests/<owning-spec>.spec.ts` and the required desktop suite.
+- [ ] Inspect the diff, record limitations and native evidence separately, and review before integration. Commit/merge follow the user's approved workflow; this plan does not authorize either.
+- [ ] Mark acceptance complete only when the milestone's recovery cases also pass.
+
+## 4. M1 — Ready without exit, with immutable results
+
+Scope: single isolated sessions, using the same result and recovery contracts later used by runs. Apply remains available while a supported session lives; unverified boundaries remain refused.
+
+**Files:** `src/core/environments.mjs`, `src/core/store.mjs` (`originFor`/`withOrigin`), `src/core/terminal.mjs`, `src/runtime/runtime.mjs`, new `src/runtime/environment-sync.mjs`, `src/desktop/main.mjs`, and the existing environment panel/copy.
+
+**Migration:** no orchestration tables are required yet, but this is a persisted-format change, not "no migration risk". Add versioned result history and operation records to isolated workspace JSON; retain backward reads. Backfill the current legacy result/ref where available without inventing lost history. M2 imports these IDs/refs rather than recapturing them.
+
+### 4.1 Interfaces and changes
+
+1. `TerminalManager` emits a qualified boundary candidate with session/launch/turn and generation IDs. Stop plus `IDLE_SETTLE_MS` is a debounce only; approvals, in-flight tools, new input/turn or unknown adapter capability invalidate eligibility.
+2. `src/runtime/environment-sync.mjs` owns the per-environment serialized `syncFromSession(session, { boundary })` path through the runtime's StoreClient. Move Main's `followEnvironment` and periodic mutation/reconciliation responsibilities here; Main observes results. Closing Main cannot suppress capture.
+3. `Environments.snapshot(id, { boundary })` persists capture intent, allocates a stable resultId and creates a distinct immutable private ref. Record result commit/tree, base and capture identity before publishing completion. Preserve every retained historical ref; a mutable latest pointer is optional compatibility data. Unchanged compatible content is idempotent.
+4. Qualify/revalidate capture and store stability evidence. A detected concurrent change produces an invalidated/uncertain capture condition, not readiness. Unknown background writers prevent claims that the captured tree was coherently tested.
+5. `preview(id, { resultId })` returns an opaque `expect` token bound to the exact result/tree, target branch/head, environment base, observation generation and applicable policy/evidence versions. `apply(id, { resultId, expect })` revalidates through the same serialized operation path before mutation. Refuse `NOT_IDLE`, `BOUNDARY_UNVERIFIED`, `RESULT_CHANGED` or `BRANCH_MOVED` as appropriate.
+6. Keep a durable Apply operation: prepared → landed → base advanced → metadata complete. Record prior/new base, expected target and landed commit. Extend `finishLanded`/`reconcile` so a crash between any two phases resumes once. Advance the base ref with CAS before allowing the next capture/Apply; final metadata/events are idempotent.
+7. Add `integrated → running` for follow-up turns, retain previous result/integration history, and preview subsequent work against the applied result as explicit three-way base. Do not assume `--merge-base=<sha>` expresses this operation.
+8. Update `withOrigin`: applied status uses the origin's resultId and integration record. Any older Apply in the same environment is insufficient.
+9. Keep `updateFromBranch`, abandon and cleanup's no-live-writer restriction until M8 proves folder-mutation eligibility. Skip post-Apply worktree cleanup while live. Normal cleanup retains immutable refs needed by result/review/memory history.
+10. UI displays captured result separately from permission to Apply. Show typed refusal/unknown reasons; unsupported providers retain session-end/manual capture without gaining unsupported live Apply.
+
+### 4.2 Acceptance gates
+
+- [ ] `tests/environments.test.mjs`: two turns and two Applies while a supported fixture stays alive; follow-up diff includes only new work and preserves intervening target-branch changes.
+- [x] Historical uncommitted snapshots remain reachable after superseding, worktree cleanup and a disposable-repo Git GC.
+- [ ] Crash at capture-ref publication and each Apply/base-advance phase; reconstruction preserves IDs and lands exactly once.
+- [ ] Stale preview, new turn/input, active approval and changed target refuse before mutation.
+- [ ] `tests/terminal.test.mjs`/`tests/turns.test.mjs`: duplicate/late hooks and a continuing Stop cannot manufacture a valid boundary.
+- [ ] `tests/storage-worker.test.mjs`: origin for applied result A stays applied; later unapplied B in the same environment stays unapplied; legacy bodies still read.
+- [x] Runtime integration fixture with no desktop process captures results and reconciles through its own StoreClient.
+- [ ] `tests/desktop-isolated.spec.ts`: capture/Apply/follow-up and unsupported-state copy; terminal alive throughout the supported case.
+- [ ] Existing isolated/session tests and required global checks pass; native evidence is recorded separately.
 
 ## 5. M2 — Durable orchestration model
 
@@ -141,17 +175,17 @@ New module `src/core/orchestration/` used by `JournalStore` (delegating methods,
 
 ### 5.1 Migration 9 (one transaction; idempotent like the existing steps)
 
-Tables as in spec §32: `runs`, `tasks`, `dependencies`, `attempts` (with `presence` column), `results`, `messages`, `approvals`, `run_events`, `capacity_samples`. Indexes as listed there. The `events` kind allow-list gains `'orchestration'` for session-level rows (worker Story).
+Tables as in spec §32, including durable `orchestration_operations` request identity/outcomes: `runs`, `tasks`, `dependencies`, `attempts` (with `presence` column), `results`, `messages`, `approvals`, `run_events`, `capacity_samples`. Indexes as listed there. The `events` kind allow-list gains `'orchestration'` for session-level rows (worker Story).
 
 ### 5.2 Entities
 
 | Entity | Store methods | Transition validation | Recovery | Retention |
 | --- | --- | --- | --- | --- |
-| Run | `createRun` (intent first: `state: 'creating'`), `getRun`, `listRuns(projectId)`, `setRunState`, `setPolicy` (tighten/loosen split), `pauseRun`/`resumeRun`, `finishRun` | `RUN_TRANSITIONS` in `model.mjs` | `creating` without a coordinator session → `failed` (no side effects yet) | Kept; events 90 days after end |
+| Run | `createRun` (intent first: `state: 'creating'`), `getRun`, `listRuns(projectId)`, `setRunState`, `setPolicy` (tighten/loosen split), `pauseRun`/`resumeRun`, `finishRun` | `RUN_TRANSITIONS` in `model.mjs` | Reconcile coordinator launch intent/process identity; absent session row alone does not prove no side effect | Kept; events 90 days after end |
 | Task | `createTask` (computes `pending` or `blocked` from dependencies), `updateTask`, `cancelTask`, `completeTask` (preconditions: an integrated result, or `reason` with no changes), `listTasks(filter)` | `TASK_TRANSITIONS`; `create_worker` precondition `state === 'pending'` | Recomputes `blocked/pending` from dependencies on open | Kept |
 | Dependency | `addDependency` (refused if the task has an active or queued attempt; cycle check by DFS over `dependencies`), `removeDependency` | DAG check | — | With task |
-| Attempt | `createAttempt` (state `requested`, then `queued` or `starting` by admission in M3), `setAttemptState`, `setPresence`, `listAttempts` | `WORKER_TRANSITIONS` (spec §7B) incl. `result_available`; presence independent | §14 rules (M10) | Kept |
-| Result | `recordResult` (from the environment snapshot; `report` bound to the turn), `getResult`, `supersede` | `RESULT_TRANSITIONS` | Rebuilt from environment refs if a row is missing | Kept |
+| Attempt | `createAttempt` (state `requested`, then `queued` or `starting` by admission in M3), `setAttemptState`, `setPresence`, `listAttempts` | `WORKER_TRANSITIONS` (spec §7B) incl. `result_available`; presence independent | §14 rules implemented now (M10a) | Kept |
+| Result | `recordResult` (from the environment snapshot; `report` bound to the turn), `getResult`, `supersede` | `RESULT_TRANSITIONS` | Reconcile M1 capture intent + immutable refs; never infer a missing envelope from Git alone | Kept |
 | Run event | `appendRunEvent` (inside the same transaction as each change), `runEvents(runId, afterId, limit)` | Kind allow-list | — | 90 days after the run ends |
 
 ### 5.3 Blocked task vs capacity-queued attempt (explicit)
@@ -169,13 +203,18 @@ Tables as in spec §32: `runs`, `tasks`, `dependencies`, `attempts` (with `prese
 - blocked → `TASK_BLOCKED`; unblock creates no attempt;
 - `get_run` reconstruction;
 - migration 9 on a database copied from an existing fixture, with sessions, workspaces, environments and memory intact (extend the `storage-worker.test.mjs` pattern);
-- all store methods listed in `STORE_METHODS`.
+- all store methods listed in `STORE_METHODS`;
+- M1 result-history import preserves result IDs, refs, receipts and applied provenance;
+- `accept_result` requires current resultId; pending `ask` during working becomes waiting only after settling; every retry source state has an explicit transition/refusal;
+- mutations store requestId + argument hash and their result in durable operation records, with unique caller/request identity; repeated requests return the prior outcome, mismatched arguments refuse;
+- late launch events, two concurrent requests and restart reconstruction cannot double-launch or overwrite a newer attempt;
+- basic run/attempt/outbox reconciliation is implemented here, not deferred to M10.
 
 ## 6. M3 — Capacity manager
 
 New `src/runtime/capacity.mjs` (`CapacityManager`) in the runtime process, persisting through the store.
 
-### 6.1 Parts
+### 6.1 Full capacity implementation (M3b unless assigned below)
 
 1. **Sampling layer:**
    - `src/runtime/probes/macos.mjs`: `vm_stat` (pages free, inactive, speculative × page size), `sysctl -n kern.memorystatus_vm_pressure_level`, `os.loadavg()`, `os.cpus().length`, `fs.statfs(dataDir)` for disk;
@@ -187,6 +226,7 @@ New `src/runtime/capacity.mjs` (`CapacityManager`) in the runtime process, persi
    - per live session, sum the RSS of the provider process tree from `descendants(table, pid)`. That tree includes the ToolServer, which the provider spawns as an MCP stdio child.
    - Add the per-session Journal overhead constant for runtime bookkeeping: the PTY, the observer buffer and hook launcher runs. It is measured once in a benchmark and set conservatively (e.g. 40 MB) until then.
    - `estimatedSessionFootprint(provider, mode)` = the rolling median of measured trees + overhead, or the conservative defaults (Claude 1.2 GB, Codex 0.8 GB, Cursor 1.0 GB; to calibrate) before 3 samples exist.
+   - Defaults and the overhead are provisional calibration inputs, never native measurements. Record unknown platform signals explicitly; Windows uses supported process/disk/memory probes and must not reuse Unix load/ps assumptions.
    - A worker whose tree grows (dev servers) updates its own current footprint, used for "launches in cool-down" and for available memory.
 3. **Admission** (`admit(request)`): the gates of spec §11.2 in order. It returns `{ verdict, reasons[], estimate }`. It is pure over (state, samples, config), so it is unit-testable.
 4. **Durable queue:**
@@ -199,19 +239,17 @@ New `src/runtime/capacity.mjs` (`CapacityManager`) in the runtime process, persi
 8. **Automatic start of queued attempts:** on admission, call WorkerManager's `launchAdmitted(attemptId)`, which creates the environment and starts the session (M5). Before M5, a test hook stands in for it.
 9. **Restart and recovery:**
    - the queue is durable;
-   - on runtime start, `launching` attempts whose session record exists become `starting/working` (from the session), and those without one go back to `queued`;
-   - back-off state is not persisted, so a restart starts clean, with pacing still applied.
+   - on runtime start, reconcile launching attempts against durable launch intent, session, environment and process identity; only a proven not-started request returns to queued. Unknown outcomes stay held for reconciliation;
+   - persist the back-off reason/deadline and admission reservations; restart revalidates process identity and pacing rather than clearing repeated-failure protection. Never relaunch solely because a session row is missing when a process/environment side effect may have occurred.
 
-### 6.2 Migrating away from `MAX_SESSIONS = 4`
+### 6.2 Staging the complete capacity manager
 
-1. **M3a:**
-   - introduce `maxLiveSessions` (setting, default **4**: unchanged behaviour) and route `TerminalManager.freeSlot()` through `CapacityManager.staticCap()`;
-   - keep slot numbers 1..n (the slot field is used by the UI);
-   - the UI reads the cap from `bootstrap` instead of the constants in `App.tsx`, `Sidebar.tsx` and `copy.ts`, and `slotsUsed` in `tests/support/ui.ts` takes the cap;
-   - the meter shows n dots;
-   - no other behaviour changes, so all existing tests pass with 4.
-2. **M3b:** add the memory, pressure, load, disk and port gates for **orchestrated worker launches only**. A user's own Start keeps today's behaviour: the static cap only, plus a non-blocking warning when memory is low.
-3. **M3c:** raise the default `maxLiveSessions` to 6 (hard ceiling 12), configurable in Settings. Ship M3c only after M3b's gates are validated on real machines.
+1. **M3a — first-team foundation:** default/global cap stays **4**, including coordinator and ordinary sessions. Implement atomic reservations, durable queued requested launches, cancellation, fair reevaluation and port allocation with restart reconciliation. `getCapacity` reports the static limiting gate honestly. Route `freeSlot()` and orchestration admission through the same reservation owner. The UI reads the configured cap rather than duplicating a constant. No adaptive claims yet.
+2. **M3b — adaptive admission:** all memory/pressure/CPU/disk/footprint/back-off gates in §6.1 for orchestrated workers, with injected probes and platform coverage. A manual ordinary Start retains its existing static limit plus a non-blocking resource warning.
+3. **M3c — validated higher limits:** implement configurable caps and validate proposed default 6 / hard ceiling 12 only after calibration on at least two machines and supported-platform evidence. Retain 4 if evidence does not support the proposed default; the configurable-cap capability itself remains required.
+4. **M3d — optional idle reclamation:** implement spec §11.4's complete eight-condition policy, off by default. A user's explicit per-run enablement is required; verify process identity, result retention, queued messages and exact resume before stopping. No working/waiting worker is stopped to make room.
+
+All four parts remain in the full delivery plan. M3b–d are not prerequisites for the first useful team.
 
 ### 6.3 Tests
 
@@ -220,52 +258,55 @@ New `src/runtime/capacity.mjs` (`CapacityManager`) in the runtime process, persi
 - 5 requested → 3 admitted, 2 queued with reasons;
 - re-evaluation starts queued attempts in fair order;
 - **a blocked task never enters the queue**;
-- no kills;
+- no kills under normal admission; only M3d's explicitly enabled reclamation can stop a qualifying idle worker;
 - the footprint includes the ToolServer and the overhead; measured values replace defaults;
 - hysteresis; pacing; back-off;
 - **concurrent admission race:** two `admit` calls in the same tick reserve distinct slots and port blocks;
-- restart: `launching` without a session → `queued`.
+- restart: reconcile launch intent, session, process identity and environment; only proven no-spawn intent returns to queued; unknown side effects remain held.
+- M3d: each reclamation condition independently refuses; enabled all-pass path stops only the intended idle process and preserves exact resume/result.
 
 `terminal.test.mjs`: `freeSlot` with caps 4 and 6.
 
-## 7. M4 — Message engine
+## 7. M4 — Durable message engine
 
-### 7.1 Parts
+**Files:** `src/core/orchestration/messages.mjs`, `src/runtime/delivery.mjs`, `src/core/terminal.mjs`, runtime role endpoints and adapter capability definitions. M4b additionally touches `src/runtime/observers.mjs`, `src/desktop/hook.mjs` and provider adapters.
 
-1. **Durable messages** (`src/core/orchestration/messages.mjs`): `queueMessage`, `nextBatch(recipient)`, `markDelivering`, `markDelivered(turnStartAt)`, `markUncertain`, `ack`, `hold`/`release`, `cancel`. A message renders deterministically with its id (§12.3).
-2. **Coordinator digests:**
-   - built from `run_events` since the coordinator's last delivered digest, filtered by the run's subscriptions (default kinds in spec §9);
-   - coalesced: one digest per 10 s at most;
-   - stored as a message (`kind: digest`), so delivery, deduplication and `uncertain` work the same way.
-3. **Idle delivery** (`src/runtime/delivery.mjs`, used by `TerminalManager`):
-   - `deliver(sessionId, text)` reuses `paste()`'s guards: Claude, or Codex with turns and approvals observed; `observation === 'live'`; `activity === 'idle'` for at least `IDLE_SETTLE_MS`; no `entry.pending`; not `stopping`;
-   - it then writes the bracketed-paste text plus `\r`;
-   - it is triggered on `turn-settled` (M1) when a batch is queued, and when a message is queued for an idle recipient.
-4. **Stop-hook continuation:**
-   - **`src/runtime/observers.mjs`:** the launcher may print the script's stdout **only** for the `Stop` event and only when the script printed a line that begins with `{"journalContinuation":`. In every other case its behaviour is unchanged (exit 0, the neutral response). Launcher tests cover both.
-   - **`src/desktop/hook.mjs`:** for `Stop`, before appending the event, connect to the runtime socket with `JOURNAL_HOOK_TOKEN`; call `takeContinuation(sessionId)`, which returns the rendered batch or null within 800 ms; print the provider-specific JSON (Claude `{"decision":"block","reason":…}`, Codex's documented equivalent) wrapped as above. On a timeout, print nothing.
-   - **Runtime:** `takeContinuation` marks the batch `delivering`. The next `turn-start` within 15 s marks it `delivered`; otherwise it becomes `uncertain`.
-   - **Adapters:** a `continuation(text)` function per adapter; Cursor's returns null until it is verified natively.
-   - **Kill switch:** a `continuation: false` flag per session after one timeout or malformed answer, and a global setting.
-5. **Fallback when continuation is unavailable** (Cursor, untrusted Codex hooks, the flag off): idle delivery only. For Cursor, no automatic delivery at all: the message is shown in the worker's view with "Journal can't deliver this automatically; it will be offered when you type into this session". The coordinator is told the worker is not reachable automatically.
-6. **Acknowledgement and deduplication:** ids in the text; `ack` tool (M5); a delivered id is never re-pushed automatically; resend is an explicit action that reuses the id.
-7. **Held delivery:** presence `paused`/`lost` → `held`. On `resumeWorker` the held batch becomes the resume's first prompt; the launch prompt argument of `buildAgentLaunch` is used for this.
-8. **Approval-prompt safety:**
-   - never write while `entry.pending.length > 0` or `status === 'waiting'`;
-   - re-check right before the write (the same tick);
-   - never write into Cursor;
-   - frames contain no control characters (validated as in `paste`).
-9. **request_result flow:**
-   - `requestResult(workerId)` queues a fixed message: "Journal: please verify your task is complete. If it is, call report_result now; if not, continue and call report_result when done."
-   - The attempt records `resultRequestedAt` and emits `worker.result_requested`.
-   - The next turn end with a report → `ready`; without one → it stays `result_available` and the coordinator is told again.
+### 7.1 M4a — required for the first useful team
 
-### 7.2 Tests
+**Interfaces:**
+- `queueMessage(input, { requestId })` → durable messageId.
+- `reserveDelivery(messageIds, target, generations)` → deliveryId and rendered bounded batch; records intent before the side effect.
+- `recordDelivery(deliveryId, outcome)` where outcome is `staged | submitted | uncertain | not-written`; only proven not-written returns to queued.
+- `ack({ messageId, deliveryId?, pullReceipt? })` validates authenticated recipient and launch. A turn-start alone never calls ack.
+- `claimInput(sessionId)` / `resumeAutomaticMessages(sessionId)` implement spec §12's explicit ownership handoff; input generations invalidate pending reservations.
+- `inbox`/`get_message` provide pull and receipt correlation when push is unsupported.
 
-- **`tests/messages.test.mjs`:** state machine; batch rendering; digest coalescing; deduplication; `uncertain`; held and released; restart keeps queues.
-- **`tests/delivery.test.mjs`:** refuses during a pending approval (including a prompt that arrives between check and write, simulated); refuses for Cursor; refuses when unobserved; writes once per idle period.
-- **`tests/hook.test.mjs` (extended):** the Stop continuation through the real launcher and script prints the JSON for Claude and Codex fixtures; a timeout prints nothing; any other event's output is still discarded.
-- **Regression:** "approval prompt injection" (a message never answers a prompt), and "message duplicate" (no double delivery after a restart during `delivering`).
+- [ ] Implement spec §7G's durable states and delivery-attempt history. Interrupted delivering/staged/unacknowledged submitted becomes uncertain; never auto-replay it.
+- [ ] Serialize the entire paste/submit operation per launch. Recheck binding, ownership, observer, approval, boundary and cancellation at queue head and before each write. Keep partial-input recovery explicit.
+- [ ] Route human writes through ownership before forwarding bytes. Handle a handoff during staged delivery without interleaving or blind Enter. Persist ownership metadata, never keystrokes.
+- [ ] Implement bounded state-derived digests (2 KiB UTF-8), coalesced at most every 10 s, with omitted-count and event cursor. Receipt advances the acknowledged cursor; submission does not.
+- [ ] Implement held reasons for paused/lost/human/unsupported recipients; validate new launch identity on resume. Never prepend uncertain input to the resume prompt.
+- [ ] `request_result` queues the standard instruction; lack of a report remains visible as result_available. Generic message submission does not itself mark an attempt working.
+- [ ] Provide visible human/uncertain input state and keyboard-accessible **Resume automatic messages** using existing session controls. Full Team UI follows in M6.
+
+### 7.2 M4b — validated Stop-hook continuation
+
+This capability remains required where supported, but does not block the first team if M4a provides a validated push path. If no push path is validated, do not claim autonomous awareness from a pull-only demonstration.
+
+- [ ] Add a separate scoped hook endpoint; never authenticate a hook as the single desktop client.
+- [ ] Use the adapter's M0-validated format only, with an 800 ms runtime-request deadline inside the existing launcher budget. No assumed Codex equivalent.
+- [ ] Preserve user hooks/settings and neutral behavior on unsupported/timeout/error. Bound retries/continuations; disable the transport after an ambiguous/malformed response and record uncertainty.
+- [ ] Validate parallel/blocking user hooks, cancellation, repeated Stop and receipt correlation. No permission decisions.
+- [ ] Enable per provider/version/platform only after a separate native trial; fixture success is necessary but insufficient. Unsupported paths remain explicitly held/pull.
+
+### 7.3 Acceptance gates
+
+- [ ] `tests/messages.test.mjs`: transitions, byte bounds, receipt binding, digest cursor, late ack, explicit resend history and durable restart.
+- [ ] `tests/delivery.test.mjs`: human draft, long pause, raw Enter, two senders, approval before/after paste, target replacement, cancellation, partial writes and observation loss; unknown always holds.
+- [ ] `tests/hook.test.mjs`: launcher continuation whitelist and neutral fallback; tool/hook client cannot evict desktop or access foreign sessions.
+- [ ] Desktop fixture: takeover and explicit handback, queue reasons and partial-input notice with keyboard focus preserved.
+- [ ] Runtime-only fixture: delivery/recovery with Main absent.
+- [ ] Native M4b behavior recorded separately; no automatic retry of uncertain delivery and no claim of exactly-once execution.
 
 ## 8. M5 — ToolServer and orchestration tools
 
@@ -277,8 +318,8 @@ New `src/runtime/capacity.mjs` (`CapacityManager`) in the runtime process, persi
    - it runs with Electron's Node (`ELECTRON_RUN_AS_NODE`), like the hook script.
 2. **`src/agent-tools/cli.mjs`:** `journal <tool> --json '<args>'`, on the same client.
 3. **`src/agent-tools/client.mjs`:** connects to the runtime socket (`socketPath(dataDir)`). It authenticates with a **per-launch tool token** (a new one, separate from the hook token) and calls `toolCall({ sessionId, tool, args })`.
-4. **Authentication and authorization (runtime → main → store):**
-   - the runtime maps token → `{ sessionId, role, runId, attemptId }`, recorded at launch;
+4. **Authentication and authorization (role-scoped runtime endpoint → runtime-owned StoreClient):**
+   - the runtime maps token → `{ sessionId, launchId, role, runId, attemptId }`, recorded at launch; tool and hook roles have separate allow-lists from desktop reconnect;
    - every tool call is checked: the role allows the tool; IDs in the arguments belong to the caller's run; a worker may act only on its own attempt (report tools) and send only to the coordinator.
 5. **Per-launch configuration** (`buildAgentLaunch` and adapters):
    - **Claude:** `--mcp-config <file>` (a per-launch JSON file in the observers folder, mode 0600), and the permission allow-list `mcp__journal__*` in the existing per-launch settings file when the run allows tools without prompts.
@@ -287,7 +328,7 @@ New `src/runtime/capacity.mjs` (`CapacityManager`) in the runtime process, persi
 6. **Tool sets:**
    - **Coordinator:** `get_run`, `get_capacity`, `create_task`, `update_task`, `cancel_task`, `complete_task`, `list_tasks`, `create_worker(s)`, `get_worker`, `list_workers`, `resume_worker`, `send_message`, `subscribe`, `inbox`, `ack`, `wait_for_events`, `snapshot_worker`, `request_result`, `accept_result`, plus the M7/M8 tools as they land, `record_decision`, `set_policy`, `request_approval`, `finish_run`.
    - **Worker:** `report_progress`, `ask`, `report_blocked`, `report_result`, `inbox`, `ack`, `get_message`.
-7. **`report_result`:** validated against spec §13's claim schema (bounded sizes). It is bound to the current turn (`entry.currentTurn`, or the last `turn-start` time) and applied at the turn's settled end (M1 hook) → `ready`.
+7. **`report_result`:** validated against spec §13, bound to explicit launchId/turnId and then the qualified captured result. A timestamp fallback cannot prove identity. Only status done makes a qualified capture ready; other claims preserve partial/blocked/failed outcomes. `accept_result` requires the exact resultId and reason.
 8. **Threat model (cross-run and cross-role):**
    - a token is tied to one session and one role, has a lifetime equal to the session, and is never written to the repository or to argv;
    - wrong role → `FORBIDDEN`; a foreign run id → `NOT_FOUND`, without revealing that it exists;
@@ -303,7 +344,10 @@ New `src/runtime/capacity.mjs` (`CapacityManager`) in the runtime process, persi
 - another run's worker id → `NOT_FOUND`;
 - `report_result` bound to the turn;
 - the token is not in argv (inspect the launch);
-- malformed arguments are refused.
+- malformed arguments are refused;
+- concurrent tool connections preserve the desktop connection and per-run subscriptions;
+- idempotent launch/report/Apply requests survive runtime restart beyond any short cache window;
+- runtime-only scripted coordinator can start a worker and capture its result with Main absent.
 
 ## 9. M5/M6 — Worker spawning
 
@@ -316,13 +360,25 @@ Lifecycle, with the code that owns each step:
 5. **Only at admission:** `Environments.create({ projectId, logicalBranch: run.logicalBranch, task })` (existing). The environment is never created for a queued attempt.
 6. Memory packet: `store.prepareContext(projectId, taskText, { workspaceId: env.id })` (existing; the receipt records the environment).
 7. Fixed worker prompt (spec §10), rendered in `src/core/orchestration/prompts.mjs`, with snapshot-tested copy.
-8. Launch: main's `startSession({ projectId, provider, task: prompt, workspaceId: env.id, role: 'worker', runId, attemptId, permissionConfig })`, which reaches `TerminalManager.start` with `role` and the tool token (M5).
+8. Launch: `WorkerManager.launchAdmitted(attemptId)` in `src/runtime/workers.mjs` loads the durable request, records launch intent and calls `TerminalManager.start` with the environment, prompt, role/run/attempt/launch IDs, permissions and tool token. Extract shared preparation from Main; no dependency on Main being connected. A retry reconciles actual environment/session/process identity before any new spawn.
 9. Session binding: `attachEnvironmentSession` (existing), `attempts.currentSessionId`, presence `live`.
 10. Events: `worker.admitted`, `worker.started`, then the worker states from hooks.
 
-The coordinator is started in the same way with `role: 'coordinator'`, a run, the checkout as cwd, the user's chosen permission configuration and the coordinator brief (spec §34.4). Main adds a **Coordinate** mode to the composer (M6 UI; M5 provides the IPC `createRun`).
+Persist environment creation and session binding idempotently under the launch operation. If a Git post-checkout hook fails, inspect actual worktree registration/HEAD before retrying; a nonzero command exit can follow a successful checkout.
+
+The coordinator is started in the same way with `role: 'coordinator'`, a run, the checkout as cwd, the user's chosen permission configuration and the coordinator brief (spec §34.4). The desktop adds a **Coordinate** mode to the composer (M6 UI; M5 provides the IPC `createRun`).
 
 ## 10. M6 — GUI hierarchy and Team view
+
+**Staging:** Stage B includes Coordinate entry, nested workers, input ownership/held reasons, result/claim display, the approvals/pause controls required by M7 and basic Run Story. Stage C completes all Plan/Workers/Results/Capacity/Policy views and navigation below. These are the same projections/components, not a temporary UI.
+
+Apply the user-selected local design skill before UI implementation. Keep keyboard actions immediate, focus stable under events and terminal load, and attention reserved for decisions. No new animation dependency is required.
+
+| Before | After | Why |
+| --- | --- | --- |
+| Idle badge suggests input is free | Separate activity, input owner and held reason | Human drafts cannot be inferred from inactivity |
+| Ready result obscures delivery outcome | Explicit queued/submitted/uncertain/acknowledged state | Users can resolve partial input without a hidden retry |
+| Reload depends on local UI state | Store-derived projection and durable cursor | Reconnect preserves decisions and keyboard context |
 
 **Projections** (main → renderer):
 - `runsTree(projectId)`: runs with their coordinator session, tasks and attempts, plus derived badges. Built in the store from tables, not from events, so a reload is exact.
@@ -352,59 +408,68 @@ The coordinator is started in the same way with `role: 'coordinator'`, a run, th
 - **`src/core/orchestration/gates.mjs`:**
   - `hardGates(preview, attempt, run)` → `{ pass, failures[] }`, from `Environments.preview` fields (`clean`, `unresolved`, `blockedBy`, `busy`, `excluded`, `nested`) plus the attempt's idleness and the run's pause;
   - `guards(preview, task, run.policy)` → `[{ guard, outcome: allow | ask | refuse, detail }]`.
-- **`preview_result` tool:** `Environments.preview` + gates + guards + `testsVerified` (from session events: the last test command after the last edit, using the Story's classification).
-- **`apply_result({ expect })`:** hard gates → guards → `ask` → an approval row and `APPROVAL_REQUIRED` (the coordinator is told; the user approves in the Team tab, then Journal applies with the same `expect`, or refuses if anything changed) → `Environments.apply` → audit (`integrations` view: requester, gates, guards) → re-preview the other ready attempts (`result.stale` / `conflict.detected`).
+- **`preview_result({ workerId, resultId })`:** pinned preview + gates/guards + revision-bound checks. Implement a check record in `src/core/orchestration/results.mjs` with resultId/treeOid, command, exit, start/end and execution provenance. An existing hook-observed pass remains a command observation unless a validated immutable-source verification checkout binds it to the result. Mutable-tree before/after equality and "last observed edit" do not suffice. Unbound observations yield unknown, never verified pass.
+- **`apply_result({ resultId, expect })`:** opaque preview token pins result/tree, target head/base, policy version and evidence IDs. Approval is for that exact subject and expires on change. Revalidate at mutation and consume the approval once. Then hard gates → guards → `ask` → an approval row and `APPROVAL_REQUIRED` (the coordinator is told; the user approves in the Team tab, then Journal applies with the same `expect`, or refuses if anything changed) → `Environments.apply` → audit (`integrations` view: requester, gates, guards) → re-preview the other ready attempts (`result.stale` / `conflict.detected`).
 - **Ask me before applying:** run policy `integration: 'ask'`, so every coordinator Apply becomes an approval.
 - **Manual Apply:** the existing `EnvironmentPanel` path, through the same gates, with requester `user`.
 - **Pause:** `pauseRun` blocks `apply_result` (`RUN_PAUSED`).
 - **Not in this milestone:** any automatic integration. The spec removed it.
 
-**Tests:** each hard gate refuses with its code; each guard outcome; the coordinator applies without a user click in the default policy; an approval flow; audit rows; a stale preview after another Apply; pause.
+**Tests:** each gate and guard; default coordinator Apply and ask policy; changed result/target/policy/evidence expires approval; shell/background changes cannot inherit test success; isolated check provenance; audit; pause; concurrent requests; crash across landing/base advancement. These are Stage B gates, not late hardening.
 
 ## 12. M8 — Dependencies, conflicts, retries, handoffs
+
+**M8a (Stage B):** dependencies, unblocking and one complete conflict loop. **M8b (Stage C):** the complete retry, cross-provider handoff and variant workflows below. All are retained full-scope commitments.
 
 - **DAG validation** (M2): exposed as tool errors.
 - **`task.unblocked`:**
   - emitted in `onTaskIntegrated` (M7's post-Apply hook) and for `when: 'ready'` on `worker.ready`;
   - added to the digest;
   - **no worker creation:** a regression test asserts no attempt or environment is created.
-- **Take-in:** the `take_in(workerId)` tool runs `Environments.updateFromBranch` only when the worker is idle (M1's idle definition). Otherwise it queues and runs on the next `turn-settled` (a deferred action in the attempt body). It always queues a message.
+- **Take-in:** `take_in(workerId)` persists a deferred action and uses the M0 operation-specific folder-mutation boundary. An idle timer alone cannot authorize writes into a live worker folder. Serialize against launch, capture, delivery and human takeover; unknown writers hold the operation. Validate live take-in where supported; otherwise use explicit graceful-stop/exact-resume, with a clear held reason. Completion queues a durable message.
 - **Conflict loop:** `resolve_conflict(workerId)` = take-in + a fixed message (files, kinds). After the worker's turn end → snapshot → `unresolved` empty → `conflict.resolved` event. A rounds counter on the attempt adds `repeatedConflict` after 3 rounds.
-- **Retry:** `request_retry(taskId, { provider, from })` → a new attempt with `retryOf`; the old one → `retired`. `from: 'environment'` makes it a handoff.
-- **Handoff:** the new attempt adopts `environmentId`. It is admitted only when the old attempt's presence is not `live`; the coordinator must stop it first (`INVALID_STATE`).
+- **Retry:** implement exactly the allowed source states/refusals in spec §20; retire old and create new attempt in one state transaction with retryOf. Preserve immutable refs and prior integrations. A working/starting/integrating/permission-waiting attempt must first be stopped/settled; queued requests must first be cancelled.
+- **Handoff:** the new attempt adopts `environmentId`. It is admitted only when verified process identity proves the previous process tree can no longer write; paused/lost metadata alone is insufficient. The coordinator must stop or resolve surviving processes first (`INVALID_STATE`).
 - **Variants:** `variants: n` creates n `requested` attempts (each admitted separately). `choose_result` marks the others `superseded`.
 - **Provenance:** `retryOf`, `handoffFrom`, provider, base and results on each attempt; memory origins carry `attemptId`.
 
 **Tests:** spec §37 #11–13, plus the regressions "dependency-blocked task accidentally starting" and "stale preview".
 
-## 13. M9 — Review
+## 13. M9 — Review and complete memory provenance
 
-- A review task: `kind: 'review'`, `subjectTaskId`, `dependsOn: [{ subject, when: 'ready' }]` by default (unblocked when the subject is ready; the coordinator still starts the reviewer).
-- The reviewer environment is created at the subject's current result commit: `Environments.create` with `base = subject.result.sha`. This needs a small extension: `createNow({ baseCommit })` with a validated commit that belongs to the project.
+**M9a (Stage B):** review of a pinned worker result, feedback, owner fix and recheck. **M9b (Stage C):** whole-run review and completion of review/memory/Story presentation. The baseline result-specific memory-origin correction already ships in M1.
+
+- A review task: `kind: 'review'`, `subjectTaskId`, `subjectResultId`, `subjectTreeOid`, `dependsOn: [{ subject, when: 'ready' }]` by default (unblocked when the subject is ready; the coordinator still starts the reviewer).
+- The reviewer environment is created at the explicitly selected subject result commit: `Environments.create` with `base = subject.result.sha`. This needs a small extension: `createNow({ baseCommit })` with a validated commit that belongs to the project.
 - The reviewer's mode is `review` (the provider's read-only/plan mode, where available).
-- Findings come in the `report_result` claim (`verdict`, `findings[]`), stored as a claim, plus `review.verdict`.
+- Findings come in the report_result claim with the pinned subjectResultId/treeOid, verdict and findings. Store review.verdict as a claim about that exact subject. A new result does not inherit it.
 - Coordinator feedback: `send_message(subject, 'review_feedback', …)`. On recheck, the coordinator asks the reviewer to take in the subject's new result. `take_in_result(reviewerId, subjectWorkerId)` is a variant of take-in that merges a result commit instead of the branch.
-- Whole-run review: a review task whose subject is the run's branch (the reviewer environment at the branch head).
+- Whole-run review pins branch/head at request time; branch movement invalidates freshness.
+- Recheck updates the subject only after the operation-specific safe environment refresh and a new review report. Provider plan/read-only mode is an intent where available, not an OS security sandbox.
+- Complete run-memory decisions, worker memoryProposals, result-specific origins and review-gated candidate admission; verify receipts remain immutable and unapplied later results do not inherit earlier applied provenance.
 
-**Tests:** the review loop with the scripted coordinator; a reviewer cannot apply (role); verdicts are never interpreted by Journal.
+**Tests:** scripted review/fix/recheck; verdict on A cannot certify B; whole-run branch head moves; safe refresh refused under a live writer; reviewer cannot Apply by role; verdict remains a claim; memory candidates/receipts/provenance and final Story reconstruct after restart.
 
-## 14. M10 — Recovery
+## 14. M10 — Recovery delivered throughout, then validated together
 
-| Crash point | Durable before the side effect | Recovery rule | Idempotency |
+**M10a** belongs to the milestone that introduces each side effect. **M10b** is the final combined fault matrix and usefulness trial. Do not postpone these durable records or recovery rules until the last PR.
+
+| Failure point | Persisted intent / identity | Recovery contract | Owner |
 | --- | --- | --- | --- |
-| Coordinator dies | Run + `coordinatorSessionId` | `coordinator.detached`; digests held; Continue or a new coordinator; `get_run` | Digest ids deduplicate |
-| Worker dies | Attempt + presence | Presence `paused`/`lost`; the work state is kept; the result is captured at session end; mid-turn with changes → `result_available` | Snapshot is idempotent |
-| Runtime crash | Sessions (existing), deliveries `delivering`, admissions `launching` | `recover()` (existing) + `delivering → uncertain`; `launching` with a session → follow the session, without one → `queued` | Delivery never auto-resends `uncertain` |
-| UI reload | — | Projections from tables; events from the last id | — |
-| Message delivery | `delivering` row before the write | `uncertain` if no `turn-start`; explicit resend with the same id | Ids in text |
-| Capacity admission | `admitted` + reserved slot before environment creation | No environment → create; environment `creating` → existing reconcile | `Environments.create` is serialized; the slot is recomputed |
-| Environment creation | Existing intent-first record | Existing `reconcile` (`creating` → `ready`/`failed`) | Existing |
-| Apply | Existing durable phases | Existing `reconcile` (`finishLanded`/`rollBack`) | Existing (CAS, `expect`, lock marker) |
-| Queue | `queued` rows | Re-evaluated after start | Admission is pure |
-| ToolServer | No state | The provider restarts the MCP server; the token stays valid while the session lives | Tool calls with side effects carry a `requestId` and are deduplicated for 10 minutes |
-| Approval | `approvals` row before execution | On approval, Journal re-validates (gates, `expect`) before acting | The approval executes at most once |
+| Capture/ref publication | ResultId, commit/tree, ref, base, launch/turn | Complete metadata from capture intent; preserve historical refs | M1 |
+| Apply/base advance | OperationId, preview subject, old/new base, expected target, landed commit, phase | Reconcile landing then base CAS then metadata/events; never apply twice | M1/M7 |
+| Coordinator dies | Run, session/launch, messages and digest cursor | Workers continue; new/resumed coordinator reconstructs; rebind only unattempted inbox items | M2/M5 |
+| Worker dies | Attempt/presence/result and pending reports | Retain settled results; reconcile unfinished changes to result_available; no invented readiness | M1/M2 |
+| Runtime dies | Launch/delivery operation records | Existing orphan/interrupted recovery; reconcile actual processes; never replay ambiguous input | M2/M4/M5 |
+| Desktop absent | Runtime owns all required operations | Launch, capture, tools and queues remain functional; later GUI reconstruction | M1/M5/M6 |
+| Paste or continuation interrupted | DeliveryId, target launch, phase | Delivering/staged/unacknowledged submitted → uncertain; explicit resolution/replay only | M4 |
+| Launch/admission interrupted | Request identity, reservation, environment/session creation evidence | Discover actual outcome; resume idempotently; only proven no-spawn requests can requeue | M3a/M5 |
+| ToolServer restarts or request times out | Caller/requestId, argument hash and outcome retained with run | Retry returns same operation/outcome; mismatch refuses; no 10-minute expiry that allows duplicates | M2/M5 |
+| Approval granted before crash | Exact preview/policy/evidence subject and consumed operationId | Revalidate unchanged subject, consume once; otherwise expire | M7 |
+| Take-in/handoff/recheck interrupted | Operation intent, prior process identity and pinned source | Reconcile before admitting another writer or refreshing subject | M8/M9 |
+| Resource back-off/reclamation | Deadline, reason, reservation, intended idle target | Revalidate state and process identity; never reset into a launch storm | M3b/d |
 
-**Tests:** inject a crash at each point (hooks like `Environments`' `hooks`); the M10 desktop spec closes and reopens the app mid-run.
+Tests inject failure before and after each side effect, including process turnover rather than only in-process reload. Use the existing environment hooks pattern. The final desktop drill distinguishes renderer reload, Main exit with keep-running, runtime death and machine-restart simulation. Full native/platform validation is separate from fixture results.
 
 ## 15. Provider-by-provider work
 
@@ -413,9 +478,9 @@ The coordinator is started in the same way with `role: 'coordinator'`, a run, th
 | Launch changes | `--mcp-config <file>`; `permissions.allow` for `mcp__journal__*` (opt-in per run) in the existing settings file; permission configuration per run | `-c mcp_servers.journal.*`; hooks as today; permission configuration flags | Plugin dir as today; MCP through the plugin (to verify) |
 | Hooks required | Existing set; `Stop` used for continuation | Existing set (≥ 0.131, trusted); `Stop` for continuation | Level 2 for turn ends |
 | MCP setup | Documented; **verify** tool prompts and the allow-list | Documented; **verify** env inheritance and the trust prompt | **Unverified** |
-| Idle detection | **Verified today** (`Stop`, settle) | **Verified today** with hooks | Only level 2 |
+| Observed idle | Existing hook signal; not proof of empty prompt | Existing signal with trusted hooks | Only level 2 |
 | Permission detection | **Verified today** (`PermissionRequest`) | **Verified today** | **Not available** |
-| Safe delivery | Idle write: verified rules; Stop continuation: **must be proven** natively | Same; Codex continuation format **must be proven** | None automatic |
+| Safe delivery | M0 ownership/adapter contract required; continuation separately proven | Same; no assumed continuation format | None automatic |
 | Resume | **Verified today** (exact ID) | **Verified today** (ID from hook or banner) | **Verified today** |
 | Known limitations | Agent teams/subagents inside a worker are just activity | Hooks need trust; older versions lack `Interrupt`/`SessionEnd` | No approvals and no turn start; one-shot worker unless proven |
 | Manual validation before shipping | Stop continuation in a real session (text appears as a new turn, no prompt is answered); MCP tools with and without the allow-list; resume with held messages | The same, with trusted hooks; continuation JSON; MCP env | Plugin MCP; `stop` follow-up |
@@ -426,14 +491,14 @@ The coordinator is started in the same way with `role: 'coordinator'`, a run, th
 | --- | --- | --- | --- | --- | --- |
 | M1 | environments (live snapshot, Apply while idle, base advance, `NOT_IDLE`), turns (`turn-settled`) | store + runtime fixture | desktop-isolated: two turns, two Applies, terminal alive | Fixture CLI that stays alive and edits on each line typed; the hook helper from desktop-notify moved to `tests/support/hooks.ts` | Claude: two turns, two Applies |
 | M2 | orchestration-model (transitions, DAG, blocked vs queued, reconstruction) | Migration on an existing database | — | — | — |
-| M3 | capacity (gates, queue, fairness, races, back-off, footprint with ToolServer) | runtime with injected probes | Slot meter with cap n; queued badge (after M6) | Probe injection | Real machine: calibrate footprints |
-| M4 | messages, delivery, hook continuation | runtime + hook launcher | Delivery to a fixture agent at idle and at Stop | Fixture agent prints what it receives | Claude/Codex continuation |
+| M3a/b/c/d | fixed-cap durable queue first; then gates, fairness, races, back-off, footprints and opt-in reclamation | runtime with injected probes | Slot meter with cap n; queued badge (after M6) | Probe injection | Real machine: calibrate footprints |
+| M4a/b | ownership, partial outcomes, messages, delivery; continuation separately | runtime + hook launcher | Delivery to a fixture agent at idle and at Stop | Fixture agent prints what it receives | Claude/Codex continuation |
 | M5 | agent-tools (roles, tokens, `report_result` binding) | Scripted MCP coordinator + fixture workers | Coordinator starts workers; blocked task refused | MCP-capable fixture worker (a script calling tools through the CLI) | Claude coordinator with tools |
 | M6 | run-tree-model, run-story | — | desktop-orchestration (nesting, badges, reload) | — | — |
 | M7 | gates, guards, approvals | Apply audit | Approve a guard in the Team tab | — | — |
 | M8 | dependencies, conflicts, retries | Conflict loop end to end | Conflict sent back and resolved | — | Two real workers, same file |
 | M9 | review | Review loop | Reviewer row and verdict | — | Real reviewer |
-| M10 | crash points | Restart mid-run | Close and reopen mid-run | — | §19 stage D |
+| M10a/b | Owned crash points tested with every milestone / combined fault matrix at the end | Desktop absent, runtime death and restart | Separate renderer/Main/runtime drills | — | §19 stage D |
 
 **Regression tests required:**
 
@@ -444,8 +509,8 @@ The coordinator is started in the same way with `role: 'coordinator'`, a run, th
 | A worker continuing after Apply (base advance, `integrated → running`) | M1 | environments |
 | Stale preview after another Apply | M1, M7 | environments, gates |
 | Concurrent admission races (slots, ports) | M3 | capacity |
-| Capacity after restart (`launching` → `queued`) | M3, M10 | capacity |
-| No duplicate message after a crash during `delivering` | M4 | messages |
+| Capacity after restart reconciles actual launch outcome before requeueing | M3, M10 | capacity |
+| No automatic replay of an uncertain side effect; duplicate logical requests deduplicated | M4 | messages |
 | Approval-prompt injection (a message never answers a prompt) | M4 | delivery |
 | A worker cannot call coordinator tools | M5 | agent-tools |
 | A worker cannot access another run | M5 | agent-tools |
@@ -457,68 +522,74 @@ Every desktop spec uses `fixtureEnv({ root, bin, extra })`. `tests/isolation.tes
 
 ## 17. Migration and compatibility
 
-- **Additive schema:** migration 9 only creates tables and indexes and extends the event-kind allow-list. Existing rows are untouched. Session bodies without `role` are ordinary sessions.
+- **Additive schema:** use the next available migration number (9 against the reviewed baseline), create tables/indexes and extend event kinds. Import M1 result history idempotently; test upgrade on legacy workspace bodies without inventing missing historical results. Session bodies without `role` are ordinary sessions.
 - **Isolated environments** created before M1 keep working: the new transitions only add paths, and `base` advancement applies only after a new Apply.
 - **The four-slot cap** stays 4 until M3c, and is then a setting.
-- **Memory:** origins gain optional `runId`/`attemptId`. `withOrigin` ignores missing fields.
+- **Memory:** origins gain optional runId/attemptId/resultId. withOrigin resolves exact integration records; legacy records retain conservative existing provenance without certifying newer work.
 - **The runtime protocol** is bumped (`PROTOCOL` 4 → 5) for the new methods. A runtime from an older build keeps its sessions (the existing runtime-switch behaviour). Orchestration features are disabled until the app runs on the new runtime (`OTHER_BUILD` message).
 - **A normal Build session** is unchanged in launch arguments, hooks and UI, except M1's Apply-while-idle for isolated sessions.
-- **Downgrade:** an older app ignores the new tables. The risk is an older runtime meeting orchestrated sessions; it treats them as normal sessions, and nothing is lost.
+- **Downgrade:** table compatibility does not imply workflow compatibility. A runtime lacking these contracts must refuse orchestration mutation/resume and cannot clean up retained result refs. Keep the new runtime attached or require explicit shutdown/recovery; never claim downgrade is lossless without a tested compatibility path.
 
 ## 18. Feature flags and rollout
 
-- **M1:** on for everyone. It is a correctness improvement to an existing feature, with a narrow change.
+- **M1:** enable supported live operations only after M0 and M1 acceptance. Retain conservative behavior for unknown capability; do not enable from a timer alone.
 - **Orchestration (M2+):** behind **Settings → Experimental → Coordinated runs** (off by default), stored in `preferences.json`. The flag hides the Coordinate mode and the run UI; the schema exists regardless (harmless).
-- **Stop-hook continuation:** a separate setting, **Deliver messages at turn end** (on when orchestration is on, off otherwise), so it can be disabled alone if a provider changes behaviour. Idle delivery remains.
+- **Stop-hook continuation:** separate setting, off until provider/version/platform native validation. Disable independently on failure. Fallback is a validated idle path or held/pull; never assume idle delivery is safe because continuation was disabled.
 - **Coordinator-managed Apply during early validation:** run policy default `integration: 'ask'` while experimental; switch the default to coordinator-managed when manual validation (§19 C–E) passes. The user can choose either at any time.
-- **M3c (default cap 6):** shipped only after footprint calibration on at least two real machines.
-- Flags are removed when the feature leaves experimental. No per-provider flags beyond the adapters' verified/unverified gating.
+- **M3c (proposed default cap 6):** adopt the higher default only after footprint calibration on at least two machines and supported-platform validation.
+- Removing the experimental UI flag does not remove adapter capability gating or the continuation kill switch.
 
 ## 19. Manual validation sequence
 
-Use a real repository (for example Unfiled on a disposable branch), real Claude Code and Codex logins on the user's machine, and the packaged app.
+For separately authorized manual trials, use a disposable branch in a chosen repository, real Claude Code and Codex logins on the user's machine, and the packaged app. These steps are not automated tests or authorization to run providers now.
 
 | Stage | Steps | Pass criteria |
 | --- | --- | --- |
 | **A. M1** | One isolated Claude session; ask for a small change; wait for its turn to end (do not exit); Apply; ask for a follow-up change; Apply again | The Apply button appears at the turn end; two commits land; the second contains only the follow-up; the terminal stays alive throughout; the checkout stays clean |
 | **B. Two workers** | Two isolated sessions on the same branch: independent files, then the same line | Both independent Applies land; the same-line case conflicts with nothing written; Resolve in the session works while alive |
-| **C. Coordinator + workers** | Experimental on; start a Claude coordinator: "add three small tests in different areas; one depends on another"; set the cap so only two run | Two workers start, one is queued with a reason; the dependent task is "waiting" with no worker; a worker asks a question and the coordinator answers (message delivered at turn end); a worker becomes ready without exiting; a turn without `report_result` shows "Result not reported" and the coordinator recovers it; the coordinator applies (ask mode: approve); after the dependency integrates the coordinator starts the dependent worker; a review worker runs and the coordinator acts on its verdict |
-| **D. Restart** | Close Journal mid-run; reopen | Workers kept running (runtime) or are paused-resumable; queued workers still queued; the coordinator (resumed) answers "what's going on?" correctly from `get_run` |
+| **C. Coordinator + workers** | Experimental on; start a Claude coordinator: "add three small tests in different areas; one depends on another"; set the cap so only two run | Two workers start, one is queued with a reason; the dependent task is "waiting" with no worker; a worker asks a question and the coordinator answers (receipt acknowledged through a validated transport); a worker becomes ready without exiting; a turn without `report_result` shows "Result not reported" and the coordinator recovers it; the coordinator applies (ask mode: approve); after the dependency integrates the coordinator starts the dependent worker; a review worker runs and the coordinator acts on its verdict |
+| **D. Restart** | Separately reload renderer, close Main with keep-running, and interrupt runtime | With Main absent, tools/launch/capture/delivery still function; runtime death yields explicit uncertain/orphaned states; no duplicate side effect; coordinator reconstructs from get_run |
 | **E. Mixed providers** | Claude coordinator + Claude and Codex workers (Codex hooks trusted) | Codex worker readiness, delivery and Apply behave like Claude's; the Codex continuation verified |
 | **F. Hosting** | Ask the coordinator to open a draft PR from the integrated branch and report `gh pr checks` | Workers never push; the coordinator's `gh` commands appear in its Story; Journal state is unaffected |
 
-## 20. Pull request strategy
+## 20. Pull request strategy and full-scope coverage
 
-| PR | Scope | Prerequisites | Acceptance | Deliberately not included |
-| --- | --- | --- | --- | --- |
-| 1 | M1: Ready without exit (environments, `turn-settled`, EnvironmentPanel, copy) | — | §4.2 tests; existing suites green | Any orchestration table |
-| 2 | M2: orchestration schema, model, store methods, run events | 1 | §5.4 | Agents, UI, capacity |
-| 3 | M3a: configurable cap (default 4), UI reads the cap | 2 | Existing tests pass with cap 4; cap 6 test | New gates |
-| 4 | M3b: capacity manager gates, queue, probes, footprints (orchestrated launches only) | 3 | §6.3 | Raising the default cap |
-| 5 | M4a: messages + idle delivery + digests + "Send to this session" | 2 | §7.2 without the Stop tests | Stop continuation |
-| 6 | M4b: Stop-hook continuation (launcher, hook script, adapters) | 5 | Hook tests; manual Claude check documented | Cursor continuation |
-| 7 | M5: ToolServer, CLI, tokens, roles, coordinator/worker tools, worker spawning, Coordinate mode (behind the flag) | 4, 6 | §8.2; scripted coordinator end to end | Gates, review |
-| 8 | M6: sidebar tree, Team tab, worker header, Run Story | 7 | §10 tests | Approvals UI (only placeholders) |
-| 9 | M7: gates, guards, approvals, pause, audit | 7 | §11 tests | Automatic integration (never) |
-| 10 | M8: dependencies, conflicts, retries, handoffs, variants | 9 | §12 tests | Review |
-| 11 | M9: review | 10 | §13 tests | PR review tooling (agents use `gh`) |
-| 12 | M10: recovery hardening, manual validation report, M3c default cap | 11 | §14 + §19 A–F documented | — |
+PR numbers are sequencing guidance; each has an independently reviewable contract. No implementation, native trial, merge or release is authorized by this document alone.
 
-Each PR is reviewed by a fresh agent, has its own regression tests, and is not merged without the user's go-ahead.
+| PR | Scope | Prerequisites | Required acceptance |
+| --- | --- | --- | --- |
+| 1 | M0 contract fixtures and capability evidence | Approved implementation scope | §3.1; no unverified path enabled |
+| 2 | M1 immutable results, live eligibility, base-advance recovery, runtime lifecycle and provenance | 1 | §4.2 including historical ref retention and Main absent |
+| 3 | M2 state machines, schema/import, operation deduplication and M10a reconstruction | 2 | §5.4; complete transition/refusal coverage |
+| 4 | M3a cap-4 admission, durable queue, slot/port reservation | 3 | Concurrency/cancellation/restart; blocked tasks never launch |
+| 5 | M4a durable delivery, ownership, receipts, digests, pull and minimal input controls | 1, 3 | §7.3; ambiguous side effects never auto-replayed |
+| 6 | M5 runtime-owned tools/spawning + essential M6 coordinator/worker navigation | 2, 4, 5 | Scripted team works with Main absent |
+| 7 | M7 pinned checks/previews, gates/guards, approvals/pause + required M6 controls | 6 | §11; stale evidence/approval refusal |
+| 8 | M8a dependencies and conflict loop + M9a exact-result review | 7 | §12/§13; Stage B useful-team checkpoint |
+| 9 | M3b adaptive probes/gates + M3c configurable limits/calibration | 8 | macOS/Windows evidence, injected gates and no launch storm |
+| 10 | M3d opt-in idle reclamation | 9 | All eight conditions, process identity, result/receipt preservation |
+| 11 | M4b Stop continuation on supported adapters | 1, 5 | Hook coexistence and separate native validation |
+| 12 | M8b retries, cross-provider handoffs and variants | 8 | Explicit source states, no simultaneous writers, immutable history |
+| 13 | Complete M6 Team/Capacity/Policy/Story and M9b whole-run review/memory | 8, 9, 12 | Full navigation and reconstruction, pinned branch review, reviewed memory |
+| 14 | M10b combined failures, mixed-provider/platform and usefulness validation | 9–13 | Spec §37/§38 and §19 A–F with limitations recorded |
+
+**Coverage rule:** M1–M10 remain in scope. Stage B is not completion: PRs 9–14 remain required. The fixed cap is replaced by the adaptive manager through the same admission interface; minimal views grow into the full UI; baseline recovery remains in place. No throwaway prototype branches in production code.
+
+Reviews and integration follow the user's approved execution workflow. Passing an intermediate milestone does not authorize release.
 
 ## 21. Risk register
 
 | Risk | Likelihood | Impact | How detected | Mitigation | Fallback |
 | --- | --- | --- | --- | --- | --- |
-| Stop-hook continuation behaves differently from the docs (ignored, double turn, shown to the user oddly) | Medium | High | M4b manual check; `delivering → uncertain` rates | Narrow launcher change; per-session kill switch | Idle delivery only |
+| Stop-hook continuation differs from docs or coexisting hooks | Medium | High | M0/M4b native trials and uncertain outcomes | Capability gate; neutral fallback; kill switch | Validated idle path or held/pull |
 | Codex hook versions (missing events, trust prompts, format changes) | Medium | Medium | `codexEvents(version)`; observation `unobserved` | Version gating (existing) | Worker without automatic readiness |
-| Message written into the wrong prompt (an approval appears just before the write) | Low | High | Delivery tests; `turn-start` vs `permission-wait` order in events | Same-tick re-check; settle time; never Cursor | Disable idle delivery; Stop continuation only |
+| Human draft or approval races automatic input | Material | High | Ownership/partial-input fixtures; native adapter trials | Serial lane, input ownership and launch/generation revalidation; unknown holds | Disable affected push path, retain pull/explicit handoff |
 | Stale provider permission state (an approval missed by hooks) | Low | Medium | Observation `lost`; aging | Delivery refuses unless `live` | User notified; delivery held |
 | Inaccurate capacity estimates | High (early) | Medium | Samples vs outcomes; resource back-offs | Conservative defaults, measured medians, reserve, pacing | Lower the cap; queue more |
 | Queue starvation (one run, or high-priority tasks forever) | Low | Medium | Queue age metrics in `get_capacity` | Round-robin across runs; aging boost | User cancels or reprioritises |
 | Session resume failure (native ID or provider change) | Medium | Medium | Resume errors; `lost` presence | Exact-ID checks (existing) | Handoff to a new attempt in the same environment |
 | Schema migration problems on user databases | Low | High | Migration tests on copies of real-shape databases; backup before migrate (existing backups) | Additive only; one transaction | Restore from the automatic backup |
-| Apply race (branch moved; worker turn started during Apply) | Low | High | CAS, `expect`, `NOT_IDLE` | Existing durable Apply | Refuse; re-preview |
+| Apply/base advance interrupted or result/target changed | Material | High | Phase crash injection; pinned preview checks | Immutable result refs, extended durable phases, CAS and serialized owner | Reconcile or refuse; re-preview |
 | Coordinator context drift (stale beliefs) | High | Medium | Coordinator claims vs `get_run` | Brief: read state before answering; digests carry facts | User asks; the coordinator re-reads |
 | MCP setup failure (provider refuses config, trust prompt, env not passed) | Medium | High | Tool server never initialises; `report_result` never arrives (→ `result_available`) | Per-provider launch tests; manual checks | `accept_result`; CLI fallback through the shell |
 | Token leakage through argv or logs | Low | High | Launch inspection tests | Environment only, redaction | Rotate per session |
@@ -526,30 +597,26 @@ Each PR is reviewed by a fresh agent, has its own regression tests, and is not m
 
 ## 22. Critical path
 
-The shortest path to a meaningful coordinator:
+1. **Prove the contracts:** M0. Capability failures do not silently relax safety; adapt the delivery mechanism or explicitly retain held/pull behavior.
+2. **Build the shared foundations:** M1/M2/M3a/M4a with recovery. Global cap 4, immutable result identity and one runtime-owned command path.
+3. **Validate useful coordination:** M5 + essential M6 + M7 + M8a + M9a. One coordinator, two workers, dependency, review, conflict, intervention and restart. This is the first usable subset of the final system.
+4. **Complete the full spec:** M3b/c/d, M4b, full M6, M8b, M9b and M10b. Preserve provider/platform gates; document any unsupported capability as remaining work rather than calling the full product finished.
 
-1. **First internal prototype (headless):** M1 + M2 + M4a (idle delivery, digests) + minimal M5 (ToolServer with `get_run`, `create_task`, `create_worker` without capacity gates, using cap 4, `send_message`, `report_result`, `request_result`), plus basic worker spawning. Validated with the scripted fixture coordinator and fixture workers. Capacity gates and Stop continuation are not needed yet.
-2. **First UI prototype:** the above + minimal M6 (the nested sidebar rows and the worker header; no Team tab yet) + manual Apply through the existing panel.
-3. **First real-agent prototype:** the above + M4b (Stop continuation for Claude) + `apply_result` with hard gates only (a slice of M7), in "ask me before applying" mode. Run §19 C with a Claude coordinator and Claude workers at the default cap.
-4. **Production-ready:** all of M3 (capacity), M7 (guards, approvals, audit), M8, M9 and M10, plus §19 A–F passing, flags lifted.
+The reason for staging is to validate shared contracts before multiplying their consumers. It does not remove capabilities or require rebuilding the first stage.
 
-## 23. Decisions still required
+## 23. Decisions and evidence required before execution
 
-**Before M1:**
-- None that block it. The spec settles readiness, Apply while idle, base advance and the unobserved-provider fallback. The only copy to confirm is the Apply-panel wording; it can be decided in the PR.
+The full-scope, staged approach is settled by the user. This update does not reopen that decision.
 
-**Before the orchestration prototype:**
-1. Accept the Stop-hook continuation as the first hook path that returns a decision (Journal messages only). Recommended: yes, behind its own setting.
-2. Journal's tools without provider prompts by default in a run (per-run allow-list). Recommended: yes, shown in the run dialog.
-3. One logical branch per run. Recommended: yes for the MVP.
-4. The ToolServer implementation: a dependency-free minimal MCP server, or the official SDK (bundle size and audit).
-5. Apply authorship in runs. Recommended: the user as author, with `Journal-Run`, `Journal-Task` and `Journal-Worker` trailers (consistent with today's Apply message).
+**Before dependent live behavior:** M0 must resolve adapter input handoff, Stop-hook coexistence, capture stability and folder-mutation eligibility. Record provider/version/platform results; unknown is a disabled capability, not a guessed implementation detail.
 
-**Can defer:**
-- Capacity default values (calibrated during M3, before M3c).
-- Guard defaults beyond the spec's proposals.
-- Idle reclamation (off by default; decide whether to keep it after M10).
-- Cost and token visibility per worker.
-- Cursor as an orchestrated worker with tools (after native verification).
-- Claude's cross-session inbox socket (only if documented).
-- Nested coordinators.
+**Implementation choices to settle in the owning PR:**
+- M5: audited MCP SDK versus minimal implementation; token inheritance; tools-without-prompts stays an explicit user run setting preserving native policy.
+- M7: Apply authorship/trailers and guard defaults, with revision-bound approval semantics fixed by the spec.
+- M3b/c: measured footprint/reserve/load calibration and supported Windows probes; proposed higher default only after evidence.
+- M3d: implement optional reclamation off by default with all specified gates.
+- M4b: enable each continuation adapter only when its native contract passes; no blocking dependency on an undocumented provider response.
+
+**Outside the current full scope, as before:** nested coordinators, provider cost/token visibility where unsupported, and an undocumented native cross-session inbox transport. These are distinct from required later milestones such as adaptive capacity, variants and full review/UI.
+
+Follow the repository's authorization boundaries when moving from this plan to implementation, native trials, merge or release.

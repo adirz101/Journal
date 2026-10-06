@@ -31,10 +31,10 @@ test('modeFlags maps Build, Plan and Read-only to today\'s launch flags', async 
 
 test('modeSupport blocks Codex Plan and Cursor modes without supports.mode', async t => {
   const { modeSupport, modeBlock } = await load(t);
-  assert.deepEqual(modeSupport('claude', claude), { build: true, plan: true, 'read-only': true });
-  assert.deepEqual(modeSupport('codex', codex), { build: true, plan: false, 'read-only': true });
-  assert.deepEqual(modeSupport('cursor', cursor()), { build: true, plan: true, 'read-only': true });
-  assert.deepEqual(modeSupport('cursor', cursor({ supports: { mode: false } })), { build: true, plan: false, 'read-only': false });
+  assert.deepEqual(modeSupport('claude', claude), { build: true, plan: true, 'read-only': true, coordinate: true });
+  assert.deepEqual(modeSupport('codex', codex), { build: true, plan: false, 'read-only': true, coordinate: true });
+  assert.deepEqual(modeSupport('cursor', cursor()), { build: true, plan: true, 'read-only': true, coordinate: false });
+  assert.deepEqual(modeSupport('cursor', cursor({ supports: { mode: false } })), { build: true, plan: false, 'read-only': false, coordinate: false });
   assert.equal(modeBlock('codex', codex, 'plan'), 'Codex has no plan mode. Choose Build or Read-only.');
   assert.equal(modeBlock('cursor', cursor({ supports: {} }), 'read-only'), 'This Cursor version has no modes. Choose Build.');
   assert.equal(modeBlock('codex', codex, 'read-only'), null);
