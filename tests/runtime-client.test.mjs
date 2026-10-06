@@ -124,7 +124,44 @@ test('the build-mismatch warning belongs to the current connection', async t => 
   const { c } = client(t);
   const socket = fakeSocket();
   c.adopt({ socket, hello: { runtimeId: 'r', build: 'other', live: 1 } });
-  assert.match(c.warning, /another Journal build/);
+  assert.match(c.warning, /another version of Journal/);
   c.socket = null; c.adopt({ socket: fakeSocket(), hello: { runtimeId: 'r', build: buildId(), live: 0 } });
   assert.equal(c.warning, null);
+});
+
+// A fake runtime connection that answers list and records every request.
+function runtimeOf(c, { build = 'other', sessions = [] } = {}) {
+  const requests = []; const socket = fakeSocket();
+  socket.write = data => { for (const line of String(data).split('\n').filter(Boolean)) { const message = JSON.parse(line); requests.push(message);
+    queueMicrotask(() => c.receive({ id: message.id, value: message.method === 'list' ? sessions : { stopping: 0 } })); } };
+  c.adopt({ socket, hello: { runtimeId: 'r', build, live: sessions.length } });
+  return { requests, socket, setSessions: next => { sessions = next; } };
+}
+
+test('another build\'s runtime is replaced only once it holds no running session, stopping nothing', async t => {
+  const { c } = client(t); const switching = [];
+  c.on('switching', () => switching.push(true));
+  const r = runtimeOf(c, { sessions: [{ id: 'a', status: 'running' }, { id: 'b', status: 'exited' }] });
+  assert.equal(c.otherBuild, true);
+  assert.equal(await c.switchIfIdle(), false, 'A running session keeps it');
+  for (const status of ['starting', 'waiting', 'stopping', 'orphaned']) { r.setSessions([{ id: 'a', status }]); assert.equal(await c.switchIfIdle(), false, status); }
+  assert.ok(!r.requests.some(m => m.method === 'shutdown'));
+  r.setSessions([{ id: 'a', status: 'exited' }, { id: 'b', status: 'interrupted' }, { id: 'c', status: 'stopped' }]);
+  assert.equal(await c.switchIfIdle(), true);
+  assert.deepEqual(r.requests.filter(m => m.method === 'shutdown').map(m => m.params), [{ stopSessions: false }]);
+  assert.deepEqual([switching.length, c.switching], [1, true]);
+  assert.equal(await c.switchIfIdle(), false, 'Once');
+});
+
+test('Switch now stops the other build\'s sessions; this build\'s runtime is never switched', async t => {
+  const { c } = client(t);
+  const r = runtimeOf(c, { sessions: [{ id: 'a', status: 'running' }] });
+  assert.equal(await c.switchNow(), true);
+  assert.deepEqual(r.requests.filter(m => m.method === 'shutdown').map(m => m.params), [{ stopSessions: true }]);
+  const { c: same } = client(t);
+  const own = runtimeOf(same, { build: buildId(), sessions: [] });
+  assert.deepEqual([same.otherBuild, same.warning, await same.switchIfIdle(), await same.switchNow()], [false, null, false, false]);
+  assert.equal(own.requests.length, 0);
+  // A new connection clears the switch in progress.
+  same.socket = null; same.adopt({ socket: fakeSocket(), hello: { runtimeId: 'r2', build: buildId(), live: 0 } }); assert.equal(same.switching, false);
 });

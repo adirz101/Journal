@@ -230,7 +230,7 @@ const notifier = createNotifier({
 });
 const seedNotifier = async () => { try { notifier.seed([...(await runtime.call('list')).map(fromRuntime), ...(await store.activeSessions())]); } catch { /* the next status events correct the badge */ } };
 runtime.on('event', event => {
-  if (event?.type === 'status' && event.session) { const session = fromRuntime(event.session); notifier.update(session); send({ ...event, session }); return; }
+  if (event?.type === 'status' && event.session) { const session = fromRuntime(event.session); notifier.update(session); send({ ...event, session }); if (runtime.otherBuild) scheduleSwitch(); return; }
   send(event);
 });
 // Explorer: one watched root, the status call per root shared while it runs,
@@ -265,15 +265,23 @@ const findEditor = () => {
   for (const name of names) { const path = resolveExecutable(name); if (path && !/\.(?:cmd|bat)$/i.test(path)) return (editor = { name, path }); }
   return (editor = null);
 };
-runtime.on('warning', message => { runtimeWarning = message; send({ type: 'runtime', state: runtimeState, warning: message }); });
-runtime.on('disconnected', () => { runtimeState = 'disconnected'; send({ type: 'runtime', state: 'disconnected' }); });
+runtime.on('warning', message => { runtimeWarning = message; send({ type: 'runtime', state: runtimeState, warning: message, otherBuild: runtime.otherBuild }); });
+// Switching to this build's runtime (src/desktop/runtime-client.mjs) is a reconnect, not a failure.
+runtime.on('switching', () => { runtimeState = 'connecting'; runtimeWarning = null; send({ type: 'runtime', state: 'connecting' }); });
+runtime.on('disconnected', () => { runtimeState = runtime.switching ? 'connecting' : 'disconnected'; send({ type: 'runtime', state: runtimeState }); });
 runtime.on('failed', message => { runtimeWarning = message; send({ type: 'runtime', state: 'disconnected', warning: message }); });
 // A warning from before the disconnect (a failed launch, a protocol mismatch) no longer applies;
 // a build mismatch of the new connection is kept (the client reports it again when adopting it).
 runtime.on('reconnected', hello => {
   runtimeState = 'connected'; runtimeWarning = runtime.warning ?? null; recovery = recoveryFrom(hello);
-  send({ type: 'runtime', state: 'connected', recovered: true, recovery, ...(runtimeWarning ? { warning: runtimeWarning } : {}) }); void seedNotifier(); tellRuntimeAppearance();
+  send({ type: 'runtime', state: 'connected', recovered: true, recovery, otherBuild: runtime.otherBuild, ...(runtimeWarning ? { warning: runtimeWarning } : {}) }); void seedNotifier(); tellRuntimeAppearance();
+  scheduleSwitch();
 });
+// A runtime of another build is replaced as soon as it holds no running session: checked after
+// every session status change, and every 30 s while connected to one.
+let switchTimer = null;
+const scheduleSwitch = () => { clearTimeout(switchTimer); if (!runtime.otherBuild) return; switchTimer = setTimeout(() => { void runtime.switchIfIdle().catch(() => {}); }, 1000); switchTimer.unref?.(); };
+setInterval(() => { if (runtime.otherBuild) scheduleSwitch(); }, 30_000).unref?.();
 // Phase 7: every provider starts as "checking"; detection, help reads and sign-in
 // probes start at once when main loads (refreshProviders below), before the window
 // exists, and run asynchronously beside it, one check in flight per provider. Only signed in / signed out / unknown is kept.
@@ -366,7 +374,7 @@ const actions = {
   // agents is read after the last await, so a providers event sent while bootstrap waited
   // is already in it (the renderer also keeps such events and applies the newest).
   bootstrap: async () => {
-    const projects = await store.listProjects(); const runtimeInfo = { state: runtimeState, warning: runtimeWarning };
+    const projects = await store.listProjects(); const runtimeInfo = { state: runtimeState, warning: runtimeWarning, otherBuild: !!runtime?.otherBuild };
     const live = runtimeState === 'connected' ? (await runtime.call('list')).map(fromRuntime) : [];
     const active = await store.activeSessions(); const hasNotes = await store.hasActiveNotes();
     return { projects, agents, platform: process.platform, shortcuts: shortcutKeys(process.platform), runtime: runtimeInfo, live, active, hasNotes, recovery };
@@ -390,6 +398,17 @@ const actions = {
   },
   // Phase 8: Reconnect now. retrying is false when there is nothing to retry (already connected).
   reconnectRuntime: () => ({ retrying: runtime.retryNow() }),
+  // Stop the sessions of another build's runtime now and switch to this build's (after confirming).
+  switchRuntime: async () => {
+    if (!runtime.otherBuild) return { switched: false };
+    const sessions = await runtime.call('list').catch(() => []);
+    const live = sessions.filter(session => ['starting', 'running', 'waiting', 'stopping'].includes(session.status)).length;
+    const confirm = headless && typeof globalThis.__journalSwitchDialog === 'number' ? { response: globalThis.__journalSwitchDialog } : await dialog.showMessageBox(window, { type: 'warning', buttons: ['Stop and switch', 'Cancel'], defaultId: 1, cancelId: 1,
+      message: live ? `Stop ${live} running session${live === 1 ? '' : 's'} and switch to this version?` : 'Switch to this version of Journal?',
+      detail: 'Each stopped session can be continued afterwards: Continue picks up the same conversation in this version.' });
+    if (confirm.response !== 0) return { switched: false };
+    return { switched: await runtime.switchNow() };
+  },
   openProject: async () => {
     const result = await dialog.showOpenDialog(window, { title: 'Open a Git project', properties: ['openDirectory'] });
     return result.canceled ? null : store.openProject(result.filePaths[0]);
@@ -773,7 +792,7 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
     try { return { ok: true, value: await (hook ? hook(action, () => actions[action](input)) : actions[action](input)) }; } finally { if (ROOT_CHANGES.has(action)) { rootCache.clear(); listings.clear(); } }
   } catch (error) { return settledError(error); }
 });
-try { recovery = recoveryFrom(await runtime.connect()); runtimeState = 'connected'; tellRuntimeAppearance(); await seedNotifier(); }
+try { recovery = recoveryFrom(await runtime.connect()); runtimeState = 'connected'; tellRuntimeAppearance(); await seedNotifier(); scheduleSwitch(); }
 catch (error) { runtimeState = 'disconnected'; console.error('Journal runtime unavailable:', error.message); void runtime.reconnect(); }
 createWindow();
 // Updates: packaged builds only. The automatic-check preference lives in the data folder.
