@@ -57,6 +57,8 @@ export const STORE_METHODS = [
   'fileRoot',
   'listBranches',
   'switchBranch',
+  'createEnvironment', 'attachEnvironmentSession', 'getEnvironment', 'listEnvironments', 'environmentsOverview', 'snapshotEnvironment', 'previewEnvironmentApply', 'applyEnvironment',
+  'updateEnvironmentFromBranch', 'abandonEnvironment', 'restoreEnvironment', 'cleanupEnvironment', 'reconcileEnvironments', 'syncEnvironment', 'environmentLaunch',
   'referenceFor', 'referenceForPath',
   'describeReference',
   'getReceipt',

@@ -1,7 +1,7 @@
 import { isLive, PROVIDER_NAMES, type Session } from './types';
 import { resumable, type SessionState, observed, reports } from './sessionState';
 import { relativeTime } from './sidebarModel';
-import { branches as branchWords, copy, shell, tip } from './copy';
+import { branches as branchWords, copy, isolation as isolationWords, shell, tip } from './copy';
 import { ProviderMark } from './ProviderMark';
 
 type Point = { x: number; y: number };
@@ -39,7 +39,8 @@ export function SessionHeader({ session, state, connected, busy, canStart, now, 
     </div>
     <div className="session-meta">
       <span className="meta-provider"><ProviderMark provider={session.provider} size={16} />{PROVIDER_NAMES[session.provider]}{version ? ` ${version}` : ''}</span>
-      <span className="meta-workspace">{session.workspaceId && !root ? <><span title={tip.separateCopy}>{copy.separateCopy}</span>{session.branch ? <> · {branchLabel(`⑂ ${session.branch}`)}</> : ''}</>
+      <span className="meta-workspace">{session.environmentId ? <><span title={isolationWords.label}>{isolationWords.heading}</span>{session.branch ? <> · ⑂ {session.branch}</> : ''}</>
+        : session.workspaceId && !root ? <><span title={tip.separateCopy}>{copy.separateCopy}</span>{session.branch ? <> · {branchLabel(`⑂ ${session.branch}`)}</> : ''}</>
         : root ? `Folder · ${session.cwd?.split(/[\\/]/).pop() ?? 'folder'}` : session.branch !== undefined ? <>{moved ? 'started on ' : ''}{branchLabel(`⑂ ${session.branch ?? 'detached HEAD'}`)}</> : null}</span>
       <span className="meta-mode" title={session.research ? tip.readOnly : session.plan ? tip.plan : undefined}>{session.research ? copy.readOnly : session.plan ? shell.planMode : shell.buildMode}</span>
       <span className="meta-started" title={new Date(session.createdAt).toLocaleString()}>{shell.started(relativeTime(session.createdAt, now))}</span>

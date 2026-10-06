@@ -1,6 +1,6 @@
 import { memo, type ReactNode } from 'react';
 import type { Memory, NoteTrust, Project, Receipt } from './types';
-import { category, composer, copy, memoryState, selectionReason } from './copy';
+import { category, composer, copy, isolation, memoryState, selectionReason } from './copy';
 import { evidenceLine, originLine, sentLine, shownNote, stateClass, type NoteCardVariant } from './noteCardModel';
 
 export type { NoteCardVariant } from './noteCardModel';
@@ -49,6 +49,7 @@ export const NoteCard = memo(function NoteCard({ note, project, variant, trust, 
     {badge && <div className="note-badge"><span className="chip just-remembered">{badge}</span></div>}
     <p className="note-statement" dir="auto" title={full(note.statement)}>{note.statement}</p>
     <div className="memory-scope note-scope" title={full(scope)}>{scope}</div>
+    {note.origin?.environmentId && !note.origin.applied && <div className="memory-scope note-unapplied">{isolation.unappliedNote(note.origin.logicalBranch ?? 'its branch')}</div>}
     {origin && <div className="note-line note-origin" title={full(origin.text)}>{origin.sessionId && onOpenSession
       ? <button type="button" className="link" tabIndex={tabbable ? undefined : -1} onClick={() => onOpenSession(origin.sessionId!)}>{origin.text} <span aria-hidden="true">›</span></button> : origin.text}</div>}
     {evidence && <div className={`note-line note-evidence${evidence.tone === 'amber' ? ' amber' : ''}`} title={evidence.title}>{evidence.text}</div>}

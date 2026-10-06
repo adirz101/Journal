@@ -11,12 +11,15 @@ const NONE: TimelineEvent[] = [];
 // runtime records its recovery before this window is listening.
 export function useSessionEvents(sessionId: string | null, live: TimelineEvent[], revision = '') {
   const [stored, setStored] = useState<{ id: string; index: EventIndex } | null>(null); const [error, setError] = useState('');
+  // An isolated session's environment records its events in main (isolation rows): fetch again when it changes.
+  const [environmentChanges, setEnvironmentChanges] = useState(0);
+  useEffect(() => window.journal?.onEvent(event => { if (event.type === 'environment' && sessionId && (!event.environment || event.environment.sessionId === sessionId)) setEnvironmentChanges(n => n + 1); }), [sessionId]);
   useEffect(() => {
     setError(''); if (!sessionId) return;
     let cancelled = false;
     void api<TimelineEvent[]>('sessionEvents', { id: sessionId }).then(events => { if (!cancelled) setStored({ id: sessionId, index: indexEvents(events, sessionId) }); }).catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); });
     return () => { cancelled = true; };
-  }, [sessionId, revision]);
+  }, [sessionId, revision, environmentChanges]);
   const own = stored?.id === sessionId ? stored.index : null;
   const events = useMemo(() => sessionId ? mergeEvents(NONE, live.filter(e => e.sessionId === sessionId), sessionId, own ?? undefined) : [], [own, live, sessionId]);
   return { events, error };

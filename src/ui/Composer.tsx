@@ -20,6 +20,8 @@ export interface ComposerProps {
   references: FileReference[]; onRemoveReference(index: number): void;
   disabled: string[]; onDisabled(next: string[]): void;
   provider: Provider; onProvider(p: Provider): void; mode: Mode; onMode(m: Mode): void;
+  // Isolated: the session works in its own copy of the branch; its changes come back through Apply.
+  isolated: boolean; onIsolated(next: boolean): void;
   connected: boolean; liveCount: number; busy: boolean;
   onStart(): void;                       // App's start(provider) with modeFlags(mode)
   onInspect(receipt: Receipt): void;     // set the receipt, show the inspector's Session tab
@@ -172,6 +174,11 @@ export function Composer(props: ComposerProps) {
           <button type="button" onClick={props.onManageWorkspaces}>{composer.manage}<span className="visually-hidden">{composer.manageWorkspacesSuffix}</span></button>
         </div>
         {worktree && <p className="field-help">{composer.separateCopyHelp}</p>}
+        {mac && mode === 'build' && !workspaceId.startsWith('root:') && branch && <label className="isolated-choice">
+          <input type="checkbox" checked={props.isolated} onChange={event => props.onIsolated(event.target.checked)} aria-describedby="isolated-help" />
+          <span>{composer.isolated}</span>
+        </label>}
+        {mac && mode === 'build' && !workspaceId.startsWith('root:') && branch && <p id="isolated-help" className="field-help">{props.isolated ? composer.isolatedOn(branch) : composer.isolatedOff}</p>}
       </div>
 
       <div className="start-error-slot" ref={errorSlot}>{problemCard && <StartError problem={problemCard} alert={!!startError}

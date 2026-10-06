@@ -19,6 +19,7 @@ import { inside, listBranches, switchBranch } from './branches.mjs';
 import { realPath } from './paths.mjs';
 import { MAX_REFERENCES, pathFromCwd, referencesBlock } from './references.mjs';
 import { deliveryCounts, memoryChecks, memoryOrigins, noteIds, sessionProposals, sessionSummary, staleNoteDiff, staleNotesForSession } from './insights.mjs';
+import { Environments, REF as ENV_REF } from './environments.mjs';
 
 const LIVE = "('starting','running','waiting','stopping')";
 const EVENT_LIMIT = 2000;
@@ -42,8 +43,10 @@ export const RECORD_DELIVERIES = `INSERT OR IGNORE INTO deliveries(receipt_id, m
 export const RECORD_RECEIPT_DELIVERIES = `${RECORD_DELIVERIES} AND r.id=?`;
 
 export class JournalStore {
-  constructor(path) {
+  // options.environmentRoot: Journal's data folder for isolated sessions (default: the database's folder).
+  constructor(path, options = {}) {
     this.path = path;
+    this.environments = new Environments(this, { dataRoot: options.environmentRoot ?? (path && path !== ':memory:' ? dirname(resolve(path)) : null), ...(options.environments ?? {}) });
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;
       CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, root TEXT UNIQUE NOT NULL, body TEXT NOT NULL);
@@ -243,7 +246,8 @@ export class JournalStore {
   // Git and file I/O never run inside BEGIN IMMEDIATE. `view` (internal) is the copy
   // the evidence is read from: a ready worktree on the note's branch, or the checkout.
   // expected: the revision the note had when it was checked (null for a new note).
-  prepareMemory(projectId, input, { branch: boundBranch = null, view = null } = {}) {
+  prepareMemory(projectId, input, options = {}) {
+    const { branch: boundBranch = null, view = null } = options;
     const project = this.project(projectId); const seen = view ?? project;
     const statement = text(input.statement, 'statement'); refuseCredentials(statement);
     const category = choice(input.category, categories, 'category');
@@ -281,13 +285,25 @@ export class JournalStore {
     const id = previous?.id ?? randomUUID();
     const revision = (previous?.revision ?? 0) + 1;
     const branch = target;
+    // Structured provenance for a note proposed from a session in an isolated environment, taken
+    // from Journal's own records (never from the caller): session, environment, base, result.
+    // A revision keeps the origin of the claim it revises unless it names a session of its own.
+    const origin = this.originFor(projectId, input.sessionId ?? options.sessionId ?? null) ?? previous?.origin ?? null;
     // Flag, never block: the reviewer decides whether two claims really conflict.
     const conflicts = this.conflictsWith(projectId, id, { statement, scope, branch, area });
     const item = { id, projectId, revisionId: randomUUID(), revision, statement, category, scope, area,
-      branch, source, conflicts, createdAt: now(), ...(environment ? { environment } : {}),
+      branch, source, conflicts, createdAt: now(), ...(environment ? { environment } : {}), ...(origin ? { origin } : {}),
       ...(supersedes ? { supersedes: { id: supersedes.id, revision: supersedes.revision } } : {}),
       ...(input.promotedFrom ? { promotedFrom: input.promotedFrom } : {}) };
     return { item, expected: previous?.revisionId ?? null };
+  }
+  originFor(projectId, sessionId) {
+    if (sessionId === null || sessionId === undefined) return null;
+    let session; try { session = this.getSession(text(sessionId, 'session ID', 100)); } catch { return null; }
+    if (session.projectId !== projectId) throw new Error('Session belongs to another project');
+    let env = null; try { env = session.workspaceId ? this.getWorkspace(session.workspaceId) : null; } catch { /* not a workspace */ }
+    if (env?.kind !== 'isolated') return { sessionId: session.id };
+    return { sessionId: session.id, environmentId: env.id, logicalBranch: env.logicalBranch, base: env.base, result: env.result?.sha ?? null };
   }
   // Remembered notes a statement may contradict (at most 5), from SQLite alone.
   conflictsWith(projectId, id, { statement, scope, branch, area }) {
@@ -335,7 +351,7 @@ export class JournalStore {
   getMemory(id) {
     const row = this.db.prepare('SELECT r.body,m.status,m.pinned FROM memories m JOIN revisions r ON r.id=m.current_revision WHERE m.id=?').get(text(id, 'memory ID', 100));
     if (!row) throw new Error('Unknown memory');
-    return { ...parse(row), status: row.status, pinned: !!row.pinned };
+    return this.withOrigin({ ...parse(row), status: row.status, pinned: !!row.pinned });
   }
   memoryHistory(id) {
     this.getMemory(id);
@@ -399,7 +415,7 @@ export class JournalStore {
     const from = 'FROM memories m JOIN revisions r ON r.id=m.current_revision';
     const total = this.db.prepare(`SELECT count(*) AS n ${from} WHERE ${where}`).get(...args).n;
     const items = this.db.prepare(`SELECT r.body,m.status,m.pinned ${from} WHERE ${where} ORDER BY m.pinned DESC, r.rowid DESC LIMIT ? OFFSET ?`).all(...args, limit, offset)
-      .map(row => { const item = { ...parse(row), status: row.status, pinned: !!row.pinned }; const validation = this.validation(project, item, cache); return { ...item, validation, drift: validation === 'current' ? this.drift(project, item, cache) : null }; });
+      .map(row => { const item = this.withOrigin({ ...parse(row), status: row.status, pinned: !!row.pinned }); const validation = this.validation(project, item, cache); return { ...item, validation, drift: validation === 'current' ? this.drift(project, item, cache) : null }; });
     const counts = Object.fromEntries(this.db.prepare('SELECT status, count(*) AS n FROM memories WHERE project_id=? GROUP BY status').all(projectId).map(row => [row.status, row.n]));
     const [byWhere, byArgs] = join(conditions);
     const categoryCounts = Object.fromEntries(['all', ...categories].map(name => [name, 0]));
@@ -476,7 +492,8 @@ export class JournalStore {
     const warnings = [...selected.warnings, ...assembled.warnings];
     // References carry paths, ranges and hashes, never contents.
     const packet = assembled.packet + referencesBlock(referenced);
-    const receipt = { id, projectId, query, packet, items, excluded, warnings, disabled: [...disabledSet], workspaceId, references: referenced, checkout: { root: project.root, branch: project.branch, head: project.head }, state: 'prepared', estimatedTokens: Math.ceil(Buffer.byteLength(packet) / 3), createdAt: now(), terms };
+    const receipt = { id, projectId, query, packet, items, excluded, warnings, disabled: [...disabledSet], workspaceId, references: referenced, checkout: { root: project.root, branch: project.branch, head: project.head },
+      ...(project.isolated ? { environment: { id: project.isolated.id, base: project.isolated.base, logicalBranch: project.isolated.logicalBranch } } : {}), state: 'prepared', estimatedTokens: Math.ceil(Buffer.byteLength(packet) / 3), createdAt: now(), terms };
     // Previews show what would be sent; only a launch keeps an immutable receipt.
     if (!persist) return { ...receipt, preview: true };
     this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(id, projectId, JSON.stringify(receipt));
@@ -845,8 +862,9 @@ export class JournalStore {
       AND json_extract(r.body,'$.category')='brief' AND json_extract(r.body,'$.scope')='branch' AND json_extract(r.body,'$.branch')=? ORDER BY r.rowid DESC LIMIT 1`).get(session.projectId, project.branch);
     const update = branchUpdate ? parse(branchUpdate) : null;
     // Commands and commits in an additional folder belong to that folder, not the primary branch.
+    // An isolated session's commits are on its own copy, not on the branch, until its result is applied.
     const candidates = [...ruleProposals(session, receipt), ...(inFolder ? [] : [...testCommandProposals(session, this.listEvents(sessionId, 2000)),
-      ...statusProposal(session, project, update ? this.drift(project, { ...update, category: 'brief', scope: 'branch' }, new Map()) : 0, !!update)])];
+      ...(project.isolated ? [] : statusProposal(session, project, update ? this.drift(project, { ...update, category: 'brief', scope: 'branch' }, new Map()) : 0, !!update))])];
     const created = [];
     for (const candidate of candidates.slice(0, 10)) {
       if (candidate.statement && candidate.kind !== 'branch-status' && existing.some(statement => isDuplicate(statement, candidate.statement))) continue;
@@ -877,7 +895,7 @@ export class JournalStore {
   acceptProposal(id) {
     const proposal = this.openProposal(id);
     const memory = this.proposeMemory(proposal.projectId, { statement: proposal.statement, category: proposal.category, scope: proposal.scope, area: '', source: proposal.source },
-      proposal.scope === 'branch' ? { branch: proposal.branch } : undefined);
+      { ...(proposal.scope === 'branch' ? { branch: proposal.branch } : {}), sessionId: proposal.evidence?.sessionId ?? null });
     this.db.prepare('UPDATE proposals SET body=? WHERE id=?').run(JSON.stringify({ ...proposal, state: 'accepted', memoryId: memory.id, handledAt: now() }), id);
     this.audit('proposal-accepted', { id, memoryId: memory.id, kind: proposal.kind });
     return memory;
@@ -1072,7 +1090,8 @@ export class JournalStore {
   // Nothing on disk is created or deleted here.
   reconcileWorkspaces(projectId) {
     const project = this.project(projectId);
-    for (const row of this.db.prepare(`SELECT body FROM workspaces WHERE project_id=? AND json_extract(body,'$.state') IN ('intent','ready','missing')`).all(projectId)) {
+    // Isolated sessions' worktrees are reconciled by their own service (environments.mjs).
+    for (const row of this.db.prepare(`SELECT body FROM workspaces WHERE project_id=? AND json_extract(body,'$.state') IN ('intent','ready','missing') AND coalesce(json_extract(body,'$.kind'),'')<>'isolated'`).all(projectId)) {
       const workspace = parse(row); const entry = registered(project, workspace.path);
       let next = workspace;
       if (entry) next = { ...workspace, state: 'ready', branch: entry.branch ?? workspace.branch, head: entry.head, detached: entry.detached, error: null };
@@ -1084,8 +1103,10 @@ export class JournalStore {
   listWorkspaces(projectId) {
     this.reconcileWorkspaces(projectId);
     const project = this.project(projectId);
-    const tracked = this.db.prepare(`SELECT body FROM workspaces WHERE project_id=? AND json_extract(body,'$.state')<>'removed' ORDER BY rowid`).all(projectId).map(parse);
-    const known = new Set([project.root, ...tracked.map(w => w.path)]);
+    const all = this.db.prepare(`SELECT body FROM workspaces WHERE project_id=? AND json_extract(body,'$.state')<>'removed' ORDER BY rowid`).all(projectId).map(parse);
+    // Isolated sessions' worktrees are not workspaces to choose or import.
+    const tracked = all.filter(w => w.kind !== 'isolated');
+    const known = new Set([project.root, ...all.map(w => w.path)]);
     const importable = listGitWorktrees(project.root).filter(entry => !known.has(entry.path) && !entry.bare && !entry.prunable && existsSync(entry.path)).map(entry => ({ path: entry.path, branch: entry.branch, head: entry.head, detached: entry.detached }));
     return { checkout: { id: null, kind: 'checkout', path: project.root, branch: project.branch, head: project.head, state: 'ready' }, workspaces: tracked, importable };
   }
@@ -1141,6 +1162,7 @@ export class JournalStore {
   // Stops tracking without touching files (imported, failed or missing entries).
   forgetWorkspace(id) {
     const workspace = this.getWorkspace(id);
+    if (workspace.kind === 'isolated') throw new Error('An isolated session\'s folder is cleaned up from its session, never forgotten');
     if (workspace.kind === 'managed' && workspace.state === 'ready') throw new Error('Remove a ready managed worktree instead; forgetting it would leave it unmanaged');
     if (this.activeSessions().some(session => session.workspaceId === id)) throw new Error('A session is still running in this workspace');
     this.audit('workspace-forgotten', { id, path: workspace.path });
@@ -1152,6 +1174,9 @@ export class JournalStore {
     const { checkout, workspaces } = this.listWorkspaces(projectId); const project = this.project(projectId);
     const primary = [{ key: 'checkout', family: 'primary', kind: 'checkout', label: `${project.name} (checkout)`, path: checkout.path, branch: checkout.branch, git: true },
       ...workspaces.filter(w => w.state === 'ready').map(w => ({ key: w.id, family: 'primary', kind: w.kind, label: `${project.name} (${w.kind === 'managed' ? 'worktree' : 'imported worktree'} ${w.branch ?? basename(w.path)})`, path: w.path, branch: w.branch ?? null, git: true }))];
+    for (const env of this.db.prepare(`SELECT body FROM workspaces WHERE project_id=? AND json_extract(body,'$.kind')='isolated' AND json_extract(body,'$.lifecycle') IN ('ready','running','waiting','completed','conflict') ORDER BY rowid`).all(projectId).map(parse)) {
+      if (existsSync(env.path)) primary.push({ key: env.id, family: 'primary', kind: 'isolated', label: `${project.name} (isolated from ${env.logicalBranch})`, path: env.path, branch: env.logicalBranch, git: true, isolated: true });
+    }
     const folders = (project.roots ?? []).map(root => { const status = folderStatus(root); return { key: `root:${root.id}`, family: 'folder', kind: root.kind, label: root.name, path: root.path, branch: status.currentBranch, git: root.kind === 'git', exists: status.exists }; });
     return { primary, folders };
   }
@@ -1219,6 +1244,8 @@ export class JournalStore {
   // Refuses while a session runs in that working tree; Git refuses (and changes nothing) when
   // uncommitted changes would be overwritten. Never forces, stashes, resets or cleans.
   switchBranch(projectId, key, request) {
+    // An isolated session's copy stays on its recorded base; its branch changes only through Apply.
+    if (typeof key === 'string' && !key.startsWith('root:') && key !== 'checkout') { let workspace = null; try { workspace = this.getWorkspace(key); } catch { /* not a workspace */ } if (workspace?.kind === 'isolated') throw new Error('Not switched: an isolated session\'s copy stays where it started; its changes reach the branch through Apply'); }
     const root = this.branchRoot(projectId, key);
     const blocked = this.switchBlocker(root); if (blocked) throw new Error(`Not switched: ${blocked}`);
     let result;
@@ -1269,7 +1296,7 @@ export class JournalStore {
     const text = JSON.stringify(body ?? {});
     if (text.length > 4000) throw new Error('Timeline event is too large');
     const stamp = typeof at === 'string' && Number.isFinite(Date.parse(at)) ? new Date(at).toISOString() : now();
-    this.db.prepare('INSERT INTO events(session_id,at,kind,body) VALUES(?,?,?,?)').run(sessionId, stamp, choice(kind, ['start', 'resume', 'context', 'prompt', 'permission', 'turn-end', 'command-start', 'command-end', 'file', 'interrupt', 'stop', 'exit', 'error', 'recovered', 'cleanup', 'disconnected', 'reference', 'tool', 'plan'], 'event kind'), text);
+    this.db.prepare('INSERT INTO events(session_id,at,kind,body) VALUES(?,?,?,?)').run(sessionId, stamp, choice(kind, ['start', 'resume', 'context', 'prompt', 'permission', 'turn-end', 'command-start', 'command-end', 'file', 'interrupt', 'stop', 'exit', 'error', 'recovered', 'cleanup', 'disconnected', 'reference', 'tool', 'plan', 'environment'], 'event kind'), text);
     this.eventCounts ??= new Map(); const count = (this.eventCounts.get(sessionId) ?? 0) + 1; this.eventCounts.set(sessionId, count);
     if (count % 50 === 0) this.db.prepare(`DELETE FROM events WHERE session_id=? AND id <= (SELECT id FROM events WHERE session_id=? ORDER BY id DESC LIMIT 1 OFFSET ${EVENT_LIMIT})`).run(sessionId, sessionId);
   }
@@ -1288,9 +1315,50 @@ export class JournalStore {
   }
   checkoutBaseline(projectId, workspaceId = null) { const view = this.view(projectId, workspaceId); return view.cwd && !view.cwdIsGit ? null : checkoutBaseline(this.cwdView(view)); }
   sessionView(session) { return this.cwdView(this.view(session.projectId, session.workspaceId ?? null)); }
+  // An isolated session whose folder was cleaned up: its changes from the saved result (refs).
+  savedEnvironmentChanges(session) {
+    let env; try { env = session.workspaceId ? this.getWorkspace(session.workspaceId) : null; } catch { return null; }
+    if (env?.kind !== 'isolated' || !env.result) return null;
+    const root = this.project(session.projectId).root;
+    let files; try { files = git(root, ['diff-tree', '-z', '-r', '--numstat', '--no-renames', env.base, ENV_REF(env.id, 'result')]).split('\0').filter(Boolean); } catch { return null; }
+    const list = files.map(line => { const [added, deleted, ...path] = line.split('\t'); return { path: path.join('\t'), from: null, additions: added === '-' ? null : Number(added), deletions: deleted === '-' ? null : Number(deleted), binary: added === '-', untracked: false, preexisting: false, sensitive: false }; });
+    return { base: env.base, available: true, saved: true, head: env.result.sha, branch: env.logicalBranch, headMoved: false, commitsSince: 0, files: list, truncated: false, trees: [],
+      additions: list.reduce((sum, f) => sum + (f.additions ?? 0), 0), deletions: list.reduce((sum, f) => sum + (f.deletions ?? 0), 0), preexistingCount: 0, sharedCheckout: false, folderPrefix: null };
+  }
+  // ----- Isolated sessions (environments.mjs): the headless control surface -----
+  createEnvironment(input) { return this.environments.create(input ?? {}); }
+  attachEnvironmentSession(id, sessionId) { return this.environments.attachSession(id, sessionId); }
+  getEnvironment(id) { return this.environments.get(id); }
+  listEnvironments(projectId) { this.project(projectId); return this.environments.list(projectId); }
+  environmentsOverview(projectId) { this.project(projectId); return this.environments.overview(projectId); }
+  snapshotEnvironment(id) { return this.environments.snapshot(id); }
+  previewEnvironmentApply(id) { return this.environments.preview(id); }
+  applyEnvironment(id, options) { return this.environments.apply(id, options); }
+  updateEnvironmentFromBranch(id) { return this.environments.updateFromBranch(id); }
+  abandonEnvironment(id) { return this.environments.abandon(id); }
+  restoreEnvironment(id) { return this.environments.restore(id); }
+  cleanupEnvironment(id, options) { return this.environments.cleanup(id, options); }
+  reconcileEnvironments(projectId, options) { return this.environments.reconcile(projectId, options); }
+  syncEnvironment(session) { return this.environments.syncFromSession(session); }
+  environmentLaunch(id) { return this.environments.launchVariables(id); }
+  // Where a note came from when a session in an isolated environment proposed it, and whether that
+  // work is on its branch yet (computed now, never stored as a fact).
+  withOrigin(item) {
+    if (!item?.origin?.environmentId) return item;
+    let env = null; try { env = this.getWorkspace(item.origin.environmentId); } catch { /* gone */ }
+    const applied = !!env?.integration && env.integration.phase === 'done';
+    return { ...item, origin: { ...item.origin, applied, environmentState: env?.lifecycle ?? 'unknown' } };
+  }
   sessionChanges(sessionId) {
     const session = this.getSession(sessionId); let view;
-    try { view = this.sessionView(session); } catch (error) { return { base: session.head ?? '', available: false, reason: `${error.message}. Changes for this session are no longer available.`, files: [] }; }
+    try { view = this.sessionView(session); } catch (error) { const saved = this.savedEnvironmentChanges(session); if (saved) return saved; return { base: session.head ?? '', available: false, reason: `${error.message}. Changes for this session are no longer available.`, files: [] }; }
+    // An isolated session compares with its environment's recorded base (moved by "take in the branch").
+    if (view.isolated) {
+      const changes = sessionChanges(view, { ...session, baseline: { ...(session.baseline ?? {}), head: view.isolated.base, dirty: [], dirtyCount: 0 } }, []);
+      // How far the logical branch moved since the environment's base (the user's view of "my branch").
+      let moved = null; try { moved = Number(git(this.project(session.projectId).root, ['rev-list', '--count', `${view.isolated.base}..refs/heads/${view.isolated.logicalBranch}`])); } catch { /* branch gone */ }
+      return { ...changes, isolated: { logicalBranch: view.isolated.logicalBranch, base: view.isolated.base, moved } };
+    }
     return sessionChanges(view, session, this.sessionTrees(session, view));
   }
   // Other working trees inside the session's folder that its own recorded edits or commands were

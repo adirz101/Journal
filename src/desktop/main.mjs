@@ -230,6 +230,7 @@ const notifier = createNotifier({
 });
 const seedNotifier = async () => { try { notifier.seed([...(await runtime.call('list')).map(fromRuntime), ...(await store.activeSessions())]); } catch { /* the next status events correct the badge */ } };
 runtime.on('event', event => {
+  if (event?.type === 'status' && event.session?.environmentId) followEnvironment(event.session);
   if (event?.type === 'status' && event.session) { const session = fromRuntime(event.session); notifier.update(session); send({ ...event, session }); if (runtime.otherBuild) scheduleSwitch(); return; }
   send(event);
 });
@@ -265,6 +266,29 @@ const findEditor = () => {
   for (const name of names) { const path = resolveExecutable(name); if (path && !/\.(?:cmd|bat)$/i.test(path)) return (editor = { name, path }); }
   return (editor = null);
 };
+// Starts a session in the runtime (main's half of the start action).
+function startSession(input) {
+  // A runtime from another build may not understand newer launch options;
+  // never let it silently run in the wrong workspace or mode.
+  if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.plan || input.provider === 'cursor' || input.disabled?.length || input.references?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, read-only or plan mode, Cursor, leave-out or file references.');
+  // The CLI version comes from main's own provider detection, and the appearance from main, never from the renderer.
+  const { cliVersion: _ignored, appearance: _alsoIgnored, hooksEnabled: _detected, ...request } = input;
+  const row = agents.find(agent => agent.provider === input.provider);
+  // What detection read, never what the window says: the version and whether the CLI's hooks are on.
+  return runtime.call('start', { ...request, appearance, cliVersion: row?.version ?? null, hooksEnabled: typeof row?.supports?.hooks === 'boolean' ? row.supports.hooks : null });
+}
+// Isolated sessions after a restart: finish what a crash interrupted (creation, an Apply), follow
+// sessions that ended meanwhile, retry pending cleanups. Then every 10 minutes for pending cleanups.
+function reconcileEnvironments() { void store.reconcileEnvironments().then(report => { if (report?.length) send({ type: 'environment', reconciled: report.length }); }).catch(() => {}); }
+setInterval(reconcileEnvironments, 10 * 60_000).unref?.();
+// An isolated session's environment follows its session: running, waiting, then completed with
+// its result captured when the session ends. One update at a time per environment.
+const environmentQueue = new Map();
+function followEnvironment(session) {
+  const previous = environmentQueue.get(session.environmentId) ?? Promise.resolve();
+  const next = previous.then(() => store.syncEnvironment(session)).then(environment => { if (environment) send({ type: 'environment', environment }); }).catch(() => {});
+  environmentQueue.set(session.environmentId, next);
+}
 runtime.on('warning', message => { runtimeWarning = message; send({ type: 'runtime', state: runtimeState, warning: message, otherBuild: runtime.otherBuild }); });
 // Switching to this build's runtime (src/desktop/runtime-client.mjs) is a reconnect, not a failure.
 runtime.on('switching', () => { runtimeState = 'connecting'; runtimeWarning = null; send({ type: 'runtime', state: 'connecting' }); });
@@ -615,7 +639,11 @@ const actions = {
   removeSession: async ({ id }) => {
     const session = await store.getSession(id); const label = session.displayName || session.title;
     const running = LIVE.includes(session.status) || session.status === 'orphaned';
-    const files = 'Your files, worktree and the native Claude/Codex conversation are not affected.';
+    const environment = session.environmentId ? await store.getEnvironment(session.environmentId).catch(() => null) : null;
+    // An isolated session's result is reached from its session: say when removing would hide work not yet applied.
+    const unapplied = environment?.result && environment.state !== 'integrated' && environment.integration?.phase !== 'done'
+      ? ` Its isolated result is not applied to ${environment.logicalBranch}; it stays saved, but you reach it only from this session.` : '';
+    const files = `Your files, worktree and the native Claude/Codex conversation are not affected.${unapplied}`;
     if (running) {
       const canStop = session.status !== 'orphaned';
       const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: canStop ? ['Stop and remove', 'Keep running and archive', 'Cancel'] : ['Keep running and archive', 'Cancel'], defaultId: canStop ? 2 : 1, cancelId: canStop ? 2 : 1,
@@ -665,16 +693,36 @@ const actions = {
       menu.popup({ window, ...position, callback: () => setTimeout(() => { if (!clicked) resolve(null); }, 250) });
     });
   },
-  start: input => {
-    // A runtime from another build may not understand newer launch options;
-    // never let it silently run in the wrong workspace or mode.
-    if (runtime.info?.build && runtime.info.build !== buildId() && (input.workspaceId || input.research || input.plan || input.provider === 'cursor' || input.disabled?.length || input.references?.length)) throw new Error('Sessions are still running in a runtime from another Journal build. Stop them (quit with "Stop sessions") before using worktrees, read-only or plan mode, Cursor, leave-out or file references.');
-    // The CLI version comes from main's own provider detection, and the appearance from main, never from the renderer.
-    const { cliVersion: _ignored, appearance: _alsoIgnored, hooksEnabled: _detected, ...request } = input;
-    const row = agents.find(agent => agent.provider === input.provider);
-    // What detection read, never what the window says: the version and whether the CLI's hooks are on.
-    return runtime.call('start', { ...request, appearance, cliVersion: row?.version ?? null, hooksEnabled: typeof row?.supports?.hooks === 'boolean' ? row.supports.hooks : null });
+  start: async input => {
+    // Isolated: a new environment from the chosen branch first, then the session in it (never for
+    // read-only or plan sessions, which do not write).
+    if (input.isolated === true) {
+      if (input.research || input.plan || input.resumeId) throw new Error('Only a new session that can edit files runs isolated');
+      const projectId = text(input.projectId, 'project ID', 100);
+      const project = await store.project(projectId);
+      const source = input.workspaceId ? await store.getWorkspace(text(input.workspaceId, 'workspace ID', 100)) : null;
+      if (source && (source.projectId !== projectId || source.kind === 'isolated')) throw new Error('Choose this checkout or one of its worktrees');
+      const logicalBranch = source ? source.branch : project.branch;
+      if (!logicalBranch) throw new Error('An isolated session starts from a named branch; this checkout has a detached HEAD');
+      const environment = await store.createEnvironment({ projectId, logicalBranch, task: typeof input.task === 'string' ? input.task.split('\n')[0].slice(0, 120) || null : null });
+      try {
+        const { isolated: _flag, ...rest } = input;
+        const result = await startSession({ ...rest, workspaceId: environment.id });
+        if (result?.session?.id) send({ type: 'environment', environment: await store.attachEnvironmentSession(environment.id, result.session.id) });
+        return result;
+      } catch (error) { await store.abandonEnvironment(environment.id).catch(() => {}); throw error; }
+    }
+    return startSession(input);
   },
+  // ----- Isolated sessions: the window's view of the headless service (environments.mjs) -----
+  environment: ({ id }) => store.getEnvironment(text(id, 'environment ID', 100)),
+  environments: ({ projectId }) => store.listEnvironments(text(projectId, 'project ID', 100)),
+  previewEnvironmentApply: ({ id }) => store.previewEnvironmentApply(text(id, 'environment ID', 100)),
+  applyEnvironment: async ({ id, expect }) => { const environment = await store.applyEnvironment(text(id, 'environment ID', 100), typeof expect === 'string' ? { expect: text(expect, 'result ID', 100) } : {}); send({ type: 'environment', environment }); const cleaned = await store.cleanupEnvironment(environment.id).catch(() => environment); send({ type: 'environment', environment: cleaned }); return cleaned; },
+  resolveInEnvironment: async ({ id }) => { const outcome = await store.updateEnvironmentFromBranch(text(id, 'environment ID', 100)); send({ type: 'environment', environment: outcome.environment }); return outcome; },
+  abandonEnvironment: async ({ id }) => { const environment = await store.abandonEnvironment(text(id, 'environment ID', 100)); send({ type: 'environment', environment }); return environment; },
+  restoreEnvironment: async ({ id }) => { const environment = await store.restoreEnvironment(text(id, 'environment ID', 100)); send({ type: 'environment', environment }); return environment; },
+  cleanupEnvironment: async ({ id, removeIgnored }) => { const environment = await store.cleanupEnvironment(text(id, 'environment ID', 100), { removeIgnored: removeIgnored === true }); send({ type: 'environment', environment }); return environment; },
   // ----- Provider CLIs: install and sign in run visibly, only after the user asks. The renderer
   // names a provider; the executable comes from detection and the argv from PROVIDER_COMMANDS. -----
   providerStatus: ({ provider, fresh }) => refreshProvider(choice(provider, PROVIDERS, 'provider'), { fresh: fresh === true }),
@@ -792,7 +840,7 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
     try { return { ok: true, value: await (hook ? hook(action, () => actions[action](input)) : actions[action](input)) }; } finally { if (ROOT_CHANGES.has(action)) { rootCache.clear(); listings.clear(); } }
   } catch (error) { return settledError(error); }
 });
-try { recovery = recoveryFrom(await runtime.connect()); runtimeState = 'connected'; tellRuntimeAppearance(); await seedNotifier(); scheduleSwitch(); }
+try { recovery = recoveryFrom(await runtime.connect()); runtimeState = 'connected'; tellRuntimeAppearance(); await seedNotifier(); scheduleSwitch(); reconcileEnvironments(); }
 catch (error) { runtimeState = 'disconnected'; console.error('Journal runtime unavailable:', error.message); void runtime.reconnect(); }
 createWindow();
 // Updates: packaged builds only. The automatic-check preference lives in the data folder.

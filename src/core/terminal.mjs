@@ -75,6 +75,8 @@ export const ERROR_CODES = Object.freeze({
   NOT_LIVE: 'NOT_LIVE',                     // owned(): terminal not active
 });
 const CODES = new Set(Object.values(ERROR_CODES));
+// The lifecycle states in which an isolated session's copy takes a new or continued session.
+const OPEN_ENVIRONMENT = ['ready', 'running', 'waiting', 'completed', 'conflict'];
 // The code of the error event sent when a hook reports another native session ID
 // (src/ui/types.ts shares it by name).
 export const IDENTITY_CHANGED = 'IDENTITY_CHANGED';
@@ -183,6 +185,8 @@ export class TerminalManager extends EventEmitter {
     }
     // The cwd is a registered worktree of this project (or its checkout), never another session's.
     const project = await (this.store.view ? this.store.view(projectId, workspaceId) : this.store.project(projectId));
+    // An isolated session's copy takes work only before its result is applied, set aside or cleaned up.
+    if (project.isolated && !OPEN_ENVIRONMENT.includes(project.isolated.lifecycle)) throw fail(ERROR_CODES.START_FAILED, `This isolated session is ${String(project.isolated.lifecycle).replace('_', ' ')}; its copy no longer takes new work. Start a new session instead.`);
     // Cursor: the genuine CLI (found again now, never assumed), with the modes this build documents.
     let cursor = null;
     if (provider === 'cursor') {
@@ -214,6 +218,7 @@ export class TerminalManager extends EventEmitter {
       status: 'starting', receiptId: receipt.id, resumedFrom: prior?.id ?? null, createdAt: now, lastActivityAt: now,
       // An additional-folder session runs in that folder with its own Git identity (if any).
       branch: project.cwd ? project.cwdBranch ?? null : project.branch, head: project.cwd ? project.cwdHead ?? null : project.head, cwd, workspaceId, research, plan, baseline, runtimeId: this.runtimeId, activity: null,
+      ...(project.isolated ? { environmentId: project.isolated.id } : {}),
       slot, nativeIdSource, identityMismatch: false, lastOutputAt: null, pending: null,
       // What Journal observes of this launch (OBSERVATIONS); lastObserved: the last applied fact, as past evidence.
       observation: 'pending', lastObserved: null, children: 0,
@@ -225,6 +230,9 @@ export class TerminalManager extends EventEmitter {
       const update = prior ? `Current Journal knowledge has been revalidated. Earlier context may remain. Only claims listed in the current packet by memory ID and revision are applicable; do not rely on any other earlier Journal claims. ${withdrawn.length ? `Previously delivered claims now excluded: ${withdrawn.map(item => `${item.id} r${item.revision}`).join(', ')}. ` : ''}${!receipt.items.length ? 'No prior Journal knowledge is currently applicable. ' : ''}No previous task is being repeated.\n` : '';
       prompt = `${update}${receipt.packet}${task ? `\nTask:\n${task}` : ''}`;
     }
+    // Checked again right before the session counts as live: an Apply, Abandon or cleanup may have
+    // finished while the launch was being prepared (once saved, those wait for the session).
+    if (project.isolated) { const current = await this.store.getEnvironment(project.isolated.id); if (!OPEN_ENVIRONMENT.includes(current.state)) throw fail(ERROR_CODES.START_FAILED, `This isolated session is ${String(current.state).replace('_', ' ')}; its copy no longer takes new work. Start a new session instead.`); }
     await this.store.saveSession(session);
     this.record(session.id, prior ? 'resume' : 'start', { provider, resumedFrom: prior?.id ?? null, branch: project.branch, head: project.head });
     let entry = null;
@@ -244,7 +252,10 @@ export class TerminalManager extends EventEmitter {
       // The hook launcher reads the observer's target and token from here (the command is the same for every launch).
       // An inherited observer (Journal started from a Journal session's agent) is never passed on:
       // only an observed launch gets a target and token, its own.
-      const env = { ...agentTerminalEnv(process.env, { appearance: this.appearance, version: this.appVersion }), JOURNAL_SESSION_ID: session.id };
+      // An isolated session: its port block, temp and log folders and identity (development isolation,
+      // not a sandbox; agents may ignore the variables).
+      const isolation = project.isolated && this.store.environmentLaunch ? await this.store.environmentLaunch(project.isolated.id) : {};
+      const env = { ...agentTerminalEnv(process.env, { appearance: this.appearance, version: this.appVersion }), ...isolation, JOURNAL_SESSION_ID: session.id };
       delete env.ELECTRON_RUN_AS_NODE; delete env.JOURNAL_APP_VERSION; delete env.JOURNAL_HOOK_TARGET; delete env.JOURNAL_HOOK_TOKEN;
       Object.assign(env, observer?.env ?? {});
       // The agent works in session.cwd: Git variables that point at another repository are not passed on (git-env.mjs).

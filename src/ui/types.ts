@@ -12,7 +12,9 @@ export interface Project { id: string; name: string; root: string; branch: strin
 export interface ProjectDetails { missing?: boolean; project: Project; roots: ProjectRoot[]; counts: { knowledge: number; sessions: number; liveSessions: number; receipts: number; events: number; proposals: number; worktrees: number }; }
 export interface Source { rootId?: string; kind: 'user' | 'file' | 'git' | 'import'; note?: string; path?: string; startLine?: number; endLine?: number; excerpt?: string; contentHash?: string; base?: string | null; head?: string; commitCount?: number | null; }
 export interface Conflict { id: string; revision: number; statement: string; }
-export interface Memory { pinned?: boolean; environment?: string; selection?: SelectionInfo; promotedFrom?: { id: string; revision: number; branch: string }; supersedes?: { id: string; revision: number }; id: string; projectId: string; revisionId: string; revision: number; statement: string; category: string; scope: 'checkout' | 'branch'; area: string; branch: string | null; source: Source; status: 'candidate' | 'active' | 'rejected' | 'archived'; validation: 'current' | 'stale' | 'wrong-branch' | 'folder-removed'; drift?: number | null; conflicts?: Conflict[]; }
+// origin: a note proposed from a session, with its isolated environment when there was one; applied is computed now.
+export interface MemoryOrigin { sessionId: string; environmentId?: string; logicalBranch?: string; base?: string; result?: string | null; applied?: boolean; environmentState?: string }
+export interface Memory { pinned?: boolean; environment?: string; origin?: MemoryOrigin; selection?: SelectionInfo; promotedFrom?: { id: string; revision: number; branch: string }; supersedes?: { id: string; revision: number }; id: string; projectId: string; revisionId: string; revision: number; statement: string; category: string; scope: 'checkout' | 'branch'; area: string; branch: string | null; source: Source; status: 'candidate' | 'active' | 'rejected' | 'archived'; validation: 'current' | 'stale' | 'wrong-branch' | 'folder-removed'; drift?: number | null; conflicts?: Conflict[]; }
 // Composer modes: the launch flags stay plan/research (Phase 4).
 export type Mode = 'build' | 'plan' | 'read-only';
 // Why a note was selected. terms: the searched terms FTS matched (receipts from Phase 4 on). The
@@ -46,7 +48,7 @@ export interface Receipt { terms?: string[]; preview?: boolean; references?: Fil
 export type SessionStatus = 'starting' | 'running' | 'waiting' | 'stopping' | 'stopped' | 'exited' | 'failed' | 'interrupted' | 'orphaned';
 export interface Survivor { pid: number; started: string; command: string; }
 export interface Session { id: string; projectId: string; provider: Provider; nativeId: string | null; nativeIdConfirmed: boolean; title: string; status: SessionStatus; receiptId: string; createdAt: string;
-  lastActivityAt?: string; endedAt?: string | null; exitCode?: number | null; branch?: string | null; head?: string | null; activity?: 'idle' | 'working' | 'permission' | null; archived?: boolean; survivors?: Survivor[] | null; resumedFrom?: string | null; displayName?: string | null; pinned?: boolean; pinSeq?: number | null; removed?: boolean; version?: number; workspaceId?: string | null; research?: boolean; plan?: boolean; cwd?: string; identityVerified?: boolean;
+  lastActivityAt?: string; endedAt?: string | null; exitCode?: number | null; branch?: string | null; head?: string | null; activity?: 'idle' | 'working' | 'permission' | null; archived?: boolean; survivors?: Survivor[] | null; resumedFrom?: string | null; displayName?: string | null; pinned?: boolean; pinSeq?: number | null; removed?: boolean; version?: number; workspaceId?: string | null; environmentId?: string | null; research?: boolean; plan?: boolean; cwd?: string; identityVerified?: boolean;
   // Runtime protocol 4 (src/core/terminal.mjs). slot: 1-4 while live in this runtime, kept until it ends.
   // lastOutputAt: last PTY output, excluding echo and resize repaints. pending: what an open Claude prompt asks.
   slot?: 1 | 2 | 3 | 4 | null; lastOutputAt?: string | null; pending?: PendingApproval | null;
@@ -99,6 +101,7 @@ export interface TimelineEvent { id?: number; sessionId?: string; at: string; ki
 export type TerminalEvent = { type: 'output'; sessionId: string; sequence: number; data: string } | { type: 'gap'; sessionId: string } | { type: 'status'; session: Session } | { type: 'error'; message: string; sessionId?: string; code?: typeof IDENTITY_CHANGED }
   | { type: 'timeline'; event: TimelineEvent } | { type: 'proposals'; projectId: string; count: number; sessionId?: string; failed?: boolean } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; otherBuild?: boolean; recovered?: boolean; recovery?: Recovery | null }
   | { type: 'files'; key: string; folders: string[]; overflow: boolean; stopped?: boolean }
+  | { type: 'environment'; environment?: Environment; reconciled?: number }
   | { type: 'update'; state: UpdateState } | { type: 'providers'; agents: AgentInfo[]; after?: { provider: Provider; kind: ProcessKind } } | { type: 'command'; id: CommandId }
   // Codex and Cursor output times, at most one per session every 5 s; main asks to show a session (notification click).
   | { type: 'activity'; sessionId: string; lastOutputAt: string } | { type: 'focus-session'; sessionId: string } | { type: 'process-output'; id: string; data: string; offset: number } | { type: 'process-exit'; id: string; provider: Provider; kind: ProcessKind; code: number | null };
@@ -124,7 +127,7 @@ export interface ProjectState { project: Project; sessions: Session[]; receipts:
 export interface ChangedFile { path: string; from: string | null; additions: number | null; deletions: number | null; binary: boolean; untracked: boolean; preexisting: boolean; sensitive: boolean; }
 // trees: other Git working trees inside the checkout that the session worked in (src/core/changes.mjs).
 export interface ChangedTree { path: string; branch: string | null; base: string; head: string; commitsSince: number; files: number }
-export interface Changes { base: string; available: boolean; reason?: string; head?: string; branch?: string; headMoved?: boolean; commitsSince?: number; files: ChangedFile[]; trees?: ChangedTree[]; truncated?: boolean; additions?: number; deletions?: number; preexistingCount?: number; }
+export interface Changes { base: string; available: boolean; reason?: string; head?: string; branch?: string; headMoved?: boolean; commitsSince?: number; files: ChangedFile[]; trees?: ChangedTree[]; isolated?: { logicalBranch: string; base: string; moved: number | null }; saved?: boolean; truncated?: boolean; additions?: number; deletions?: number; preexistingCount?: number; }
 // Phase 7. auth is signed-in or signed-out only from a probe that parsed cleanly (src/core/agents.mjs probeAuth).
 export type AuthState = 'unchecked' | 'signed-in' | 'signed-out' | 'unknown';
 // A visible one-off process (src/desktop/processes.mjs): one per provider and kind.
@@ -199,3 +202,20 @@ export async function api<T>(action: string, input: object = {}): Promise<T> {
 }
 export const LIVE_STATUSES: SessionStatus[] = ['starting', 'running', 'waiting', 'stopping'];
 export const isLive = (session: Session | null | undefined) => !!session && LIVE_STATUSES.includes(session.status);
+
+// An isolated session's environment (src/core/environments.mjs view): what the window shows.
+export type EnvironmentState = 'creating' | 'ready' | 'running' | 'waiting' | 'completed' | 'failed' | 'integrating' | 'conflict' | 'integrated' | 'abandoned' | 'cleanup_pending' | 'removed';
+export interface EnvironmentFile { status: string; path: string }
+export interface Environment {
+  id: string; projectId: string; sessionId: string | null; task: string | null; logicalBranch: string; base: string; state: EnvironmentState;
+  result: { id: string; files: EnvironmentFile[]; fileCount: number; excluded: string[]; at: string } | null;
+  conflict: { paths: { path: string; kind: string }[]; against: string; at: string; inEnvironment?: boolean } | null;
+  integration: { commit: string; phase: string; landedAt: string | null } | null;
+  cleanup: { reason?: string; code?: string | null; attempts?: number; from?: string; removedAt?: string } | null; error: string | null; ports: number[]; folder: boolean;
+  details: { path: string; tmpDir: string; logDir: string; refs: { base: string; head: string; result: string } };
+}
+export interface ApplyPreview {
+  environmentId: string; logicalBranch: string; base: string; logicalHead: string; result: string; moved: boolean; commitsSince: number; baseOnBranch: boolean;
+  clean: boolean; conflicts: { path: string; kind: string }[]; changes: EnvironmentFile[]; excluded: string[]; blockedBy: string[]; canApply: boolean; checkedOut: boolean;
+  busy: string | null; unresolved: string[]; empty: boolean; switchedTo: string | null;
+}

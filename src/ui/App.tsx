@@ -103,7 +103,7 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<WorkspaceList | null>(null); const [workspaceId, setWorkspaceId] = useState<string>('');
   // === Phase 4: composer state ===
   // The agent choice is remembered on this computer; the mode starts at Build and is never changed for the user.
-  const [mode, setMode] = useState<Mode>('build'); const [startError, setStartError] = useState<{ code?: string; message: string } | null>(null);
+  const [mode, setMode] = useState<Mode>('build'); const [isolated, setIsolated] = useState(false); const [startError, setStartError] = useState<{ code?: string; message: string } | null>(null);
   const rememberedAgent = useRef<string | null | undefined>(undefined);
   if (rememberedAgent.current === undefined) rememberedAgent.current = (() => { try { const value = localStorage.getItem('journal-agent'); return isProvider(value) ? value : null; } catch { return null; } })();
   const [provider, setProviderState] = useState<Provider>(() => defaultProvider(undefined, rememberedAgent.current ?? null));
@@ -468,7 +468,7 @@ export default function App() {
     await run(async () => {
       try {
         if (!resumeFrom) setStartError(null);
-        const result = await api<{ session: Session; receipt: Receipt }>('start', { projectId, provider, task: submitted, resumeId: resumeFrom?.id, ...(resumeFrom ? {} : { workspaceId: workspaceId || null, ...modeFlags(mode), disabled, references: referenceInputs }) });
+        const result = await api<{ session: Session; receipt: Receipt }>('start', { projectId, provider, task: submitted, resumeId: resumeFrom?.id, ...(resumeFrom ? {} : { workspaceId: workspaceId || null, ...modeFlags(mode), disabled, references: referenceInputs, ...(isolated && mode === 'build' && !workspaceId.startsWith('root:') ? { isolated: true } : {}) }) });
         merge([result.session]); setSelectedId(result.session.id); setReceipt(result.receipt); setFirstNote(null); setDisabled([]); if (!resumeFrom) setReferences([]); setPanel('session'); await refresh(projectId);
       } catch (error) {
         if (submitted) setTask(current => current || submitted);
@@ -655,7 +655,7 @@ export default function App() {
   const composerLatest = useRef({ start, chooseProvider, provider, showInspector: layout.showInspector });
   composerLatest.current = { start, chooseProvider, provider, showInspector: layout.showInspector };
   const composerCallbacks = useMemo(() => ({
-    onWorkspace: (id: string) => setWorkspaceId(id), onManageWorkspaces: () => setWorkspaceDialog(true),
+    onWorkspace: (id: string) => setWorkspaceId(id), onManageWorkspaces: () => setWorkspaceDialog(true), onIsolated: (next: boolean) => setIsolated(next),
     onRemoveReference: (index: number) => setReferences(current => current.filter((_, i) => i !== index)),
     onProvider: (next: Provider) => composerLatest.current.chooseProvider(next), onMode: (next: Mode) => { setMode(next); setStartError(null); },
     onStart: () => void composerLatest.current.start(composerLatest.current.provider),
@@ -767,7 +767,7 @@ export default function App() {
   const inspector = (pane: 'full' | 'rail', overlay: boolean) => state && <Inspector pane={pane} inOverlay={overlay} overlayOpen={layout.inspector === 'overlay'} tab={panel} onTab={setPanel} badges={{ files: changed, memory: proposals.length }} shortcuts={bootstrap?.shortcuts}
       
     onHide={overlay ? () => layout.closeOverlays(true) : layout.mode === 'wide' ? layout.toggleInspector : undefined} onShow={tab => tab ? layout.showInspector() : layout.toggleInspector()}>
-      {panel === 'session' && <SessionTab session={session} events={events} now={now} onShowSent={showSent} context={<ContextPanel receipt={receipt} session={session} bootstrap={bootstrap} history={state.receipts} disabled={disabled} events={events} now={now} packetRequest={packetRequest} onPacketShown={() => setPacketRequest(null)}
+      {panel === 'session' && <SessionTab session={session} events={events} now={now} onShowSent={showSent} onError={failed} context={<ContextPanel receipt={receipt} session={session} bootstrap={bootstrap} history={state.receipts} disabled={disabled} events={events} now={now} packetRequest={packetRequest} onPacketShown={() => setPacketRequest(null)}
         project={state.project} trustVersion={trustVersion} sessions={ordered} onOpenSession={openSession}
         onToggle={id => { const next = disabled.includes(id) ? disabled.filter(x => x !== id) : [...disabled, id]; setDisabled(next); if (receipt?.state === 'prepared') void api<Receipt>('prepareContext', { projectId: state.project.id, task: receipt.query, workspaceId: workspaceId || null, disabled: next, references: referenceInputs }).then(setReceipt).catch(failed); }}
         onSelectReceipt={setReceipt} onChanged={() => setKnowledgeVersion(v => v + 1)} onError={failed} />} />}
@@ -815,7 +815,7 @@ export default function App() {
           onEdit={(scope, statement) => { const draft = scope === 'checkout' ? currentDrafts.overview : currentDrafts.branch; if (draft) setForm({ draft: { ...draft, statement }, firstRun: scope }); }} />
         : firstRunPending ? <div className="first-run-pending" aria-busy="true" />
         : !session ? <NewSessionView project={state.project} bootstrap={bootstrap} workspaces={workspaces} workspaceId={workspaceId}
-          task={task} onTask={editTask} taskRef={taskRef} references={references} disabled={disabled} onDisabled={setDisabled} provider={provider} mode={mode}
+          task={task} onTask={editTask} taskRef={taskRef} references={references} disabled={disabled} onDisabled={setDisabled} provider={provider} mode={mode} isolated={isolated}
           connected={connected} liveCount={liveCount} busy={busy} startError={startError} knowledgeVersion={knowledgeVersion} onAddReference={openReferencePicker}
           {...composerCallbacks} providers={providerProps} mark={journalMark} justRemembered={justRemembered}
           emptyTerminal={firstSession ? bootstrap?.shortcuts['new-session']?.label ?? '' : null} />

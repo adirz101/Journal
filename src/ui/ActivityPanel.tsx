@@ -18,6 +18,7 @@ const describe = (event: TimelineEvent) => {
     case 'file': return `${b.op === 'add' ? 'Created' : b.op === 'delete' ? 'Deleted' : b.tool ?? 'Edited'} ${b.path}`;
     case 'tool': return `${b.tool}${b.path ? ` ${b.path}` : ''}${b.description ? ` · ${b.description}` : ''}`;
     case 'plan': return `Plan updated: ${count(Array.isArray(b.items) ? b.items.length : 0, 'item')}`;
+    case 'environment': return `Isolation: ${String(b.action ?? '')}${b.branch ? ` ${b.branch}` : ''}${b.commit ? ` ${String(b.commit).slice(0, 7)}` : ''}`;
     case 'interrupt': return 'Interrupt sent (Ctrl+C)';
     case 'stop': return `Stopped${b.survivors ? ` · ${b.survivors} child process${b.survivors === 1 ? '' : 'es'} still running` : ''}`;
     case 'exit': return `Process exited${b.exitCode !== null && b.exitCode !== undefined ? ` with code ${b.exitCode}` : ''}${b.survivors ? ` · ${b.survivors} child process${b.survivors === 1 ? '' : 'es'} still running` : ''}`;

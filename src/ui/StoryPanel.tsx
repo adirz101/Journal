@@ -49,6 +49,7 @@ export function StoryPanel({ events, waiting = false, empty }: { events: Timelin
   const latest = active.at(-1); const older = active.slice(0, -1);
   return <div className="story">
     {waiting && story.waiting && <p className="story-waiting" role="note"><span aria-hidden="true">●</span> {copy.waiting(story.waiting.label)}</p>}
+    {story.isolation.length > 0 && <section aria-label={copy.isolation}><h3 className="story-heading">{copy.isolation}</h3><ol className="story-list">{story.isolation.map(phase => <Row key={phase.key} phase={phase} />)}</ol></section>}
     {story.plan?.length ? <section aria-label={copy.plan}><h3 className="story-heading">{copy.plan}</h3><ol className="story-list">{story.plan.map(phase => <Row key={phase.key} phase={phase} />)}</ol></section> : null}
     {latest ? <section aria-label={copy.turn(latest.index)}><h3 className="story-heading">{turnHeading(latest)}</h3><ol className="story-list">{latest.phases.map(phase => <Row key={phase.key} phase={phase} />)}</ol></section>
       : !story.plan && <p className="muted">{empty}</p>}
