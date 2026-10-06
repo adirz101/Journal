@@ -174,11 +174,11 @@ export function Composer(props: ComposerProps) {
           <button type="button" onClick={props.onManageWorkspaces}>{composer.manage}<span className="visually-hidden">{composer.manageWorkspacesSuffix}</span></button>
         </div>
         {worktree && <p className="field-help">{composer.separateCopyHelp}</p>}
-        {mode === 'build' && !workspaceId.startsWith('root:') && branch && <label className="isolated-choice">
+        {mac && mode === 'build' && !workspaceId.startsWith('root:') && branch && <label className="isolated-choice">
           <input type="checkbox" checked={props.isolated} onChange={event => props.onIsolated(event.target.checked)} aria-describedby="isolated-help" />
           <span>{composer.isolated}</span>
         </label>}
-        {mode === 'build' && !workspaceId.startsWith('root:') && branch && <p id="isolated-help" className="field-help">{props.isolated ? composer.isolatedOn(branch) : composer.isolatedOff}</p>}
+        {mac && mode === 'build' && !workspaceId.startsWith('root:') && branch && <p id="isolated-help" className="field-help">{props.isolated ? composer.isolatedOn(branch) : composer.isolatedOff}</p>}
       </div>
 
       <div className="start-error-slot" ref={errorSlot}>{problemCard && <StartError problem={problemCard} alert={!!startError}

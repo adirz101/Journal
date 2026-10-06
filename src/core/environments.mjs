@@ -185,6 +185,8 @@ export class Environments {
   // Creations run one at a time, so two concurrent ones never pick the same port block.
   create(input) { const next = (this.creating ?? Promise.resolve()).catch(() => {}).then(() => this.createNow(input)); this.creating = next; return next; }
   async createNow({ projectId, logicalBranch, task = null, sessionId = null }) {
+    // This milestone is macOS only (Windows needs its own path, lock and line-ending handling).
+    if (process.platform === 'win32') fail('UNSUPPORTED_PLATFORM', 'Isolated sessions are available on macOS only for now');
     if (!gitSupportsEnvironments()) fail('GIT_TOO_OLD', 'Isolated sessions need Git 2.40 or later');
     const project = this.store.project(projectId); const repo = project.root;
     if (typeof logicalBranch !== 'string' || !logicalBranch || logicalBranch.startsWith('-') || tryGit(repo, ['check-ref-format', '--branch', logicalBranch]) === null) fail('INVALID_BRANCH', 'Isolated sessions start from a named branch');

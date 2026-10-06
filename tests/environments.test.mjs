@@ -8,6 +8,10 @@ import { JournalStore } from '../src/core/store.mjs';
 import { LIFECYCLE } from '../src/core/environments.mjs';
 import { removeLater } from './support/cleanup.mjs';
 
+// Isolated sessions are a macOS milestone: on Windows only the refusal is tested.
+const windows = process.platform === 'win32';
+const it = windows ? (name, fn) => test(name, { skip: 'isolated sessions are macOS only in this milestone' }, fn) : test;
+
 // Isolated sessions (src/core/environments.mjs) through Journal's store, on real temporary
 // repositories: creation, private refs, results, the previewed Apply (clean, conflict, race,
 // dirty checkout), resolve in the environment, abandon and restore, cleanup refusals, recovery,
@@ -46,7 +50,7 @@ function fixture(t, environments = {}) {
 const checkout = f => ({ head: f.git(f.repo, 'rev-parse', 'feature/auth'), index: readFileSync(join(f.repo, '.git', 'index')), api: readFileSync(join(f.repo, 'src', 'api.js'), 'utf8'), status: f.git(f.repo, 'status', '--porcelain') });
 async function rejects(fn, code) { try { await fn(); } catch (error) { assert.equal(error.code, code, error.message); return error; } assert.fail(`expected ${code}`); }
 
-test('creation: detached at the branch commit, outside the checkout, private refs, lock and marker; the branch list stays clean', async t => {
+it('creation: detached at the branch commit, outside the checkout, private refs, lock and marker; the branch list stays clean', async t => {
   const f = fixture(t);
   const envs = await Promise.all(['A', 'B', 'C'].map(task => f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'feature/auth', task })));
   const base = f.git(f.repo, 'rev-parse', 'feature/auth');
@@ -66,7 +70,7 @@ test('creation: detached at the branch commit, outside the checkout, private ref
   await rejects(() => f.store.createEnvironment({ projectId: f.project.id, logicalBranch: '--force' }), 'INVALID_BRANCH');
 });
 
-test('a session in an environment: its folder, logical branch, launch variables; receipts and notes follow the logical branch', async t => {
+it('a session in an environment: its folder, logical branch, launch variables; receipts and notes follow the logical branch', async t => {
   const f = fixture(t);
   const note = f.store.proposeMemory(f.project.id, { statement: 'Auth tokens refresh in the gateway, never in the form', category: 'decision', scope: 'branch', area: '', source: { kind: 'user', note: 'team' } });
   f.store.setMemoryStatus(note.id, 'active');
@@ -93,7 +97,7 @@ test('a session in an environment: its folder, logical branch, launch variables;
   assert.equal(f.git(f.repo, 'status', '--porcelain'), '', 'the checkout never changed');
 });
 
-test('result: commits, staged, unstaged and untracked work; the worker\'s index untouched; sensitive files left out; idempotent', async t => {
+it('result: commits, staged, unstaged and untracked work; the worker\'s index untouched; sensitive files left out; idempotent', async t => {
   const f = fixture(t);
   const env = await f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'feature/auth' }); const p = env.details.path;
   writeFileSync(join(p, 'src', 'api.js'), 'committed\n'); f.git(p, 'commit', '-qam', 'worker commit');
@@ -111,7 +115,7 @@ test('result: commits, staged, unstaged and untracked work; the worker\'s index 
   assert.equal(f.store.snapshotEnvironment(env.id).result.id, result.id, 'unchanged content: the same result');
 });
 
-test('Apply: clean, then the second worker is re-previewed against the moved branch; history and checkout follow', async t => {
+it('Apply: clean, then the second worker is re-previewed against the moved branch; history and checkout follow', async t => {
   const f = fixture(t);
   const a = await f.worker('backend', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 2, 'line 2 by A')));
   const b = await f.worker('form', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 8, 'line 8 by B')));
@@ -129,7 +133,7 @@ test('Apply: clean, then the second worker is re-previewed against the moved bra
   assert.deepEqual(events, ['created', 'result', 'apply-started', 'applied']);
 });
 
-test('Apply refuses without writing: same lines, delete versus edit, overlapping uncommitted work', async t => {
+it('Apply refuses without writing: same lines, delete versus edit, overlapping uncommitted work', async t => {
   const f = fixture(t);
   const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 3, 'A')));
   const b = await f.worker('B', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 3, 'B')));
@@ -149,7 +153,7 @@ test('Apply refuses without writing: same lines, delete versus edit, overlapping
   assert.deepEqual(f.store.environmentsOverview(f.project.id).conflict.map(x => x.task), ['B', 'D']);
 });
 
-test('Apply keeps the user\'s unrelated staged, unstaged and untracked work', async t => {
+it('Apply keeps the user\'s unrelated staged, unstaged and untracked work', async t => {
   const f = fixture(t);
   const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 1, 'A')));
   writeFileSync(join(f.repo, 'README.md'), 'mine\n'); writeFileSync(join(f.repo, 'src', 'form.js'), edit(FORM, 9, 'staged by me')); f.git(f.repo, 'add', 'src/form.js'); writeFileSync(join(f.repo, 'scratch.txt'), 'x\n');
@@ -160,7 +164,7 @@ test('Apply keeps the user\'s unrelated staged, unstaged and untracked work', as
   assert.match(readFileSync(join(f.repo, 'src', 'api.js'), 'utf8'), /^A$/m);
 });
 
-test('Apply race: the checkout is locked against commits and another writer is refused by compare-and-swap; nothing applied', async t => {
+it('Apply race: the checkout is locked against commits and another writer is refused by compare-and-swap; nothing applied', async t => {
   const f = fixture(t); let raced = false; let commitError = '';
   const s = f.reopen({ hooks: { beforeLand: () => {
     if (raced) return; raced = true;
@@ -175,7 +179,7 @@ test('Apply race: the checkout is locked against commits and another writer is r
   assert.equal(s.applyEnvironment(a.id).state, 'integrated');
 });
 
-test('recovery: a crash before landing rolls back; a crash after landing finishes; both leave Git usable', async t => {
+it('recovery: a crash before landing rolls back; a crash after landing finishes; both leave Git usable', async t => {
   const f = fixture(t);
   const crashing = f.reopen({ hooks: { afterFiles: () => { throw new Error('crash before landing'); } } });
   const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 6, 'A')), crashing);
@@ -190,7 +194,7 @@ test('recovery: a crash before landing rolls back; a crash after landing finishe
   assert.equal(f.git(f.repo, 'status', '--porcelain'), ''); f.git(f.repo, 'commit', '-q', '--allow-empty', '-m', 'usable');
 });
 
-test('recovery: an unfinished creation, and a session that ended while Journal was closed', async t => {
+it('recovery: an unfinished creation, and a session that ended while Journal was closed', async t => {
   const f = fixture(t);
   const env = await f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'feature/auth' });
   const sess = f.session(env.id, 'running');
@@ -206,7 +210,7 @@ test('recovery: an unfinished creation, and a session that ended while Journal w
   assert.deepEqual(f.store.getEnvironment(env.id).result.files.map(file => file.path), ['late.md']);
 });
 
-test('resolve in the environment: markers only there, the work kept, then applied', async t => {
+it('resolve in the environment: markers only there, the work kept, then applied', async t => {
   const f = fixture(t);
   const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 3, 'A was here')));
   const b = await f.worker('B', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 3, 'B was here')));
@@ -221,7 +225,7 @@ test('resolve in the environment: markers only there, the work kept, then applie
   f.store.applyEnvironment(b.id); assert.match(readFileSync(join(f.repo, 'src', 'api.js'), 'utf8'), /A and B/);
 });
 
-test('abandon keeps the result in refs and cleans the folder; restore makes it applicable again', async t => {
+it('abandon keeps the result in refs and cleans the folder; restore makes it applicable again', async t => {
   const f = fixture(t);
   const a = await f.worker('A', (p, git) => { writeFileSync(join(p, 'src', 'api.js'), 'precious\n'); git(p, 'commit', '-qam', 'w'); writeFileSync(join(p, 'LEFT.md'), 'left\n'); });
   const abandoned = f.store.abandonEnvironment(a.id);
@@ -236,7 +240,7 @@ test('abandon keeps the result in refs and cleans the folder; restore makes it a
   await rejects(() => f.store.restoreEnvironment(a.id), 'INVALID_STATE');
 });
 
-test('cleanup refuses what it cannot prove: a live session, a user worktree, a folder outside its root; never forces; links as links', async t => {
+it('cleanup refuses what it cannot prove: a live session, a user worktree, a folder outside its root; never forces; links as links', async t => {
   const f = fixture(t);
   const env = await f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'feature/auth' });
   const sess = f.session(env.id, 'running'); f.store.attachEnvironmentSession(env.id, sess.id);
@@ -257,7 +261,7 @@ test('cleanup refuses what it cannot prove: a live session, a user worktree, a f
   assert.ok(!/['"]--force['"]/.test(readFileSync(new URL('../src/core/environments.mjs', import.meta.url), 'utf8')));
 });
 
-test('cleanup: a held folder (simulated) and late work give cleanup_pending, retried safely; no repository-wide prune', async t => {
+it('cleanup: a held folder (simulated) and late work give cleanup_pending, retried safely; no repository-wide prune', async t => {
   const f = fixture(t); let held = true;
   const s = f.reopen({ remove: (repo, path) => { if (held) { const error = new Error('EBUSY: resource busy or locked'); error.code = 'EBUSY'; throw error; } execFileSync('git', ['-C', repo, 'worktree', 'remove', path]); } });
   const a = await f.worker('A', p => writeFileSync(join(p, 'work.md'), 'w\n'), s);
@@ -276,7 +280,7 @@ test('cleanup: a held folder (simulated) and late work give cleanup_pending, ret
   assert.match(f.git(f.repo, 'worktree', 'list', '--porcelain'), /unmounted/);
 });
 
-test('notes from an isolated session carry structured provenance, marked unapplied until the result lands; conflicting proposals both kept', async t => {
+it('notes from an isolated session carry structured provenance, marked unapplied until the result lands; conflicting proposals both kept', async t => {
   const f = fixture(t);
   const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), 'retry 3\n'));
   const b = await f.worker('B', p => writeFileSync(join(p, 'src', 'api.js'), 'retry 5\n'));
@@ -292,7 +296,7 @@ test('notes from an isolated session carry structured provenance, marked unappli
   assert.equal(f.store.originFor(f.project.id, 'missing-session'), null);
 });
 
-test('ports: two environments listen side by side on their own blocks; reconcile only follows the ended one', async t => {
+it('ports: two environments listen side by side on their own blocks; reconcile only follows the ended one', async t => {
   const f = fixture(t, { probe: undefined, range: { start: 47400, end: 47600, size: 10 } });
   const [a, b] = await Promise.all(['A', 'B'].map(task => f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'feature/auth', task })));
   assert.equal(a.ports.filter(port => b.ports.includes(port)).length, 0);
@@ -306,7 +310,7 @@ test('ports: two environments listen side by side on their own blocks; reconcile
 import net from 'node:net';
 const require_net = () => net;
 
-test('the environment follows its session: running, waiting, then completed with its result; no branch switching inside it', async t => {
+it('the environment follows its session: running, waiting, then completed with its result; no branch switching inside it', async t => {
   const f = fixture(t);
   const env = await f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'feature/auth', task: 'sync' });
   const sess = f.session(env.id, 'running'); f.store.attachEnvironmentSession(env.id, sess.id);
@@ -322,7 +326,7 @@ test('the environment follows its session: running, waiting, then completed with
 });
 
 // ---- Regression tests for the independent review's findings ----
-test('review: sensitive names are left out even when Git would quote them (non-ASCII); saved Changes read such names', async t => {
+it('review: sensitive names are left out even when Git would quote them (non-ASCII); saved Changes read such names', async t => {
   const f = fixture(t);
   const dir = 'conf\u00efg'; const note = 'na\u00efve "notes".md';
   const a = await f.worker('A', p => { mkdirSync(join(p, dir)); writeFileSync(join(p, dir, '.env'), 'TOKEN=x\n'); writeFileSync(join(p, note), 'n\n'); });
@@ -336,7 +340,7 @@ test('review: sensitive names are left out even when Git would quote them (non-A
   assert.deepEqual(f.store.sessionChanges(b.sessionId).files.map(file => file.path), [note]);
 });
 
-test('review: Apply after resolving lands the resolution without a manual result; markers left refuse Apply; a clean take-in is the new result', async t => {
+it('review: Apply after resolving lands the resolution without a manual result; markers left refuse Apply; a clean take-in is the new result', async t => {
   const f = fixture(t);
   const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 3, 'A was here')));
   const b = await f.worker('B', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 3, 'B was here')));
@@ -360,7 +364,7 @@ test('review: Apply after resolving lands the resolution without a manual result
   assert.equal(readFileSync(join(f.repo, 'src', 'api.js'), 'utf8'), edit(edit(API, 3, 'A and B'), 9, 'C was here'));
 });
 
-test('review: nothing to apply, a busy branch, a live session and a switched copy are all refused or reported; nothing written', async t => {
+it('review: nothing to apply, a busy branch, a live session and a switched copy are all refused or reported; nothing written', async t => {
   const f = fixture(t);
   const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 2, 'A')));
   const empty = await f.worker('E', () => {});
@@ -387,7 +391,7 @@ test('review: nothing to apply, a busy branch, a live session and a switched cop
   assert.equal(f.store.applyEnvironment(a.id).state, 'integrated');
 });
 
-test('review: the session follows an orphaned agent and does not complete while another session still runs there', async t => {
+it('review: the session follows an orphaned agent and does not complete while another session still runs there', async t => {
   const f = fixture(t);
   const env = await f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'feature/auth' });
   const one = f.session(env.id, 'running'); f.store.attachEnvironmentSession(env.id, one.id);
@@ -400,7 +404,7 @@ test('review: the session follows an orphaned agent and does not complete while 
   assert.equal(f.store.syncEnvironment({ ...f.store.getSession(two.id) }).state, 'completed');
 });
 
-test('review: an Apply interrupted at each step is finished or rolled back, and the checkout\'s index lock is always released', async t => {
+it('review: an Apply interrupted at each step is finished or rolled back, and the checkout\'s index lock is always released', async t => {
   const f = fixture(t);
   const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 5, 'A')));
   const lockFile = join(f.repo, '.git', 'index.lock');
@@ -427,7 +431,7 @@ test('review: an Apply interrupted at each step is finished or rolled back, and 
   assert.equal(readFileSync(join(f.repo, 'src', 'form.js'), 'utf8'), FORM); assert.equal(f.git(f.repo, 'status', '--porcelain'), '');
 });
 
-test('review: cleanup keeps ignored work and nested repositories until confirmed; regenerable folders go', async t => {
+it('review: cleanup keeps ignored work and nested repositories until confirmed; regenerable folders go', async t => {
   const f = fixture(t);
   const a = await f.worker('A', p => { mkdirSync(join(p, 'node_modules', 'x'), { recursive: true }); writeFileSync(join(p, 'node_modules', 'x', 'i.js'), '1\n'); writeFileSync(join(p, 'debug.log'), 'l\n'); });
   assert.equal(f.store.abandonEnvironment(a.id).state, 'removed', 'node_modules and logs are regenerable');
@@ -443,7 +447,7 @@ test('review: cleanup keeps ignored work and nested repositories until confirmed
   assert.ok(existsSync(join(nested.details.path, 'vendor', '.git')));
 });
 
-test('review: a copy no session started in is set aside after a while; a failed one is cleaned; forget refuses isolated', async t => {
+it('review: a copy no session started in is set aside after a while; a failed one is cleaned; forget refuses isolated', async t => {
   const f = fixture(t);
   const stray = await f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'feature/auth' });
   assert.deepEqual(f.store.reconcileEnvironments(f.project.id), [], 'young copies wait for their session');
@@ -454,7 +458,7 @@ test('review: a copy no session started in is set aside after a while; a failed 
   assert.deepEqual(f.store.reconcileEnvironments(f.project.id, { orphanAge: -1 }), []);
 });
 
-test('review: a finished copy takes no new session; Files lists copies in use only; status proposals skip isolated sessions; revisions keep their origin', async t => {
+it('review: a finished copy takes no new session; Files lists copies in use only; status proposals skip isolated sessions; revisions keep their origin', async t => {
   const f = fixture(t);
   const { TerminalManager } = await import('../src/core/terminal.mjs');
   const manager = new TerminalManager({ store: f.store, trackMs: 0, identify: () => null, table: () => null, spawn: () => ({ onData() {}, onExit(fn) { this.exit = fn; }, write() {}, resize() {}, kill() {} }) });
@@ -471,7 +475,7 @@ test('review: a finished copy takes no new session; Files lists copies in use on
 });
 
 // ---- Regression tests for the second review ----
-test('review 2: conflicts markers cannot show (binary, modify/delete) stay unresolved until staged; kinds recorded', async t => {
+it('review 2: conflicts markers cannot show (binary, modify/delete) stay unresolved until staged; kinds recorded', async t => {
   const f = fixture(t);
   writeFileSync(join(f.repo, 'img.bin'), Buffer.from([0, 1, 2, 3])); f.git(f.repo, 'add', '-A'); f.git(f.repo, 'commit', '-qm', 'bin');
   const w = await f.worker('W', p => { writeFileSync(join(p, 'img.bin'), Buffer.from([0, 9, 9, 9])); writeFileSync(join(p, 'src', 'form.js'), edit(FORM, 2, 'W')); });
@@ -489,7 +493,7 @@ test('review 2: conflicts markers cannot show (binary, modify/delete) stay unres
   assert.deepEqual([...readFileSync(join(f.repo, 'img.bin'))], [0, 7, 7, 7]); assert.equal(readFileSync(join(f.repo, 'src', 'form.js'), 'utf8'), edit(FORM, 2, 'W'));
 });
 
-test('review 2: a secret or another repository the worker committed is left out of the result, at any depth', async t => {
+it('review 2: a secret or another repository the worker committed is left out of the result, at any depth', async t => {
   const f = fixture(t);
   const a = await f.worker('A', (p, git) => {
     writeFileSync(join(p, '.env'), 'TOKEN=x\n'); mkdirSync(join(p, 'tools', 'vendor'), { recursive: true }); writeFileSync(join(p, 'tools', 'a.js'), 'a\n');
@@ -505,7 +509,7 @@ test('review 2: a secret or another repository the worker committed is left out 
   const held = f.store.abandonEnvironment(a.id); assert.equal(held.state, 'cleanup_pending'); assert.match(held.cleanup.reason, /another Git repository \(tools\/vendor\)/);
 });
 
-test('review 2: taking in the branch twice works; the copy is left with no merge in progress', async t => {
+it('review 2: taking in the branch twice works; the copy is left with no merge in progress', async t => {
   const f = fixture(t);
   const c = await f.worker('C', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 9, 'C')));
   const commit = (line, text) => { writeFileSync(join(f.repo, 'src', 'api.js'), edit(readFileSync(join(f.repo, 'src', 'api.js'), 'utf8'), line, text)); f.git(f.repo, 'commit', '-qam', text); };
@@ -521,7 +525,7 @@ test('review 2: taking in the branch twice works; the copy is left with no merge
   assert.equal(readFileSync(join(f.repo, 'src', 'api.js'), 'utf8'), edit(edit(edit(edit(API, 1, 'one'), 2, 'two'), 3, 'three'), 9, 'both nine'));
 });
 
-test('review 2: recovery removes only Journal\'s own index lock, swaps in only the exact new index, and sees a landed Apply the branch moved past', async t => {
+it('review 2: recovery removes only Journal\'s own index lock, swaps in only the exact new index, and sees a landed Apply the branch moved past', async t => {
   const f = fixture(t); const lockFile = join(f.repo, '.git', 'index.lock');
   // Crash right after taking the lock (phase still planned): Journal's lock is recognised and released.
   const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 5, 'A')));
@@ -544,7 +548,7 @@ test('review 2: recovery removes only Journal\'s own index lock, swaps in only t
   assert.equal(readFileSync(join(f.repo, 'src', 'form.js'), 'utf8'), edit(FORM, 5, 'B')); assert.equal(f.git(f.repo, 'status', '--porcelain'), '');
 });
 
-test('review 2: Apply refuses a result that changed after the preview', async t => {
+it('review 2: Apply refuses a result that changed after the preview', async t => {
   const f = fixture(t);
   const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 5, 'A')));
   const preview = f.store.previewEnvironmentApply(a.id);
@@ -556,7 +560,7 @@ test('review 2: Apply refuses a result that changed after the preview', async t 
   assert.equal(f.store.applyEnvironment(a.id, { expect: again.result }).state, 'integrated');
 });
 
-test('review 2: a session start that races an Apply is refused before it counts as live', async t => {
+it('review 2: a session start that races an Apply is refused before it counts as live', async t => {
   const f = fixture(t);
   const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 5, 'A')));
   const { TerminalManager } = await import('../src/core/terminal.mjs');
@@ -567,4 +571,10 @@ test('review 2: a session start that races an Apply is refused before it counts 
   f.store.prepareContext = (...args) => { f.store.applyEnvironment(a.id); return prepare(...args); };
   await assert.rejects(manager.start({ projectId: f.project.id, provider: 'claude', task: 'more', workspaceId: a.id }), /no longer takes new work/);
   assert.equal(spawned, 0); assert.equal(f.store.getEnvironment(a.id).state, 'integrated');
+});
+
+test('on Windows, creating an isolated session is refused before any Git change', { skip: !windows && 'Windows only' }, async t => {
+  const f = fixture(t);
+  await rejects(() => f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'feature/auth' }), 'UNSUPPORTED_PLATFORM');
+  assert.deepEqual(f.store.listEnvironments(f.project.id), []);
 });
