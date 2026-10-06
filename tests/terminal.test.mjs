@@ -1054,3 +1054,26 @@ test('recovery retains tracked child writers and never treats a missing process 
   f.store.saveSession({ ...session, pid: 9001, runtimeId: 'old' }); next.table = async () => null;
   const [unknown] = await next.recover(); assert.equal(unknown.survivors, null);
 });
+
+test('leftover cleanup never converts unknown or still-running writers into an empty set', async t => {
+  const f = runtime(t); const { session } = await f.manager.start({ projectId: f.project.id, provider: 'claude', task: 'cleanup fixture' });
+  f.callbacks.exit({ exitCode: 0 });
+  const entry = f.manager.entries.get(session.id);
+  entry.session.survivors = null;
+  await assert.rejects(f.manager.terminateSurvivors(session.id), { code: 'WRITERS_UNKNOWN' });
+  assert.equal(entry.session.survivors, null);
+  const child = { pid: 9102, started: 'fixture-start', command: 'fixture-child' };
+  entry.session.survivors = [child]; f.manager.table = async () => [child];
+  f.manager.verifiedSignal = async () => ({ signalled: false });
+  await f.manager.terminateSurvivors(session.id);
+  assert.deepEqual(f.store.getSession(session.id).survivors, [child], 'failed signals cannot admit another writer');
+  f.manager.verifiedSignal = async () => ({ signalled: true });
+  await f.manager.terminateSurvivors(session.id);
+  assert.deepEqual(f.store.getSession(session.id).survivors, [child], 'a sent signal is not evidence the process exited');
+  f.manager.table = async () => null;
+  await f.manager.terminateSurvivors(session.id);
+  assert.deepEqual(f.store.getSession(session.id).survivors, [child], 'a failed scan retains the known blockers');
+  f.manager.table = async () => [];
+  await f.manager.terminateSurvivors(session.id);
+  assert.deepEqual(f.store.getSession(session.id).survivors, [], 'only a verified empty scan releases the writer guard');
+});

@@ -14,6 +14,7 @@ import { processIdentity, isAlive } from '../src/core/process.mjs';
 import { removeLater } from './support/cleanup.mjs';
 import { fileURLToPath } from 'node:url';
 import { ToolClient } from '../src/agent-tools/client.mjs';
+import { fixtureEnv } from './support/env.ts';
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 async function until(check, timeout = 3000) {
@@ -784,4 +785,53 @@ test('Cursor level 2: with Journal\'s reviewed entries, turns end, and an aborte
   await until(() => f.store.getSession(session.id).status === 'exited', 8000);
   await until(() => !runtime.observers.sessions.has(session.id), 8000);
   assert.deepEqual(turnEnds(f, session.id), [['g1', 'completed'], ['g2', 'interrupted']], 'One outcome per generation; the late stop for g1 changes nothing');
+});
+
+
+test('MCP stdio restart preserves mutation identity and never evicts the desktop connection', { skip: process.platform === 'win32' }, async t => {
+  const f = fixture(t); const { runtime, fake } = await f.boot();
+  const desktop = client(f, t); await desktop.connect();
+  const run = await runtime.workers.startRun({ callerId: 'desktop', requestId: 'mcp-run', projectId: f.project.id, logicalBranch: 'main', goal: 'MCP restart fixture', provider: 'claude' });
+  const launchEnv = fake.procs[0].options.env;
+  const env = fixtureEnv({ root: f.root, bin: join(f.root, 'bin'), extra: { JOURNAL_TOOL_SOCKET: runtime.path, JOURNAL_TOOL_ID: launchEnv.JOURNAL_TOOL_ID, JOURNAL_TOOL_TOKEN: launchEnv.JOURNAL_TOOL_TOKEN } });
+  const startServer = async () => {
+    const child = spawnChild(process.execPath, [resolve('src/agent-tools/server.mjs')], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const pending = new Map(); let sequence = 0, buffer = '', diagnostic = '';
+    child.stderr.on('data', data => { diagnostic = (diagnostic + data).slice(-2000); });
+    child.stdout.on('data', data => {
+      buffer += data;
+      while (buffer.includes('\n')) {
+        const newline = buffer.indexOf('\n'); const message = JSON.parse(buffer.slice(0, newline)); buffer = buffer.slice(newline + 1);
+        const waiter = pending.get(message.id); if (!waiter) continue;
+        pending.delete(message.id); clearTimeout(waiter.timer);
+        if (message.error) waiter.reject(new Error(message.error.message)); else waiter.resolve(message.result);
+      }
+    });
+    const closed = new Promise(resolve => child.once('close', resolve));
+    child.on('close', () => { for (const waiter of pending.values()) { clearTimeout(waiter.timer); waiter.reject(new Error(`MCP closed: ${diagnostic}`)); } pending.clear(); });
+    const stop = async () => { child.kill('SIGTERM'); await closed; };
+    t.after(stop);
+    const rpc = (method, params = {}) => new Promise((resolve, reject) => {
+      const id = ++sequence; const timer = setTimeout(() => { pending.delete(id); reject(new Error(`MCP timeout: ${method}; ${diagnostic}`)); }, 5000);
+      pending.set(id, { resolve, reject, timer }); child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+    });
+    const initialized = await rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'fixture', version: '1' } });
+    assert.equal(initialized.serverInfo.name, 'journal');
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
+    return { rpc, stop };
+  };
+  const first = await startServer();
+  const tools = await first.rpc('tools/list'); assert.ok(tools.tools.some(tool => tool.name === 'create_task'));
+  const args = { requestId: 'restart-request', title: 'Exactly one durable task' };
+  const created = await first.rpc('tools/call', { name: 'create_task', arguments: args });
+  assert.ok(!created.isError); const task = JSON.parse(created.content[0].text);
+  await first.stop();
+  const second = await startServer();
+  const repeated = await second.rpc('tools/call', { name: 'create_task', arguments: args });
+  assert.deepEqual(JSON.parse(repeated.content[0].text), task);
+  const changed = await second.rpc('tools/call', { name: 'create_task', arguments: { ...args, title: 'Changed arguments' } });
+  assert.equal(changed.isError, true); assert.equal(JSON.parse(changed.content[0].text).code, 'REQUEST_MISMATCH');
+  assert.equal(f.store.getRun(run.id).tasks.length, 1);
+  assert.equal((await desktop.call('ping')).runtimeId, runtime.runtimeId);
+  await second.stop(); await runtime.capacity.close();
 });

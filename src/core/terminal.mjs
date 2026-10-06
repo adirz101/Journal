@@ -557,9 +557,23 @@ export class TerminalManager extends EventEmitter {
   // Explicit user action after a stop reported surviving descendants.
   async terminateSurvivors(id) {
     const session = this.entries.get(id)?.session ?? await this.store.getSession(id);
-    const results = [];
-    for (const row of session.survivors ?? []) results.push({ pid: row.pid, ...await this.verifiedSignal(row.pid, { started: row.started }, 'SIGTERM', this.platform) });
-    session.survivors = []; this.persist(session, true); this.record(id, 'cleanup', { results: results.map(r => ({ pid: r.pid, signalled: r.signalled })) });
+    if (!Array.isArray(session.survivors)) throw Object.assign(new Error('The previous process tree is unknown; inspect it before reusing this folder'), { code: 'WRITERS_UNKNOWN' });
+    const recorded = [...session.survivors]; const results = [];
+    for (const row of recorded) results.push({ pid: row.pid, ...await this.verifiedSignal(row.pid, { started: row.started }, 'SIGTERM', this.platform) });
+    // Sending SIGTERM is not proof of exit. Preserve blockers when a signal fails,
+    // a child ignores it, or the process table cannot be read. Only observed absence
+    // may release the environment's writer guard.
+    let remaining = recorded; let verified = false; const deadline = Date.now() + 1000;
+    do {
+      const current = survivors(recorded, await Promise.resolve(this.table()).catch(() => null));
+      if (current === null) break;
+      remaining = current; verified = true;
+      if (!remaining.length || Date.now() >= deadline) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    } while (true);
+    session.survivors = remaining;
+    await this.store.saveSession({ ...session });
+    this.record(id, 'cleanup', { results: results.map(r => ({ pid: r.pid, signalled: r.signalled })), remaining: remaining.length, verified });
     this.emitStatus(session);
     return results;
   }

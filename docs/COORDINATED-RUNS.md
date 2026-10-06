@@ -37,3 +37,5 @@ This is not a dependency installer: ignored `node_modules`, a mutable worker fol
 Automated tests use fixture CLIs, real temporary Git repositories, SQLite and Electron-native node-pty. They do not use provider logins, provider requests or secrets. Passing these checks is not authenticated provider acceptance.
 
 Still required before enabling the gated production transports or declaring M10b complete: local authenticated provider/version trials for MCP permissions, exact resume, continuation and live boundaries; mixed-provider conflict/review workflows; higher-cap calibration; and the real usefulness trial. No public release or merge is implied by the implementation PR.
+
+See the [validation record and native worksheet](ORCHESTRATION-VALIDATION.md) for executable evidence and the remaining manual trials.
