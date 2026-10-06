@@ -29,7 +29,7 @@ export default Object.freeze({
   register({ dir, session, command }) {
     const hooks = Object.fromEntries(EVENTS.map(event => [event, [{ hooks: [{ type: 'command', command, timeout: TIMEOUT_S }] }]]));
     const settingsFile = join(dir, `${session.id}.settings.json`);
-    writeFileSync(settingsFile, JSON.stringify({ hooks }), { mode: 0o600 });
+    writeFileSync(settingsFile, JSON.stringify({ hooks, ...(session.role && session.journalToolsAllowed === true ? { permissions: { allow: ['mcp__journal__*'] } } : {}) }), { mode: 0o600 });
     return { settingsFile, files: [settingsFile], observes: { turns: true, approvals: true } };
   },
   // Hook payload -> observation line (in the hook process). Every event, PermissionRequest

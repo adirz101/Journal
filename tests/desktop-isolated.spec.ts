@@ -57,7 +57,8 @@ test('an isolated session works in its own copy; its result is previewed and app
     await skipFirstRun(page);
     await isolatedSession(page, 'LINE 2 changed by the isolated agent');
     const rows = await page.locator('.xterm-rows').innerText();
-    expect(rows).toContain(`WORKING IN ${f.data}`); expect(rows).toMatch(/PORT 4\d{4} BRANCH feature\/auth/);
+    // A managed worktree can have a longer path than one terminal row.
+    expect(rows.replace(/\n/g, '')).toContain(`WORKING IN ${f.data}`); expect(rows).toMatch(/PORT 4\d{4} BRANCH feature\/auth/);
     expect(readFileSync(join(f.project, 'src', 'api.js'), 'utf8')).toBe(LINES); expect(f.git('status', '--porcelain')).toBe('');
     await expect(page.locator('.session-header')).toContainText('Isolated · ⑂ feature/auth');
     await inspectorTab(page, 'Session');

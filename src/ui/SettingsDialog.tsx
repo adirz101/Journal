@@ -23,7 +23,7 @@ export function SettingsDialog({ appearance, onAppearance, update, project, onCl
   // Shown at once; main's stored values replace it, or the previous ones come back on failure.
   const prefer = (key: keyof Preferences, value: boolean) => {
     const before = preferences; setError(''); setPreferences(current => current && { ...current, [key]: value });
-    void api<Preferences>('setPreference', { key, value }).then(setPreferences).catch(e => { setPreferences(before); failed(e); });
+    void api<Preferences>('setPreference', { key, value }).then(next => { setPreferences(next); window.dispatchEvent(new CustomEvent('journal-preferences', { detail: next })); }).catch(e => { setPreferences(before); failed(e); });
   };
   const act = async (action: () => Promise<string | null>) => { setBusy(true); setError(''); setMessage(''); try { const text = await action(); if (text) setMessage(text); onDataChanged(); } catch (e) { failed(e); } finally { setBusy(false); } };
   return <dialog ref={dialog} onCancel={onClose} aria-labelledby="settings-title" className="knowledge-dialog settings-dialog">
@@ -42,6 +42,7 @@ export function SettingsDialog({ appearance, onAppearance, update, project, onCl
     {/* Its own section, headed Updates. */}
     <UpdateSettings state={update} />
     <CursorHooksSetting onError={failed} />
+    <section className="settings-section" aria-labelledby="settings-experimental"><h3 id="settings-experimental">Experimental</h3>{preferences && <label className="inline-check"><input type="checkbox" checked={preferences.coordinatedRuns} onChange={event => prefer('coordinatedRuns', event.target.checked)} />Coordinated runs</label>}<p className="muted small-print">Coordinate tasks and isolated workers. Automatic delivery and live folder changes remain disabled where provider behavior has not been validated.</p></section>
     <section className="settings-section" aria-labelledby="settings-data"><h3 id="settings-data">{shell.dataAndBackups}</h3>
       <p className="muted">Everything stays on this device. Terminal output is never stored; timelines of sessions that ended more than 90 days ago are trimmed automatically. Project memory is never pruned.</p>
       {info && <dl className="receipt-facts"><dt>Database</dt><dd>{mb(info.database)} + {mb(info.wal)} write-ahead log</dd>

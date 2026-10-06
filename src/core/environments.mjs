@@ -25,7 +25,7 @@ const TRANSITIONS = {
   completed: ['running', 'waiting', 'integrating', 'conflict', 'abandoned'],
   conflict: ['running', 'waiting', 'completed', 'integrating', 'abandoned'],
   integrating: ['integrated', 'completed', 'conflict'],
-  integrated: ['cleanup_pending', 'removed'],
+  integrated: ['running', 'waiting', 'completed', 'integrating', 'conflict', 'abandoned', 'cleanup_pending', 'removed'],
   abandoned: ['completed', 'cleanup_pending', 'removed'],
   failed: ['abandoned', 'cleanup_pending', 'removed'],
   cleanup_pending: ['cleanup_pending', 'removed', 'completed'],
@@ -179,28 +179,36 @@ export class Environments {
   }
   patch(id, patch) { return this.save({ ...this.record(id), ...patch }); }
   event(env, action, body = {}) { if (env.sessionId) { try { this.store.appendEvent(env.sessionId, 'environment', { action, environmentId: env.id, ...body }); } catch { /* the timeline is best effort */ } } }
-  liveSessions(id) { return this.store.activeSessions().filter(session => session.workspaceId === id && LIVE_SESSION.has(session.status)); }
+  liveSessions(id) { return this.store.db.prepare("SELECT body FROM sessions WHERE json_extract(body,'$.workspaceId')=?").all(id).map(row => JSON.parse(row.body)).filter(session => LIVE_SESSION.has(session.status) || session.survivors === null || session.survivors?.length); }
 
   // ---- Create, attach, list ----
   // Creations run one at a time, so two concurrent ones never pick the same port block.
   create(input) { const next = (this.creating ?? Promise.resolve()).catch(() => {}).then(() => this.createNow(input)); this.creating = next; return next; }
-  async createNow({ projectId, logicalBranch, task = null, sessionId = null }) {
+  async createNow({ projectId, logicalBranch, task = null, sessionId = null, attemptId = null, baseCommit = null }) {
     // This milestone is macOS only (Windows needs its own path, lock and line-ending handling).
     if (process.platform === 'win32') fail('UNSUPPORTED_PLATFORM', 'Isolated sessions are available on macOS only for now');
     if (!gitSupportsEnvironments()) fail('GIT_TOO_OLD', 'Isolated sessions need Git 2.40 or later');
     const project = this.store.project(projectId); const repo = project.root;
     if (typeof logicalBranch !== 'string' || !logicalBranch || logicalBranch.startsWith('-') || tryGit(repo, ['check-ref-format', '--branch', logicalBranch]) === null) fail('INVALID_BRANCH', 'Isolated sessions start from a named branch');
-    const base = tryGit(repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${logicalBranch}^{commit}`]);
+    if (baseCommit && !/^[a-f0-9]{40,64}$/.test(baseCommit)) fail('INVALID_BASE', 'A pinned commit is required');
+    const base = tryGit(repo, ['rev-parse', '--verify', '--quiet', baseCommit ? `${baseCommit}^{commit}` : `refs/heads/${logicalBranch}^{commit}`]);
     if (!base) fail('NOT_FOUND', `There is no branch ${logicalBranch}`);
     const id = randomUUID(); const projectDir = join(this.envRoot, short(projectId)); const path = join(projectDir, id.replace(/-/g, '').slice(0, 10));
     if (!inside(this.envRoot, path)) fail('UNSAFE_PATH', 'Isolated folders stay inside Journal\'s data folder');
-    const taken = this.store.db.prepare(`SELECT body FROM workspaces WHERE json_extract(body,'$.kind')='isolated' AND json_extract(body,'$.lifecycle') NOT IN ('removed')`).all().map(row => JSON.parse(row.body).ports?.[0]).filter(Number.isInteger);
-    const ports = await allocatePortBlock(taken, { ...(this.range ? { range: this.range } : {}), ...(this.probe ? { probe: this.probe } : {}) });
-    const env = { id, projectId, kind: 'isolated', path, branch: null, logicalBranch, base, sessionId, task: typeof task === 'string' ? task.slice(0, 200) : null, ports,
-      tmpDir: `${path}.tmp`, logDir: `${path}.log`, lifecycle: 'creating', result: null, conflict: null, integration: null, cleanup: null, error: null,
-      createdAt: now(), history: [{ state: 'creating', at: now() }] };
-    // Intent first: the record exists before any Git side effect, so a crash is reconciled.
-    this.save(env); this.store.audit('environment-intent', { id, projectId, logicalBranch, base });
+    const takenBlocks = () => this.store.db.prepare(`SELECT body FROM workspaces WHERE json_extract(body,'$.kind')='isolated' AND json_extract(body,'$.lifecycle') NOT IN ('removed')`).all().map(row => JSON.parse(row.body).ports?.[0]).filter(Number.isInteger);
+    let env;
+    while (!env) {
+      const ports = await allocatePortBlock(takenBlocks(), { ...(this.range ? { range: this.range } : {}), ...(this.probe ? { probe: this.probe } : {}) });
+      // Another store owner may have reserved these while the OS probes awaited. The
+      // write transaction rechecks and publishes the reservation together with its intent.
+      env = this.store.transaction(() => {
+        if (takenBlocks().includes(ports[0])) return null;
+        const candidate = { id, projectId, kind: 'isolated', path, branch: null, logicalBranch, base, sessionId, attemptId, task: typeof task === 'string' ? task.slice(0, 200) : null, ports,
+          tmpDir: `${path}.tmp`, logDir: `${path}.log`, lifecycle: 'creating', result: null, conflict: null, integration: null, cleanup: null, error: null,
+          createdAt: now(), history: [{ state: 'creating', at: now() }] };
+        this.save(candidate); this.store.audit('environment-intent', { id, projectId, logicalBranch, base }); return candidate;
+      });
+    }
     try {
       mkdirSync(projectDir, { recursive: true, mode: 0o700 });
       git(repo, ['worktree', 'add', '--detach', '--lock', '--reason', `journal env ${id}`, path, base]);
@@ -232,7 +240,7 @@ export class Environments {
     // An orphaned agent may still be writing in the folder: it counts as running.
     const to = session.status === 'waiting' ? 'waiting' : ['starting', 'running', 'stopping', 'orphaned'].includes(session.status) ? 'running' : 'ended';
     if (to !== 'ended') { if (env.lifecycle !== to && TRANSITIONS[env.lifecycle]?.includes(to)) return this.view(this.transition(env.id, to, { sessionId: session.id })); return this.view(env); }
-    if (this.liveSessions(env.id).some(other => other.id !== session.id)) return this.view(env);
+    if (session.survivors === null || session.survivors?.length || this.liveSessions(env.id).some(other => other.id !== session.id)) return this.view(env);
     if (['running', 'waiting', 'ready'].includes(env.lifecycle) && existsSync(env.path)) { this.snapshot(env.id); return this.view(this.transition(env.id, 'completed')); }
     return this.view(env);
   }
@@ -245,11 +253,58 @@ export class Environments {
   }
 
   // ---- Result snapshot ----
+  // Backfill only the last legacy result: older overwritten refs cannot be reconstructed.
+  retainResults(id) {
+    let env = this.record(id);
+    if (env.resultsVersion === 1) return env;
+    const results = env.result ? [{ ...env.result, resultId: env.result.resultId ?? env.result.sha, base: env.result.base ?? env.base }] : [];
+    const repo = this.store.project(env.projectId).root;
+    for (const result of results) git(repo, ['update-ref', REF(id, `results/${result.resultId}`), result.sha]);
+    return this.patch(id, { resultsVersion: 1, results, result: results.at(-1) ?? null });
+  }
+  resultHistory(id) { return this.retainResults(id).results.map(result => ({ ...result, id: result.sha })); }
+  resultById(id, resultId) {
+    const result = this.resultHistory(id).find(result => result.resultId === resultId || result.sha === resultId);
+    if (!result) fail('NOT_FOUND', 'This environment has no such retained result');
+    return result;
+  }
+  recoverCaptureRefs(id) {
+    const env = this.retainResults(id); if (env.capture) return env;
+    const repo = this.store.project(env.projectId).root; const prefix = REF(id, 'results/');
+    const results = [...env.results]; const known = new Set(results.map(result => result.resultId));
+    for (const ref of git(repo, ['for-each-ref', '--format=%(refname)', prefix]).split('\n').filter(Boolean)) {
+      const resultId = ref.slice(prefix.length); if (known.has(resultId)) continue;
+      const sha = git(repo, ['rev-parse', ref]);
+      const trailer = git(repo, ['log', '-1', '--format=%B', sha]).split('\n').find(line => line.startsWith('Journal-Capture: '));
+      if (!trailer) continue; // Legacy or unknown refs are retained, never guessed into a result.
+      let result; try { result = JSON.parse(trailer.slice('Journal-Capture: '.length)); } catch { continue; }
+      if (result?.resultId !== resultId || !Array.isArray(result.files) || result.tree !== git(repo, ['rev-parse', `${sha}^{tree}`]) || result.head !== git(repo, ['rev-parse', `${sha}^`])) continue;
+      results.push({ ...result, sha }); known.add(resultId);
+    }
+    if (results.length === env.results.length) return env;
+    results.sort((a, b) => a.at.localeCompare(b.at));
+    const result = results.at(-1);
+    git(repo, ['update-ref', REF(id, 'result'), result.sha]);
+    return this.patch(id, { results, result });
+  }
+  publishCapture(id) {
+    const env = this.retainResults(id); const result = env.capture?.result;
+    if (!result) return env;
+    const repo = this.store.project(env.projectId).root;
+    const ref = REF(id, `results/${result.resultId}`);
+    const existing = tryGit(repo, ['rev-parse', '--verify', '--quiet', ref]);
+    if (existing && existing !== result.sha) fail('RESULT_CHANGED', 'The immutable result ref has changed');
+    if (!existing) git(repo, ['update-ref', ref, result.sha, '']);
+    this.hooks.afterCaptureRef?.(this.record(id));
+    git(repo, ['update-ref', REF(id, 'result'), result.sha]);
+    return this.patch(id, { result, results: [...env.results.filter(saved => saved.resultId !== result.resultId), result], capture: null });
+  }
   // Committed + staged + unstaged + untracked (not ignored) work as one commit whose parent is the
   // environment's HEAD, built in a side index (the worker's own index is untouched). New or
   // changed files with sensitive names are left out and listed. Idempotent for unchanged content.
-  snapshot(id) {
-    const env = this.record(id); const repo = this.store.project(env.projectId).root;
+  snapshot(id, captureContext = null) {
+    this.recoverCaptureRefs(id);
+    const env = this.publishCapture(id); const repo = this.store.project(env.projectId).root;
     if (!existsSync(env.path)) { if (env.result) return this.view(env); fail('INVALID_STATE', 'The isolated folder is gone and no result was captured'); }
     const head = git(env.path, ['rev-parse', 'HEAD']);
     // The worker may have switched its copy onto a branch: the result is still its files, but say so.
@@ -274,12 +329,21 @@ export class Environments {
       tree = git(env.path, ['write-tree'], { env: side });
     } finally { rmSync(index, { force: true }); }
     git(repo, ['update-ref', REF(id, 'head'), head]);
-    if (env.result && env.result.tree === tree && (env.result.head === head || env.result.sha === head)) return this.view((env.result.attached ?? null) === attached ? env : this.patch(id, { result: { ...env.result, attached } }));
-    const message = [`Journal result of isolated session ${id}`, '', `Journal-Environment: ${id}`, `Journal-Session: ${env.sessionId ?? '-'}`, `Journal-Logical-Branch: ${env.logicalBranch}`, `Journal-Base: ${env.base}`].join('\n');
-    const sha = git(repo, ['commit-tree', tree, '-p', head, '-m', message], { env: IDENTITY });
-    git(repo, ['update-ref', REF(id, 'result'), sha]);
+    const sameCapture = !captureContext || (env.result?.launchId === captureContext.launchId && env.result?.turnId === captureContext.turnId && env.result?.attemptId === captureContext.attemptId);
+    if (sameCapture && env.result && env.result.tree === tree && (env.result.head === head || env.result.sha === head)) return this.view((env.result.attached ?? null) === attached ? env : this.patch(id, { result: { ...env.result, attached } }));
     const files = nameStatus(repo, env.base, tree);
-    const saved = this.patch(id, { result: { sha, head, tree, files: files.slice(0, 500), fileCount: files.length, excluded, nested, attached, at: now() } });
+    const envelope = { resultId: randomUUID(), head, tree, base: env.base, files: files.slice(0, 500), fileCount: files.length, excluded, nested, attached, at: now(),
+      ...(captureContext ? { attemptId: captureContext.attemptId, launchId: captureContext.launchId, turnId: captureContext.turnId, captureGeneration: captureContext.captureGeneration ?? null } : {}) };
+    // Pin before recording the SHA in SQLite. The envelope in the pinned commit lets recovery
+    // adopt a ref published just before a crash, without guessing metadata from working files.
+    const message = [`Journal result of isolated session ${id}`, '', `Journal-Environment: ${id}`, `Journal-Session: ${env.sessionId ?? '-'}`, `Journal-Logical-Branch: ${env.logicalBranch}`, `Journal-Base: ${env.base}`, `Journal-Capture: ${JSON.stringify(envelope)}`].join('\n');
+    const sha = git(repo, ['commit-tree', tree, '-p', head, '-m', message], { env: IDENTITY });
+    const result = { ...envelope, sha };
+    git(repo, ['update-ref', REF(id, `results/${result.resultId}`), sha, '']);
+    this.hooks.afterCapturePin?.({ ...this.record(id), capture: { phase: 'pinned', result } });
+    this.patch(id, { capture: { phase: 'prepared', result } });
+    this.hooks.afterCaptureIntent?.(this.record(id));
+    const saved = this.publishCapture(id);
     this.event(saved, 'result', { files: files.length, excluded: excluded.length });
     return this.view(saved);
   }
@@ -287,7 +351,7 @@ export class Environments {
   // ---- Previewed Apply ----
   // Three-way merge of the result into the branch from the recorded base, in the object store only;
   // what Apply would change in the checkout holding the branch; overlap with its uncommitted work.
-  preview(id) {
+  preview(id, { retain = true } = {}) {
     const env = this.record(id); const repo = this.store.project(env.projectId).root;
     if (!env.result) fail('NO_RESULT', 'This isolated session has no captured result yet');
     const logicalHead = tryGit(repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${env.logicalBranch}^{commit}`]);
@@ -303,7 +367,11 @@ export class Environments {
     const dirty = checkout && existsSync(checkout.path) ? dirtyPaths(checkout.path) : [];
     const blockedBy = changes.map(change => change.path).filter(path => dirty.includes(path));
     const unresolved = this.unresolved(env);
-    return { environmentId: id, logicalBranch: env.logicalBranch, base: env.base, logicalHead, result: env.result.sha, moved: commitsSince > 0 || !baseOnBranch, commitsSince, baseOnBranch,
+    const expect = randomUUID();
+    const binding = { expect, resultId: env.result.resultId ?? env.result.sha, result: env.result.sha, resultTree: env.result.tree, base: env.base, logicalBranch: env.logicalBranch, logicalHead };
+    if (retain) this.patch(id, { applyPreviews: [...(env.applyPreviews ?? []), binding].slice(-20) });
+    const executable = git(repo, ['diff', '--summary', env.base, env.result.sha]).split('\n').filter(line => /(?:mode change 100644 => 100755|create mode 100755)/.test(line));
+    return { expect, environmentId: id, logicalBranch: env.logicalBranch, base: env.base, logicalHead, result: env.result.sha, moved: commitsSince > 0 || !baseOnBranch, commitsSince, baseOnBranch, nested: env.result.nested ?? [], executable,
       clean, conflicts, changes, excluded: env.result.excluded ?? [], blockedBy, busy, unresolved, empty: clean && changes.length === 0, switchedTo: env.result.attached ?? null,
       canApply: clean && blockedBy.length === 0 && changes.length > 0 && !busy && unresolved.length === 0, checkedOut: !!checkout, tree: clean ? tree : null,
       details: { checkout: checkout?.path ?? null } };
@@ -344,17 +412,21 @@ export class Environments {
   // the new index is built in a side file; the branch moves by compare-and-swap; only then the side
   // index replaces the real one. A conflict, overlap or race writes nothing.
   // expect: the result ID the person previewed; Apply refuses if the folder changed since then.
-  apply(id, { message, expect } = {}) {
+  apply(id, { message, expect, operationId = null } = {}) {
     const env0 = this.record(id); const repo = this.store.project(env0.projectId).root;
-    if (!['completed', 'conflict'].includes(env0.lifecycle)) fail('INVALID_STATE', `An isolated session that is ${env0.lifecycle} cannot be applied`, { state: env0.lifecycle });
+    if (!['completed', 'conflict', 'integrated'].includes(env0.lifecycle)) fail('INVALID_STATE', `An isolated session that is ${env0.lifecycle} cannot be applied`, { state: env0.lifecycle });
     if (this.liveSessions(id).length) fail('INVALID_STATE', 'Its session is still running; stop it first so the result is final');
     const lock = this.lock(`${short(env0.projectId)}-${short(env0.logicalBranch)}`); if (!lock) fail('LOCKED', 'Another Apply to this branch is in progress');
     try {
       // What lands is what the folder holds now: the result is captured again (a no-op when unchanged).
       if (existsSync(env0.path)) this.snapshot(id);
       const env = this.record(id);
-      if (expect && env.result?.sha !== expect) fail('RESULT_CHANGED', 'Its files changed since the preview; preview again');
+      const binding = expect ? env.applyPreviews?.find(preview => preview.expect === expect) : null;
+      // Older single-session callers use a commit SHA; new callers use the opaque retained preview.
+      if (expect && !binding && !/^[a-f0-9]{40,64}$/.test(expect)) fail('PREVIEW_EXPIRED', 'This preview is no longer available; preview again');
+      if (expect && (env.result?.sha !== (binding?.result ?? expect) || (binding && (binding.resultTree !== env.result.tree || binding.base !== env.base || binding.resultId !== (env.result.resultId ?? env.result.sha))))) fail('RESULT_CHANGED', 'Its files changed since the preview; preview again');
       const preview = this.preview(id);
+      if (binding && (binding.logicalHead !== preview.logicalHead || binding.logicalBranch !== env.logicalBranch)) fail('BRANCH_MOVED', 'The branch changed since the preview; preview again');
       if (preview.unresolved.length) fail('UNRESOLVED', 'Some files that conflicted are not resolved yet; resolve them in the session first', { paths: preview.unresolved });
       if (!preview.clean) {
         const saved = this.transition(id, 'conflict', { conflict: { paths: preview.conflicts, against: preview.logicalHead, at: now() } });
@@ -373,7 +445,7 @@ export class Environments {
       // Intent first. Phases: planned → locked (Journal holds the checkout's index.lock) → files (the
       // side index and files are updated) → landed (the branch moved) → swapping → done. Reconcile
       // finishes or undoes each one.
-      const plan = { phase: 'planned', from: preview.logicalHead, commit, result: env.result.sha, checkout, indexLock, sideIndex, changes: preview.changes.length, at: now() };
+      const plan = { id: randomUUID(), operationId, phase: 'planned', from: preview.logicalHead, baseFrom: env.base, commit, result: env.result.sha, resultId: env.result.resultId ?? env.result.sha, checkout, indexLock, sideIndex, changes: preview.changes.length, at: now() };
       const started = this.transition(id, 'integrating', { integration: plan });
       this.event(started, 'apply-started', { from: preview.logicalHead });
       const phase = name => this.patch(id, { integration: { ...this.record(id).integration, phase: name } });
@@ -413,7 +485,7 @@ export class Environments {
         release(); try { this.transition(id, 'completed', { integration: null }); } catch { /* reconcile settles the state; only Journal's own lock is ever removed */ }
         throw error;
       }
-      const done = this.transition(id, 'integrated', { conflict: null, integration: { ...this.record(id).integration, phase: 'done', landedAt: now() } });
+      const done = this.finishIntegration(id);
       this.store.audit('environment-applied', { id, branch: env.logicalBranch, commit });
       this.event(done, 'applied', { commit, branch: env.logicalBranch, files: preview.changes.length });
       return this.view(done);
@@ -424,13 +496,15 @@ export class Environments {
   // the other way), conflict markers stay there for its worker, and the base moves to that commit.
   // The worker's work, uncommitted included, first becomes the environment's HEAD (its result), so
   // the merge never refuses and nothing is lost.
-  updateFromBranch(id) {
+  updateFromBranch(id, options = {}) {
     const env = this.record(id); const repo = this.store.project(env.projectId).root;
-    if (!['completed', 'conflict', 'ready'].includes(env.lifecycle)) fail('INVALID_STATE', `An isolated session that is ${env.lifecycle} cannot take in its branch`, { state: env.lifecycle });
+    if (options.operationId && env.takeIn?.operationId === options.operationId && ['merged', 'refreshed'].includes(env.takeIn.phase)) return this.finishTakeIn(id);
+    if (!['completed', 'conflict', 'ready', 'integrated'].includes(env.lifecycle)) fail('INVALID_STATE', `An isolated session that is ${env.lifecycle} cannot take in its branch`, { state: env.lifecycle });
     if (!existsSync(env.path)) fail('INVALID_STATE', 'The isolated folder is gone');
     if (this.liveSessions(id).length) fail('INVALID_STATE', 'Its session is still running; stop it first');
     if (this.unresolved(env).length) fail('UNRESOLVED', 'It is already taking in its branch; resolve the conflicts in the session first');
-    const target = git(repo, ['rev-parse', `refs/heads/${env.logicalBranch}`]);
+    if (options.target && !/^[a-f0-9]{40,64}$/.test(options.target)) fail('INVALID_INPUT', 'Invalid pinned take-in commit');
+    const target = git(repo, ['rev-parse', options.target ? `${options.target}^{commit}` : `refs/heads/${env.logicalBranch}`]);
     // Capture first (an earlier take-in the worker resolved is in it), then forget that merge.
     const captured = this.snapshot(id).result.id;
     // The copy's history records each earlier take-in as a merge of its base, so Git's next merge
@@ -439,18 +513,37 @@ export class Environments {
       : git(repo, ['commit-tree', `${captured}^{tree}`, '-p', captured, '-p', env.base, '-m', `Journal: ${env.logicalBranch} taken into isolated session ${id}`], { env: IDENTITY });
     tryGit(env.path, ['merge', '--quit']);
     git(env.path, ['update-ref', '--no-deref', 'HEAD', result]); git(env.path, ['read-tree', result]);
-    let merged; try { merged = git(env.path, ['merge', '--no-ff', '--no-commit', target], { allow: [1], env: IDENTITY }); }
+    let merged; try {
+      // Captures A and B may be sibling commits. An unchanged read-only review of A
+      // refreshes to B instead of producing an artificial three-way conflict. The
+      // two-tree checkout still refuses unexpected local/untracked overwrites.
+      if (options.reviewBase && /^[a-f0-9]{40,64}$/.test(options.reviewBase) && !(this.record(id).result.excluded?.length) && git(repo, ['rev-parse', `${captured}^{tree}`]) === git(repo, ['rev-parse', `${options.reviewBase}^{tree}`])) {
+        git(env.path, ['update-index', '--refresh']); git(env.path, ['read-tree', '-m', '-u', result, target]); git(env.path, ['update-ref', '--no-deref', 'HEAD', target]); merged = '';
+      } else merged = git(env.path, ['merge', '--no-ff', '--no-commit', target], { allow: [1], env: IDENTITY });
+    }
     catch (error) { fail('TAKE_IN_FAILED', `Git could not take ${env.logicalBranch} into its copy; nothing there was lost`, { reason: String(error.stderr ?? error.message).trim().slice(0, 300) }); }
     const stages = typeof merged === 'string' ? new Map() : unmergedStages(env.path);
     const conflicts = [...stages.keys()];
     const kind = path => { const stage = stages.get(path); if (!(stage.has('2') && stage.has('3'))) return 'modify/delete'; try { return readFileSync(join(env.path, path)).includes(0) ? 'binary' : 'content'; } catch { return 'content'; } };
+    const conflict = conflicts.length ? { paths: conflicts.map(path => ({ path, kind: kind(path) })), against: target, at: now(), inEnvironment: true } : null;
+    this.patch(id, { takeIn: { ...(env.takeIn ?? {}), operationId: options.operationId ?? null, phase: 'merged', target, conflicts, conflict } });
+    this.hooks.afterTakeInMerge?.(this.record(id));
+    return this.finishTakeIn(id);
+  }
+  finishTakeIn(id) {
+    const env = this.record(id); const savedTakeIn = env.takeIn;
+    if (!savedTakeIn || !['merged', 'refreshed'].includes(savedTakeIn.phase)) fail('OPERATION_PENDING', 'Take-in has no verified completion checkpoint');
+    if (this.liveSessions(id).length) fail('INVALID_STATE', 'Stop all writers before reconciling take-in');
+    const { target, conflicts, conflict } = savedTakeIn;
+    if (savedTakeIn.phase === 'refreshed') return { environment: this.view(env), conflicts };
+    const repo = this.store.project(env.projectId).root;
     git(repo, ['update-ref', REF(id, 'base'), target]);
-    this.patch(id, { base: target, conflict: conflicts.length ? { paths: conflicts.map(path => ({ path, kind: kind(path) })), against: target, at: now(), inEnvironment: true } : null });
-    // A clean merge is the new result right away (Apply would otherwise land the pre-merge result),
-    // and the copy is left with no merge in progress, at that result.
+    this.patch(id, { base: target, conflict });
+    this.hooks.afterTakeInBase?.(this.record(id));
     if (!conflicts.length) { const after = this.snapshot(id).result.id; tryGit(env.path, ['merge', '--quit']); git(env.path, ['update-ref', '--no-deref', 'HEAD', after]); git(env.path, ['read-tree', after]); }
-    const saved = this.record(id);
-    this.event(saved, 'updated', { to: target, conflicts: conflicts.length });
+    this.patch(id, { takeIn: { ...savedTakeIn, phase: 'refreshed' } });
+    this.hooks.afterTakeInComplete?.(this.record(id));
+    const saved = this.record(id); this.event(saved, 'updated', { to: target, conflicts: conflicts.length });
     return { environment: this.view(saved), conflicts };
   }
 
@@ -478,6 +571,10 @@ export class Environments {
   // removeIgnored: the person confirmed that ignored files outside the usual regenerable folders go too.
   cleanup(id, { removeIgnored = false } = {}) {
     const env = this.record(id); const repo = this.store.project(env.projectId).root;
+    if (env.attemptId) {
+      const attempt = this.store.db.prepare('SELECT state FROM attempts WHERE id=?').get(env.attemptId);
+      if (attempt && !['done', 'cancelled', 'retired', 'superseded', 'abandoned'].includes(attempt.state)) fail('ACTIVE_ATTEMPT', 'Finish or retire the worker before removing its environment');
+    }
     if (!['integrated', 'abandoned', 'failed', 'cleanup_pending'].includes(env.lifecycle)) fail('INVALID_STATE', `An isolated session that is ${env.lifecycle} is not ready to clean up`, { state: env.lifecycle });
     const pending = (reason, code = null) => { const saved = this.transition(id, 'cleanup_pending', { cleanup: { reason, code, attempts: (env.cleanup?.attempts ?? 0) + 1, at: now(), from: env.cleanup?.from ?? env.lifecycle } }); this.event(saved, 'cleanup-pending', { reason }); return this.view(saved); };
     const live = this.liveSessions(id); if (live.length) return pending('its session is still running');
@@ -554,8 +651,14 @@ export class Environments {
     const report = [];
     const rows = this.store.db.prepare(`SELECT body FROM workspaces WHERE json_extract(body,'$.kind')='isolated' AND json_extract(body,'$.lifecycle') NOT IN ('removed')${projectId ? ' AND project_id=?' : ''}`).all(...(projectId ? [projectId] : []));
     for (const row of rows) {
-      const env = JSON.parse(row.body); let repo; try { repo = this.store.project(env.projectId).root; } catch { continue; }
+      let env = JSON.parse(row.body); let repo; try { repo = this.store.project(env.projectId).root; } catch { continue; }
+      // Another process may be applying through its own StoreClient. Recovery is a writer,
+      // so it must use the same branch lock and may never undo an operation still in flight.
+      const lock = this.lock(`${short(env.projectId)}-${short(env.logicalBranch)}`);
+      if (!lock) continue;
       try {
+        this.recoverCaptureRefs(env.id);
+        env = this.publishCapture(env.id);
         if (env.lifecycle === 'creating') {
           const admin = existsSync(env.path) ? tryGit(env.path, ['rev-parse', '--absolute-git-dir']) : null;
           const ok = !!admin && !samePath(admin, git(repo, ['rev-parse', '--absolute-git-dir'])) && !!tryGit(repo, ['rev-parse', '--verify', '--quiet', REF(env.id, 'base')]);
@@ -571,7 +674,7 @@ export class Environments {
           const head = tryGit(repo, ['rev-parse', `refs/heads/${env.logicalBranch}`]);
           const commit = env.integration?.commit;
           // Landed, even if the branch has moved on since.
-          if (head && commit && (head === commit || git(repo, ['merge-base', '--is-ancestor', commit, head], { allow: [1] }) === '')) { this.finishLanded(env); this.transition(env.id, 'integrated', { conflict: null, integration: { ...env.integration, phase: 'done' } }); report.push([env.id, 'integrating', 'integrated']); continue; }
+          if (head && commit && (head === commit || git(repo, ['merge-base', '--is-ancestor', commit, head], { allow: [1] }) === '')) { this.finishLanded(env); this.finishIntegration(env.id); report.push([env.id, 'integrating', 'integrated']); continue; }
           this.rollBack(env); this.transition(env.id, 'completed', { integration: null }); report.push([env.id, 'integrating', 'completed']); continue;
         }
         // A copy no session ever started in (Journal stopped between creating it and the start, or
@@ -583,6 +686,7 @@ export class Environments {
         if (env.lifecycle === 'failed' && !this.liveSessions(env.id).length) { const after = this.cleanup(env.id); report.push([env.id, 'failed', after.state]); continue; }
         if (env.lifecycle === 'cleanup_pending' || (env.lifecycle === 'integrated' && existsSync(env.path))) { const after = this.cleanup(env.id); report.push([env.id, env.lifecycle, after.state]); }
       } catch (error) { report.push([env.id, env.lifecycle, `error: ${error.message}`]); }
+      finally { lock.release(); }
     }
     return report;
   }
@@ -598,6 +702,21 @@ export class Environments {
     }
     if (existsSync(indexLock) && indexHash && sha256(indexLock) === indexHash) renameSync(indexLock, join(dirname(indexLock), 'index'));
     else if (ownsLock(indexLock, env.id)) rmSync(indexLock, { force: true });
+  }
+  finishIntegration(id) {
+    const env = this.record(id); const repo = this.store.project(env.projectId).root; const integration = env.integration;
+    if (!integration?.result) fail('RECOVERY_REQUIRED', 'The integration has no pinned result');
+    this.patch(id, { integration: { ...integration, phase: 'base_advancing' } });
+    const ref = REF(id, 'base'); const current = tryGit(repo, ['rev-parse', '--verify', ref]);
+    if (current !== integration.result) {
+      if (current !== (integration.baseFrom ?? env.base)) fail('BASE_MOVED', 'The environment base changed during integration');
+      git(repo, ['update-ref', ref, integration.result, current]);
+    }
+    this.hooks.afterBaseRef?.(this.record(id));
+    const completed = { ...integration, phase: 'done', landedAt: integration.landedAt ?? now() };
+    const integrations = [...(env.integrations ?? [])];
+    if (!integrations.some(item => item.commit === completed.commit && item.resultId === completed.resultId)) integrations.push(completed);
+    return this.transition(id, 'integrated', { base: integration.result, conflict: null, integration: completed, integrations });
   }
   // The branch did not move: the checkout's files go back to the branch with the side index, then
   // Journal's own lock is released (the real index was never changed). If Git refuses, the lock stays.
@@ -623,8 +742,8 @@ export class Environments {
 
   // What callers see: no paths or refs outside `details`.
   view(env) {
-    return { id: env.id, projectId: env.projectId, sessionId: env.sessionId ?? null, task: env.task ?? null, logicalBranch: env.logicalBranch, base: env.base, state: env.lifecycle,
-      result: env.result ? { id: env.result.sha, files: env.result.files, fileCount: env.result.fileCount ?? env.result.files.length, excluded: env.result.excluded ?? [], at: env.result.at } : null,
+    return { id: env.id, projectId: env.projectId, sessionId: env.sessionId ?? null, attemptId: env.attemptId ?? null, task: env.task ?? null, logicalBranch: env.logicalBranch, base: env.base, state: env.lifecycle,
+      result: env.result ? { id: env.result.sha, resultId: env.result.resultId ?? env.result.sha, tree: env.result.tree, base: env.result.base ?? env.base, files: env.result.files, fileCount: env.result.fileCount ?? env.result.files.length, excluded: env.result.excluded ?? [], at: env.result.at } : null,
       conflict: env.conflict ?? null, integration: env.integration ? { commit: env.integration.commit, phase: env.integration.phase, landedAt: env.integration.landedAt ?? null } : null,
       cleanup: env.cleanup ?? null, error: env.error ?? null, ports: env.ports, createdAt: env.createdAt, updatedAt: env.updatedAt, folder: existsSync(env.path),
       details: { path: env.path, tmpDir: env.tmpDir, logDir: env.logDir, refs: { base: REF(env.id, 'base'), head: REF(env.id, 'head'), result: REF(env.id, 'result') } } };

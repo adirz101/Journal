@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useRef, type FormEvent, type KeyboardEvent, type RefObject } from 'react';
+import { useCallback, useMemo, useRef, useState, useEffect, type FormEvent, type KeyboardEvent, type RefObject } from 'react';
+import { api, type Preferences } from './types';
 import { TaskField } from './TaskField';
 import { ContextPreview, PreviewNote } from './ContextPreview';
 import { ProviderStatus } from './ProviderStatus';
@@ -14,6 +15,7 @@ import { startProblem } from './statesModel'; // Phase 8
 import { PROVIDER_NAMES, type Bootstrap, type FileReference, type Mode, type Project, type Provider, type Receipt, type WorkspaceList } from './types';
 
 export interface ComposerProps {
+  journalToolsAllowed?: boolean; onJournalToolsAllowed?(allowed: boolean): void;
   project: Project; bootstrap: Bootstrap | null; workspaces: WorkspaceList | null;
   workspaceId: string; onWorkspace(id: string): void; onManageWorkspaces(): void;
   task: string; onTask(value: string): void; taskRef: RefObject<HTMLTextAreaElement | null>;
@@ -55,7 +57,7 @@ function AgentChoice({ provider: p, agent: info, chosen: on, current, busy, hand
   </div>;
 }
 
-const MODE_LABEL: Record<Mode, string> = { build: composer.build, plan: composer.plan, 'read-only': composer.readOnly };
+const MODE_LABEL: Record<Mode, string> = { build: composer.build, plan: composer.plan, 'read-only': composer.readOnly, coordinate: 'Coordinate' };
 
 // Arrow keys, Home and End for a radio group with roving tabIndex.
 function roving<T>(event: KeyboardEvent, items: readonly T[], current: T, choose: (item: T) => void, allowed: (item: T) => boolean = () => true) {
@@ -76,6 +78,9 @@ function roving<T>(event: KeyboardEvent, items: readonly T[], current: T, choose
 // Start, beside the live preview of what the agent will know. App owns the
 // state; the preview hook is the only thing this component runs on its own.
 export function Composer(props: ComposerProps) {
+  const [teamsEnabled, setTeamsEnabled] = useState(false);
+  useEffect(() => { let alive = true; void api<Preferences>('preferences').then(value => { if (alive) setTeamsEnabled(value.coordinatedRuns === true); }).catch(() => {}); const changed = (event: Event) => setTeamsEnabled((event as CustomEvent<Preferences>).detail.coordinatedRuns === true); window.addEventListener('journal-preferences', changed); return () => { alive = false; window.removeEventListener('journal-preferences', changed); }; }, []);
+  const modes = MODES.filter(value => value !== 'coordinate' || teamsEnabled);
   const { project, bootstrap, workspaces, workspaceId, task, references, disabled, provider, mode } = props;
   const mac = bootstrap?.platform === 'darwin';
   const agent = bootstrap?.agents.find(a => a.provider === provider);
@@ -95,7 +100,8 @@ export function Composer(props: ComposerProps) {
   const live = useRef(props); live.current = props;
   const leaveOut = useCallback((id: string) => { const { disabled: current, onDisabled } = live.current; if (!current.includes(id)) onDisabled([...current, id]); }, []);
   const restore = useCallback(() => live.current.onDisabled([]), []);
-  const block = startBlock({ connected: props.connected, liveCount: props.liveCount, busy: props.busy, agent, provider, mode });
+  const block = startBlock({ connected: props.connected, liveCount: props.liveCount, busy: props.busy, agent, provider, mode })
+    ?? (mode === 'coordinate' ? !task.trim() ? 'Describe a goal for the team.' : workspaceId ? 'Start a team in the project checkout.' : !branch ? 'Choose a named branch before starting a team.' : null : null);
   const support = modeSupport(provider, agent);
   const start = (event?: FormEvent) => { event?.preventDefault(); if (block === null) props.onStart(); };
   // ⌘↵ / Ctrl+Enter: anywhere in the composer form (task box, agent cards, mode, workspace,
@@ -154,10 +160,10 @@ export function Composer(props: ComposerProps) {
       <div className="composer-field">
         <span className="field-label" id="mode-label">{composer.mode}</span>
         <div className="mode-switch" role="radiogroup" aria-labelledby="mode-label" aria-describedby="mode-help">
-          {MODES.map(m => {
+          {modes.map(m => {
             const reason = modeBlock(provider, agent, m); const on = m === mode;
             return <button type="button" role="radio" key={m} aria-checked={on} tabIndex={on ? 0 : -1} aria-disabled={reason ? true : undefined} title={reason ?? undefined}
-              onClick={() => { if (!reason) props.onMode(m); }} onKeyDown={event => roving(event, MODES, mode, props.onMode, item => support[item])}>{MODE_LABEL[m]}</button>;
+              onClick={() => { if (!reason) props.onMode(m); }} onKeyDown={event => roving(event, modes, mode, props.onMode, item => support[item])}>{MODE_LABEL[m]}</button>;
           })}
         </div>
         <p id="mode-help" className="field-help">{composer.modeHelp[mode]}</p>
@@ -183,6 +189,8 @@ export function Composer(props: ComposerProps) {
 
       <div className="start-error-slot" ref={errorSlot}>{problemCard && <StartError problem={problemCard} alert={!!startError}
         onOpenTerminal={problemCard.kind === 'signed-out' && agent?.supports?.login ? () => props.providers.onLogin(provider) : problemCard.kind === 'missing' && problemCard.command ? () => props.providers.onInstall(provider) : null} />}</div>
+      {mode === 'coordinate' && provider === 'claude' && <label className="inline-check"><input type="checkbox" checked={props.journalToolsAllowed ?? false} onChange={event => props.onJournalToolsAllowed?.(event.target.checked)} />Allow Journal team tools without prompts for this run</label>}
+      {mode === 'coordinate' && <p className="field-help">Provider file, shell and network permissions stay native. Tool permission shortcuts for other providers are not validated.</p>}
       <div className="start-row">
         <button type="submit" className="primary start-button" disabled={block !== null} aria-describedby="start-reason" aria-keyshortcuts={mac ? 'Meta+Enter' : 'Control+Enter'}>
           {composer.start(PROVIDER_NAMES[provider])} <kbd aria-hidden="true">{startKeys}</kbd></button>

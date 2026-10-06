@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync 
 import { StoreClient } from './store-client.mjs';
 import { RuntimeClient } from './runtime-client.mjs';
 import { buildId } from '../runtime/protocol.mjs';
+import { EnvironmentSync } from '../runtime/environment-sync.mjs';
 import { PROVIDER_COMMANDS, PROVIDER_NAMES, PROVIDERS, commandsFor, detectCursor, detectProvider, initialAgents, installFor, probeAuth } from '../core/agents.mjs';
 import { cursorAuth, findCursor, installCommand, installEnv } from '../core/cursor.mjs';
 import { ProcessRunner } from './processes.mjs';
@@ -229,8 +230,13 @@ const notifier = createNotifier({
   preferences: () => preferences,
 });
 const seedNotifier = async () => { try { notifier.seed([...(await runtime.call('list')).map(fromRuntime), ...(await store.activeSessions())]); } catch { /* the next status events correct the badge */ } };
+// A kept runtime from before lifecycle ownership moved cannot follow its environments.
+// Keep the compatibility lane only until a runtime advertises that it owns this work.
+const legacyEnvironments = new EnvironmentSync({ store, emit: send });
+const legacyReconcile = () => { if (runtime.info && runtime.info.environmentSync !== true) void legacyEnvironments.reconcile(); };
+setInterval(legacyReconcile, 10 * 60_000).unref();
 runtime.on('event', event => {
-  if (event?.type === 'status' && event.session?.environmentId) followEnvironment(event.session);
+  if (runtime.info?.environmentSync !== true && event?.type === 'status') void legacyEnvironments.follow(event.session);
   if (event?.type === 'status' && event.session) { const session = fromRuntime(event.session); notifier.update(session); send({ ...event, session }); if (runtime.otherBuild) scheduleSwitch(); return; }
   send(event);
 });
@@ -276,18 +282,6 @@ function startSession(input) {
   const row = agents.find(agent => agent.provider === input.provider);
   // What detection read, never what the window says: the version and whether the CLI's hooks are on.
   return runtime.call('start', { ...request, appearance, cliVersion: row?.version ?? null, hooksEnabled: typeof row?.supports?.hooks === 'boolean' ? row.supports.hooks : null });
-}
-// Isolated sessions after a restart: finish what a crash interrupted (creation, an Apply), follow
-// sessions that ended meanwhile, retry pending cleanups. Then every 10 minutes for pending cleanups.
-function reconcileEnvironments() { void store.reconcileEnvironments().then(report => { if (report?.length) send({ type: 'environment', reconciled: report.length }); }).catch(() => {}); }
-setInterval(reconcileEnvironments, 10 * 60_000).unref?.();
-// An isolated session's environment follows its session: running, waiting, then completed with
-// its result captured when the session ends. One update at a time per environment.
-const environmentQueue = new Map();
-function followEnvironment(session) {
-  const previous = environmentQueue.get(session.environmentId) ?? Promise.resolve();
-  const next = previous.then(() => store.syncEnvironment(session)).then(environment => { if (environment) send({ type: 'environment', environment }); }).catch(() => {});
-  environmentQueue.set(session.environmentId, next);
 }
 runtime.on('warning', message => { runtimeWarning = message; send({ type: 'runtime', state: runtimeState, warning: message, otherBuild: runtime.otherBuild }); });
 // Switching to this build's runtime (src/desktop/runtime-client.mjs) is a reconnect, not a failure.
@@ -714,11 +708,42 @@ const actions = {
     }
     return startSession(input);
   },
+  createRun: async input => {
+    if (!preferences.coordinatedRuns) throw new Error('Enable Coordinated runs in Settings before starting a team.');
+    if (runtime.otherBuild) throw new Error('Switch to the current Journal runtime before starting a team.');
+    const project = await store.project(text(input.projectId, 'project ID', 100));
+    if (!project.branch) throw new Error('Choose a named branch before starting a team.');
+    const run = await runtime.call('createRun', { projectId: project.id, logicalBranch: project.branch, journalToolsAllowed: input.journalToolsAllowed === true, goal: text(input.goal, 'goal', 20000), provider: choice(input.provider, ['claude', 'codex'], 'coordinator provider'), requestId: text(input.requestId, 'request ID', 200) });
+    send({ type: 'run', runId: run.id }); return run;
+  },
+  getRun: input => runtime.call('getRun', input),
+  getCapacity: input => runtime.call('getCapacity', input),
+  setCapacityLimits: input => runtime.call('setCapacityLimits', input),
+  runsTree: input => runtime.call('runsTree', input),
+  teamAction: input => runtime.call('teamAction', input),
+  listRuns: input => runtime.call('listRuns', input),
+  runEvents: input => runtime.call('runEvents', input),
+  pauseRun: input => runtime.call('pauseRun', input),
+  sendMessage: input => runtime.call('sendMessage', input),
+  cancelMessage: input => runtime.call('cancelMessage', input),
+  resendMessage: input => runtime.call('resendMessage', input),
+  resumeAutomatic: input => runtime.call('resumeAutomatic', input),
+  previewResult: input => runtime.call('previewResult', input),
+  applyResult: input => runtime.call('applyResult', input),
+  decideApproval: input => runtime.call('decideApproval', input),
   // ----- Isolated sessions: the window's view of the headless service (environments.mjs) -----
   environment: ({ id }) => store.getEnvironment(text(id, 'environment ID', 100)),
   environments: ({ projectId }) => store.listEnvironments(text(projectId, 'project ID', 100)),
-  previewEnvironmentApply: ({ id }) => store.previewEnvironmentApply(text(id, 'environment ID', 100)),
-  applyEnvironment: async ({ id, expect }) => { const environment = await store.applyEnvironment(text(id, 'environment ID', 100), typeof expect === 'string' ? { expect: text(expect, 'result ID', 100) } : {}); send({ type: 'environment', environment }); const cleaned = await store.cleanupEnvironment(environment.id).catch(() => environment); send({ type: 'environment', environment: cleaned }); return cleaned; },
+  previewEnvironmentApply: async ({ id }) => { const env = await store.getEnvironment(text(id, 'environment ID', 100)); return env.attemptId ? runtime.call('previewResult', { attemptId: env.attemptId, resultId: env.result?.resultId }) : store.previewEnvironmentApply(id); },
+  applyEnvironment: async ({ id, expect }) => {
+    const before = await store.getEnvironment(text(id, 'environment ID', 100));
+    if (before.attemptId) {
+      const outcome = await runtime.call('applyResult', { requestId: randomUUID(), attemptId: before.attemptId, resultId: before.result?.resultId, expect });
+      if (outcome.approvalRequired) throw Object.assign(new Error('Apply is waiting for your decision in the Team view.'), { code: 'APPROVAL_REQUIRED' });
+      const environment = await store.getEnvironment(id); send({ type: 'environment', environment }); return environment;
+    }
+    const environment = await store.applyEnvironment(id, typeof expect === 'string' ? { expect: text(expect, 'result ID', 100) } : {}); send({ type: 'environment', environment }); const cleaned = await store.cleanupEnvironment(environment.id).catch(() => environment); send({ type: 'environment', environment: cleaned }); return cleaned;
+  },
   resolveInEnvironment: async ({ id }) => { const outcome = await store.updateEnvironmentFromBranch(text(id, 'environment ID', 100)); send({ type: 'environment', environment: outcome.environment }); return outcome; },
   abandonEnvironment: async ({ id }) => { const environment = await store.abandonEnvironment(text(id, 'environment ID', 100)); send({ type: 'environment', environment }); return environment; },
   restoreEnvironment: async ({ id }) => { const environment = await store.restoreEnvironment(text(id, 'environment ID', 100)); send({ type: 'environment', environment }); return environment; },
@@ -840,7 +865,7 @@ ipcMain.handle('journal:request', async (event, action, input = {}) => {
     try { return { ok: true, value: await (hook ? hook(action, () => actions[action](input)) : actions[action](input)) }; } finally { if (ROOT_CHANGES.has(action)) { rootCache.clear(); listings.clear(); } }
   } catch (error) { return settledError(error); }
 });
-try { recovery = recoveryFrom(await runtime.connect()); runtimeState = 'connected'; tellRuntimeAppearance(); await seedNotifier(); scheduleSwitch(); reconcileEnvironments(); }
+try { recovery = recoveryFrom(await runtime.connect()); runtimeState = 'connected'; tellRuntimeAppearance(); await seedNotifier(); scheduleSwitch(); legacyReconcile(); }
 catch (error) { runtimeState = 'disconnected'; console.error('Journal runtime unavailable:', error.message); void runtime.reconnect(); }
 createWindow();
 // Updates: packaged builds only. The automatic-check preference lives in the data folder.
@@ -907,6 +932,7 @@ app.on('before-quit', event => {
     }
     processes.stopAll(); updater?.stop(); notifier.dispose();
     await runtime.close({ shutdown: policy !== 'keep' && !!runtime.socket, stopSessions: true });
+    await legacyEnvironments.close();
     await store.close().catch(() => {});
     closed = true;
     if (updatePolicy) {

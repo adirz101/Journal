@@ -4,7 +4,7 @@ import { composer, states } from './copy';
 import { agentRow, type AgentAction } from './firstRunModel';
 import { PROVIDER_NAMES, type AgentInfo, type Memory, type Mode, type Provider, type Receipt, type SelectionInfo, type SelectionPreview } from './types';
 
-export const MODES: readonly Mode[] = ['build', 'plan', 'read-only'];
+export const MODES: readonly Mode[] = ['build', 'plan', 'read-only', 'coordinate'];
 export const AGENT_ORDER: readonly Provider[] = ['claude', 'codex', 'cursor'];
 // Packet budget (src/core/store.mjs assemblePacket): 12 notes or 6000 bytes.
 export const NOTE_LIMIT = 12; export const BYTE_LIMIT = 6000;
@@ -19,14 +19,15 @@ export function modeFlags(mode: Mode): { plan: boolean; research: boolean } {
 // Which modes an agent can start in. Codex has no plan mode; Cursor needs a
 // CLI with --mode for Plan and Read-only (Ask).
 export function modeSupport(provider: Provider, agent: AgentInfo | null | undefined): Record<Mode, boolean> {
-  if (provider === 'codex') return { build: true, plan: false, 'read-only': true };
-  if (provider === 'cursor') { const modes = !!agent?.supports?.mode; return { build: true, plan: modes, 'read-only': modes }; }
-  return { build: true, plan: true, 'read-only': true };
+  if (provider === 'codex') return { build: true, plan: false, 'read-only': true, coordinate: true };
+  if (provider === 'cursor') { const modes = !!agent?.supports?.mode; return { build: true, plan: modes, 'read-only': modes, coordinate: false }; }
+  return { build: true, plan: true, 'read-only': true, coordinate: true };
 }
 
 // Why a mode is unavailable for this agent, or null.
 export function modeBlock(provider: Provider, agent: AgentInfo | null | undefined, mode: Mode): string | null {
   if (modeSupport(provider, agent)[mode]) return null;
+  if (mode === 'coordinate') return 'Choose Claude Code or Codex to coordinate a team. Cursor can work on individual tasks.';
   return provider === 'cursor' ? composer.noModes : composer.noPlan(PROVIDER_NAMES[provider]);
 }
 

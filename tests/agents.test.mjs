@@ -1,3 +1,4 @@
+import { buildAgentLaunch } from '../src/core/agents.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -234,5 +235,12 @@ test('install pipelines fail when their first stage fails (pipefail), through th
     const args = [...command.args.slice(0, -1), 'false | cat'];
     assert.notEqual(spawnSync(command.file, args).status, 0);
     assert.equal(spawnSync(command.file, args.filter(arg => arg !== '-o' && arg !== 'pipefail')).status, 0, 'without pipefail the same pipeline exits 0');
+  }
+});
+test('explicit model selection is one literal provider argument and cannot become a CLI flag', () => {
+  for (const provider of ['claude', 'codex', 'cursor']) {
+    const launch = buildAgentLaunch({ provider, executable: '/fixture/agent', model: 'fixture-model', prompt: 'Work' });
+    assert.deepEqual(launch.argv.slice(launch.argv.indexOf('--model'), launch.argv.indexOf('--model') + 2), ['--model', 'fixture-model']);
+    assert.throws(() => buildAgentLaunch({ provider, executable: '/fixture/agent', model: '--permission-mode=bypassPermissions' }), /model/);
   }
 });

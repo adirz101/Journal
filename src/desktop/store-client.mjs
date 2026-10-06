@@ -12,7 +12,8 @@ export class StoreClient {
       if (message.ready) { this.readyResolve(); return; }
       const pending = this.pending.get(message.id); if (!pending) return;
       this.pending.delete(message.id); if (pending.method === 'close' && !message.error) this.closed = true;
-      message.error ? pending.reject(new Error(message.error)) : pending.resolve(message.value);
+      message.error ? pending.reject(Object.assign(new Error(message.error),
+        ...(typeof message.code === 'string' ? [{ code: message.code }] : []), ...(message.detail ? [{ detail: message.detail }] : []))) : pending.resolve(message.value);
     });
     const failed = error => {
       this.failure = error; this.readyReject(error);

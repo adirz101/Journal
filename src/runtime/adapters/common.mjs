@@ -73,7 +73,7 @@ export function only(fields) {
 }
 
 // The parts of an observation line every normalized event keeps (normalize()).
-export const carried = raw => ({ event: raw.event, nativeId: str(raw.nativeId) ?? null, cwd: typeof raw.cwd === 'string' ? raw.cwd : null,
+export const carried = raw => ({ hookInvocationId: str(raw.hookInvocationId), event: raw.event, nativeId: str(raw.nativeId) ?? null, cwd: typeof raw.cwd === 'string' ? raw.cwd : null,
   tool: str(raw.tool, 80), toolUseId: str(raw.toolUseId), command: typeof raw.command === 'string' ? raw.command : undefined,
   filePath: typeof raw.filePath === 'string' ? raw.filePath : undefined, background: raw.background, exit: raw.exit, interrupted: raw.interrupted, durationMs: raw.durationMs,
   description: typeof raw.description === 'string' ? raw.description.slice(0, 120) : undefined, readPath: typeof raw.readPath === 'string' ? raw.readPath.slice(0, 1000) : undefined,

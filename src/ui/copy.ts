@@ -66,6 +66,7 @@ export const composer = {
   task: 'Task', taskHint: 'optional, picks relevant notes', taskPlaceholder: 'What are you working on? Mention a module or path to include notes about it.',
   agent: 'Agent', mode: 'Mode', build: 'Build', plan: copy.plan, readOnly: copy.readOnly, workspace: 'Workspace', manage: 'Manage',
   modeHelp: { build: 'Normal native permissions. The CLI asks before it runs tools.',
+    coordinate: 'A coordinator plans the work and requests workers in separate copies. Native permissions still apply.',
     plan: 'Starts in Claude plan mode or Cursor Plan mode. You can switch inside the session.',
     'read-only': 'The agent can read but is asked not to change files (Claude plan mode, Codex read-only sandbox, Cursor Ask). You can switch inside the session.' },
   separateCopyHelp: 'Isolated from your other sessions. Journal never stashes, copies or force-removes your work.',

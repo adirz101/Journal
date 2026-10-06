@@ -131,7 +131,7 @@ test('an unfocused window gets one notification per episode, without the command
     const settings = page.getByRole('dialog', { name: 'Settings' });
     await settings.getByRole('checkbox', { name: 'Show the command in notifications' }).check();
     await expect(settings.getByRole('checkbox', { name: 'Show the command in notifications' })).toBeChecked();
-    await expect.poll(() => JSON.parse(readFileSync(resolve(f.root, 'data/preferences.json'), 'utf8'))).toEqual({ notifications: true, notificationCommand: true });
+    await expect.poll(() => JSON.parse(readFileSync(resolve(f.root, 'data/preferences.json'), 'utf8'))).toEqual({ notifications: true, notificationCommand: true, coordinatedRuns: false });
     await settings.getByRole('button', { name: 'Done', exact: true }).click();
     hook(f.env, f.root, f.project, session, 'PreToolUse', bash('t3'));
     hook(f.env, f.root, f.project, session, 'PermissionRequest', bash('t3'));

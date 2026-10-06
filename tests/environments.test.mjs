@@ -48,6 +48,103 @@ function fixture(t, environments = {}) {
   return { root, repo, data, git, store, project, session, worker, reopen: extra => { const s = open(extra); stores.push(s); return s; } };
 }
 const checkout = f => ({ head: f.git(f.repo, 'rev-parse', 'feature/auth'), index: readFileSync(join(f.repo, '.git', 'index')), api: readFileSync(join(f.repo, 'src', 'api.js'), 'utf8'), status: f.git(f.repo, 'status', '--porcelain') });
+
+async function teamResult(f, suffix = '') {
+  const request = (requestId, args) => ({ callerId: 'fixture-coordinator', requestId: `${requestId}${suffix}`, ...args });
+  const run = f.store.createRun(request('run', { projectId: f.project.id, goal: 'Integrate a fixture', logicalBranch: 'feature/auth' }));
+  const task = f.store.createTask(request('task', { runId: run.id, title: 'Change fixture' }));
+  const attempt = f.store.requestWorker(request('worker', { taskId: task.id, provider: 'claude' }));
+  const env = await f.worker('fixture', path => writeFileSync(join(path, 'README.md'), `fixture result ${suffix}\n`));
+  f.store.setAttemptState(attempt.id, 'starting', { launchId: 'launch' });
+  f.store.setAttemptState(attempt.id, 'working', { launchId: 'launch', turnId: 'turn', environmentId: env.id });
+  f.store.reportWorker(request('report', { attemptId: attempt.id, launchId: 'launch', turnId: 'turn', kind: 'result', status: 'done', summary: 'Fixture claim' }));
+  f.store.settleAttempt(attempt.id, { launchId: 'launch', turnId: 'turn', resultId: env.result.resultId });
+  return { run, task, attempt, env, request, subject: { attemptId: attempt.id, resultId: env.result.resultId } };
+}
+
+it('coordinator Apply is durably idempotent and unblocks a dependency without creating its worker', async t => {
+  const f = fixture(t); const team = await teamResult(f);
+  const child = f.store.createTask(team.request('child', { runId: team.run.id, title: 'Dependent', dependencies: [team.task.id] }));
+  const preview = f.store.previewResult(team.subject); assert.equal(preview.hardGates.pass, true);
+  const input = team.request('apply', { ...team.subject, expect: preview.expect });
+  const applied = f.store.applyResult(input); assert.equal(applied.applied, true);
+  assert.deepEqual(f.reopen().applyResult(input), applied);
+  assert.equal(f.store.listTasks(team.run.id).find(task => task.id === child.id).state, 'pending');
+  assert.equal(f.store.listAttempts(team.run.id).length, 1);
+  assert.equal(f.store.getRun(team.run.id).results[0].status, 'applied');
+  assert.equal(f.store.runEvents(team.run.id).filter(event => event.kind === 'result.applied').length, 1);
+});
+it('managed take-in records a pinned operation, preserves the checkout, and deduplicates a repeated request', async t => {
+  const f = fixture(t); const team = await teamResult(f);
+  writeFileSync(join(f.repo, 'extra.md'), 'branch addition\n'); f.git(f.repo, 'add', '.'); f.git(f.repo, 'commit', '-qm', 'branch advanced');
+  const input = team.request('take-in', { runId: team.run.id, attemptId: team.subject.attemptId });
+  const taken = f.store.takeInWorker(input);
+  assert.equal(taken.conflicts.length, 0);
+  assert.deepEqual(f.reopen().takeInWorker(input), taken);
+  assert.equal(readFileSync(join(f.repo, 'README.md'), 'utf8'), '# fixture\n');
+  assert.equal(f.store.getRun(team.run.id).messages.filter(message => message.kind === 'resolve_conflict').length, 1);
+});
+it('review subjects and memory candidates retain exact result provenance across a later turn', async t => {
+  const f = fixture(t); const team = await teamResult(f);
+  const review = f.store.createTask(team.request('review', { runId: team.run.id, title: 'Review exact result', kind: 'review', subjectResultId: team.subject.resultId }));
+  const reviewer = f.store.requestWorker(team.request('review-worker', { taskId: review.id, provider: 'codex' }));
+  assert.equal(reviewer.baseCommit, team.env.result.id); assert.equal(review.subjectTreeOid, team.env.result.tree);
+  f.store.setAttemptState(team.attempt.id, 'working', { launchId: 'launch', turnId: 'next' });
+  f.store.reportWorker(team.request('next-report', { attemptId: team.attempt.id, launchId: 'launch', turnId: 'next', kind: 'result', status: 'done', summary: 'Another turn', memoryProposals: [{ statement: 'The fixture uses one integration branch', category: 'decision', scope: 'branch', area: '' }] }));
+  const next = f.store.snapshotEnvironment(team.env.id, { attemptId: team.attempt.id, launchId: 'launch', turnId: 'next' }).result;
+  f.store.settleAttempt(team.attempt.id, { launchId: 'launch', turnId: 'next', resultId: next.resultId });
+  const result = f.store.getResult(next.resultId); const candidate = f.store.getMemory(result.memoryCandidates[0]);
+  assert.equal(candidate.status, 'candidate'); assert.equal(candidate.origin.resultId, next.resultId); assert.equal(candidate.origin.attemptId, team.attempt.id);
+  assert.equal(f.store.listTasks(team.run.id).find(task => task.id === review.id).subjectResultId, team.subject.resultId);
+  assert.notEqual(next.resultId, team.subject.resultId);
+});
+
+it('only a user approval for the exact preview can apply, and branch movement expires it', async t => {
+  const f = fixture(t); const team = await teamResult(f);
+  f.store.setRunState(team.run.id, 'creating', { policy: { ...team.run.policy, version: 2, integration: 'ask' } });
+  const preview = f.store.previewResult(team.subject);
+  const pending = f.store.applyResult(team.request('apply', { ...team.subject, expect: preview.expect }));
+  assert.equal(pending.approval.state, 'pending');
+  assert.throws(() => f.store.decideApproval({ callerId: 'coordinator', requestId: 'decide', approvalId: pending.approval.id, decision: 'approved' }), { code: 'FORBIDDEN' });
+  writeFileSync(join(f.repo, 'extra.md'), 'another change'); f.git(f.repo, 'add', '.'); f.git(f.repo, 'commit', '-qm', 'branch moved');
+  assert.equal(f.store.decideApproval({ callerId: 'desktop', requestId: 'decide', approvalId: pending.approval.id, decision: 'approved' }).state, 'expired');
+  assert.equal(readFileSync(join(f.repo, 'README.md'), 'utf8'), '# fixture\n');
+  const next = f.store.previewResult(team.subject);
+  const again = f.store.applyResult(team.request('new-apply', { ...team.subject, expect: next.expect }));
+  const decided = f.store.decideApproval({ callerId: 'desktop', requestId: 'decide-new', approvalId: again.approval.id, decision: 'approved' });
+  assert.equal(decided.applied, true);
+  assert.equal(f.store.getRun(team.run.id).approvals.find(item => item.id === again.approval.id).state, 'consumed');
+});
+
+it('repeated Apply advances the worker base to its own result and keeps independent branch edits', async t => {
+  const f = fixture(t);
+  const env = await f.worker('two turns', path => writeFileSync(join(path, 'src', 'api.js'), edit(API, 2, 'first result')));
+  const firstId = env.result.resultId; const firstSha = env.result.id;
+  f.store.applyEnvironment(env.id, { expect: f.store.previewEnvironmentApply(env.id).expect });
+  assert.equal(f.store.getEnvironment(env.id).base, firstSha);
+  writeFileSync(join(f.repo, 'src', 'form.js'), edit(FORM, 3, 'another worker'));
+  f.git(f.repo, 'add', '.'); f.git(f.repo, 'commit', '-qm', 'independent work');
+  writeFileSync(join(env.details.path, 'src', 'api.js'), edit(edit(API, 2, 'first result'), 8, 'second result'));
+  const second = f.store.snapshotEnvironment(env.id).result;
+  assert.equal(second.base, firstSha);
+  const applied = f.store.applyEnvironment(env.id, { expect: f.store.previewEnvironmentApply(env.id).expect });
+  assert.equal(applied.base, second.id);
+  assert.match(readFileSync(join(f.repo, 'src', 'form.js'), 'utf8'), /another worker/);
+  assert.match(readFileSync(join(f.repo, 'src', 'api.js'), 'utf8'), /second result/);
+  const body = f.store.environments.record(env.id);
+  assert.equal(body.integrations.length, 2); assert.equal(body.integrations[0].resultId, firstId);
+  assert.equal(f.git(f.repo, 'rev-parse', env.details.refs.base), second.id);
+});
+
+it('a crash after base-ref advancement reconciles both the base and integration history once', async t => {
+  const f = fixture(t, { hooks: { afterBaseRef: () => { throw new Error('fixture crash'); } } });
+  const env = await f.worker('base recovery', path => writeFileSync(join(path, 'README.md'), 'change\n'));
+  assert.throws(() => f.store.applyEnvironment(env.id, { expect: f.store.previewEnvironmentApply(env.id).expect }), /fixture crash/);
+  const reopened = f.reopen({ hooks: {} }); reopened.reconcileEnvironments(); reopened.reconcileEnvironments();
+  const body = reopened.environments.record(env.id);
+  assert.equal(body.base, env.result.id); assert.equal(body.integrations.length, 1);
+  assert.equal(body.integrations[0].phase, 'done');
+});
 async function rejects(fn, code) { try { await fn(); } catch (error) { assert.equal(error.code, code, error.message); return error; } assert.fail(`expected ${code}`); }
 
 it('creation: detached at the branch commit, outside the checkout, private refs, lock and marker; the branch list stays clean', async t => {
@@ -113,6 +210,58 @@ it('result: commits, staged, unstaged and untracked work; the worker\'s index un
   const message = f.git(f.repo, 'log', '-1', '--format=%B', result.id);
   assert.match(message, new RegExp(`Journal-Environment: ${env.id}`)); assert.match(message, /Journal-Logical-Branch: feature\/auth/);
   assert.equal(f.store.snapshotEnvironment(env.id).result.id, result.id, 'unchanged content: the same result');
+});
+
+it('superseded results survive pruning and remain addressable after reopening the store', async t => {
+  const f = fixture(t);
+  const env = await f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'feature/auth' });
+  writeFileSync(join(env.details.path, 'README.md'), 'first result\n');
+  const first = f.store.snapshotEnvironment(env.id).result;
+  writeFileSync(join(env.details.path, 'README.md'), 'second result\n');
+  const second = f.store.snapshotEnvironment(env.id).result;
+  assert.notEqual(first.id, second.id);
+  f.git(f.repo, 'reflog', 'expire', '--expire=now', '--all');
+  f.git(f.repo, 'gc', '--prune=now');
+  assert.equal(f.git(f.repo, 'show', `${first.id}:README.md`), 'first result');
+  const reopened = f.reopen();
+  assert.deepEqual(reopened.listEnvironmentResults(env.id).map(result => result.id), [first.id, second.id]);
+  assert.equal(reopened.getEnvironmentResult(env.id, first.id).tree, f.git(f.repo, 'rev-parse', `${first.id}^{tree}`));
+  assert.equal(reopened.abandonEnvironment(env.id).folder, false);
+  f.git(f.repo, 'gc', '--prune=now');
+  assert.equal(f.git(f.repo, 'show', `${first.id}:README.md`), 'first result');
+  assert.equal(f.git(f.repo, 'show', `${second.id}:README.md`), 'second result');
+});
+
+it('legacy result bodies are backfilled without changing their commit identity or inventing history', async t => {
+  const f = fixture(t);
+  const env = await f.worker('legacy result', p => writeFileSync(join(p, 'README.md'), 'legacy\n'));
+  const saved = f.store.getWorkspace(env.id);
+  f.git(f.repo, 'update-ref', '-d', `refs/journal/env/${env.id}/results/${saved.result.resultId}`);
+  f.store.saveWorkspace({ ...saved, resultsVersion: undefined, results: undefined, result: { ...saved.result, resultId: undefined, base: undefined } });
+  const migrated = f.reopen();
+  const results = migrated.listEnvironmentResults(env.id);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].id, env.result.id);
+  assert.equal(results[0].resultId, env.result.id);
+  assert.equal(f.git(f.repo, 'rev-parse', `refs/journal/env/${env.id}/results/${env.result.id}`), env.result.id);
+});
+
+for (const phase of ['afterCapturePin', 'afterCaptureIntent', 'afterCaptureRef']) it(`capture recovery: ${phase} retains the allocated result identity exactly once`, async t => {
+  let crash = true; let planned;
+  const f = fixture(t, { hooks: { [phase]: env => { planned = env.capture.result; if (crash) throw new Error('capture crash'); } } });
+  const env = await f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'feature/auth' });
+  writeFileSync(join(env.details.path, 'README.md'), 'recover me\n');
+  assert.throws(() => f.store.snapshotEnvironment(env.id), /capture crash/);
+  crash = false;
+  f.git(f.repo, 'reflog', 'expire', '--expire=now', '--all');
+  f.git(f.repo, 'gc', '--prune=now');
+  const recovered = f.reopen();
+  recovered.reconcileEnvironments();
+  recovered.reconcileEnvironments();
+  assert.equal(recovered.getEnvironment(env.id).result.resultId, planned.resultId);
+  assert.equal(recovered.listEnvironmentResults(env.id).length, 1);
+  f.git(f.repo, 'gc', '--prune=now');
+  assert.equal(f.git(f.repo, 'show', `${planned.sha}:README.md`), 'recover me');
 });
 
 it('Apply: clean, then the second worker is re-previewed against the moved branch; history and checkout follow', async t => {
@@ -286,7 +435,7 @@ it('notes from an isolated session carry structured provenance, marked unapplied
   const b = await f.worker('B', p => writeFileSync(join(p, 'src', 'api.js'), 'retry 5\n'));
   const pa = f.store.proposeMemory(f.project.id, { statement: 'Uploads retry three times before failing', category: 'decision', scope: 'checkout', area: 'src', sessionId: a.sessionId, source: { kind: 'user', note: 'worker A' } });
   const pb = f.store.proposeMemory(f.project.id, { statement: 'Uploads retry five times before failing', category: 'decision', scope: 'checkout', area: 'src', sessionId: b.sessionId, source: { kind: 'user', note: 'worker B' } });
-  assert.deepEqual(f.store.getMemory(pa.id).origin, { sessionId: a.sessionId, environmentId: a.id, logicalBranch: 'feature/auth', base: a.base, result: a.result.id, applied: false, environmentState: 'completed' });
+  assert.deepEqual(f.store.getMemory(pa.id).origin, { sessionId: a.sessionId, environmentId: a.id, logicalBranch: 'feature/auth', base: a.base, result: a.result.id, resultId: a.result.resultId, applied: false, environmentState: 'completed' });
   assert.deepEqual([f.store.getMemory(pa.id).status, f.store.getMemory(pb.id).status], ['candidate', 'candidate']);
   f.store.applyEnvironment(a.id);
   assert.deepEqual([f.store.getMemory(pa.id).origin.applied, f.store.getMemory(pb.id).origin.applied], [true, false]);
@@ -294,6 +443,48 @@ it('notes from an isolated session carry structured provenance, marked unapplied
   assert.equal(page.items.find(item => item.id === pb.id).origin.applied, false);
   // A checkout session gets the session, nothing about environments.
   assert.equal(f.store.originFor(f.project.id, 'missing-session'), null);
+});
+
+it('an earlier Apply never marks a later result or an unbound note as applied', async t => {
+  const f = fixture(t);
+  const env = await f.worker('first', p => writeFileSync(join(p, 'README.md'), 'first\n'));
+  const origin = f.store.originFor(f.project.id, env.sessionId);
+  f.store.applyEnvironment(env.id);
+  assert.equal(f.store.withOrigin({ origin }).origin.applied, true);
+  // Simulate a later captured result without borrowing the first result's integration proof.
+  const saved = f.store.getWorkspace(env.id);
+  f.store.saveWorkspace({ ...saved, result: { ...saved.result, sha: 'a'.repeat(40), resultId: 'later-result' } });
+  const later = f.store.originFor(f.project.id, env.sessionId);
+  assert.equal(f.store.withOrigin({ origin: later }).origin.applied, false);
+  assert.equal(f.store.withOrigin({ origin: { ...origin, result: null, resultId: null } }).origin.applied, false);
+  assert.equal(f.store.withOrigin({ origin }).origin.applied, true);
+});
+
+it('Apply binds the preview to the target branch head, even when the result itself is unchanged', async t => {
+  const f = fixture(t);
+  const env = await f.worker('reviewed result', p => writeFileSync(join(p, 'README.md'), 'reviewed\n'));
+  const preview = f.store.previewEnvironmentApply(env.id);
+  assert.equal(typeof preview.expect, 'string');
+  writeFileSync(join(f.repo, 'src', 'api.js'), 'concurrent branch change\n');
+  f.git(f.repo, 'commit', '-qam', 'branch advanced');
+  const before = checkout(f);
+  await rejects(() => f.store.applyEnvironment(env.id, { expect: preview.expect }), 'BRANCH_MOVED');
+  assert.deepEqual(checkout(f), before);
+  const refreshed = f.store.previewEnvironmentApply(env.id);
+  assert.equal(f.store.applyEnvironment(env.id, { expect: refreshed.expect }).state, 'integrated');
+});
+
+it('reconciliation from another store never rolls back an Apply that still owns its branch lock', async t => {
+  const f = fixture(t);
+  const other = f.reopen();
+  const applier = f.reopen({ hooks: { afterFiles: () => {
+    other.reconcileEnvironments();
+    assert.equal(other.getEnvironment(env.id).state, 'integrating');
+  } } });
+  const env = await f.worker('concurrent recovery', p => writeFileSync(join(p, 'README.md'), 'keep this Apply\n'));
+  applier.applyEnvironment(env.id);
+  assert.equal(readFileSync(join(f.repo, 'README.md'), 'utf8'), 'keep this Apply\n');
+  assert.equal(f.git(f.repo, 'status', '--porcelain'), '');
 });
 
 it('ports: two environments listen side by side on their own blocks; reconcile only follows the ended one', async t => {
@@ -577,4 +768,12 @@ test('on Windows, creating an isolated session is refused before any Git change'
   const f = fixture(t);
   await rejects(() => f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'feature/auth' }), 'UNSUPPORTED_PLATFORM');
   assert.deepEqual(f.store.listEnvironments(f.project.id), []);
+});
+it('two store owners cannot reserve the same port block during concurrent probes', async t => {
+  let release; const barrier = new Promise(resolve => { release = resolve; }); let probes = 0;
+  const probe = async () => { if (++probes === 2) release(); if (probes <= 2) await barrier; return true; };
+  const f = fixture(t, { probe }); const other = f.reopen({ probe });
+  const input = { projectId: f.project.id, logicalBranch: 'feature/auth' };
+  const [a, b] = await Promise.all([f.store.createEnvironment(input), other.createEnvironment(input)]);
+  assert.notEqual(a.ports[0], b.ports[0]);
 });

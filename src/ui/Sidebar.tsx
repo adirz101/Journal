@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { RunNavigation } from './RunNavigation';
 import { isLive, PROVIDER_NAMES, type Bootstrap, type CommandId, type Pane, type Project, type Proposal, type Session, type UpdateState } from './types';
 import { needsYou, slotOrder, stateFor, type SessionState } from './sessionState';
 import { byPin, endedTime, recentGroups, relativeTime, rowDetail, sessionName, suggestionCounts } from './sidebarModel';
@@ -32,21 +33,22 @@ const shortPath = (path: string) => { const parts = path.split(/[\\/]/).filter(B
 // all slots in use: the user can write the task while Start explains why it waits).
 // update: shown in the footer; the caller passes null while the session view's status bar shows it.
 export function Sidebar({ pane, inOverlay = false, projects, project, sessions, proposals, selectedId, connected, runtimeState, now, canCompose, shortcuts, appearance, update,
-  onSelect, onSessionMenu, onNew, onSwitchProject, onProjectMenu, onOpenMemory, onOpenSettings, onSearch, onExpand, onShowRecent, onError }: {
+  onSelect, onOpenRun, onSessionMenu, onNew, onSwitchProject, onProjectMenu, onOpenMemory, onOpenSettings, onSearch, onExpand, onShowRecent, onError }: {
   pane: Pane; inOverlay?: boolean; projects: Project[]; project: Project | null; sessions: Session[]; proposals: Proposal[];
   selectedId: string | null; connected: boolean; runtimeState: 'connected' | 'connecting' | 'disconnected'; now: number; canCompose: boolean;
   shortcuts: Keys; appearance: Appearance; update: UpdateState | null;
-  onSelect(session: Session): void; onSessionMenu(session: Session, at?: Point): void; onNew(): void; onSearch?(): void;
+  onOpenRun(runId: string): void; onSelect(session: Session): void; onSessionMenu(session: Session, at?: Point): void; onNew(): void; onSearch?(): void;
   onSwitchProject(at?: Point): void; onProjectMenu(at?: Point): void; onOpenMemory(): void; onOpenSettings(): void;
   onExpand?(): void; onShowRecent?(): void; onError(error: unknown): void;
 }) {
   const [showArchived, setShowArchived] = useState(false);
+  const [knownRuns, setKnownRuns] = useState<Set<string>>(new Set());
   const mark = appearance === 'light' ? journalMarkDark : journalMarkWhite;
   const visible = sessions.filter(s => !s.removed);
   // Active: running sessions from every project, archived or not, in the order of their stable slots.
   const active = slotOrder(visible);
   const projectId = project?.id ?? null;
-  const groups = recentGroups(visible, projectId, now);
+  const groups = recentGroups(visible.filter(session => !session.runId || !knownRuns.has(session.runId)), projectId, now);
   const archived = visible.filter(s => s.archived && !active.includes(s) && s.projectId === projectId).sort(byPin);
   const suggestions = suggestionCounts(proposals);
   const projectName = (id: string) => projects.find(p => p.id === id)?.name ?? 'Unknown project';
@@ -112,7 +114,8 @@ export function Sidebar({ pane, inOverlay = false, projects, project, sessions, 
     </button>
     <nav aria-label="Sessions" className="session-nav">
       <div className="side-heading"><span>{shell.active}</span><span className="slots-used">{shell.slotsUsed(used)}<span className="slot-meter" aria-hidden="true">{[1, 2, 3, 4].map(n => <span key={n} className={n <= used ? 'on' : ''} />)}</span></span></div>
-      {active.length > 0 && <div className="session-group" role="group" aria-label="Active sessions">{active.map(row)}</div>}
+      {project && <RunNavigation projectId={project.id} sessions={sessions} onSelect={onSelect} onOpenRun={onOpenRun} onRuns={setKnownRuns} />}
+      {active.length > 0 && <div className="session-group" role="group" aria-label="Active sessions">{active.filter(session => !session.runId || !knownRuns.has(session.runId)).map(row)}</div>}
       {groups.length > 0 && <div id="sidebar-recent" className="side-heading"><span>{shell.recent}</span></div>}
       {groups.map(group => <div key={group.key} className="day" role="group" aria-label={group.label}><div className="day-label" aria-hidden="true">{group.label}</div>{group.sessions.map(row)}</div>)}
       {archived.length > 0 && <button className="side-heading archived-toggle" aria-expanded={showArchived} onClick={() => setShowArchived(!showArchived)}><span aria-hidden="true">{showArchived ? '▾' : '▸'}</span> {shell.archived} · {archived.length}</button>}

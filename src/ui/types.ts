@@ -5,7 +5,7 @@ export type CommandId = 'new-session' | 'open-project' | 'add-note' | 'focus-ter
 export type InspectorTab = 'session' | 'files' | 'memory';
 export type Pane = 'full' | 'rail';
 // userData/preferences.json (src/desktop/notify.mjs PREFERENCE_DEFAULTS).
-export interface Preferences { notifications: boolean; notificationCommand: boolean; }
+export interface Preferences { notifications: boolean; notificationCommand: boolean; coordinatedRuns: boolean; }
 export const PROVIDER_NAMES: Record<Provider, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
 export interface ProjectRoot { id: string; path: string; name: string; kind: 'git' | 'folder'; nested: boolean; gitRoot: string | null; branch: string | null; exists?: boolean; currentBranch?: string | null; knowledge?: number; }
 export interface Project { id: string; name: string; root: string; branch: string | null; head: string | null; displayName?: string | null; folderName?: string; pinned?: boolean; roots?: ProjectRoot[]; }
@@ -16,7 +16,7 @@ export interface Conflict { id: string; revision: number; statement: string; }
 export interface MemoryOrigin { sessionId: string; environmentId?: string; logicalBranch?: string; base?: string; result?: string | null; applied?: boolean; environmentState?: string }
 export interface Memory { pinned?: boolean; environment?: string; origin?: MemoryOrigin; selection?: SelectionInfo; promotedFrom?: { id: string; revision: number; branch: string }; supersedes?: { id: string; revision: number }; id: string; projectId: string; revisionId: string; revision: number; statement: string; category: string; scope: 'checkout' | 'branch'; area: string; branch: string | null; source: Source; status: 'candidate' | 'active' | 'rejected' | 'archived'; validation: 'current' | 'stale' | 'wrong-branch' | 'folder-removed'; drift?: number | null; conflicts?: Conflict[]; }
 // Composer modes: the launch flags stay plan/research (Phase 4).
-export type Mode = 'build' | 'plan' | 'read-only';
+export type Mode = 'build' | 'plan' | 'read-only' | 'coordinate';
 // Why a note was selected. terms: the searched terms FTS matched (receipts from Phase 4 on). The
 // searched terms come from the task text and the referenced paths, so a term may be a path word
 // ("billing" from src/billing) that does not appear in the task; underline only the spans found in the task.
@@ -48,6 +48,7 @@ export interface Receipt { terms?: string[]; preview?: boolean; references?: Fil
 export type SessionStatus = 'starting' | 'running' | 'waiting' | 'stopping' | 'stopped' | 'exited' | 'failed' | 'interrupted' | 'orphaned';
 export interface Survivor { pid: number; started: string; command: string; }
 export interface Session { id: string; projectId: string; provider: Provider; nativeId: string | null; nativeIdConfirmed: boolean; title: string; status: SessionStatus; receiptId: string; createdAt: string;
+  role?: 'coordinator' | 'worker'; runId?: string; attemptId?: string | null; launchId?: string; turnId?: string | null; inputOwner?: 'automation' | 'human' | 'uncertain';
   lastActivityAt?: string; endedAt?: string | null; exitCode?: number | null; branch?: string | null; head?: string | null; activity?: 'idle' | 'working' | 'permission' | null; archived?: boolean; survivors?: Survivor[] | null; resumedFrom?: string | null; displayName?: string | null; pinned?: boolean; pinSeq?: number | null; removed?: boolean; version?: number; workspaceId?: string | null; environmentId?: string | null; research?: boolean; plan?: boolean; cwd?: string; identityVerified?: boolean;
   // Runtime protocol 4 (src/core/terminal.mjs). slot: 1-4 while live in this runtime, kept until it ends.
   // lastOutputAt: last PTY output, excluding echo and resize repaints. pending: what an open Claude prompt asks.
@@ -102,6 +103,7 @@ export type TerminalEvent = { type: 'output'; sessionId: string; sequence: numbe
   | { type: 'timeline'; event: TimelineEvent } | { type: 'proposals'; projectId: string; count: number; sessionId?: string; failed?: boolean } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; otherBuild?: boolean; recovered?: boolean; recovery?: Recovery | null }
   | { type: 'files'; key: string; folders: string[]; overflow: boolean; stopped?: boolean }
   | { type: 'environment'; environment?: Environment; reconciled?: number }
+  | { type: 'run'; runId: string; lastEventId?: number }
   | { type: 'update'; state: UpdateState } | { type: 'providers'; agents: AgentInfo[]; after?: { provider: Provider; kind: ProcessKind } } | { type: 'command'; id: CommandId }
   // Codex and Cursor output times, at most one per session every 5 s; main asks to show a session (notification click).
   | { type: 'activity'; sessionId: string; lastOutputAt: string } | { type: 'focus-session'; sessionId: string } | { type: 'process-output'; id: string; data: string; offset: number } | { type: 'process-exit'; id: string; provider: Provider; kind: ProcessKind; code: number | null };
@@ -215,6 +217,7 @@ export interface Environment {
   details: { path: string; tmpDir: string; logDir: string; refs: { base: string; head: string; result: string } };
 }
 export interface ApplyPreview {
+  expect: string;
   environmentId: string; logicalBranch: string; base: string; logicalHead: string; result: string; moved: boolean; commitsSince: number; baseOnBranch: boolean;
   clean: boolean; conflicts: { path: string; kind: string }[]; changes: EnvironmentFile[]; excluded: string[]; blockedBy: string[]; canApply: boolean; checkedOut: boolean;
   busy: string | null; unresolved: string[]; empty: boolean; switchedTo: string | null;

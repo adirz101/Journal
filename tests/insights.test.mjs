@@ -73,7 +73,7 @@ test('migration v8 from a v7 database file backfills approvals and deliveries', 
 
   f.store = new JournalStore(f.path);
   const db = f.store.db;
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 9);
   const expected = db.prepare(`SELECT count(*) AS n FROM receipts r, json_each(r.body,'$.items') WHERE json_extract(r.body,'$.state') IN ('submitted','uncertain')`).get().n;
   assert.equal(expected, 6); assert.equal(f.rows().length, expected);
   const onDemand = onDemandCounts(db);
@@ -91,7 +91,7 @@ test('migration v8 from a v7 database file backfills approvals and deliveries', 
 
   f.store.close(); f.store = new JournalStore(f.path);
   assert.equal(f.rows().length, expected, 'Reopening is a no-op');
-  assert.equal(f.store.db.prepare('PRAGMA user_version').get().user_version, 8);
+  assert.equal(f.store.db.prepare('PRAGMA user_version').get().user_version, 9);
 });
 
 test('migration v8 tolerates a database whose version was lowered after the columns were added', t => {
@@ -99,7 +99,7 @@ test('migration v8 tolerates a database whose version was lowered after the colu
   f.store.close();
   const raw = new DatabaseSync(f.path); raw.exec('PRAGMA user_version=7'); raw.close();
   f.store = new JournalStore(f.path);
-  assert.equal(f.store.db.prepare('PRAGMA user_version').get().user_version, 8);
+  assert.equal(f.store.db.prepare('PRAGMA user_version').get().user_version, 9);
   assert.equal(f.rows().length, 1);
 });
 

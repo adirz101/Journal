@@ -6,6 +6,7 @@ import { ResizableWorkspace } from './ResizableWorkspace';
 import { useShellLayout } from './useShellLayout';
 import { useProposals } from './useProposals';
 import { Sidebar } from './Sidebar';
+import { TeamPanel, type TeamRun } from './TeamPanel';
 import { nextNeedsYou, outputOnly, resumable, slotOrder, slotTarget, stateFor } from './sessionState';
 import { ChangesPanel } from './ChangesPanel';
 import { WorkspaceDialog } from './WorkspaceDialog';
@@ -83,6 +84,7 @@ export default function App() {
   const [sessions, setSessions] = useState<Record<string, Session>>({}); const [selectedId, setSelectedId] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null); const [task, setTask] = useState('');
   const [panel, setPanel] = useState<InspectorTab>('memory');
+  const [teamRunId, setTeamRunId] = useState<string | null>(null);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState<{ memory?: Memory; supersedes?: Memory; initialCategory?: string; initialStatement?: string; draft?: StatusDraft; firstRun?: 'checkout' | 'branch'; after?: () => void } | null>(null);
   const [knowledgeVersion, setKnowledgeVersion] = useState(0);
   // Phase 5: note trust lines refetch on note changes and when a session starts running (a new delivery).
@@ -103,6 +105,7 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<WorkspaceList | null>(null); const [workspaceId, setWorkspaceId] = useState<string>('');
   // === Phase 4: composer state ===
   // The agent choice is remembered on this computer; the mode starts at Build and is never changed for the user.
+  const [journalToolsAllowed, setJournalToolsAllowed] = useState(true);
   const [mode, setMode] = useState<Mode>('build'); const [isolated, setIsolated] = useState(false); const [startError, setStartError] = useState<{ code?: string; message: string } | null>(null);
   const rememberedAgent = useRef<string | null | undefined>(undefined);
   if (rememberedAgent.current === undefined) rememberedAgent.current = (() => { try { const value = localStorage.getItem('journal-agent'); return isProvider(value) ? value : null; } catch { return null; } })();
@@ -372,6 +375,7 @@ export default function App() {
   // New session also leaves Getting to know your project; its drafts are dropped (decision 3),
   // but only when the screen was showing: drafts not yet seen wait for their project.
   function newSession() {
+    setTeamRunId(null);
     userChose.current = true; setSelectedId(null); setTaskFocus(n => n + 1);
     const shownFor = showFirstRun && state ? state.project.id : null;
     if (shownFor) setFirstRunDrafts(current => { const next = { ...current }; delete next[shownFor]; return next; });
@@ -468,6 +472,16 @@ export default function App() {
     await run(async () => {
       try {
         if (!resumeFrom) setStartError(null);
+        if (!resumeFrom && mode === 'coordinate') {
+          const team = await api<TeamRun>('createRun', { projectId, provider, goal: submitted, journalToolsAllowed: provider === 'claude' && journalToolsAllowed, requestId: crypto.randomUUID() });
+          if (!team.coordinatorSessionId) { setSelectedId(null); setTeamRunId(team.id); setPanel('session'); await refresh(projectId); return; }
+          const coordinator = await api<Session>('getSession', { id: team.coordinatorSessionId });
+          merge([coordinator]); setSelectedId(coordinator.id); setReceipt(await api<Receipt>('getReceipt', { id: coordinator.receiptId })); setTeamRunId(team.id); setFirstNote(null); setPanel('session'); await refresh(projectId); return;
+        }
+        if (resumeFrom?.runId) {
+          await api('teamAction', { action: resumeFrom.role === 'coordinator' ? 'resumeCoordinator' : 'resume', input: { runId: resumeFrom.runId, attemptId: resumeFrom.attemptId, requestId: crypto.randomUUID() } });
+          setTeamRunId(resumeFrom.runId); await reloadSessions(); await refresh(projectId); return;
+        }
         const result = await api<{ session: Session; receipt: Receipt }>('start', { projectId, provider, task: submitted, resumeId: resumeFrom?.id, ...(resumeFrom ? {} : { workspaceId: workspaceId || null, ...modeFlags(mode), disabled, references: referenceInputs, ...(isolated && mode === 'build' && !workspaceId.startsWith('root:') ? { isolated: true } : {}) }) });
         merge([result.session]); setSelectedId(result.session.id); setReceipt(result.receipt); setFirstNote(null); setDisabled([]); if (!resumeFrom) setReferences([]); setPanel('session'); await refresh(projectId);
       } catch (error) {
@@ -784,7 +798,8 @@ export default function App() {
     sidebar={(pane, overlay) => <Sidebar pane={pane} inOverlay={overlay} projects={projects} project={state?.project ?? null} sessions={ordered} proposals={proposals} selectedId={selectedId} connected={connected}
       runtimeState={runtime.state === 'connected' || runtime.state === 'disconnected' ? runtime.state : 'connecting'} now={now} canCompose={!!state}
       shortcuts={bootstrap?.shortcuts} appearance={appearance} update={state && session ? null : update}
-      onSelect={next => { if (overlay || layout.inspector === 'overlay') layout.closeOverlays(false); void selectSession(next); }} onSessionMenu={(next, position) => void sessionMenu(next, position)} onNew={() => { if (overlay || layout.inspector === 'overlay') layout.closeOverlays(false); newSession(); }}
+      onOpenRun={id => { setSelectedId(null); setReceipt(null); setTeamRunId(id); if (overlay) layout.closeOverlays(false); }}
+      onSelect={next => { setTeamRunId(null); if (overlay || layout.inspector === 'overlay') layout.closeOverlays(false); void selectSession(next); }} onSessionMenu={(next, position) => void sessionMenu(next, position)} onNew={() => { if (overlay || layout.inspector === 'overlay') layout.closeOverlays(false); newSession(); }}
       onSwitchProject={position => void switcherMenu(position).catch(failed)} onProjectMenu={position => void projectMenu(position).catch(failed)}
       onOpenMemory={() => { setPanel('memory'); layout.showInspector(); }} onOpenSettings={() => setSettingsOpen(true)} onError={failed}
       onSearch={() => { if (overlay || layout.inspector === 'overlay') layout.closeOverlays(false); command.current('command-palette'); }}
@@ -814,12 +829,13 @@ export default function App() {
           onRemember={rememberFirstRun} onSkip={skipFirstRun} onRedraft={redraftFirstRun} onShown={orientationShown}
           onEdit={(scope, statement) => { const draft = scope === 'checkout' ? currentDrafts.overview : currentDrafts.branch; if (draft) setForm({ draft: { ...draft, statement }, firstRun: scope }); }} />
         : firstRunPending ? <div className="first-run-pending" aria-busy="true" />
+        : !session && teamRunId ? <section className="session-view"><div className="team-switch"><button onClick={() => setTeamRunId(null)}>New session</button></div><TeamPanel key={teamRunId} runId={teamRunId} sessions={sessions} onSelect={target => { setTeamRunId(null); void selectSession(target); }} /></section>
         : !session ? <NewSessionView project={state.project} bootstrap={bootstrap} workspaces={workspaces} workspaceId={workspaceId}
-          task={task} onTask={editTask} taskRef={taskRef} references={references} disabled={disabled} onDisabled={setDisabled} provider={provider} mode={mode} isolated={isolated}
+          journalToolsAllowed={journalToolsAllowed} onJournalToolsAllowed={setJournalToolsAllowed} task={task} onTask={editTask} taskRef={taskRef} references={references} disabled={disabled} onDisabled={setDisabled} provider={provider} mode={mode} isolated={isolated}
           connected={connected} liveCount={liveCount} busy={busy} startError={startError} knowledgeVersion={knowledgeVersion} onAddReference={openReferencePicker}
           {...composerCallbacks} providers={providerProps} mark={journalMark} justRemembered={justRemembered}
           emptyTerminal={firstSession ? bootstrap?.shortcuts['new-session']?.label ?? '' : null} />
-        : <section className="session-view" aria-label="Session">
+        : <section className="session-view" aria-label="Session" data-team={!!session.runId && teamRunId === session.runId}>
           <SessionHeader session={session} state={stateFor(session, now, connected)} connected={connected} busy={busy} canStart={canStart} now={now} mac={bootstrap?.platform === 'darwin'}
             projectBranch={session.projectId === state.project.id ? state.project.branch : session.branch ?? null} agentVersion={bootstrap?.agents.find(a => a.provider === session.provider)?.version ?? null}
             onSwitchBranch={session.projectId === state.project.id && !session.workspaceId?.startsWith('root:') ? () => openBranchPicker(session.workspaceId ?? 'checkout') : undefined}
@@ -827,6 +843,7 @@ export default function App() {
             onArchiveToggle={() => void (session.archived ? sessionActions.unarchive(session) : sessionActions.archive(session))}
             onEndOrphan={() => void sessionAction('terminateOrphan')} onEndSurvivors={() => void sessionAction('terminateSurvivors')} onMenu={position => void sessionMenu(session, position)} />
           <AttentionBanner session={session} />
+          {session.runId && <><div className="team-switch" aria-label="Session view"><button aria-pressed={teamRunId !== session.runId} onClick={() => setTeamRunId(null)}>Terminal</button><button aria-pressed={teamRunId === session.runId} onClick={() => setTeamRunId(session.runId!)}>Team</button>{session.role === 'worker' && <button onClick={() => void api<TeamRun>('getRun', { runId: session.runId }).then(run => { const coordinator = run.coordinatorSessionId ? sessions[run.coordinatorSessionId] : null; if (coordinator) { setTeamRunId(null); void selectSession(coordinator); } else setTeamRunId(session.runId!); }).catch(error => setError(error.message))}>← Coordinator</button>}<small>{session.role === 'coordinator' ? 'Coordinator' : 'Worker'} · Input {session.inputOwner === 'human' ? 'yours' : session.inputOwner === 'uncertain' ? 'needs checking' : 'automatic'}</small>{session.inputOwner !== 'automation' && <button onClick={() => void sessionAction('resumeAutomatic')}>Continue automatic messages</button>}</div>{teamRunId === session.runId && <TeamPanel key={session.runId} runId={session.runId} sessions={sessions} onSelect={target => { setTeamRunId(null); void selectSession(target); }} />}</>}
           {projectBranchChanged && <p className="hint session-hint">The checkout is now on {state.project.branch ?? 'a detached HEAD'}; this session started on {session.branch ?? 'a detached HEAD'}.</p>}
           {session.status === 'orphaned' && <p className="hint session-hint">{session.identityVerified === false ? `A process with this session's PID (${(session as { pid?: number }).pid ?? 'unknown'}) is still running, but Journal cannot verify it is the original agent, so it will not signal it. Continuing stays blocked until it ends; check it outside Journal.` : 'The runtime that owned this terminal stopped while its process kept running. Journal cannot reattach to it. End it here, or leave it running; continuing this conversation stays blocked while it runs.'}</p>}
           {session.status === 'interrupted' && <p className="hint session-hint">This session's runtime stopped unexpectedly. Whether its first message reached the agent is uncertain, and nothing was resent.{resumable(session) ? ' Continue reopens the same conversation.' : ''}</p>}

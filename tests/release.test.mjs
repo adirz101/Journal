@@ -62,7 +62,7 @@ test('packaging config: stable ID, platforms, per-user installer, data kept, upd
   const signedOnly = withEnv({ CSC_LINK: 'secret-path', CSC_IDENTITY_AUTO_DISCOVERY: undefined, APPLE_API_KEY: undefined }, () => loadConfig());
   assert.equal(signedOnly.mac.notarize, false, 'Notarization only with App Store Connect credentials');
   // node-pty and electron-updater ship as modules; the renderer libraries are bundled by Vite.
-  assert.deepEqual(Object.keys(pkg.dependencies), ['electron-updater', 'node-pty']);
+  assert.deepEqual(Object.keys(pkg.dependencies), ['@modelcontextprotocol/server', 'electron-updater', 'node-pty', 'zod']);
   for (const name of pkg.journal.rendererBundle) assert.ok(pkg.devDependencies[name], name);
 });
 
@@ -90,7 +90,7 @@ test('the node-pty spawn-helper path fix is applied once and fails closed on cha
 });
 
 test('package audit: allow-list, forbidden files and leaks', () => {
-  assert.deepEqual(auditEntries(['dist/index.html', 'dist/assets/index-abc.js', 'src/core/store.mjs', 'src/desktop/main.mjs', 'src/runtime/runtime.mjs', 'src/runtime/adapters/codex.mjs', 'package.json', 'THIRD_PARTY_NOTICES.md',
+  assert.deepEqual(auditEntries(['dist/index.html', 'dist/assets/index-abc.js', 'src/core/store.mjs', 'src/desktop/main.mjs', 'src/runtime/runtime.mjs', 'src/runtime/adapters/codex.mjs', 'src/agent-tools/server.mjs', 'src/core/orchestration/runs.mjs', 'package.json', 'THIRD_PARTY_NOTICES.md',
     'node_modules/node-pty/lib/index.js', 'node_modules/node-pty/build/Release/pty.node', 'node_modules/node-pty/build/Release/spawn-helper', 'assets/branding/journal-app-icon.png',
     'dist/assets/jetbrains-mono-latin-400-normal-V6pRDFza.woff2']), []);
   for (const bad of ['.env', 'src/core/.env.local', 'data/journal.sqlite', 'runtime-stderr.log', 'dist/assets/index.js.map', '.cache/tmp/x', 'tests/a.test.mjs', 'fixtures/x.json', 'docs/a.md', 'src/ui/App.tsx', 'certs/dev.p12'])

@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { chmodSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { join, sep } from 'node:path';
 import { realPath } from '../core/paths.mjs';
 import { ADAPTERS } from './adapters/index.mjs';
@@ -44,7 +45,7 @@ const CMD_UNSAFE = /[&()@^|%!"<>]/;
 // The launcher always exits 0 and discards the script's output and errors, so whatever the
 // script does, the provider sees a successful hook with only the neutral response: '{}' for
 // Cursor, nothing otherwise. It returns at once when the agent was not started by Journal.
-export function launcherScript({ execPath, hookScript, platform = process.platform, timeoutSeconds = LAUNCHER_TIMEOUT_S }) {
+export function launcherScript({ execPath, hookScript, platform = process.platform, timeoutSeconds = LAUNCHER_TIMEOUT_S, allowContinuation = false }) {
   const responses = Object.values(ADAPTERS).filter(adapter => adapter.response);
   if (platform === 'win32') {
     // Inside a batch file `%` must be doubled; with delayed expansion off `!` is literal; quoted
@@ -62,10 +63,11 @@ export function launcherScript({ execPath, hookScript, platform = process.platfo
   return ['#!/bin/sh',
     '# Journal hook launcher, rewritten by each Journal version. Always exits 0.',
     'exec 2>/dev/null',
+    ...(allowContinuation ? ['run_hook() {'] : []),
     'if [ -n "$JOURNAL_HOOK_TARGET" ]; then',
     // Background jobs get /dev/null as stdin: keep the payload on fd 3 for the script.
     '  exec 3<&0',
-    `  ELECTRON_RUN_AS_NODE=1 ${quote(execPath, platform)} ${quote(hookScript, platform)} "$1" <&3 >/dev/null 2>&1 3<&- &`,
+    `  ELECTRON_RUN_AS_NODE=1 ${quote(execPath, platform)} ${quote(hookScript, platform)} "$1" <&3 ${allowContinuation ? '' : '>/dev/null'} 2>&1 3<&- &`,
     '  pid=$!',
     '  exec 3<&-',
     // The watchdog kills the script at the limit; stopped early, it ends its own sleep too.
@@ -76,6 +78,7 @@ export function launcherScript({ execPath, hookScript, platform = process.platfo
     'else',
     '  cat >/dev/null 2>&1',
     'fi',
+    ...(allowContinuation ? ['}', `run_hook "$1" | ELECTRON_RUN_AS_NODE=1 ${quote(execPath, platform)} ${quote(fileURLToPath(new URL('./continuation-response.mjs', import.meta.url)), platform)} --filter "$1"`] : []),
     'case "$1" in',
     ...responses.map(adapter => `  ${adapter.provider}) printf '%s\\n' '${adapter.response}' ;;`),
     'esac',
@@ -88,12 +91,12 @@ export function launcherScript({ execPath, hookScript, platform = process.platfo
 // path is used until a later start can replace the fixed one. Trade-off: launches registered
 // meanwhile use another command string, so a provider that trusts hooks by their command
 // (Codex) asks again for those launches.
-export function installLauncher({ dataDir, execPath, hookScript, platform = process.platform, timeoutSeconds }) {
+export function installLauncher({ dataDir, execPath, hookScript, platform = process.platform, timeoutSeconds, allowContinuation = false }) {
   const dir = join(dataDir, 'hooks'); mkdirSync(dir, { recursive: true, mode: 0o700 });
   if (platform !== 'win32') chmodSync(dir, 0o700);
   const name = launcherName(platform); const path = join(dir, name);
   if (platform === 'win32' && CMD_UNSAFE.test(path)) throw new Error('The data folder path cannot be used in a hook command');
-  const content = launcherScript({ execPath, hookScript, platform, timeoutSeconds });
+  const content = launcherScript({ execPath, hookScript, platform, timeoutSeconds, allowContinuation });
   const write = target => {
     const temporary = `${target}.${process.pid}.tmp`;
     writeFileSync(temporary, content, { mode: 0o700 });
@@ -122,7 +125,7 @@ export class Observers {
     // Files from a previous runtime belong to sessions it can no longer observe.
     for (const name of readdirSync(this.dir)) this.remove(join(this.dir, name));
     // Without a launcher nothing is registered and sessions stay unobserved.
-    try { this.launcher = installLauncher({ dataDir, execPath, hookScript, platform, timeoutSeconds: launcherTimeoutSeconds }); } catch { this.launcher = null; }
+    try { this.launcher = installLauncher({ dataDir, execPath, hookScript, platform, timeoutSeconds: launcherTimeoutSeconds, allowContinuation: Object.values(adapters).some(adapter => adapter.continuation?.validated === true) }); } catch { this.launcher = null; }
   }
   remove(path) { try { rmSync(path, { force: true }); } catch { /* Windows may hold the file briefly; a later sweep retries. */ } }
   command(provider) { return launcherCommand(this.launcher, this.platform, provider); }

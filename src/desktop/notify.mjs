@@ -13,7 +13,7 @@ import { redact } from '../core/validation.mjs';
 // electron-builder.config.cjs (tests/release.test.mjs keeps them equal).
 export const APP_USER_MODEL_ID = 'io.github.adirz101.journal';
 
-export const PREFERENCE_DEFAULTS = Object.freeze({ notifications: true, notificationCommand: false });
+export const PREFERENCE_DEFAULTS = Object.freeze({ notifications: true, notificationCommand: false, coordinatedRuns: false });
 const PREFERENCE_KEYS = Object.keys(PREFERENCE_DEFAULTS);
 const DETAIL_MAX = 120;
 

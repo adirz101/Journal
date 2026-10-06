@@ -2,7 +2,7 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { cpSync, mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync, appendFileSync, symlinkSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { sessionStatus, skipFirstRun, startSession } from './support/ui';
+import { sessionStatus, skipFirstRun, startSession, newSession, taskBox, inspectorTab } from './support/ui';
 import { fixtureEnv } from './support/env';
 
 // Sessions kept running across an update stay in the other build's runtime; Journal switches to
@@ -10,7 +10,7 @@ import { fixtureEnv } from './support/env';
 // app whose runtime code differs by a comment (the build is a hash of the runtime's own files).
 test.skip(process.platform === 'win32', 'POSIX fixture CLI');
 
-function setup(name: string) {
+function setup(name: string, legacyEnvironments = false) {
   mkdirSync(resolve('.cache/tmp'), { recursive: true });
   const root = mkdtempSync(resolve('.cache/tmp', `${name}-`)); const project = resolve(root, 'project'); const bin = resolve(root, 'bin'); const other = resolve(root, 'other-build');
   for (const dir of [project, bin]) mkdirSync(dir);
@@ -28,6 +28,13 @@ console.log('AGENT READY');process.stdin.resume();`);
   for (const part of ['package.json', 'src', 'dist', 'assets']) cpSync(resolve(part), resolve(other, part), { recursive: true });
   symlinkSync(resolve('node_modules'), resolve(other, 'node_modules'));
   appendFileSync(resolve(other, 'src/runtime/protocol.mjs'), '\n// another build\n');
+  if (legacyEnvironments) {
+    const file = resolve(other, 'src/runtime/runtime.mjs');
+    writeFileSync(file, readFileSync(file, 'utf8')
+      .replace('environmentSync: true', 'environmentSync: false')
+      .replaceAll('environments.reconcile()', 'Promise.resolve()')
+      .replace("if (event.type === 'status') void environments.follow(event.session);", '// Legacy fixture has no environment follower.'));
+  }
   const runtimeInfo = () => JSON.parse(readFileSync(resolve(root, 'data/runtime.json'), 'utf8')) as { pid: number; runtimeId: string; build?: string };
   const pids = new Set<number>();
   const remember = () => { try { pids.add(runtimeInfo().pid); } catch {} };
@@ -102,6 +109,33 @@ test('Switch now stops the other build\'s sessions after confirming and switches
       // The stopped session can be continued in this build.
       await expect(page.getByRole('button', { name: /^Continue/ }).first()).toBeVisible({ timeout: 15000 });
       expect(existsSync(resolve(f.root, 'data/runtime.json'))).toBe(true);
+    } finally { await app.close().catch(() => {}); }
+  } finally { f.cleanup(); }
+});
+
+test('an older kept runtime still captures an isolated result while another session remains live', async () => {
+  const f = setup('runtime-legacy-environments', true);
+  try {
+    let { app, page } = await launch(f, f.other);
+    await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
+    await skipFirstRun(page);
+    await newSession(page);
+    await page.getByRole('checkbox', { name: 'Isolated' }).check();
+    await taskBox(page).fill('legacy isolated worker');
+    await page.getByRole('button', { name: /^Start Claude Code/ }).click();
+    await expect(page.locator('.xterm-rows')).toContainText('AGENT READY');
+    await startSession(page, 'claude', { task: 'keep runtime alive' });
+    await expect(page.locator('.xterm-rows')).toContainText('AGENT READY');
+    f.remember(); const before = f.runtimeInfo();
+    await app.close();
+    ({ app, page } = await launch(f, '.'));
+    try {
+      await expect(page.locator('.runtime-notice')).toBeVisible();
+      await page.getByRole('button', { name: /legacy isolated worker/ }).first().click();
+      await page.getByRole('button', { name: 'Stop', exact: true }).click();
+      await inspectorTab(page, 'Session');
+      await expect(page.locator('.environment-panel')).toContainText('Done.', { timeout: 15000 });
+      expect(f.runtimeInfo().runtimeId).toBe(before.runtimeId);
     } finally { await app.close().catch(() => {}); }
   } finally { f.cleanup(); }
 });
