@@ -6,10 +6,10 @@ import { captureEvidence, validateEvidence } from './evidence.mjs';
 import { choice, relativePath, refuseCredentials, text } from './validation.mjs';
 import { branchDraft, commitsSince, overviewDraft, PLACEHOLDER } from './status.mjs';
 import { aliasesFor, areaMatches, isDuplicate, possibleConflict, queryTerms } from './retrieval.mjs';
-import { checkoutBaseline, fileDiff, openableFile, sessionChanges } from './changes.mjs';
+import { checkoutBaseline, fileDiff, nestedTrees, openableFile, sessionChanges } from './changes.mjs';
 import { classifyFolder, folderStatus } from './projects.mjs';
 import { SESSION_USER_FIELDS, survivorScanPending } from './sessions.mjs';
-import { basename, isAbsolute, join, relative, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { applyRetention, backupTo, checkpoint, exportBrain, importBrain, purgeSession, storageInfo } from './maintenance.mjs';
 import { ruleProposals, statusProposal, testCommandProposals } from './proposals.mjs';
 import { addWorktree, creationNotices, listGitWorktrees, plannedPath, registered, removalBlockers, removeWorktree, resolveBase, validateBranchName, workspaceView } from './workspaces.mjs';
@@ -1291,10 +1291,22 @@ export class JournalStore {
   sessionChanges(sessionId) {
     const session = this.getSession(sessionId); let view;
     try { view = this.sessionView(session); } catch (error) { return { base: session.head ?? '', available: false, reason: `${error.message}. Changes for this session are no longer available.`, files: [] }; }
-    return sessionChanges(view, session);
+    return sessionChanges(view, session, this.sessionTrees(session, view));
   }
-  openableFile(sessionId, path) { const session = this.getSession(sessionId); return openableFile(this.sessionView(session), session, path); }
-  sessionFileDiff(sessionId, path) { const session = this.getSession(sessionId); return fileDiff(this.sessionView(session), session, path); }
+  // Other working trees inside the session's folder that its own recorded edits or commands were
+  // in (src/core/changes.mjs nestedTrees): the folders of edited files and of commands.
+  sessionTrees(session, view) {
+    if (view.pathPrefix || typeof session.cwd !== 'string') return [];
+    const places = new Set();
+    for (const event of this.listEvents(session.id, 2000)) {
+      const place = event.kind === 'file' ? event.body?.path : event.kind === 'command-start' ? event.body?.cwd : null;
+      if (typeof place !== 'string' || !place || place === '.') continue;
+      places.add(resolve(session.cwd, event.kind === 'file' ? dirname(place) : place));
+    }
+    return nestedTrees(view.root, [...places].sort());
+  }
+  openableFile(sessionId, path) { const session = this.getSession(sessionId); const view = this.sessionView(session); return openableFile(view, session, path, this.sessionTrees(session, view)); }
+  sessionFileDiff(sessionId, path) { const session = this.getSession(sessionId); const view = this.sessionView(session); return fileDiff(view, session, path, this.sessionTrees(session, view)); }
   recoverSessions() {
     for (const row of this.db.prepare('SELECT body FROM sessions').all()) {
       const session = parse(row);

@@ -97,6 +97,9 @@ export const count = (n: number, one: string, many = `${one}s`) => `${n} ${n ===
 // Every key exists from the start so the three groups never edit the same
 // lines; a group adds new keys only in its own block.
 export const shell = {
+  // Another Git working tree inside the checkout that the session worked in (Files → Changed).
+  otherTree: (path: string, branch: string | null, files: number, commits: number, base: string) =>
+    `${count(files, 'file')} in the worktree ${path}${branch ? ` (${branch})` : ''}, compared with ${base}${commits ? `, the commit before the ${count(commits, 'commit')} made there since the session started` : ''}.`,
   // A: sidebar and settings
   newSession: 'New session', search: 'Search', searchHint: 'Search sessions, commands and notes', active: 'Active', slotsUsed: (n: number) => `${n} of 4`,
   recent: 'Recent', today: 'Today', yesterday: 'Yesterday', earlier: 'Earlier', archived: 'Archived',
