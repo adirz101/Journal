@@ -276,6 +276,18 @@ Branch `claude/session-story`. Fixture acceptance only. "What it did" became a d
   - collection tests in `tests/turns.test.mjs`;
   - `tests/desktop-story.spec.ts`: two end-to-end tests through the real hook launcher.
 
+### Changes in other worktrees
+
+Branch `claude/changes-other-worktrees`. Files → Changed compared only the session's own checkout, so an agent working in a Git worktree inside it showed nothing (`.worktrees/name`, usually ignored by the checkout). Found on a real session: 28 edits and most commands ran there.
+
+- **Which trees:** the view now also lists every other Git working tree inside the checkout that the session's own recorded file edits or commands were in (`nestedTrees` in `src/core/changes.mjs`). These are the outermost folders with their own `.git` below the checkout: worktrees, nested repositories, submodules.
+- **Paths:** their files keep their project paths (`.worktrees/name/...`); diffs and Open run Git in that tree.
+- **Base:** Journal did not record that tree's commit at the start. So the base is the parent of the oldest first-parent commit there written after the session started and not on the main branch (`origin/HEAD`, else `origin/main`, `main` or `master`), or HEAD.
+  - A rebase onto a newer main does not count main's commits.
+  - A session whose commits were already merged into the main branch shows only its uncommitted changes there.
+- **Display:** the view names each tree with its branch and the commits made there since the session started.
+- **Tests:** `tests/changes-trees.test.mjs`.
+
 ## Verification
 
 | Check | Result |

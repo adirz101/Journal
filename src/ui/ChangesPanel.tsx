@@ -23,6 +23,7 @@ export function ChangesPanel({ session, changes, loading, error: loadError, refr
     {changes?.available && <>
       <div className="receipt-meta"><span>{changes.files.length} file{changes.files.length === 1 ? '' : 's'}</span><span className="additions">+{changes.additions}</span><span className="deletions">−{changes.deletions}</span>{changes.commitsSince ? <span>{changes.commitsSince} new commit{changes.commitsSince === 1 ? '' : 's'}{(changes as { folderPrefix?: string | null }).folderPrefix ? ' in the repository' : ''}</span> : null}</div>
       {!!changes.preexistingCount && <p className="hint">{changes.preexistingCount} file{changes.preexistingCount === 1 ? ' was' : 's were'} already modified when the session started; they are marked “before”.</p>}
+      {changes.trees?.map(tree => <p key={tree.path} className="hint change-tree">{shell.otherTree(tree.path, tree.branch, tree.files, tree.commitsSince, tree.base.slice(0, 7))}</p>)}
       {changes.truncated && <p className="hint">Showing the first 500 files.</p>}
       <ul className="change-list">{changes.files.map(file => <li key={file.path}>
         <button className="change-row" aria-expanded={open === file.path} onClick={() => void toggle(file.path)}>

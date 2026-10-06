@@ -122,7 +122,9 @@ export interface FileReference { projectId?: string; kind: 'file' | 'lines' | 'f
 export interface UpdateState { status: 'off' | 'idle' | 'checking' | 'none' | 'available' | 'downloading' | 'ready' | 'error'; mode: 'off' | 'auto' | 'notify'; current: string; version: string | null; percent: number | null; message: string | null; automatic: boolean; installing: boolean; }
 export interface ProjectState { project: Project; sessions: Session[]; receipts: Receipt[]; needsOrientation?: boolean; }
 export interface ChangedFile { path: string; from: string | null; additions: number | null; deletions: number | null; binary: boolean; untracked: boolean; preexisting: boolean; sensitive: boolean; }
-export interface Changes { base: string; available: boolean; reason?: string; head?: string; branch?: string; headMoved?: boolean; commitsSince?: number; files: ChangedFile[]; truncated?: boolean; additions?: number; deletions?: number; preexistingCount?: number; }
+// trees: other Git working trees inside the checkout that the session worked in (src/core/changes.mjs).
+export interface ChangedTree { path: string; branch: string | null; base: string; head: string; commitsSince: number; files: number }
+export interface Changes { base: string; available: boolean; reason?: string; head?: string; branch?: string; headMoved?: boolean; commitsSince?: number; files: ChangedFile[]; trees?: ChangedTree[]; truncated?: boolean; additions?: number; deletions?: number; preexistingCount?: number; }
 // Phase 7. auth is signed-in or signed-out only from a probe that parsed cleanly (src/core/agents.mjs probeAuth).
 export type AuthState = 'unchecked' | 'signed-in' | 'signed-out' | 'unknown';
 // A visible one-off process (src/desktop/processes.mjs): one per provider and kind.
