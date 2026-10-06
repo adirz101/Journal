@@ -298,7 +298,7 @@ export function isolationOf(events) {
       case 'abandoned': row('Set aside', ['result kept']); break;
       case 'restored': row('Restored', ['ready to apply']); break;
       case 'cleanup-pending': row('Cleanup waiting', [typeof b.reason === 'string' ? b.reason.slice(0, 80) : null]); break;
-      case 'cleaned': row('Folder cleaned up', ['result kept']); break;
+      case 'cleaned': row('Folder cleaned up', [b.hasResult === false ? null : 'result kept']); break;
       default: break;
     }
   }

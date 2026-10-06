@@ -35,6 +35,8 @@ const WORKSPACE_STATE = { creating: 'intent', failed: 'failed', removed: 'remove
 export const REF = (id, name) => `refs/journal/env/${id}/${name}`;
 const MARKER = 'journal-env';
 const PORT_RANGE = { start: 42000, end: 46000, size: 10 };
+// Ignored folders that tools regenerate: deleting them with the copy loses nothing.
+const REGENERABLE = new Set(['node_modules', 'dist', 'build', 'out', '.next', '.nuxt', '.turbo', '.parcel-cache', '.vite', 'target', '.venv', 'venv', '__pycache__', '.pytest_cache', '.mypy_cache', '.cache', 'coverage', '.gradle', 'DerivedData', '.tox']);
 const LIVE_SESSION = new Set(['starting', 'running', 'waiting', 'stopping', 'orphaned']);
 
 // Errors a caller branches on by code (a coordinator never parses messages).
@@ -84,7 +86,44 @@ function dirtyPaths(checkout) {
   for (let i = 0; i < out.length; i++) { const entry = out[i]; if (!entry) continue; paths.push(entry.slice(3)); if (/^[RC]/.test(entry)) paths.push(out[++i]); }
   return paths;
 }
-const nameStatus = (repo, from, to) => git(repo, ['diff-tree', '-r', '--name-status', '--no-renames', from, to]).split('\n').filter(Boolean).map(line => { const [status, ...path] = line.split('\t'); return { status, path: path.join('\t') }; });
+// Repositories created inside a copy and not tracked: Git lists each one as "path/" (at any depth).
+function untrackedRepos(path) {
+  return git(path, ['ls-files', '-z', '--others', '--exclude-standard'], { raw: true }).split('\0').filter(entry => entry.endsWith('/')).map(entry => entry.slice(0, -1)).filter(entry => existsSync(join(path, entry, '.git')));
+}
+const sha256 = file => { try { return createHash('sha256').update(readFileSync(file)).digest('hex'); } catch { return null; } };
+const hasMarkers = text => /^<{7}( |$)/m.test(text) && /^>{7}( |$)/m.test(text);
+// Unmerged paths in a copy's index and their stages ('1' base, '2' ours, '3' theirs).
+function unmergedStages(path) {
+  const stages = new Map();
+  for (const line of git(path, ['ls-files', '-u', '-z'], { raw: true }).split('\0').filter(Boolean)) {
+    const tab = line.indexOf('\t'); const name = line.slice(tab + 1); const stage = line.slice(0, tab).split(' ')[2];
+    if (!stages.has(name)) stages.set(name, new Set()); stages.get(name).add(stage);
+  }
+  return stages;
+}
+// Names are always read NUL-separated: Git quotes unusual names (non-ASCII, quotes) otherwise,
+// and a quoted ".env" would slip past the sensitive-name check.
+export function nameStatus(repo, from, to) {
+  const parts = git(repo, ['diff-tree', '-z', '-r', '--name-status', '--no-renames', from, to], { raw: true }).split('\0'); const out = [];
+  for (let i = 0; i + 1 < parts.length; i += 2) if (parts[i]) out.push({ status: parts[i], path: parts[i + 1] });
+  return out;
+}
+// `git merge-tree -z --write-tree --name-only`: the tree, conflicted paths, then message groups
+// (count, paths, type, message). Returns { tree, conflicts: [{ path, kind }] }.
+export function parseMergeTree(raw) {
+  const parts = raw.split('\0'); const tree = parts[0]; let i = 1; const paths = [];
+  while (i < parts.length && parts[i] !== '') paths.push(parts[i++]);
+  i++; const kinds = new Map();
+  while (i < parts.length) {
+    const n = Number(parts[i]); if (!Number.isInteger(n) || n < 1) break;
+    const named = parts.slice(i + 1, i + 1 + n); const type = parts[i + 1 + n] ?? ''; i += n + 3;
+    const match = /^CONFLICT \(([^)]+)\)/.exec(type); if (match) for (const path of named) if (!kinds.has(path)) kinds.set(path, match[1] === 'contents' ? 'content' : match[1]);
+  }
+  return { tree, conflicts: paths.map(path => ({ path, kind: kinds.get(path) ?? 'content' })) };
+}
+const LITERAL = { GIT_LITERAL_PATHSPECS: '1' };
+const lockMark = id => `journal-apply ${id}\n`;
+const ownsLock = (file, id) => { try { return readFileSync(file, 'utf8') === lockMark(id); } catch { return false; } };
 
 // ---- Ports (development isolation, not a network sandbox) ------------------------------------
 export function portFree(port, hosts = ['127.0.0.1', '::1']) {
@@ -188,8 +227,10 @@ export class Environments {
   // result is captured and the environment is completed (Continue makes it running again).
   syncFromSession(session) {
     if (!session?.workspaceId) return null; let env; try { env = this.record(session.workspaceId); } catch { return null; }
-    const to = session.status === 'waiting' ? 'waiting' : ['starting', 'running', 'stopping'].includes(session.status) ? 'running' : 'ended';
+    // An orphaned agent may still be writing in the folder: it counts as running.
+    const to = session.status === 'waiting' ? 'waiting' : ['starting', 'running', 'stopping', 'orphaned'].includes(session.status) ? 'running' : 'ended';
     if (to !== 'ended') { if (env.lifecycle !== to && TRANSITIONS[env.lifecycle]?.includes(to)) return this.view(this.transition(env.id, to, { sessionId: session.id })); return this.view(env); }
+    if (this.liveSessions(env.id).some(other => other.id !== session.id)) return this.view(env);
     if (['running', 'waiting', 'ready'].includes(env.lifecycle) && existsSync(env.path)) { this.snapshot(env.id); return this.view(this.transition(env.id, 'completed')); }
     return this.view(env);
   }
@@ -209,25 +250,34 @@ export class Environments {
     const env = this.record(id); const repo = this.store.project(env.projectId).root;
     if (!existsSync(env.path)) { if (env.result) return this.view(env); fail('INVALID_STATE', 'The isolated folder is gone and no result was captured'); }
     const head = git(env.path, ['rev-parse', 'HEAD']);
+    // The worker may have switched its copy onto a branch: the result is still its files, but say so.
+    const attached = tryGit(env.path, ['symbolic-ref', '-q', '--short', 'HEAD']) || null;
     mkdirSync(env.tmpDir, { recursive: true, mode: 0o700 });
     const index = join(env.tmpDir, `.journal-result-${process.pid}-${Date.now()}.index`);
-    let tree; const excluded = [];
+    let tree; const excluded = []; let nested = [];
     try {
       const side = { GIT_INDEX_FILE: index };
-      git(env.path, ['read-tree', head], { env: side }); git(env.path, ['add', '-A'], { env: side });
-      for (const path of git(env.path, ['diff-index', '--cached', '--name-only', '--no-renames', head], { env: side }).split('\n').filter(Boolean)) {
-        if (!isSensitivePath(path)) continue;
-        excluded.push(path); git(env.path, ['reset', '-q', head, '--', path], { env: side });
+      // Another repository created inside the copy is not part of the result (and would make `add` fail
+      // without a commit); cleanup keeps the folder for it.
+      nested = untrackedRepos(env.path);
+      git(env.path, ['read-tree', head], { env: side }); git(env.path, ['add', '-A', '--', '.', ...nested.map(entry => `:(exclude,literal)${entry}`)], { env: side });
+      // Compared with the base, not the copy's HEAD: a worker's own commit of a secret or of another
+      // repository (a submodule entry) is left out too; those paths keep the base's version.
+      const changed = git(env.path, ['diff-index', '-z', '--cached', '--name-only', '--no-renames', env.base], { env: side, raw: true }).split('\0').filter(Boolean);
+      const links = new Set(git(env.path, ['ls-files', '-s', '-z'], { env: side, raw: true }).split('\0').filter(line => line.startsWith('160000 ')).map(line => line.slice(line.indexOf('\t') + 1)));
+      for (const path of changed) {
+        if (links.has(path)) nested.push(path); else if (isSensitivePath(path)) excluded.push(path); else continue;
+        git(env.path, ['reset', '-q', env.base, '--', path], { env: { ...side, ...LITERAL } });
       }
       tree = git(env.path, ['write-tree'], { env: side });
     } finally { rmSync(index, { force: true }); }
     git(repo, ['update-ref', REF(id, 'head'), head]);
-    if (env.result && env.result.tree === tree && (env.result.head === head || env.result.sha === head)) return this.view(env);
+    if (env.result && env.result.tree === tree && (env.result.head === head || env.result.sha === head)) return this.view((env.result.attached ?? null) === attached ? env : this.patch(id, { result: { ...env.result, attached } }));
     const message = [`Journal result of isolated session ${id}`, '', `Journal-Environment: ${id}`, `Journal-Session: ${env.sessionId ?? '-'}`, `Journal-Logical-Branch: ${env.logicalBranch}`, `Journal-Base: ${env.base}`].join('\n');
     const sha = git(repo, ['commit-tree', tree, '-p', head, '-m', message], { env: IDENTITY });
     git(repo, ['update-ref', REF(id, 'result'), sha]);
     const files = nameStatus(repo, env.base, tree);
-    const saved = this.patch(id, { result: { sha, head, tree, files: files.slice(0, 500), fileCount: files.length, excluded, at: now() } });
+    const saved = this.patch(id, { result: { sha, head, tree, files: files.slice(0, 500), fileCount: files.length, excluded, nested, attached, at: now() } });
     this.event(saved, 'result', { files: files.length, excluded: excluded.length });
     return this.view(saved);
   }
@@ -242,62 +292,125 @@ export class Environments {
     if (!logicalHead) fail('NOT_FOUND', `The branch ${env.logicalBranch} no longer exists`);
     const commitsSince = Number(git(repo, ['rev-list', '--count', `${env.base}..${logicalHead}`]));
     const baseOnBranch = git(repo, ['merge-base', '--is-ancestor', env.base, logicalHead], { allow: [1] }) === '';
-    const merged = git(repo, ['merge-tree', '--write-tree', '--name-only', `--merge-base=${env.base}`, logicalHead, env.result.sha], { allow: [1] });
-    const clean = typeof merged === 'string'; const lines = (clean ? merged : merged.stdout).split('\n');
-    const tree = lines[0]; const blank = lines.indexOf('', 1);
-    const paths = clean ? [] : lines.slice(1, blank === -1 ? lines.length : blank).filter(Boolean);
-    const messages = blank === -1 ? [] : lines.slice(blank + 1);
-    const conflicts = paths.map(path => ({ path, kind: (/^CONFLICT \(([^)]+)\)/.exec(messages.find(text => text.startsWith('CONFLICT') && text.includes(path)) ?? '') ?? [])[1] ?? 'content' }));
+    const merged = git(repo, ['merge-tree', '-z', '--write-tree', '--name-only', `--merge-base=${env.base}`, logicalHead, env.result.sha], { allow: [1], raw: true });
+    const clean = typeof merged === 'string'; const { tree, conflicts } = parseMergeTree(clean ? merged : merged.stdout);
     const changes = clean ? nameStatus(repo, logicalHead, tree) : [];
-    const checkout = worktrees(repo).find(entry => entry.branch === `refs/heads/${env.logicalBranch}`) ?? null;
+    // The checkout that has the branch, never one of Journal's own isolated folders (a worker could switch its copy onto it).
+    const checkout = worktrees(repo).find(entry => entry.branch === `refs/heads/${env.logicalBranch}` && !inside(this.envRoot, real(entry.path) ?? entry.path)) ?? null;
+    const busy = this.branchBusy(repo, env.logicalBranch);
     const dirty = checkout && existsSync(checkout.path) ? dirtyPaths(checkout.path) : [];
     const blockedBy = changes.map(change => change.path).filter(path => dirty.includes(path));
+    const unresolved = this.unresolved(env);
     return { environmentId: id, logicalBranch: env.logicalBranch, base: env.base, logicalHead, result: env.result.sha, moved: commitsSince > 0 || !baseOnBranch, commitsSince, baseOnBranch,
-      clean, conflicts, changes, excluded: env.result.excluded ?? [], blockedBy, canApply: clean && blockedBy.length === 0, checkedOut: !!checkout, tree: clean ? tree : null,
+      clean, conflicts, changes, excluded: env.result.excluded ?? [], blockedBy, busy, unresolved, empty: clean && changes.length === 0, switchedTo: env.result.attached ?? null,
+      canApply: clean && blockedBy.length === 0 && changes.length > 0 && !busy && unresolved.length === 0, checkedOut: !!checkout, tree: clean ? tree : null,
       details: { checkout: checkout?.path ?? null } };
+  }
+
+  // A rebase, merge or bisect in progress on the branch (in any of the user's worktrees): Apply
+  // waits, since moving the branch under it would confuse the operation. Returns its name or null.
+  branchBusy(repo, branch) {
+    const ref = `refs/heads/${branch}`;
+    for (const entry of worktrees(repo)) {
+      if (inside(this.envRoot, real(entry.path) ?? entry.path) || !existsSync(entry.path)) continue;
+      const admin = tryGit(entry.path, ['rev-parse', '--absolute-git-dir']); if (!admin) continue;
+      for (const dir of ['rebase-merge', 'rebase-apply']) { let name = ''; try { name = readFileSync(join(admin, dir, 'head-name'), 'utf8').trim(); } catch { /* none */ } if (name === ref) return 'rebase'; }
+      if (entry.branch !== ref) continue;
+      if (existsSync(join(admin, 'MERGE_HEAD'))) return 'merge'; if (existsSync(join(admin, 'CHERRY_PICK_HEAD')) || existsSync(join(admin, 'REVERT_HEAD'))) return 'cherry-pick';
+      if (existsSync(join(admin, 'BISECT_LOG'))) return 'bisect';
+    }
+    return null;
+  }
+  // Paths still unresolved in the environment after taking in its branch: files with conflict
+  // markers, and paths still unmerged in its index that markers cannot show (binary, deleted on one
+  // side) until the worker stages them. A text conflict whose markers were edited away is resolved.
+  unresolved(env) {
+    if (!existsSync(env.path)) return [];
+    const stages = unmergedStages(env.path);
+    const candidates = new Set(stages.keys());
+    if (env.conflict?.inEnvironment) for (const { path } of env.conflict.paths) candidates.add(path);
+    return [...candidates].filter(path => {
+      let data = null; try { data = readFileSync(join(env.path, path)); } catch { /* deleted */ }
+      if (data && hasMarkers(data.toString('utf8'))) return true;
+      const stage = stages.get(path); if (!stage) return false;
+      return !data || !(stage.has('2') && stage.has('3')) || data.includes(0);
+    });
   }
 
   // Lands a previewed result (spec §8.3, the order the prototype proved): one Apply per branch at a
   // time; the checkout's own index lock is held throughout, so a `git commit` there fails cleanly;
   // the new index is built in a side file; the branch moves by compare-and-swap; only then the side
   // index replaces the real one. A conflict, overlap or race writes nothing.
-  apply(id, { message } = {}) {
-    const env = this.record(id); const repo = this.store.project(env.projectId).root;
-    if (!['completed', 'conflict'].includes(env.lifecycle)) fail('INVALID_STATE', `An isolated session that is ${env.lifecycle} cannot be applied`, { state: env.lifecycle });
+  // expect: the result ID the person previewed; Apply refuses if the folder changed since then.
+  apply(id, { message, expect } = {}) {
+    const env0 = this.record(id); const repo = this.store.project(env0.projectId).root;
+    if (!['completed', 'conflict'].includes(env0.lifecycle)) fail('INVALID_STATE', `An isolated session that is ${env0.lifecycle} cannot be applied`, { state: env0.lifecycle });
     if (this.liveSessions(id).length) fail('INVALID_STATE', 'Its session is still running; stop it first so the result is final');
-    const lock = this.lock(`${short(env.projectId)}-${short(env.logicalBranch)}`); if (!lock) fail('LOCKED', 'Another Apply to this branch is in progress');
+    const lock = this.lock(`${short(env0.projectId)}-${short(env0.logicalBranch)}`); if (!lock) fail('LOCKED', 'Another Apply to this branch is in progress');
     try {
+      // What lands is what the folder holds now: the result is captured again (a no-op when unchanged).
+      if (existsSync(env0.path)) this.snapshot(id);
+      const env = this.record(id);
+      if (expect && env.result?.sha !== expect) fail('RESULT_CHANGED', 'Its files changed since the preview; preview again');
       const preview = this.preview(id);
+      if (preview.unresolved.length) fail('UNRESOLVED', 'Some files that conflicted are not resolved yet; resolve them in the session first', { paths: preview.unresolved });
       if (!preview.clean) {
         const saved = this.transition(id, 'conflict', { conflict: { paths: preview.conflicts, against: preview.logicalHead, at: now() } });
         this.event(saved, 'conflict', { paths: preview.conflicts.length, against: preview.logicalHead });
         fail('CONFLICT', 'The result conflicts with the branch; nothing was applied', { conflicts: preview.conflicts });
       }
+      if (preview.busy) fail('BRANCH_BUSY', `${env.logicalBranch} is in the middle of a ${preview.busy}; finish it first`);
       if (preview.blockedBy.length) fail('DIRTY_OVERLAP', 'Uncommitted changes in the checkout would be overwritten; nothing was applied', { paths: preview.blockedBy });
+      if (preview.empty) fail('NOTHING_TO_APPLY', 'This result changes nothing on the branch');
       const subject = (message ?? `Apply ${env.task ?? `isolated session ${id.slice(0, 8)}`}`).split('\n')[0].slice(0, 200);
       const body = [subject, '', `Journal-Environment: ${id}`, `Journal-Session: ${env.sessionId ?? '-'}`, `Journal-Base: ${env.base}`, `Journal-Result: ${env.result.sha}`].join('\n');
       const commit = git(repo, ['commit-tree', preview.tree, '-p', preview.logicalHead, '-m', body], { env: IDENTITY });
       const checkout = preview.details.checkout;
       const gitDir = checkout ? git(checkout, ['rev-parse', '--absolute-git-dir']) : null;
       const indexLock = checkout ? join(gitDir, 'index.lock') : null; const sideIndex = checkout ? join(gitDir, `journal-apply-${id}.index`) : null;
-      const started = this.transition(id, 'integrating', { integration: { phase: 'planned', from: preview.logicalHead, commit, checkout, indexLock, sideIndex, changes: preview.changes.length, at: now() } });
+      // Intent first. Phases: planned → locked (Journal holds the checkout's index.lock) → files (the
+      // side index and files are updated) → landed (the branch moved) → swapping → done. Reconcile
+      // finishes or undoes each one.
+      const plan = { phase: 'planned', from: preview.logicalHead, commit, result: env.result.sha, checkout, indexLock, sideIndex, changes: preview.changes.length, at: now() };
+      const started = this.transition(id, 'integrating', { integration: plan });
       this.event(started, 'apply-started', { from: preview.logicalHead });
-      if (checkout) {
-        try { closeSync(openSync(indexLock, 'wx')); } catch { this.transition(id, 'completed', { integration: null }); fail('LOCKED', 'Git is busy in the checkout (its index is locked); try again in a moment'); }
-        try { copyFileSync(join(gitDir, 'index'), sideIndex); git(checkout, ['read-tree', '-m', '-u', preview.logicalHead, commit], { env: { GIT_INDEX_FILE: sideIndex } }); }
-        catch (error) { rmSync(sideIndex, { force: true }); rmSync(indexLock, { force: true }); this.transition(id, 'completed', { integration: null }); fail('CHECKOUT_REFUSED', 'Git refused to update the checkout; nothing was applied', { reason: String(error.stderr ?? error.message).trim().slice(0, 300) }); }
+      const phase = name => this.patch(id, { integration: { ...this.record(id).integration, phase: name } });
+      // A throwing test hook stands for a crash at that point: nothing is undone here, reconcile does it.
+      const hook = name => { try { this.hooks[name]?.(this.record(id)); } catch (error) { error.crash = true; throw error; } };
+      let landed = false;
+      const release = () => { if (sideIndex) rmSync(sideIndex, { force: true }); if (checkout && ownsLock(indexLock, id)) rmSync(indexLock, { force: true }); };
+      const undoFiles = () => { if (checkout && existsSync(sideIndex)) git(checkout, ['read-tree', '-m', '-u', commit, preview.logicalHead], { env: { GIT_INDEX_FILE: sideIndex } }); };
+      try {
+        if (checkout) {
+          // Journal's lock says whose it is, so recovery never removes a lock Git itself holds.
+          try { const fd = openSync(indexLock, 'wx'); writeFileSync(fd, lockMark(id)); closeSync(fd); } catch { this.transition(id, 'completed', { integration: null }); fail('LOCKED', 'Git is busy in the checkout (its index is locked); try again in a moment'); }
+          phase('locked');
+          copyFileSync(join(gitDir, 'index'), sideIndex);
+          phase('files');
+          try { git(checkout, ['read-tree', '-m', '-u', preview.logicalHead, commit], { env: { GIT_INDEX_FILE: sideIndex } }); }
+          catch (error) { undoFiles(); release(); this.transition(id, 'completed', { integration: null }); fail('CHECKOUT_REFUSED', 'Git refused to update the checkout; nothing was applied', { reason: String(error.stderr ?? error.message).trim().slice(0, 300) }); }
+          // The new index's fingerprint: recovery swaps in only this exact file.
+          this.patch(id, { integration: { ...this.record(id).integration, indexHash: sha256(sideIndex) } });
+        } else phase('files');
+        hook('afterFiles'); hook('beforeLand');
+        const moved = git(repo, ['update-ref', '-m', `journal apply ${id}`, `refs/heads/${env.logicalBranch}`, commit, preview.logicalHead], { allow: [1, 128] });
+        if (typeof moved !== 'string') {
+          // The branch moved after the preview: the files go back with the side index; the real index never changed.
+          undoFiles(); release(); this.transition(id, 'completed', { integration: null });
+          fail('BRANCH_MOVED', 'The branch changed while applying; nothing was applied. Preview again.');
+        }
+        landed = true; phase('landed');
+        hook('afterLand');
+        if (checkout) { renameSync(sideIndex, indexLock); phase('swapping'); renameSync(indexLock, join(gitDir, 'index')); }
+      } catch (error) {
+        if (error.crash || ['LOCKED', 'CHECKOUT_REFUSED', 'BRANCH_MOVED'].includes(error.code)) throw error;
+        if (landed) { try { this.finishLanded(this.record(id)); } catch { /* reconcile finishes it */ } throw error; }
+        // Any other failure before landing: put the files back and release; if that fails too, keep
+        // the lock and the side index so reconcile retries, and say so.
+        try { undoFiles(); } catch { fail('ROLLBACK_PENDING', 'Applying failed and the checkout could not be put back yet; Journal will retry. Do not commit in the checkout until then.', { reason: error.message }); }
+        release(); try { this.transition(id, 'completed', { integration: null }); } catch { /* reconcile settles the state; only Journal's own lock is ever removed */ }
+        throw error;
       }
-      this.patch(id, { integration: { ...this.record(id).integration, phase: 'files' } });
-      this.hooks.afterFiles?.(this.record(id)); this.hooks.beforeLand?.(this.record(id));
-      const landed = git(repo, ['update-ref', '-m', `journal apply ${id}`, `refs/heads/${env.logicalBranch}`, commit, preview.logicalHead], { allow: [1, 128] });
-      if (typeof landed !== 'string') {
-        if (checkout) { git(checkout, ['read-tree', '-m', '-u', commit, preview.logicalHead], { env: { GIT_INDEX_FILE: sideIndex } }); rmSync(sideIndex, { force: true }); rmSync(indexLock, { force: true }); }
-        this.transition(id, 'completed', { integration: null });
-        fail('BRANCH_MOVED', 'The branch changed while applying; nothing was applied. Preview again.');
-      }
-      this.patch(id, { integration: { ...this.record(id).integration, phase: 'landed' } });
-      this.hooks.afterLand?.(this.record(id));
-      if (checkout) { renameSync(sideIndex, indexLock); renameSync(indexLock, join(gitDir, 'index')); }
       const done = this.transition(id, 'integrated', { conflict: null, integration: { ...this.record(id).integration, phase: 'done', landedAt: now() } });
       this.store.audit('environment-applied', { id, branch: env.logicalBranch, commit });
       this.event(done, 'applied', { commit, branch: env.logicalBranch, files: preview.changes.length });
@@ -313,13 +426,28 @@ export class Environments {
     const env = this.record(id); const repo = this.store.project(env.projectId).root;
     if (!['completed', 'conflict', 'ready'].includes(env.lifecycle)) fail('INVALID_STATE', `An isolated session that is ${env.lifecycle} cannot take in its branch`, { state: env.lifecycle });
     if (!existsSync(env.path)) fail('INVALID_STATE', 'The isolated folder is gone');
+    if (this.liveSessions(id).length) fail('INVALID_STATE', 'Its session is still running; stop it first');
+    if (this.unresolved(env).length) fail('UNRESOLVED', 'It is already taking in its branch; resolve the conflicts in the session first');
     const target = git(repo, ['rev-parse', `refs/heads/${env.logicalBranch}`]);
-    const result = this.snapshot(id).result.id;
+    // Capture first (an earlier take-in the worker resolved is in it), then forget that merge.
+    const captured = this.snapshot(id).result.id;
+    // The copy's history records each earlier take-in as a merge of its base, so Git's next merge
+    // starts from there and does not replay the branch's earlier changes against the worker's.
+    const result = git(env.path, ['merge-base', '--is-ancestor', env.base, captured], { allow: [1] }) === '' ? captured
+      : git(repo, ['commit-tree', `${captured}^{tree}`, '-p', captured, '-p', env.base, '-m', `Journal: ${env.logicalBranch} taken into isolated session ${id}`], { env: IDENTITY });
+    tryGit(env.path, ['merge', '--quit']);
     git(env.path, ['update-ref', '--no-deref', 'HEAD', result]); git(env.path, ['read-tree', result]);
-    const merged = git(env.path, ['merge', '--no-ff', '--no-commit', target], { allow: [1], env: IDENTITY });
-    const conflicts = typeof merged === 'string' ? [] : git(env.path, ['diff', '--name-only', '--diff-filter=U']).split('\n').filter(Boolean);
+    let merged; try { merged = git(env.path, ['merge', '--no-ff', '--no-commit', target], { allow: [1], env: IDENTITY }); }
+    catch (error) { fail('TAKE_IN_FAILED', `Git could not take ${env.logicalBranch} into its copy; nothing there was lost`, { reason: String(error.stderr ?? error.message).trim().slice(0, 300) }); }
+    const stages = typeof merged === 'string' ? new Map() : unmergedStages(env.path);
+    const conflicts = [...stages.keys()];
+    const kind = path => { const stage = stages.get(path); if (!(stage.has('2') && stage.has('3'))) return 'modify/delete'; try { return readFileSync(join(env.path, path)).includes(0) ? 'binary' : 'content'; } catch { return 'content'; } };
     git(repo, ['update-ref', REF(id, 'base'), target]);
-    const saved = this.patch(id, { base: target, conflict: conflicts.length ? { paths: conflicts.map(path => ({ path, kind: 'content' })), against: target, at: now(), inEnvironment: true } : null });
+    this.patch(id, { base: target, conflict: conflicts.length ? { paths: conflicts.map(path => ({ path, kind: kind(path) })), against: target, at: now(), inEnvironment: true } : null });
+    // A clean merge is the new result right away (Apply would otherwise land the pre-merge result),
+    // and the copy is left with no merge in progress, at that result.
+    if (!conflicts.length) { const after = this.snapshot(id).result.id; tryGit(env.path, ['merge', '--quit']); git(env.path, ['update-ref', '--no-deref', 'HEAD', after]); git(env.path, ['read-tree', after]); }
+    const saved = this.record(id);
     this.event(saved, 'updated', { to: target, conflicts: conflicts.length });
     return { environment: this.view(saved), conflicts };
   }
@@ -345,16 +473,20 @@ export class Environments {
   // Removes the folder only when every check passes; otherwise cleanup_pending with the reason.
   // Never --force: HEAD and the index are pointed at the captured result (equal to the files), so
   // `git worktree remove` succeeds only if nothing changed; untracked links are deleted as links.
-  cleanup(id) {
+  // removeIgnored: the person confirmed that ignored files outside the usual regenerable folders go too.
+  cleanup(id, { removeIgnored = false } = {}) {
     const env = this.record(id); const repo = this.store.project(env.projectId).root;
     if (!['integrated', 'abandoned', 'failed', 'cleanup_pending'].includes(env.lifecycle)) fail('INVALID_STATE', `An isolated session that is ${env.lifecycle} is not ready to clean up`, { state: env.lifecycle });
-    const pending = reason => { const saved = this.transition(id, 'cleanup_pending', { cleanup: { reason, attempts: (env.cleanup?.attempts ?? 0) + 1, at: now(), from: env.cleanup?.from ?? env.lifecycle } }); this.event(saved, 'cleanup-pending', { reason }); return this.view(saved); };
+    const pending = (reason, code = null) => { const saved = this.transition(id, 'cleanup_pending', { cleanup: { reason, code, attempts: (env.cleanup?.attempts ?? 0) + 1, at: now(), from: env.cleanup?.from ?? env.lifecycle } }); this.event(saved, 'cleanup-pending', { reason }); return this.view(saved); };
     const live = this.liveSessions(id); if (live.length) return pending('its session is still running');
     if (!existsSync(env.path)) { this.forgetAdmin(repo, env); return this.removed(id); }
     const unsafe = this.unsafe(env, repo); if (unsafe) fail('UNSAFE_CLEANUP', unsafe);
     const before = env.result; const after = this.snapshot(id).result;
     if (before && before.sha !== after.id) return pending('new work appeared after its result was saved; it is saved now, try again');
     const result = this.record(id).result;
+    const held = this.kept(env.path);
+    if (held.repos.length) return pending(`it contains another Git repository (${held.repos.slice(0, 3).join(', ')}); move it out or delete it, then try again`);
+    if (held.ignored.length && !removeIgnored) return pending(`it holds ignored files that are not in its result (${held.ignored.slice(0, 3).join(', ')}${held.ignored.length > 3 ? ', …' : ''})`, 'ignored');
     try {
       if (result) { git(env.path, ['update-ref', '--no-deref', 'HEAD', result.sha]); git(env.path, ['read-tree', result.sha]); }
       const tracked = new Set(git(env.path, ['ls-files', '-z'], { raw: true }).split('\0').filter(Boolean));
@@ -367,10 +499,23 @@ export class Environments {
     }
     return this.removed(id);
   }
+  // What `git worktree remove` would delete without it being in the result: nested repositories
+  // (submodule entries or folders with their own .git) and ignored files outside regenerable folders.
+  kept(path) {
+    const repos = git(path, ['ls-files', '-s', '-z'], { raw: true }).split('\0').filter(line => line.startsWith('160000 ')).map(line => line.slice(line.indexOf('\t') + 1));
+    const ignored = [];
+    for (const entry of git(path, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory'], { raw: true }).split('\0').filter(Boolean)) {
+      const name = entry.replace(/\/$/, '');
+      if (existsSync(join(path, name, '.git'))) repos.push(name);
+      else if (!name.split('/').some(part => REGENERABLE.has(part)) && !/\.(log|pyc)$/.test(name) && name !== '.DS_Store') ignored.push(name);
+    }
+    repos.push(...untrackedRepos(path));
+    return { repos, ignored };
+  }
   removed(id) {
     const env = this.record(id);
     rmSync(env.tmpDir, { recursive: true, force: true }); rmSync(env.logDir, { recursive: true, force: true });
-    const saved = this.transition(id, 'removed', { cleanup: { removedAt: now(), from: env.cleanup?.from ?? env.lifecycle } }); this.event(saved, 'cleaned');
+    const saved = this.transition(id, 'removed', { cleanup: { removedAt: now(), from: env.cleanup?.from ?? env.lifecycle } }); this.event(saved, 'cleaned', { hasResult: !!env.result });
     this.store.audit('environment-removed', { id }); return this.view(saved);
   }
   // Why this folder must not be removed by Journal, or null.
@@ -392,14 +537,18 @@ export class Environments {
     for (const name of names) {
       const admin = join(common, 'worktrees', name); let marker = ''; let gitdir = '';
       try { marker = readFileSync(join(admin, MARKER), 'utf8').trim(); gitdir = readFileSync(join(admin, 'gitdir'), 'utf8').trim(); } catch { continue; }
-      if (marker === env.id && samePath(dirname(gitdir), env.path)) rmSync(admin, { recursive: true, force: true });
+      if (marker !== env.id || !samePath(dirname(gitdir), env.path)) continue;
+      // Its last HEAD stays reachable through the environment's own ref before the entry goes.
+      let head = ''; try { head = readFileSync(join(admin, 'HEAD'), 'utf8').trim(); } catch { /* none */ }
+      if (/^[0-9a-f]{40,64}$/.test(head) && tryGit(repo, ['cat-file', '-e', `${head}^{commit}`]) !== null) tryGit(repo, ['update-ref', REF(env.id, 'head'), head]);
+      rmSync(admin, { recursive: true, force: true });
     }
   }
 
   // ---- Recovery ----
   // After a crash or restart: finish creation, follow sessions that ended, finish or roll back an
   // Apply from its durable plan, retry pending cleanups. Unknown work is never deleted.
-  reconcile(projectId) {
+  reconcile(projectId, { orphanAge = 10 * 60_000 } = {}) {
     const report = [];
     const rows = this.store.db.prepare(`SELECT body FROM workspaces WHERE json_extract(body,'$.kind')='isolated' AND json_extract(body,'$.lifecycle') NOT IN ('removed')${projectId ? ' AND project_id=?' : ''}`).all(...(projectId ? [projectId] : []));
     for (const row of rows) {
@@ -417,19 +566,43 @@ export class Environments {
           continue;
         }
         if (env.lifecycle === 'integrating') {
-          const { from, commit, checkout, indexLock, sideIndex } = env.integration ?? {}; const head = tryGit(repo, ['rev-parse', `refs/heads/${env.logicalBranch}`]);
-          const ours = !!indexLock && existsSync(indexLock) && !!sideIndex && existsSync(sideIndex);
-          if (head && head === commit) {
-            if (ours) { renameSync(sideIndex, indexLock); renameSync(indexLock, join(dirname(indexLock), 'index')); }
-            this.transition(env.id, 'integrated', { integration: { ...env.integration, phase: 'done' } }); report.push([env.id, 'integrating', 'integrated']); continue;
-          }
-          if (ours) { tryGit(checkout, ['read-tree', '-m', '-u', commit, from], { env: { GIT_INDEX_FILE: sideIndex } }); rmSync(sideIndex, { force: true }); rmSync(indexLock, { force: true }); }
-          this.transition(env.id, 'completed', { integration: null }); report.push([env.id, 'integrating', 'completed']); continue;
+          const head = tryGit(repo, ['rev-parse', `refs/heads/${env.logicalBranch}`]);
+          const commit = env.integration?.commit;
+          // Landed, even if the branch has moved on since.
+          if (head && commit && (head === commit || git(repo, ['merge-base', '--is-ancestor', commit, head], { allow: [1] }) === '')) { this.finishLanded(env); this.transition(env.id, 'integrated', { conflict: null, integration: { ...env.integration, phase: 'done' } }); report.push([env.id, 'integrating', 'integrated']); continue; }
+          this.rollBack(env); this.transition(env.id, 'completed', { integration: null }); report.push([env.id, 'integrating', 'completed']); continue;
         }
+        // A copy no session ever started in (Journal stopped between creating it and the start, or
+        // the start failed): after a while it is set aside, keeping anything found in it as its result.
+        if (env.lifecycle === 'ready' && !this.liveSessions(env.id).length && Date.now() - Date.parse(env.createdAt) > orphanAge) {
+          let session = null; try { session = env.sessionId ? this.store.getSession(env.sessionId) : null; } catch { /* gone */ }
+          if (!session || !LIVE_SESSION.has(session.status)) { const after = this.abandon(env.id); report.push([env.id, 'ready', after.state]); continue; }
+        }
+        if (env.lifecycle === 'failed' && !this.liveSessions(env.id).length) { const after = this.cleanup(env.id); report.push([env.id, 'failed', after.state]); continue; }
         if (env.lifecycle === 'cleanup_pending' || (env.lifecycle === 'integrated' && existsSync(env.path))) { const after = this.cleanup(env.id); report.push([env.id, env.lifecycle, after.state]); }
       } catch (error) { report.push([env.id, env.lifecycle, `error: ${error.message}`]); }
     }
     return report;
+  }
+
+  // The branch moved to the Apply commit: the new index takes the place of the real one. The side
+  // index may already have become index.lock (crash between the two renames), or be in place already;
+  // only Journal's own lock or the exact new index (by fingerprint) is ever renamed.
+  finishLanded(env) {
+    const { checkout, indexLock, sideIndex, indexHash } = env.integration ?? {}; if (!checkout || !indexLock) return;
+    if (sideIndex && existsSync(sideIndex)) {
+      if (existsSync(indexLock) && !ownsLock(indexLock, env.id)) fail('LOCKED', 'Git is busy in the checkout; Journal will finish applying later');
+      renameSync(sideIndex, indexLock);
+    }
+    if (existsSync(indexLock) && indexHash && sha256(indexLock) === indexHash) renameSync(indexLock, join(dirname(indexLock), 'index'));
+    else if (ownsLock(indexLock, env.id)) rmSync(indexLock, { force: true });
+  }
+  // The branch did not move: the checkout's files go back to the branch with the side index, then
+  // Journal's own lock is released (the real index was never changed). If Git refuses, the lock stays.
+  rollBack(env) {
+    const { from, commit, checkout, indexLock, sideIndex } = env.integration ?? {}; if (!checkout || !indexLock) return;
+    if (sideIndex && existsSync(sideIndex)) { git(checkout, ['read-tree', '-m', '-u', commit, from], { env: { GIT_INDEX_FILE: sideIndex } }); rmSync(sideIndex, { force: true }); }
+    if (ownsLock(indexLock, env.id)) rmSync(indexLock, { force: true });
   }
 
   // One Apply per branch: an exclusive lock file holding the owner's pid; a dead owner's lock is taken over.

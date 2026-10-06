@@ -101,7 +101,7 @@ export const count = (n: number, one: string, many = `${one}s`) => `${n} ${n ===
 // lines; a group adds new keys only in its own block.
 export const shell = {
   isolatedFrom: (branch: string, sha: string) => `Isolated from ${branch} at ${sha}: its own copy, compared with where it started.`,
-  isolatedMoved: (branch: string, n: number) => `${branch} moved ${count(n, 'commit')} since this session started.`,
+  isolatedMoved: (branch: string, n: number) => `${branch} moved ${count(n, 'commit')} since its copy was made or last updated.`,
   savedResult: 'Its folder was removed; these are the changes in its saved result.',
   // Another Git working tree inside the checkout that the session worked in (Files → Changed).
   otherTree: (path: string, branch: string | null, files: number, commits: number, base: string) =>
@@ -468,7 +468,7 @@ export const isolation = {
     running: `Working in its own copy of ${branch}.`, waiting: `Waiting for you, in its own copy of ${branch}.`,
     completed: `Done. Its changes are ready to apply to ${branch}.`, conflict: `Its changes conflict with ${branch}; nothing was applied.`,
     integrating: `Applying to ${branch}…`, integrated: `Applied to ${branch}.`, abandoned: 'Set aside. Its result is kept; you can restore it.',
-    cleanup_pending: 'Its folder could not be removed yet; nothing was lost.', removed: 'Its folder was removed; its result is kept.', failed: 'Its copy could not be set up.',
+    cleanup_pending: 'Its folder was not removed yet; it stays as it is until cleanup can finish.', removed: 'Its folder was removed.', failed: 'Its copy could not be set up.',
   } as Record<string, string>)[state] ?? state,
   applied: (branch: string, sha: string) => `Applied to ${branch} as commit ${sha}.`,
   result: (n: number) => `Result: ${count(n, 'file')} changed.`, excluded: (n: number) => `${count(n, 'file')} with sensitive names left out.`,
@@ -478,9 +478,9 @@ export const isolation = {
   tookInConflicts: (branch: string, n: number) => `${branch} was taken into its copy; ${count(n, 'file')} to resolve there. Continue the session and ask the agent to resolve them.`,
   tookInClean: (branch: string) => `${branch} was taken into its copy without conflicts. Apply again.`,
   previewLabel: (branch: string) => `What applying to ${branch} would do`,
-  moved: (branch: string, n: number) => `${branch} moved ${count(n, 'commit')} since this session started.`, combined: 'Its changes are combined with them.',
-  rewritten: (branch: string) => `${branch} was rewritten since this session started; check the result carefully.`,
-  upToDate: (branch: string) => `${branch} has not moved since this session started.`,
+  moved: (branch: string, n: number) => `${branch} moved ${count(n, 'commit')} since its copy was made or last updated.`, combined: 'Its changes are combined with them.',
+  rewritten: (branch: string) => `${branch} was rewritten since its copy was made; check the result carefully.`,
+  upToDate: (branch: string) => `${branch} has not moved since its copy was made or last updated.`,
   changes: (n: number) => `${count(n, 'file')} would change:`, more: (n: number) => `and ${n} more`,
   previewConflict: (n: number) => `${count(n, 'file')} conflict; nothing can be applied:`,
   blocked: (n: number) => `Your uncommitted changes to ${count(n, 'file')} would be overwritten; commit or move them first:`,
@@ -488,6 +488,12 @@ export const isolation = {
   resolve: 'Resolve in this session', keep: 'Keep for later', keptForLater: (branch: string) => `Kept. You can apply it to ${branch} any time.`,
   abandon: 'Abandon…', abandonConfirm: 'Remove its folder? Its result is kept and can be restored.', abandonNow: 'Abandon', restore: 'Restore', retryCleanup: 'Try cleanup again',
   cleanupWaiting: (reason: string) => `Cleanup waiting: ${reason}.`,
+  removeAnyway: 'Remove anyway', removeAnywayConfirm: 'Delete its folder with those ignored files? They are not in its result.',
+  busy: (branch: string, operation: string) => `A ${operation} is in progress on ${branch}; finish it first.`,
+  unresolved: (n: number) => `${count(n, 'file')} still ${n === 1 ? 'has' : 'have'} conflict markers; continue the session to resolve them first:`,
+  empty: (branch: string) => `Its changes are already on ${branch}; there is nothing to apply.`,
+  switched: (name: string) => `Its agent switched its copy onto ${name}; what is applied is the files in its copy.`,
+  label: 'Isolated session: works in its own copy of its branch',
   details: 'Details', folder: 'Folder', removed: 'removed', base: 'Started at', resultId: 'Result', ports: 'Ports', refs: 'Saved as',
   unappliedNote: (branch: string) => `From an isolated session whose changes are not on ${branch} yet.`,
   notSandbox: 'Isolation keeps files, temp folders and ports apart. It is not a security sandbox: the agent runs as you.',

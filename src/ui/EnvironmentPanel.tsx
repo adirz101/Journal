@@ -13,14 +13,14 @@ export function EnvironmentPanel({ session, onError }: { session: Session; onErr
   const [environment, setEnvironment] = useState<Environment | null>(null);
   const [preview, setPreview] = useState<ApplyPreview | null>(null); const [previewing, setPreviewing] = useState(false);
   const [busy, setBusy] = useState(false); const [confirmAbandon, setConfirmAbandon] = useState(false);
-  const [resolved, setResolved] = useState<string[] | null>(null); const [kept, setKept] = useState(false);
+  const [resolved, setResolved] = useState<string[] | null>(null); const [kept, setKept] = useState(false); const [confirmRemove, setConfirmRemove] = useState(false);
   const load = useCallback(() => { if (id) void api<Environment>('environment', { id }).then(setEnvironment).catch(() => setEnvironment(null)); }, [id]);
-  useEffect(() => { setPreview(null); setPreviewing(false); setConfirmAbandon(false); setResolved(null); setKept(false); load(); }, [load]);
+  useEffect(() => { setPreview(null); setPreviewing(false); setConfirmAbandon(false); setResolved(null); setKept(false); setConfirmRemove(false); load(); }, [load]);
   useEffect(() => window.journal?.onEvent(event => { if (event.type === 'environment' && (!event.environment || event.environment.id === id)) { if (event.environment) setEnvironment(event.environment); else load(); } }), [id, load]);
   if (!id || !environment) return null;
   const run = async (action: () => Promise<unknown>) => { setBusy(true); try { await action(); } catch (error) { onError(error instanceof Error ? error.message : String(error)); } finally { setBusy(false); load(); } };
   const openPreview = () => run(async () => { setPreview(await api<ApplyPreview>('previewEnvironmentApply', { id })); setPreviewing(true); });
-  const apply = () => run(async () => { await api('applyEnvironment', { id }); setPreviewing(false); setPreview(null); });
+  const apply = () => run(async () => { await api('applyEnvironment', { id, expect: preview?.result }); setPreviewing(false); setPreview(null); });
   const branch = environment.logicalBranch; const state = environment.state;
   const done = state === 'completed' || state === 'conflict';
   const applied = !!environment.integration && environment.integration.phase === 'done';
@@ -41,6 +41,10 @@ export function EnvironmentPanel({ session, onError }: { session: Session; onErr
         <ul className="apply-files">{preview.changes.slice(0, MAX_FILES).map(change => <li key={change.path}><span className="change-status">{change.status}</span> <code>{change.path}</code></li>)}
           {preview.changes.length > MAX_FILES && <li className="muted">{copy.more(preview.changes.length - MAX_FILES)}</li>}</ul>
       </> : <p className="form-error">{copy.previewConflict(preview.conflicts.length)} {preview.conflicts.slice(0, MAX_FILES).map(item => item.path).join(', ')}</p>}
+      {preview.switchedTo && <p className="muted">{copy.switched(preview.switchedTo)}</p>}
+      {preview.unresolved.length > 0 && <p className="form-error">{copy.unresolved(preview.unresolved.length)} {preview.unresolved.slice(0, MAX_FILES).join(', ')}</p>}
+      {preview.busy && <p className="form-error">{copy.busy(branch, preview.busy)}</p>}
+      {preview.empty && <p className="muted">{copy.empty(branch)}</p>}
       {preview.blockedBy.length > 0 && <p className="form-error">{copy.blocked(preview.blockedBy.length)} {preview.blockedBy.slice(0, MAX_FILES).join(', ')}</p>}
       {preview.excluded.length > 0 && <p className="muted">{copy.excludedList(preview.excluded.join(', '))}</p>}
       <div className="environment-actions">
@@ -59,6 +63,10 @@ export function EnvironmentPanel({ session, onError }: { session: Session; onErr
       {state === 'cleanup_pending' && <button type="button" disabled={busy} onClick={() => void run(() => api('cleanupEnvironment', { id }))}>{copy.retryCleanup}</button>}
     </div>}
     {state === 'cleanup_pending' && environment.cleanup?.reason && <p className="muted">{copy.cleanupWaiting(environment.cleanup.reason)}</p>}
+    {state === 'cleanup_pending' && environment.cleanup?.code === 'ignored' && <div className="environment-actions">
+      {!confirmRemove ? <button type="button" disabled={busy} onClick={() => setConfirmRemove(true)}>{copy.removeAnyway}</button>
+        : <><span className="muted">{copy.removeAnywayConfirm}</span><button type="button" disabled={busy} onClick={() => void run(async () => { await api('cleanupEnvironment', { id, removeIgnored: true }); setConfirmRemove(false); })}>{copy.removeAnyway}</button><button type="button" onClick={() => setConfirmRemove(false)}>{copy.cancel}</button></>}
+    </div>}
     {done && kept && <p className="muted" role="status">{copy.keptForLater(branch)}</p>}
     <details className="environment-details"><summary>{copy.details}</summary>
       <dl>

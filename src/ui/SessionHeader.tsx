@@ -39,7 +39,7 @@ export function SessionHeader({ session, state, connected, busy, canStart, now, 
     </div>
     <div className="session-meta">
       <span className="meta-provider"><ProviderMark provider={session.provider} size={16} />{PROVIDER_NAMES[session.provider]}{version ? ` ${version}` : ''}</span>
-      <span className="meta-workspace">{session.environmentId ? <><span title={isolationWords.state('ready', session.branch ?? '')}>{isolationWords.heading}</span>{session.branch ? <> · ⑂ {session.branch}</> : ''}</>
+      <span className="meta-workspace">{session.environmentId ? <><span title={isolationWords.label}>{isolationWords.heading}</span>{session.branch ? <> · ⑂ {session.branch}</> : ''}</>
         : session.workspaceId && !root ? <><span title={tip.separateCopy}>{copy.separateCopy}</span>{session.branch ? <> · {branchLabel(`⑂ ${session.branch}`)}</> : ''}</>
         : root ? `Folder · ${session.cwd?.split(/[\\/]/).pop() ?? 'folder'}` : session.branch !== undefined ? <>{moved ? 'started on ' : ''}{branchLabel(`⑂ ${session.branch ?? 'detached HEAD'}`)}</> : null}</span>
       <span className="meta-mode" title={session.research ? tip.readOnly : session.plan ? tip.plan : undefined}>{session.research ? copy.readOnly : session.plan ? shell.planMode : shell.buildMode}</span>

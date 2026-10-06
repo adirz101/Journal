@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, spawn } from 'node:child_process';
@@ -319,4 +319,252 @@ test('the environment follows its session: running, waiting, then completed with
   assert.throws(() => f.store.switchBranch(f.project.id, env.id, { kind: 'local', name: 'main' }), /stays where it started/);
   assert.equal(f.git(env.details.path, 'rev-parse', 'HEAD'), env.base);
   assert.deepEqual(f.store.environmentsOverview(f.project.id).running.map(x => x.task), ['sync']);
+});
+
+// ---- Regression tests for the independent review's findings ----
+test('review: sensitive names are left out even when Git would quote them (non-ASCII); saved Changes read such names', async t => {
+  const f = fixture(t);
+  const dir = 'conf\u00efg'; const note = 'na\u00efve "notes".md';
+  const a = await f.worker('A', p => { mkdirSync(join(p, dir)); writeFileSync(join(p, dir, '.env'), 'TOKEN=x\n'); writeFileSync(join(p, note), 'n\n'); });
+  assert.deepEqual(a.result.excluded, [`${dir}/.env`]);
+  assert.deepEqual(a.result.files.map(file => file.path), [note]);
+  assert.throws(() => f.git(f.repo, 'show', `${a.result.id}:${dir}/.env`));
+  // The left-out secret is still in the folder, so cleanup waits rather than delete it.
+  const kept = f.store.abandonEnvironment(a.id); assert.equal(kept.state, 'cleanup_pending'); assert.ok(existsSync(join(kept.details.path, dir, '.env')));
+  const b = await f.worker('B', p => writeFileSync(join(p, note), 'n\n'));
+  assert.equal(f.store.abandonEnvironment(b.id).folder, false);
+  assert.deepEqual(f.store.sessionChanges(b.sessionId).files.map(file => file.path), [note]);
+});
+
+test('review: Apply after resolving lands the resolution without a manual result; markers left refuse Apply; a clean take-in is the new result', async t => {
+  const f = fixture(t);
+  const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 3, 'A was here')));
+  const b = await f.worker('B', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 3, 'B was here')));
+  const c = await f.worker('C', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 9, 'C was here')));
+  f.store.applyEnvironment(a.id); await rejects(() => f.store.applyEnvironment(b.id), 'CONFLICT');
+  f.store.updateEnvironmentFromBranch(b.id);
+  assert.deepEqual(f.store.previewEnvironmentApply(b.id).unresolved, ['src/api.js']);
+  await rejects(() => f.store.updateEnvironmentFromBranch(b.id), 'UNRESOLVED');
+  const before = checkout(f);
+  assert.deepEqual((await rejects(() => f.store.applyEnvironment(b.id), 'UNRESOLVED')).detail.paths, ['src/api.js']);
+  assert.deepEqual(checkout(f), before);
+  // The worker resolves by editing only (no git add, no new result): Apply captures and lands it.
+  writeFileSync(join(f.store.getEnvironment(b.id).details.path, 'src', 'api.js'), edit(API, 3, 'A and B'));
+  assert.equal(f.store.applyEnvironment(b.id).state, 'integrated');
+  assert.equal(readFileSync(join(f.repo, 'src', 'api.js'), 'utf8'), edit(API, 3, 'A and B'));
+  // C took in the branch cleanly: its result now holds both, and Apply adds only its own line.
+  assert.deepEqual(f.store.updateEnvironmentFromBranch(c.id).conflicts, []);
+  assert.equal(f.store.getEnvironment(c.id).base, f.git(f.repo, 'rev-parse', 'feature/auth'));
+  assert.deepEqual(f.store.previewEnvironmentApply(c.id).changes.map(x => x.path), ['src/api.js']);
+  f.store.applyEnvironment(c.id);
+  assert.equal(readFileSync(join(f.repo, 'src', 'api.js'), 'utf8'), edit(edit(API, 3, 'A and B'), 9, 'C was here'));
+});
+
+test('review: nothing to apply, a busy branch, a live session and a switched copy are all refused or reported; nothing written', async t => {
+  const f = fixture(t);
+  const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 2, 'A')));
+  const empty = await f.worker('E', () => {});
+  const preview = f.store.previewEnvironmentApply(empty.id);
+  assert.deepEqual([preview.empty, preview.canApply], [true, false]); await rejects(() => f.store.applyEnvironment(empty.id), 'NOTHING_TO_APPLY');
+  // A merge in progress in the checkout holding the branch.
+  writeFileSync(join(f.repo, '.git', 'MERGE_HEAD'), `${f.git(f.repo, 'rev-parse', 'main')}\n`);
+  assert.equal(f.store.previewEnvironmentApply(a.id).busy, 'merge');
+  let before = checkout(f); await rejects(() => f.store.applyEnvironment(a.id), 'BRANCH_BUSY'); assert.deepEqual(checkout(f), before);
+  rmSync(join(f.repo, '.git', 'MERGE_HEAD'));
+  // A rebase of the branch running in another worktree of the user.
+  const other = join(f.root, 'other'); f.git(f.repo, 'worktree', 'add', '-q', '--detach', other, 'main');
+  const admin = f.git(other, 'rev-parse', '--absolute-git-dir'); mkdirSync(join(admin, 'rebase-merge')); writeFileSync(join(admin, 'rebase-merge', 'head-name'), 'refs/heads/feature/auth\n');
+  assert.equal(f.store.previewEnvironmentApply(a.id).busy, 'rebase');
+  rmSync(join(admin, 'rebase-merge'), { recursive: true });
+  // Continue running in it: Apply and take-in wait for the session.
+  const live = f.session(a.id, 'running');
+  await rejects(() => f.store.applyEnvironment(a.id), 'INVALID_STATE'); await rejects(() => f.store.updateEnvironmentFromBranch(a.id), 'INVALID_STATE');
+  f.store.saveSession({ ...f.store.getSession(live.id), status: 'exited' });
+  // The worker switched its copy onto a branch of its own: reported, its files still apply.
+  f.git(f.store.getEnvironment(a.id).details.path, 'switch', '-q', '-c', 'side');
+  f.store.snapshotEnvironment(a.id);
+  assert.equal(f.store.previewEnvironmentApply(a.id).switchedTo, 'side');
+  assert.equal(f.store.applyEnvironment(a.id).state, 'integrated');
+});
+
+test('review: the session follows an orphaned agent and does not complete while another session still runs there', async t => {
+  const f = fixture(t);
+  const env = await f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'feature/auth' });
+  const one = f.session(env.id, 'running'); f.store.attachEnvironmentSession(env.id, one.id);
+  assert.equal(f.store.syncEnvironment({ ...one, status: 'running' }).state, 'running');
+  assert.equal(f.store.syncEnvironment({ ...one, status: 'orphaned' }).state, 'running');
+  const two = f.session(env.id, 'running');
+  f.store.saveSession({ ...f.store.getSession(one.id), status: 'exited' });
+  assert.equal(f.store.syncEnvironment({ ...f.store.getSession(one.id) }).state, 'running');
+  f.store.saveSession({ ...f.store.getSession(two.id), status: 'exited' });
+  assert.equal(f.store.syncEnvironment({ ...f.store.getSession(two.id) }).state, 'completed');
+});
+
+test('review: an Apply interrupted at each step is finished or rolled back, and the checkout\'s index lock is always released', async t => {
+  const f = fixture(t);
+  const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 5, 'A')));
+  const lockFile = join(f.repo, '.git', 'index.lock');
+  // Landed, the side index already renamed to index.lock (crash between the two renames).
+  const late = f.reopen({ hooks: { afterLand: env => { renameSync(env.integration.sideIndex, env.integration.indexLock); throw new Error('crash mid-swap'); } } });
+  await assert.rejects(async () => late.applyEnvironment(a.id), /crash mid-swap/);
+  assert.equal(f.store.getWorkspace(a.id).integration.phase, 'landed');
+  assert.deepEqual(f.reopen().reconcileEnvironments().map(r => r.slice(1)), [['integrating', 'integrated']]);
+  assert.ok(!existsSync(lockFile)); assert.equal(f.git(f.repo, 'status', '--porcelain'), '');
+  // Not landed, the side index already gone: the lock is released, nothing applied.
+  const b = await f.worker('B', p => writeFileSync(join(p, 'src', 'form.js'), edit(FORM, 5, 'B')));
+  const early = f.reopen({ hooks: { afterFiles: env => { rmSync(env.integration.sideIndex); throw new Error('crash'); } } });
+  const head = f.git(f.repo, 'rev-parse', 'feature/auth');
+  await assert.rejects(async () => early.applyEnvironment(b.id), /crash/);
+  f.reopen().reconcileEnvironments();
+  assert.ok(!existsSync(lockFile)); assert.equal(f.git(f.repo, 'rev-parse', 'feature/auth'), head);
+  f.git(f.repo, 'checkout', '--', '.'); assert.equal(f.git(f.repo, 'status', '--porcelain'), '');
+  // An ordinary error before landing is undone at once, without waiting for reconcile.
+  // (A plain error, unlike a hook's simulated crash: recording the files phase fails once.)
+  const failing = f.reopen(); const original = failing.environments.patch.bind(failing.environments); let calls = 0;
+  failing.environments.patch = (id, patch) => { if (patch.integration?.phase === 'files' && ++calls === 1) { original(id, patch); throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); } return original(id, patch); };
+  await assert.rejects(async () => failing.applyEnvironment(b.id), /disk full/);
+  assert.ok(!existsSync(lockFile)); assert.equal(f.store.getEnvironment(b.id).state, 'completed');
+  assert.equal(readFileSync(join(f.repo, 'src', 'form.js'), 'utf8'), FORM); assert.equal(f.git(f.repo, 'status', '--porcelain'), '');
+});
+
+test('review: cleanup keeps ignored work and nested repositories until confirmed; regenerable folders go', async t => {
+  const f = fixture(t);
+  const a = await f.worker('A', p => { mkdirSync(join(p, 'node_modules', 'x'), { recursive: true }); writeFileSync(join(p, 'node_modules', 'x', 'i.js'), '1\n'); writeFileSync(join(p, 'debug.log'), 'l\n'); });
+  assert.equal(f.store.abandonEnvironment(a.id).state, 'removed', 'node_modules and logs are regenerable');
+  const b = await f.worker('B', p => { writeFileSync(join(p, '.gitignore'), 'node_modules/\n*.log\nnotes/\n'); mkdirSync(join(p, 'notes')); writeFileSync(join(p, 'notes', 'mine.md'), 'keep\n'); });
+  const held = f.store.abandonEnvironment(b.id);
+  assert.deepEqual([held.state, held.cleanup.code], ['cleanup_pending', 'ignored']); assert.match(held.cleanup.reason, /notes/);
+  assert.ok(existsSync(join(held.details.path, 'notes', 'mine.md')));
+  assert.equal(f.store.cleanupEnvironment(b.id, { removeIgnored: true }).state, 'removed');
+  const c = await f.worker('C', p => { mkdirSync(join(p, 'vendor')); f.git(join(p, 'vendor'), 'init', '-q'); writeFileSync(join(p, 'vendor', 'v.txt'), 'v\n'); });
+  const nested = f.store.abandonEnvironment(c.id);
+  assert.equal(nested.state, 'cleanup_pending'); assert.match(nested.cleanup.reason, /another Git repository/);
+  assert.equal(f.store.cleanupEnvironment(c.id, { removeIgnored: true }).state, 'cleanup_pending');
+  assert.ok(existsSync(join(nested.details.path, 'vendor', '.git')));
+});
+
+test('review: a copy no session started in is set aside after a while; a failed one is cleaned; forget refuses isolated', async t => {
+  const f = fixture(t);
+  const stray = await f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'feature/auth' });
+  assert.deepEqual(f.store.reconcileEnvironments(f.project.id), [], 'young copies wait for their session');
+  const report = f.store.reconcileEnvironments(f.project.id, { orphanAge: -1 });
+  assert.deepEqual(report.map(r => r.slice(1)), [['ready', 'removed']]); assert.equal(existsSync(stray.details.path), false);
+  assert.throws(() => f.store.forgetWorkspace(stray.id), /never forgotten/);
+  const live = await f.store.createEnvironment({ projectId: f.project.id, logicalBranch: 'feature/auth' }); f.session(live.id, 'running');
+  assert.deepEqual(f.store.reconcileEnvironments(f.project.id, { orphanAge: -1 }), []);
+});
+
+test('review: a finished copy takes no new session; Files lists copies in use only; status proposals skip isolated sessions; revisions keep their origin', async t => {
+  const f = fixture(t);
+  const { TerminalManager } = await import('../src/core/terminal.mjs');
+  const manager = new TerminalManager({ store: f.store, trackMs: 0, identify: () => null, table: () => null, spawn: () => ({ onData() {}, onExit(fn) { this.exit = fn; }, write() {}, resize() {}, kill() {} }) });
+  t.after(() => { manager.disposed = true; });
+  const a = await f.worker('A', (p, git) => { writeFileSync(join(p, 'src', 'api.js'), edit(API, 1, 'A')); git(p, 'commit', '-qam', 'A'); });
+  assert.ok(f.store.fileRoots(f.project.id).primary.some(root => root.key === a.id), 'a completed copy is browsable');
+  assert.deepEqual(f.store.generateProposals(a.sessionId).filter(p => p.kind === 'branch-status'), [], 'its commits are not on the branch');
+  const note = f.store.proposeMemory(f.project.id, { statement: 'The API retries once', category: 'decision', scope: 'checkout', area: 'src', sessionId: a.sessionId, source: { kind: 'user', note: 'A' } });
+  const revised = f.store.proposeMemory(f.project.id, { memoryId: note.id, statement: 'The API retries once, then fails', category: 'decision', scope: 'checkout', area: 'src', source: { kind: 'user', note: 'edit' } });
+  assert.equal(f.store.getMemory(revised.id).origin.environmentId, a.id);
+  f.store.applyEnvironment(a.id);
+  assert.ok(!f.store.fileRoots(f.project.id).primary.some(root => root.key === a.id));
+  await assert.rejects(manager.start({ projectId: f.project.id, provider: 'claude', task: 'more', workspaceId: a.id }), /no longer takes new work|Unknown|not/);
+});
+
+// ---- Regression tests for the second review ----
+test('review 2: conflicts markers cannot show (binary, modify/delete) stay unresolved until staged; kinds recorded', async t => {
+  const f = fixture(t);
+  writeFileSync(join(f.repo, 'img.bin'), Buffer.from([0, 1, 2, 3])); f.git(f.repo, 'add', '-A'); f.git(f.repo, 'commit', '-qm', 'bin');
+  const w = await f.worker('W', p => { writeFileSync(join(p, 'img.bin'), Buffer.from([0, 9, 9, 9])); writeFileSync(join(p, 'src', 'form.js'), edit(FORM, 2, 'W')); });
+  writeFileSync(join(f.repo, 'img.bin'), Buffer.from([0, 7, 7, 7])); f.git(f.repo, 'rm', '-q', 'src/form.js'); f.git(f.repo, 'commit', '-qam', 'branch');
+  await rejects(() => f.store.applyEnvironment(w.id), 'CONFLICT');
+  const { environment } = f.store.updateEnvironmentFromBranch(w.id);
+  assert.deepEqual(environment.conflict.paths.map(x => [x.path, x.kind]).sort(), [['img.bin', 'binary'], ['src/form.js', 'modify/delete']]);
+  assert.deepEqual(f.store.previewEnvironmentApply(w.id).unresolved.sort(), ['img.bin', 'src/form.js']);
+  const head = f.git(f.repo, 'rev-parse', 'feature/auth');
+  await rejects(() => f.store.applyEnvironment(w.id), 'UNRESOLVED'); assert.equal(f.git(f.repo, 'rev-parse', 'feature/auth'), head);
+  // The worker decides: keeps the branch's image, keeps its edited form, and stages both.
+  const path = environment.details.path; f.git(path, 'checkout', '--theirs', 'img.bin'); f.git(path, 'add', 'img.bin', 'src/form.js');
+  assert.deepEqual(f.store.previewEnvironmentApply(w.id).unresolved, []);
+  f.store.applyEnvironment(w.id);
+  assert.deepEqual([...readFileSync(join(f.repo, 'img.bin'))], [0, 7, 7, 7]); assert.equal(readFileSync(join(f.repo, 'src', 'form.js'), 'utf8'), edit(FORM, 2, 'W'));
+});
+
+test('review 2: a secret or another repository the worker committed is left out of the result, at any depth', async t => {
+  const f = fixture(t);
+  const a = await f.worker('A', (p, git) => {
+    writeFileSync(join(p, '.env'), 'TOKEN=x\n'); mkdirSync(join(p, 'tools', 'vendor'), { recursive: true }); writeFileSync(join(p, 'tools', 'a.js'), 'a\n');
+    git(join(p, 'tools', 'vendor'), 'init', '-q'); writeFileSync(join(p, 'tools', 'vendor', 'v.txt'), 'v\n'); git(join(p, 'tools', 'vendor'), 'add', '-A'); git(join(p, 'tools', 'vendor'), 'commit', '-qm', 'v');
+    git(p, 'add', '.env', 'tools/a.js'); git(p, 'commit', '-qm', 'with a secret');
+  });
+  assert.deepEqual(a.result.excluded, ['.env']);
+  assert.deepEqual(a.result.files.map(file => file.path), ['tools/a.js']);
+  assert.throws(() => f.git(f.repo, 'show', `${a.result.id}:.env`));
+  assert.equal(f.git(f.repo, 'ls-tree', '-r', a.result.id, '--', 'tools/vendor'), '');
+  const b = await f.worker('B', (p, git) => { mkdirSync(join(p, 'lib')); git(join(p, 'lib'), 'init', '-q'); writeFileSync(join(p, 'lib', 'x'), 'x\n'); git(join(p, 'lib'), 'add', '-A'); git(join(p, 'lib'), 'commit', '-qm', 'x'); git(p, 'add', 'lib'); git(p, 'commit', '-qm', 'gitlink'); });
+  assert.equal(f.git(f.repo, 'ls-tree', '-r', b.result.id, '--', 'lib'), '', 'a committed submodule entry is left out');
+  const held = f.store.abandonEnvironment(a.id); assert.equal(held.state, 'cleanup_pending'); assert.match(held.cleanup.reason, /another Git repository \(tools\/vendor\)/);
+});
+
+test('review 2: taking in the branch twice works; the copy is left with no merge in progress', async t => {
+  const f = fixture(t);
+  const c = await f.worker('C', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 9, 'C')));
+  const commit = (line, text) => { writeFileSync(join(f.repo, 'src', 'api.js'), edit(readFileSync(join(f.repo, 'src', 'api.js'), 'utf8'), line, text)); f.git(f.repo, 'commit', '-qam', text); };
+  commit(1, 'one'); assert.deepEqual(f.store.updateEnvironmentFromBranch(c.id).conflicts, []);
+  const path = f.store.getEnvironment(c.id).details.path;
+  assert.ok(!existsSync(join(f.git(path, 'rev-parse', '--absolute-git-dir'), 'MERGE_HEAD')));
+  commit(2, 'two'); assert.deepEqual(f.store.updateEnvironmentFromBranch(c.id).conflicts, []);
+  // A conflicted take-in resolved by editing (no commit), then another take-in.
+  commit(9, 'branch nine'); assert.deepEqual(f.store.updateEnvironmentFromBranch(c.id).conflicts, ['src/api.js']);
+  writeFileSync(join(path, 'src', 'api.js'), edit(edit(edit(API, 1, 'one'), 2, 'two'), 9, 'both nine'));
+  commit(3, 'three'); assert.deepEqual(f.store.updateEnvironmentFromBranch(c.id).conflicts, []);
+  f.store.applyEnvironment(c.id);
+  assert.equal(readFileSync(join(f.repo, 'src', 'api.js'), 'utf8'), edit(edit(edit(edit(API, 1, 'one'), 2, 'two'), 3, 'three'), 9, 'both nine'));
+});
+
+test('review 2: recovery removes only Journal\'s own index lock, swaps in only the exact new index, and sees a landed Apply the branch moved past', async t => {
+  const f = fixture(t); const lockFile = join(f.repo, '.git', 'index.lock');
+  // Crash right after taking the lock (phase still planned): Journal's lock is recognised and released.
+  const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 5, 'A')));
+  const s = f.reopen(); const patch = s.environments.patch.bind(s.environments);
+  s.environments.patch = (id, change) => { if (change.integration?.phase === 'locked') throw Object.assign(new Error('crash'), { crash: true }); return patch(id, change); };
+  await assert.rejects(async () => s.applyEnvironment(a.id), /crash/);
+  assert.equal(f.store.getWorkspace(a.id).integration.phase, 'planned'); assert.ok(existsSync(lockFile));
+  f.reopen().reconcileEnvironments(); assert.ok(!existsSync(lockFile)); assert.equal(f.store.getEnvironment(a.id).state, 'completed');
+  // Crash after both renames, before the state was saved: a lock the user's Git holds then is left alone.
+  const late = f.reopen({ hooks: { afterLand: env => { renameSync(env.integration.sideIndex, env.integration.indexLock); renameSync(env.integration.indexLock, join(f.repo, '.git', 'index')); writeFileSync(lockFile, 'users git\n'); throw new Error('crash'); } } });
+  await assert.rejects(async () => late.applyEnvironment(a.id), /crash/);
+  f.reopen().reconcileEnvironments();
+  assert.equal(readFileSync(lockFile, 'utf8'), 'users git\n'); rmSync(lockFile);
+  assert.equal(f.store.getEnvironment(a.id).state, 'integrated'); assert.equal(f.git(f.repo, 'status', '--porcelain'), '');
+  // Landed, then the user committed on top before Journal came back: it is integrated, nothing rolled back.
+  const b = await f.worker('B', p => writeFileSync(join(p, 'src', 'form.js'), edit(FORM, 5, 'B')));
+  const third = f.reopen({ hooks: { afterLand: env => { renameSync(env.integration.sideIndex, env.integration.indexLock); renameSync(env.integration.indexLock, join(f.repo, '.git', 'index')); f.git(f.repo, 'commit', '-q', '--allow-empty', '-m', 'user on top'); throw new Error('crash'); } } });
+  await assert.rejects(async () => third.applyEnvironment(b.id), /crash/);
+  assert.deepEqual(f.reopen().reconcileEnvironments().find(([id]) => id === b.id).slice(1), ['integrating', 'integrated']);
+  assert.equal(readFileSync(join(f.repo, 'src', 'form.js'), 'utf8'), edit(FORM, 5, 'B')); assert.equal(f.git(f.repo, 'status', '--porcelain'), '');
+});
+
+test('review 2: Apply refuses a result that changed after the preview', async t => {
+  const f = fixture(t);
+  const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 5, 'A')));
+  const preview = f.store.previewEnvironmentApply(a.id);
+  writeFileSync(join(a.details.path, 'late.md'), 'written after the preview\n');
+  const head = f.git(f.repo, 'rev-parse', 'feature/auth');
+  await rejects(() => f.store.applyEnvironment(a.id, { expect: preview.result }), 'RESULT_CHANGED');
+  assert.equal(f.git(f.repo, 'rev-parse', 'feature/auth'), head);
+  const again = f.store.previewEnvironmentApply(a.id); assert.deepEqual(again.changes.map(x => x.path).sort(), ['late.md', 'src/api.js']);
+  assert.equal(f.store.applyEnvironment(a.id, { expect: again.result }).state, 'integrated');
+});
+
+test('review 2: a session start that races an Apply is refused before it counts as live', async t => {
+  const f = fixture(t);
+  const a = await f.worker('A', p => writeFileSync(join(p, 'src', 'api.js'), edit(API, 5, 'A')));
+  const { TerminalManager } = await import('../src/core/terminal.mjs');
+  let spawned = 0;
+  const manager = new TerminalManager({ store: f.store, trackMs: 0, identify: () => null, table: () => null, spawn: () => { spawned++; return { onData() {}, onExit(fn) { this.exit = fn; }, write() {}, resize() {}, kill() {} }; } });
+  t.after(() => { manager.disposed = true; });
+  const prepare = f.store.prepareContext.bind(f.store);
+  f.store.prepareContext = (...args) => { f.store.applyEnvironment(a.id); return prepare(...args); };
+  await assert.rejects(manager.start({ projectId: f.project.id, provider: 'claude', task: 'more', workspaceId: a.id }), /no longer takes new work/);
+  assert.equal(spawned, 0); assert.equal(f.store.getEnvironment(a.id).state, 'integrated');
 });

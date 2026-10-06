@@ -287,7 +287,8 @@ export class JournalStore {
     const branch = target;
     // Structured provenance for a note proposed from a session in an isolated environment, taken
     // from Journal's own records (never from the caller): session, environment, base, result.
-    const origin = this.originFor(projectId, input.sessionId ?? options.sessionId ?? null);
+    // A revision keeps the origin of the claim it revises unless it names a session of its own.
+    const origin = this.originFor(projectId, input.sessionId ?? options.sessionId ?? null) ?? previous?.origin ?? null;
     // Flag, never block: the reviewer decides whether two claims really conflict.
     const conflicts = this.conflictsWith(projectId, id, { statement, scope, branch, area });
     const item = { id, projectId, revisionId: randomUUID(), revision, statement, category, scope, area,
@@ -861,8 +862,9 @@ export class JournalStore {
       AND json_extract(r.body,'$.category')='brief' AND json_extract(r.body,'$.scope')='branch' AND json_extract(r.body,'$.branch')=? ORDER BY r.rowid DESC LIMIT 1`).get(session.projectId, project.branch);
     const update = branchUpdate ? parse(branchUpdate) : null;
     // Commands and commits in an additional folder belong to that folder, not the primary branch.
+    // An isolated session's commits are on its own copy, not on the branch, until its result is applied.
     const candidates = [...ruleProposals(session, receipt), ...(inFolder ? [] : [...testCommandProposals(session, this.listEvents(sessionId, 2000)),
-      ...statusProposal(session, project, update ? this.drift(project, { ...update, category: 'brief', scope: 'branch' }, new Map()) : 0, !!update)])];
+      ...(project.isolated ? [] : statusProposal(session, project, update ? this.drift(project, { ...update, category: 'brief', scope: 'branch' }, new Map()) : 0, !!update))])];
     const created = [];
     for (const candidate of candidates.slice(0, 10)) {
       if (candidate.statement && candidate.kind !== 'branch-status' && existing.some(statement => isDuplicate(statement, candidate.statement))) continue;
@@ -1160,6 +1162,7 @@ export class JournalStore {
   // Stops tracking without touching files (imported, failed or missing entries).
   forgetWorkspace(id) {
     const workspace = this.getWorkspace(id);
+    if (workspace.kind === 'isolated') throw new Error('An isolated session\'s folder is cleaned up from its session, never forgotten');
     if (workspace.kind === 'managed' && workspace.state === 'ready') throw new Error('Remove a ready managed worktree instead; forgetting it would leave it unmanaged');
     if (this.activeSessions().some(session => session.workspaceId === id)) throw new Error('A session is still running in this workspace');
     this.audit('workspace-forgotten', { id, path: workspace.path });
@@ -1171,7 +1174,7 @@ export class JournalStore {
     const { checkout, workspaces } = this.listWorkspaces(projectId); const project = this.project(projectId);
     const primary = [{ key: 'checkout', family: 'primary', kind: 'checkout', label: `${project.name} (checkout)`, path: checkout.path, branch: checkout.branch, git: true },
       ...workspaces.filter(w => w.state === 'ready').map(w => ({ key: w.id, family: 'primary', kind: w.kind, label: `${project.name} (${w.kind === 'managed' ? 'worktree' : 'imported worktree'} ${w.branch ?? basename(w.path)})`, path: w.path, branch: w.branch ?? null, git: true }))];
-    for (const env of this.db.prepare(`SELECT body FROM workspaces WHERE project_id=? AND json_extract(body,'$.kind')='isolated' AND json_extract(body,'$.state')='ready' ORDER BY rowid`).all(projectId).map(parse)) {
+    for (const env of this.db.prepare(`SELECT body FROM workspaces WHERE project_id=? AND json_extract(body,'$.kind')='isolated' AND json_extract(body,'$.lifecycle') IN ('ready','running','waiting','completed','conflict') ORDER BY rowid`).all(projectId).map(parse)) {
       if (existsSync(env.path)) primary.push({ key: env.id, family: 'primary', kind: 'isolated', label: `${project.name} (isolated from ${env.logicalBranch})`, path: env.path, branch: env.logicalBranch, git: true, isolated: true });
     }
     const folders = (project.roots ?? []).map(root => { const status = folderStatus(root); return { key: `root:${root.id}`, family: 'folder', kind: root.kind, label: root.name, path: root.path, branch: status.currentBranch, git: root.kind === 'git', exists: status.exists }; });
@@ -1317,7 +1320,7 @@ export class JournalStore {
     let env; try { env = session.workspaceId ? this.getWorkspace(session.workspaceId) : null; } catch { return null; }
     if (env?.kind !== 'isolated' || !env.result) return null;
     const root = this.project(session.projectId).root;
-    let files; try { files = git(root, ['diff-tree', '-r', '--numstat', '--no-renames', env.base, ENV_REF(env.id, 'result')]).split('\n').filter(Boolean); } catch { return null; }
+    let files; try { files = git(root, ['diff-tree', '-z', '-r', '--numstat', '--no-renames', env.base, ENV_REF(env.id, 'result')]).split('\0').filter(Boolean); } catch { return null; }
     const list = files.map(line => { const [added, deleted, ...path] = line.split('\t'); return { path: path.join('\t'), from: null, additions: added === '-' ? null : Number(added), deletions: deleted === '-' ? null : Number(deleted), binary: added === '-', untracked: false, preexisting: false, sensitive: false }; });
     return { base: env.base, available: true, saved: true, head: env.result.sha, branch: env.logicalBranch, headMoved: false, commitsSince: 0, files: list, truncated: false, trees: [],
       additions: list.reduce((sum, f) => sum + (f.additions ?? 0), 0), deletions: list.reduce((sum, f) => sum + (f.deletions ?? 0), 0), preexistingCount: 0, sharedCheckout: false, folderPrefix: null };
@@ -1334,8 +1337,8 @@ export class JournalStore {
   updateEnvironmentFromBranch(id) { return this.environments.updateFromBranch(id); }
   abandonEnvironment(id) { return this.environments.abandon(id); }
   restoreEnvironment(id) { return this.environments.restore(id); }
-  cleanupEnvironment(id) { return this.environments.cleanup(id); }
-  reconcileEnvironments(projectId) { return this.environments.reconcile(projectId); }
+  cleanupEnvironment(id, options) { return this.environments.cleanup(id, options); }
+  reconcileEnvironments(projectId, options) { return this.environments.reconcile(projectId, options); }
   syncEnvironment(session) { return this.environments.syncFromSession(session); }
   environmentLaunch(id) { return this.environments.launchVariables(id); }
   // Where a note came from when a session in an isolated environment proposed it, and whether that

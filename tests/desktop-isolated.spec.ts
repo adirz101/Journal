@@ -67,7 +67,7 @@ test('an isolated session works in its own copy; its result is previewed and app
     await expect(panel(page)).toContainText('Result: 1 file changed.');
     await panel(page).getByRole('button', { name: 'Apply to feature/auth…' }).click();
     const preview = page.getByLabel('What applying to feature/auth would do');
-    await expect(preview).toContainText('feature/auth has not moved since this session started.');
+    await expect(preview).toContainText('feature/auth has not moved since its copy was made or last updated.');
     await expect(preview).toContainText('src/api.js');
     await preview.getByRole('button', { name: 'Apply to feature/auth', exact: true }).click();
     await expect(panel(page)).toContainText('Applied to feature/auth as commit', { timeout: 15000 });
@@ -102,7 +102,7 @@ test('two isolated sessions on the same line: the second conflicts, nothing is w
     await inspectorTab(page, 'Session');
     await panel(page).getByRole('button', { name: 'Apply to feature/auth…' }).click();
     const preview = page.getByLabel('What applying to feature/auth would do');
-    await expect(preview).toContainText('feature/auth moved 1 commit since this session started');
+    await expect(preview).toContainText('feature/auth moved 1 commit since its copy was made or last updated');
     await expect(preview).toContainText('1 file conflict; nothing can be applied');
     await expect(preview.getByRole('button', { name: 'Apply to feature/auth', exact: true })).toBeDisabled();
     expect({ head: f.git('rev-parse', 'feature/auth'), api: readFileSync(join(f.project, 'src', 'api.js'), 'utf8') }).toEqual(before);

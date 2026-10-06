@@ -639,7 +639,11 @@ const actions = {
   removeSession: async ({ id }) => {
     const session = await store.getSession(id); const label = session.displayName || session.title;
     const running = LIVE.includes(session.status) || session.status === 'orphaned';
-    const files = 'Your files, worktree and the native Claude/Codex conversation are not affected.';
+    const environment = session.environmentId ? await store.getEnvironment(session.environmentId).catch(() => null) : null;
+    // An isolated session's result is reached from its session: say when removing would hide work not yet applied.
+    const unapplied = environment?.result && environment.state !== 'integrated' && environment.integration?.phase !== 'done'
+      ? ` Its isolated result is not applied to ${environment.logicalBranch}; it stays saved, but you reach it only from this session.` : '';
+    const files = `Your files, worktree and the native Claude/Codex conversation are not affected.${unapplied}`;
     if (running) {
       const canStop = session.status !== 'orphaned';
       const { response } = await dialog.showMessageBox(window, { type: 'warning', buttons: canStop ? ['Stop and remove', 'Keep running and archive', 'Cancel'] : ['Keep running and archive', 'Cancel'], defaultId: canStop ? 2 : 1, cancelId: canStop ? 2 : 1,
@@ -714,11 +718,11 @@ const actions = {
   environment: ({ id }) => store.getEnvironment(text(id, 'environment ID', 100)),
   environments: ({ projectId }) => store.listEnvironments(text(projectId, 'project ID', 100)),
   previewEnvironmentApply: ({ id }) => store.previewEnvironmentApply(text(id, 'environment ID', 100)),
-  applyEnvironment: async ({ id }) => { const environment = await store.applyEnvironment(text(id, 'environment ID', 100)); send({ type: 'environment', environment }); const cleaned = await store.cleanupEnvironment(environment.id).catch(() => environment); send({ type: 'environment', environment: cleaned }); return cleaned; },
+  applyEnvironment: async ({ id, expect }) => { const environment = await store.applyEnvironment(text(id, 'environment ID', 100), typeof expect === 'string' ? { expect: text(expect, 'result ID', 100) } : {}); send({ type: 'environment', environment }); const cleaned = await store.cleanupEnvironment(environment.id).catch(() => environment); send({ type: 'environment', environment: cleaned }); return cleaned; },
   resolveInEnvironment: async ({ id }) => { const outcome = await store.updateEnvironmentFromBranch(text(id, 'environment ID', 100)); send({ type: 'environment', environment: outcome.environment }); return outcome; },
   abandonEnvironment: async ({ id }) => { const environment = await store.abandonEnvironment(text(id, 'environment ID', 100)); send({ type: 'environment', environment }); return environment; },
   restoreEnvironment: async ({ id }) => { const environment = await store.restoreEnvironment(text(id, 'environment ID', 100)); send({ type: 'environment', environment }); return environment; },
-  cleanupEnvironment: async ({ id }) => { const environment = await store.cleanupEnvironment(text(id, 'environment ID', 100)); send({ type: 'environment', environment }); return environment; },
+  cleanupEnvironment: async ({ id, removeIgnored }) => { const environment = await store.cleanupEnvironment(text(id, 'environment ID', 100), { removeIgnored: removeIgnored === true }); send({ type: 'environment', environment }); return environment; },
   // ----- Provider CLIs: install and sign in run visibly, only after the user asks. The renderer
   // names a provider; the executable comes from detection and the argv from PROVIDER_COMMANDS. -----
   providerStatus: ({ provider, fresh }) => refreshProvider(choice(provider, PROVIDERS, 'provider'), { fresh: fresh === true }),

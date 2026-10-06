@@ -330,7 +330,9 @@ Errors carry codes. Nothing needs the window.
 5. Move the branch by compare-and-swap (`update-ref`). On a race, put the files back; the real index never changed.
 6. Swap the side index in.
 
-The plan is durable, and reconcile finishes or rolls back a crash on either side of the landing.
+Apply first captures the result again (what lands is what the folder holds; with the previewed result ID it refuses with `RESULT_CHANGED` if the folder changed since the preview), and refuses when the session is live, files that conflicted are unresolved (markers left, or a binary or modify/delete conflict not yet staged), a rebase, merge, cherry-pick or bisect is in progress on the branch, or the result changes nothing. The plan is durable with phases (`planned`, `locked`, `files`, `landed`, `swapping`, `done`): reconcile finishes a landed Apply (including a crash between the two renames) or rolls back one that did not land, and releases Journal's index lock either way. Journal's lock file names its Apply, and recovery swaps in only the exact new index (by fingerprint), so a lock held by the user's own Git is never removed or renamed. An Apply the branch has already moved past counts as landed. A plain error before landing is rolled back at once; if the rollback itself fails, the error is `ROLLBACK_PENDING` and the lock stays until reconcile. File names are always read NUL-separated, so sensitive names Git would quote (non-ASCII) are still left out. Sensitive files and nested repositories (untracked at any depth, or committed as submodule entries) are compared with the base, so a worker's own commit of them is left out too.
+
+**Take-in** (Resolve in this session) records each take-in as a merge of the base in the copy's history and leaves no merge in progress, so it can be repeated; conflicts are recorded with their kind (content, binary, modify/delete).
 
 **Memory.**
 - Receipts record `environment: { id, base, logicalBranch }`.
@@ -352,11 +354,13 @@ The plan is durable, and reconcile finishes or rolls back a crash on either side
 **Cleanup:**
 - Never `--force`, and never a repository-wide `git worktree prune`.
 - Only inside Journal's root, with the marker and Git registration matching, no live or orphaned session, the result captured, and no work added after it.
+- Ignored files outside regenerable folders (`node_modules`, `dist`, `build`, `.venv`, `target`, caches and the like) keep the folder in `cleanup_pending`; **Remove anyway** confirms deleting them. A nested repository always keeps it. A secret left out of the result keeps it too, since `git worktree remove` refuses untracked files.
+- A copy no session ever started in is set aside after 10 minutes; a failed one is cleaned up when safe.
 - HEAD and the index are pointed at the result; untracked links are removed as links; then `git worktree remove`.
 - Otherwise `cleanup_pending`, retried at startup and every 10 minutes.
 
 **Tests:**
-- `tests/environments.test.mjs`: 16 tests on real Git through the store.
+- `tests/environments.test.mjs`: 30 tests on real Git through the store, 14 of them regression tests for the two independent reviews' findings.
 - Isolation rows in `tests/story.test.mjs`; the isolation copy in `tests/copy.test.mjs`.
 - `tests/desktop-isolated.spec.ts`: 2 end-to-end tests, the isolated flow plus a conflict and a restart.
 

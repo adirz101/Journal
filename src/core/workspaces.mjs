@@ -124,6 +124,6 @@ export function workspaceView(project, workspace) {
   // An isolated session's worktree is detached; it works for its logical branch, which is what notes,
   // receipts and the Changes view follow (never whatever branch the user's checkout is on).
   if (workspace.kind === 'isolated') return { ...project, root: info.root, branch: workspace.logicalBranch, head: info.head, workspaceId: workspace.id, detached: true,
-    isolated: { id: workspace.id, logicalBranch: workspace.logicalBranch, base: workspace.base } };
+    isolated: { id: workspace.id, logicalBranch: workspace.logicalBranch, base: workspace.base, lifecycle: workspace.lifecycle } };
   return { ...project, root: info.root, branch: info.branch, head: info.head, workspaceId: workspace.id };
 }

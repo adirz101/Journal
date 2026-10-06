@@ -211,10 +211,11 @@ export interface Environment {
   result: { id: string; files: EnvironmentFile[]; fileCount: number; excluded: string[]; at: string } | null;
   conflict: { paths: { path: string; kind: string }[]; against: string; at: string; inEnvironment?: boolean } | null;
   integration: { commit: string; phase: string; landedAt: string | null } | null;
-  cleanup: { reason?: string; attempts?: number; from?: string; removedAt?: string } | null; error: string | null; ports: number[]; folder: boolean;
+  cleanup: { reason?: string; code?: string | null; attempts?: number; from?: string; removedAt?: string } | null; error: string | null; ports: number[]; folder: boolean;
   details: { path: string; tmpDir: string; logDir: string; refs: { base: string; head: string; result: string } };
 }
 export interface ApplyPreview {
-  environmentId: string; logicalBranch: string; base: string; logicalHead: string; moved: boolean; commitsSince: number; baseOnBranch: boolean;
+  environmentId: string; logicalBranch: string; base: string; logicalHead: string; result: string; moved: boolean; commitsSince: number; baseOnBranch: boolean;
   clean: boolean; conflicts: { path: string; kind: string }[]; changes: EnvironmentFile[]; excluded: string[]; blockedBy: string[]; canApply: boolean; checkedOut: boolean;
+  busy: string | null; unresolved: string[]; empty: boolean; switchedTo: string | null;
 }
