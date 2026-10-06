@@ -1,6 +1,6 @@
 # Hierarchical agent orchestration: technical specification
 
-Status: **research and specification only. Do not implement yet** (see [§36](#36-do-not-implement-yet)). Written 6 October 2026 against `main` at 0.1.2-alpha (isolated sessions merged in PR #30). Revised the same day with the clarified product decisions: the coordinator owns workflow decisions, completion never depends on a session exiting, resources are a hard constraint owned by Journal, and Git hosting workflows are ordinary agent shell work.
+Status: **research and specification only. Do not implement yet** (see [§36](#36-do-not-implement-yet)). Written 6 October 2026 against `main` at 0.1.2-alpha (isolated sessions merged in PR #30). Revised the same day with the clarified product decisions, and again after a final review (dependency-blocked tasks versus capacity-queued workers, results that were never reported, workers integrating through Journal rather than pushing, and Journal's own per-session overhead in capacity): the coordinator owns workflow decisions, completion never depends on a session exiting, resources are a hard constraint owned by Journal, and Git hosting workflows are ordinary agent shell work.
 
 Sources: this repository's code; [ISOLATED-AGENT-ENVIRONMENTS](ISOLATED-AGENT-ENVIRONMENTS.md), [STORY](STORY.md), [PROVIDERS](PROVIDERS.md) and [TERMINAL-FIRST-SPEC](TERMINAL-FIRST-SPEC.md); official provider documentation, cited inline. Other agent-orchestration tools were studied through their public documentation and command-line help only. They are described by what they do, not by name (project policy), and no code was copied.
 
@@ -66,7 +66,7 @@ The split of responsibility is the core of the design:
   - persistence and recovery;
   - memory with provenance.
 
-  Journal refuses unsafe actions with a deterministic reason. It never replaces the coordinator's reasoning and never moves work forward on its own.
+  Journal refuses unsafe actions with a deterministic reason. It never replaces the coordinator's reasoning and never moves work forward on its own. The one thing it starts without a new request is a worker launch the coordinator already requested and that was queued for capacity; it never starts a worker because a task became unblocked.
 - **Workers write the code** in their own copies and report what they did. Their reports are claims; Journal's verified facts are kept beside them.
 
 The main loop:
@@ -149,7 +149,9 @@ Principles that stay in force:
 | Task decomposition, scopes, acceptance criteria | Coordinator | Journal stores and validates structure (cycles, scope paths) |
 | Which provider/model per worker | Coordinator | Within the providers the run allows |
 | Resource admission (launch now, queue, refuse) | **Journal** | §11; the coordinator cannot override it |
-| Starting queued workers when capacity returns | **Journal** | Automatic; the coordinator is told |
+| Starting a worker for a task (including one that was just unblocked) | Coordinator | Journal never creates a worker on its own |
+| Starting a worker launch that was already requested and queued for capacity | **Journal** | Automatic when capacity returns; the coordinator is told |
+| What to do with a result the worker did not report | Coordinator | `request_result`, a follow-up, or `accept_result` |
 | Worker code changes | Worker | In its isolated environment |
 | Turn-end, idle and ready detection | **Journal** | From provider hooks and Git, never from text |
 | Result capture and verification | **Journal** | Snapshot at turn boundaries; verified evidence |
@@ -319,23 +321,25 @@ While the coordinator is `detached`, workers keep going: running turns finish, r
 
 ```mermaid
 stateDiagram-v2
-  [*] --> queued: J capacity says wait (reason recorded)
-  [*] --> starting: J admitted
+  [*] --> queued: C create_worker requested; J capacity says wait (reason recorded)
+  [*] --> starting: C create_worker requested; J admitted
   queued --> starting: J capacity available (re-evaluated)
   queued --> cancelled: C/U cancel
   starting --> working: H session-start / turn-start
   starting --> launch_failed: J launch failed
   launch_failed --> queued: J resource failure (back-off)
-  working --> idle: H turn-end, settled, no open approval
+  working --> idle: H turn-end, settled, no open approval; no new changes and no report
+  working --> result_available: H turn-end + J result captured with changes, but no report_result this turn
+  working --> ready: H turn-end + J result captured + worker called report_result (status done) during the turn
   idle --> working: H turn-start (message delivered or user typed)
+  result_available --> working: H turn-start (C request_result / follow-up delivered, or user typed)
   working --> waiting_for_user: H permission-wait (provider prompt)
   waiting_for_user --> working: H tool-end / U answered
   idle --> waiting_for_coordinator: C/J worker called ask (question pending)
   waiting_for_coordinator --> working: J answer delivered
-  idle --> ready: J current result captured + worker reported done
   ready --> working: H turn-start (follow-up) → previous result kept, current result superseded later
-  idle --> blocked: J worker reported blocked / dependency unmet
-  blocked --> working: J message delivered (dependency ready, answer)
+  working --> blocked: H turn-end after the worker called report_blocked (its own blocker)
+  blocked --> working: J message delivered (answer, instruction)
   ready --> integrating: C apply_result (or U Apply)
   integrating --> integrated: J landed
   integrating --> ready: J refused (gate, moved, changed); nothing written
@@ -346,10 +350,23 @@ stateDiagram-v2
   ready --> done: C complete_task (no changes needed, reason)
   ready --> superseded: C choose_result picked another attempt
   idle --> abandoned: C/U abandon
+  result_available --> abandoned: C/U abandon
   ready --> abandoned: C/U abandon
   conflict --> abandoned: C/U abandon
   idle --> retired: C request_retry (a new attempt continues)
+  result_available --> retired: C request_retry
 ```
+
+**Result available, not reported.** A turn that ends with captured changes but without a successful `report_result` leaves the worker in `result_available`, never in `working` and never in `ready`. The reasons can be a tool failure, an MCP server that is unavailable, or an agent that forgot or answered without using the tool. Journal emits `worker.result_available` (with the verified result summary and `report: missing`), and the coordinator digest lists it. The coordinator decides what to do:
+- `request_result(workerId)`, which sends the standard completion-report instruction; its next turn end with a report makes it `ready`;
+- a follow-up message;
+- reading the verified result itself first.
+
+Journal never promotes a worker to `ready` from terminal or assistant text.
+
+A worker in `result_available` whose provider has no tools (for example Cursor without MCP) can be made `ready` only by the coordinator's `accept_result(workerId, { reason })`. That is an explicit coordinator decision recorded as such ("accepted without a worker report"), never an inference.
+
+`blocked` here is a *worker* reporting its own blocker (a question for someone, a missing credential). It is unrelated to task dependencies: a task with unmet dependencies has no worker at all (§7C).
 
 **Presence is separate.** It runs `live → paused` when the session ends with a resumable exact ID, or `live → lost` when it is not resumable, and `paused → live` on resume.
 
@@ -361,12 +378,12 @@ The work state stays where it was. An attempt that is `ready` and `paused` is st
 
 ```mermaid
 stateDiagram-v2
-  [*] --> pending: C create_task
-  pending --> blocked: J unmet dependency
-  blocked --> pending: J dependency met
-  pending --> queued: J its attempt is queued for capacity
-  queued --> in_progress: J attempt starts
-  pending --> in_progress: J attempt starts
+  [*] --> pending: C create_task (dependencies met)
+  [*] --> blocked: C create_task (unmet dependencies)
+  blocked --> pending: J dependency met → task.unblocked (no worker is created)
+  pending --> queued: C create_worker requested; J capacity says wait
+  queued --> in_progress: J the requested attempt is admitted and starts
+  pending --> in_progress: C create_worker requested; J admitted
   in_progress --> ready: J an attempt is ready
   ready --> in_progress: J that attempt resumed work
   ready --> integrated: J the attempt's result was applied
@@ -380,6 +397,17 @@ stateDiagram-v2
 ```
 
 A task is never completed by Journal; `complete_task` is the coordinator's decision, and Journal only checks its preconditions.
+
+**Blocked is not queued.** These are two different conditions:
+
+| | Blocked (workflow dependency) | Queued (capacity) |
+| --- | --- | --- |
+| Meaning | The task's dependencies are not met | The coordinator already requested a worker; the machine has no room yet |
+| Worker, environment, session | None exist | An attempt row exists with its admission record; no environment or session yet |
+| `create_worker` | Refused with `TASK_BLOCKED` | — (it already happened) |
+| What happens when the condition clears | `task.unblocked` is emitted; the coordinator decides whether and when to call `create_worker` | Journal starts the requested worker automatically (`worker.admitted`, `worker.started`) |
+
+Adding a dependency to a task that already has an active or queued attempt is refused (`INVALID_STATE`). The coordinator cancels or finishes that attempt first.
 
 ### D. Environment
 
@@ -460,7 +488,8 @@ Separate facts, each with its own source:
 | Turn finished | The agent stopped responding | `turn-end` hook (Claude `Stop`, Codex `Stop`/`Interrupt`, Cursor `stop` with level 2) | Verified |
 | Idle | Turn finished, settled 750 ms, no open approval, no in-flight tool | Runtime (`activity: idle`) | Verified |
 | Current result | A result commit exists for the environment's current files | `snapshot()` at the boundary | Verified |
-| Agent says done | The worker reported its task complete | `report_result` tool (§13) | Claim |
+| Agent says done | The worker reported its task complete during the turn | `report_result` tool (§13) | Claim |
+| Result available | Idle + current result with changes + **no** report this turn | Journal | Verified state; needs the coordinator's attention |
 | Ready | Idle + current result + agent says done | Journal | Verified state over a claim |
 | Safe to apply | Hard gates pass on a fresh preview | `preview()` + gates (§16.2) | Verified |
 | Integrated | Apply landed | Durable Apply record | Verified |
@@ -479,12 +508,17 @@ Separate facts, each with its own source:
 | Retries | A retry is a decision, not a consequence of an exit |
 | GUI | "Ready" never requires the terminal to close; presence is a small separate marker ("paused, resumable") |
 | Recovery | After a crash, ready results stay ready; presence becomes paused/lost |
+| Missing report | Idle with a captured result and no report is `result_available`, visible and recoverable, never "still working" |
 
 **Automatic snapshot.** Journal captures a result on every settled `turn-end` of a worker in an isolated environment. The capture is idempotent: an unchanged tree reuses the previous result. It is skipped, and retried at the next boundary, when:
 - an approval is pending or a tool is in flight;
 - the observer is not `live` (then only `snapshot_worker` or the session's end captures).
 
 Long-running child processes (dev servers) do not block a capture. They mark the result "files may still be changing", and Apply's `expect` check protects against change after a preview.
+
+**Report binding.** A `report_result` call is bound to the turn it was made in. At that turn's end, Journal captures the result and binds the report to it. A report made in an earlier turn does not make a later result ready: every new result needs its own report, or an explicit `accept_result` by the coordinator.
+
+**Never from text.** Journal does not read terminal output or `last_assistant_message` to decide readiness. Those are shown to the coordinator as claims at most.
 
 **Follow-up after ready.** A delivered message starts a new turn. The attempt goes back to `working`. Its previous result stays recorded, and stays integrated if it was. The next turn end produces a new current result, which is previewed against the advanced base (§15).
 
@@ -496,37 +530,40 @@ Long-running child processes (dev servers) do not block a capture. They mark the
 - **Permission configuration.** It is launched with the permission configuration the user chose for the run, by default the user's normal configuration for that provider. Journal does not force a read-only mode on it.
 - **Editing.** The coordinator brief says it should not edit code itself unless the user asks: workers edit in isolation, which keeps integration clean. This is guidance, not a technical restriction. If the coordinator does edit the checkout, the existing overlap gates protect Apply, and the edits are visible in Changes as for any session.
 - **Working directory.** The coordinator runs in the project's checkout on the run's logical branch.
-- **Proactive awareness.** The coordinator subscribes to event kinds (default: ready, blocked, waiting_for_user, waiting_for_coordinator, conflict, capacity, launch failures, review verdicts, presence lost). Journal delivers them as a short **digest** at the coordinator's turn end, or when it is idle. Digests are coalesced: at most one per 10 s, and the batch is never split. The coordinator therefore learns what happened without being asked. It reads the details with `get_run`/`list_workers`.
+- **Proactive awareness.** The coordinator subscribes to event kinds (default: ready, result_available, blocked, waiting_for_user, waiting_for_coordinator, conflict, task unblocked, capacity, launch failures, review verdicts, presence lost). Journal delivers them as a short **digest** at the coordinator's turn end, or when it is idle. Digests are coalesced: at most one per 10 s, and the batch is never split. The coordinator therefore learns what happened without being asked. It reads the details with `get_run`/`list_workers`.
 - **Answers come from state.** "What's going on?" is answered from `get_run` (verified fields and claims kept apart), not from the coordinator's memory.
 - **Replacement.** If the coordinator session ends, the run keeps its state; the user resumes it (exact-ID resume, tools re-registered) or starts a new coordinator for the run, which calls `get_run` first.
 - **Context.** It gets the project memory packet for the goal, the run memory, the run policy and a brief (§34.4). It never gets workers' raw terminal output.
 
 ## 10. Worker model and spawning
 
-`create_worker` (one call per worker; `create_workers` for a batch). Each step is recorded before its side effect:
+`create_worker` (one call per worker; `create_workers` for a batch, evaluated item by item). Each step is recorded before its side effect:
 
 1. **Task binding.** The task must exist, or is created inline from `title`, `goal`, `acceptance`, `scope` and `dependsOn`.
-2. **Admission.** The capacity manager (§11) decides `admitted`, `queued` (with structured reasons) or `refused`. A queued attempt has no environment yet; it is created at admission so that queues do not hold disk or ports.
-3. **Environment.** A new isolated environment from the run's logical branch, a handoff environment, or the branch after the task's dependencies integrated.
-4. **Memory packet.** Existing retrieval for the task text, scoped to the logical branch and the task's areas, plus run memory (§22).
-5. **Prompt.** Built by Journal from a fixed template:
+2. **Dependency check.** A task with unmet dependencies cannot get a worker. The call is refused with `TASK_BLOCKED`. If the task was created inline with unmet dependencies, it is still created, in state `blocked`, but no attempt is made. In a batch, the other items proceed. When the task is unblocked later, Journal emits `task.unblocked` and does nothing else: the coordinator decides whether and when to call `create_worker`.
+3. **Admission.** The capacity manager (§11) decides `admitted`, `queued` (with structured reasons) or `refused`. A queued attempt has no environment yet; it is created at admission so that queues do not hold disk or ports.
+4. **Environment.** A new isolated environment, created at admission (never for a queued attempt). It comes from the run's logical branch as it is at admission, so it includes any dependencies that were already integrated, or from a handoff environment.
+5. **Memory packet.** Existing retrieval for the task text, scoped to the logical branch and the task's areas, plus run memory (§22).
+6. **Prompt.** Built by Journal from a fixed template:
    ```
    You are a worker in a Journal run. Coordinator: <name>. Task <id>: <title>
    Goal: …            Acceptance criteria: …     Scope: …
    Depends on: <tasks and their integrated results, if any>
    You work in your own copy of <branch>; your changes reach <branch> only when the coordinator integrates them.
-   Report with the journal tools: report_progress, ask, report_blocked, report_result.
-   Do not switch branches in your copy. Push, open pull requests or merge only if your task says so.
+   Report with the journal tools: report_progress, ask, report_blocked. When your task is complete, call report_result
+   before you end your turn; a turn that ends without it is not counted as done.
+   Do not push, merge, create a pull request or switch branches unless the coordinator explicitly assigned a task
+   whose purpose requires that hosting operation. Your work reaches <branch> through Journal's integration.
    <memory packet>
    <the coordinator's instructions, quoted as data>
    ```
-6. **Launch.** Existing `TerminalManager.start`, with:
+7. **Launch.** Existing `TerminalManager.start`, with:
    - `workspaceId` set to the environment;
    - provider and model;
    - the run's permission configuration for that provider (§18);
    - the worker tool set;
    - launch variables `JOURNAL_RUN_ID`, `JOURNAL_TASK_ID` and `JOURNAL_ATTEMPT_ID`.
-7. **Return** to the coordinator: `{ workerId, taskId, state, environmentId?, sessionId?, admission: { verdict, reasons[], position? } }`. Paths and refs are never returned.
+8. **Return** to the coordinator: `{ workerId, taskId, state, environmentId?, sessionId?, admission: { verdict, reasons[], position? } }`, or `{ taskId, refused: 'TASK_BLOCKED', waitingFor: [taskIds] }`. Paths and refs are never returned.
 
 **Options:**
 - `provider`, `model`;
@@ -534,7 +571,8 @@ Long-running child processes (dev servers) do not block a capture. They mark the
 - `priority`: affects the queue;
 - `timeoutMinutes`: soft; it sends a reminder, then tells the coordinator;
 - `attachments`: project file references;
-- `dependsOn`, `handoffFrom`, `retryOf`.
+- `dependsOn` (only for an inline task), `handoffFrom`, `retryOf`;
+- `hostingAllowed`: lets this worker's brief permit push or pull request operations for a task whose purpose needs them. Off by default.
 
 ## 11. Resource and capacity management
 
@@ -550,7 +588,7 @@ Resources are a hard constraint owned by Journal. The coordinator can ask for an
 | Available memory | `vm_stat` (free + inactive + speculative pages), `os.freemem()` fallback | Sampled every 5 s and at each decision |
 | Memory pressure | `sysctl kern.memorystatus_vm_pressure_level` (1 normal, 2 warning, 4 critical) | Warning blocks new launches; critical also pauses idle reclamation |
 | CPU load | 1-minute load average vs logical cores | Above 1.5 × cores → wait (soft gate) |
-| Provider footprint | Observed resident memory of each session's process tree (the runtime already tracks descendants), a rolling median per provider and mode, with conservative defaults until measured | Workers that start dev servers or test runners raise their own estimate |
+| Session footprint | `estimatedSessionFootprint` = provider process tree + Journal ToolServer process + known per-session Journal overhead (hook launcher runs, observer files and buffers in the runtime, the PTY, the environment's bookkeeping). Measured resident memory of the session's whole tree (the runtime already tracks descendants, and the ToolServer is a child of the provider), as a rolling median per provider and mode; conservative defaults until measured | Measurements win over defaults. Workers that start dev servers or test runners raise their own estimate |
 | Port blocks | Free blocks in the environment port range (existing probing) | No block → wait |
 | Disk | Free space on the data volume | Below a floor (default 5 GB) → wait |
 | Environments | Existing environments for the run and their states | Count toward disk and admission |
@@ -563,7 +601,7 @@ Each launch request is evaluated in order. The first gate that says "wait" queue
 1. **Static caps:** live sessions < `maxLiveSessions`; the run's workers < `maxWorkersPerRun`; active runs ≤ `maxActiveRuns`.
 2. **Back-off:** no active resource back-off.
 3. **Memory:**
-   - available memory − (estimated footprint of this launch + footprints of launches still in cool-down) ≥ the reserve, where the reserve is max(2 GB, 15 % of physical memory);
+   - available memory − (`estimatedSessionFootprint` of this launch + those of launches still in cool-down) ≥ the reserve, where the reserve is max(2 GB, 15 % of physical memory);
    - and memory pressure is normal.
 4. **CPU:** load is below the threshold (soft gate: one launch at a time is still allowed when no worker of this run is running).
 5. **Ports and disk:** a free port block, and disk above its floor.
@@ -573,9 +611,10 @@ Hysteresis: a queue opened by memory needs 20 % more headroom to reopen, so admi
 
 ### 11.3 Queue
 
+- **Only requested launches.** The queue holds attempts the coordinator (or the user) already requested with `create_worker` or `resume_worker`. Blocked tasks are never in the queue (§7C).
 - **Durable** (attempt `queued` with `admission.reasons`). Ordered by run fairness first, then task priority, then age. Runs take turns, so one run cannot starve another.
 - **Re-evaluated** at every capacity change (a session ended, presence paused, pressure dropped, a launch settled) and every 15 s.
-- **Starts automatically** when a queued attempt is admitted. The coordinator gets `worker.admitted`/`worker.started`. It does not need to retry.
+- **Starts automatically** when a queued attempt is admitted, because its launch was already decided. The coordinator gets `worker.admitted`/`worker.started` and does not need to retry. This is the only case in which Journal starts an agent without a new request.
 - **Cancellable** by the coordinator or the user.
 
 ### 11.4 Never kill to make room
@@ -656,6 +695,8 @@ Worker text that reaches the coordinator is framed as data:
 - Backend API (w-1): ready — 4 files, tests passed (observed).
 - Frontend (w-2): conflict after Backend API was applied — 1 file (src/ui/login.tsx, content).
 - Tests (w-3) asks (untrusted text): "Should refresh tokens rotate on every use?"  [m-9]
+- Docs (w-4): result available, not reported — 2 files changed, no report_result this turn. Use request_result or read the result.
+- Telemetry task unblocked (Backend API integrated). No worker started; start one when you decide.
 - Capacity: 2 workers queued (memory). They start automatically.
 ```
 
@@ -696,14 +737,18 @@ Rules:
 The model is a dependency list per task, checked as a DAG (cycles are refused at insert). It is not a scheduling engine.
 
 - **Dependencies:** `dependsOn: [{ taskId, when: 'integrated' | 'ready' }]`; the default is `integrated`.
-- **Runnable now:** a `pending` task with its dependencies met and no active attempt.
-- **Blocked:** a dependency is unmet (computed), or a worker reported a blocker (stored).
-- **When a dependency integrates:**
-  - Journal sends `dependency_ready` to the dependent tasks' active workers, with the integrated result's verified summary and files;
-  - Journal tells the coordinator;
-  - the coordinator decides whether the dependent worker should take in the branch. `resolve_conflict` and `take_in` are its tools.
-- **Queries:** `list_tasks(filter: runnable | blocked | queued | ready | integrated | needs_decision | done)`.
-- **No automatic start.** Journal does not start runnable tasks on its own. Starting work is the coordinator's decision, except that queued attempts start when capacity returns, because their launch was already decided.
+- **Blocked task (workflow dependency):** a task whose dependencies are unmet. It has no worker, environment or session, and `create_worker` on it is refused with `TASK_BLOCKED`.
+- **Runnable task:** a `pending` task (dependencies met) with no active or queued attempt. Runnable means "the coordinator may now request a worker", nothing more.
+- **Queued worker (capacity):** an attempt the coordinator already requested, waiting for machine capacity (§11.3). It is a different thing from a blocked task (§7C table).
+- **Worker-reported blocker:** a running worker can report its own blocker (`report_blocked`); that is a worker state, unrelated to task dependencies.
+- **When a dependency is met** (normally: integrated):
+  - Journal moves the dependent task from `blocked` to `pending` and emits `task.unblocked`, with the dependency's verified summary and files;
+  - the coordinator's digest lists it;
+  - **Journal creates no worker.** The coordinator decides whether and when to call `create_worker` for the task, possibly with another provider or after other work.
+- **Ordering with `when: 'ready'`:** a task may depend on another task's *ready* result (for example a reviewer). It is unblocked when the subject becomes ready, and the coordinator still starts its worker.
+- **A running worker affected by another task's integration** (an independent task whose files overlap) is told through `dependency_ready`-style information only if the coordinator sends it. Re-previews after each Apply surface conflicts automatically (§16.4).
+- **Queries:** `list_tasks(filter: runnable | blocked | queued | in_progress | result_available | ready | integrated | needs_decision | done)`.
+- **No automatic start of work.** Journal starts an agent without a new request in exactly one case: a worker launch the coordinator (or the user) already requested, which was queued for capacity.
 
 ## 15. Environment interaction
 
@@ -722,7 +767,6 @@ The model is a dependency list per task, checked as a DAG (cycles are refused at
 | **Coordinator-managed** (primary) | The coordinator, when it decides integration is the right next step | Runs hard gates, then guards. Applies, refuses with a reason, or opens a user approval if a guard is set to "ask" | Default in orchestration runs |
 | **Ask me before applying** (run option) | The coordinator requests | Every Apply opens an approval with the preview | When the user wants to approve each result |
 | **Manual** | The user clicks Apply | Same gates | Always available; the only mode outside runs |
-| *Automatic (optional, deferred)* | Journal, when the coordinator marked a task "integrate when ready" | Same gates | Secondary convenience; not the intended experience; not in the MVP |
 
 ### 16.2 Hard gates (always; nobody can skip them)
 
@@ -840,14 +884,23 @@ Journal's responsibilities stay narrow:
 - **Keep the run's state coherent.** Hosting events change no Journal state. The coordinator decides what they mean, for example sending a CI failure to the worker that owns the code.
 - **Carry messages** between the coordinator and the responsible worker.
 
-Typical flow:
-1. The coordinator integrates results into the logical branch.
-2. It pushes and opens the pull request from the checkout, or asks a worker to push its work.
-3. It polls with `gh pr checks`.
-4. It sends failures to the owning worker.
-5. It integrates the fixes, pushes again and merges when it judges it right.
+**Default workflow: workers integrate through Journal, the coordinator hosts.**
 
-A worker's copy is detached and inside Journal's data folder. A worker that must push uses a branch name the coordinator gives it, and pushing is its normal shell action.
+```
+worker → isolated result → coordinator reviews and decides → Journal Apply into the run's logical branch
+       → coordinator: git push / gh pr create / gh pr checks / gh pr merge from the integrated branch
+```
+
+1. Workers produce isolated results. They do not push, merge, create pull requests or switch branches. Their fixed brief says so (§10), so Journal's previewed, conflict-safe integration is not bypassed.
+2. The coordinator integrates results into the logical branch with `apply_result`.
+3. The coordinator pushes and opens the pull request from the checkout of the logical branch.
+4. It follows CI with `gh pr checks` (or the CI provider's CLI).
+5. It sends failures or review comments to the owning worker as messages.
+6. It integrates the fixes through Journal, pushes again, and merges when it judges it right.
+
+**Special tasks.** The coordinator may give a worker a task whose purpose *is* a hosting operation, for example "review pull request #142 with `gh` and comment" or "push this experimental branch for a draft PR". It creates that worker with `hostingAllowed: true`, which changes the worker's brief. The brief also names the branch to use: a worker's copy is detached inside Journal's data folder, so it pushes with an explicit refspec the coordinator gives it.
+
+Journal does not *block* a worker's `git push` technically. The provider's permissions are the control, and the brief is the convention. An observed push by a worker without `hostingAllowed` is recorded and flagged to the coordinator (`command.observed` with `unexpected: hosting`).
 
 Journal does not create pull requests, poll CI, manage reviews or merge on the hosting service. A future integration could enrich *visibility* (for example showing a PR's status in the run), outside the orchestration core.
 
@@ -895,7 +948,8 @@ Project ▾
 - **Run row:** a run is a row with its coordinator. Workers nest under it, with collapse and expand remembered per run.
 - **Worker row:**
   - provider mark and task title;
-  - work-state badge: Working, Idle, Ready, Waiting for you, Waiting for coordinator, Blocked, Conflict, Integrated, Queued (reason), Done;
+  - work-state badge: Working, Idle, Result not reported, Ready, Waiting for you, Waiting for coordinator, Blocked (worker's own blocker), Conflict, Integrated, Queued (capacity reason), Done;
+  - tasks without a worker show as task rows: "Waiting for <task>" (dependency, no worker) or "Not started" (runnable, no worker requested);
   - a small presence marker (paused/lost);
   - elapsed time and unread attention.
 - **Attention to the user** is raised only for user decisions (§4): provider prompts, approvals and real questions. The user is not alerted for routine states the coordinator handles.
@@ -958,6 +1012,9 @@ The existing surfaces (terminal, Story, Files, Changes, the isolation panel with
 | Memory pressure rises with workers running | No kills; new launches wait; the coordinator and the user see the pressure |
 | Machine sleeps | No state change; observation ages; on wake, capacity is re-sampled before any launch |
 | Machine restarts | As a runtime crash; queued workers stay queued; presence `paused` for resumable workers |
+| `report_result` fails or is never called | The turn's result is still captured; the worker is `result_available` (not working, not ready); the coordinator is told and can `request_result` or `accept_result` |
+| Worker process ends mid-turn with changes | Presence `paused`/`lost`; the result is captured at the session's end; the work state is `result_available` (no report) |
+| Dependency met while the coordinator is detached | `task.unblocked` is recorded and held for the next coordinator digest; no worker starts |
 
 **Reconstruction.** `get_run` returns:
 - the goal and the policy;
@@ -1048,7 +1105,7 @@ These tools were studied through public documentation and command-line help only
 - an agent-facing tool surface;
 - attention as a first-class state;
 - idle notification with the final answer, treated as a *claim*;
-- dependencies with automatic unblocking messages;
+- dependencies with automatic unblocking events (never automatic starts);
 - feedback routed to the owning worker, decided by the coordinator;
 - resource-aware queueing (none of the studied tools documents it; it is Journal's addition).
 
@@ -1066,7 +1123,7 @@ These tools were studied through public documentation and command-line help only
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Ready without exit | Result final at session end | Turn-end snapshot; Apply while idle; presence separate from work state | `snapshot`, `apply(expect)`, turn hooks | Trigger, apply guard, base advance | M | M | M1 |
 | Durable run/task/attempt model | None | Tables, state machines, run events, `get_run` | Store, migrations | New module | M | L | M2 |
-| Resource/capacity manager | `MAX_SESSIONS = 4` | Multi-gate admission, durable queue, back-off, automatic starts | Slot reservation, descendant tracking, port probing | Sampling, estimates, queue, events | M | **H** | M3 |
+| Resource/capacity manager | `MAX_SESSIONS = 4` | Multi-gate admission, durable queue of requested launches, back-off, automatic start of those requested launches only | Slot reservation, descendant tracking, port probing | Sampling, estimates, queue, events | M | **H** | M3 |
 | Message store and delivery | `paste` without Enter | Durable queue; turn-end continuation; guarded idle write; ack/dedupe; held for paused | Hook launcher, runtime socket, `paste` rules | Narrow hook decision path | M | **H** | M4 |
 | Coordinator awareness (digests) | None | Subscribed event kinds delivered at boundaries | Message engine | Coalescing rules | S | M | M4 |
 | Agent-facing tools | None | MCP server + CLI on one API, roles, tokens | Runtime protocol, tokens | New process, per-provider config | L | **H** | M5 |
@@ -1091,7 +1148,7 @@ These tools were studied through public documentation and command-line help only
 | --- | --- | --- | --- |
 | **OrchestrationStore** (`src/core/orchestration/store.mjs`) | Store worker | Runs, tasks, attempts, dependencies, messages, approvals, results, run events; checked transitions | Environments, sessions, memory |
 | **RunManager** | Store worker | Run lifecycle, policy, `get_run` reconstruction | OrchestrationStore |
-| **CapacityManager** (`src/runtime/capacity.mjs`) | Runtime | Sampling (memory, pressure, load, disk, ports), footprint estimates per provider, admission verdicts, the durable queue (through the store), back-off, cool-downs, optional idle reclamation | Store, TerminalManager |
+| **CapacityManager** (`src/runtime/capacity.mjs`) | Runtime | Sampling (memory, pressure, load, disk, ports); `estimatedSessionFootprint` per provider and mode (provider tree + ToolServer + per-session Journal overhead); admission verdicts; the durable queue of requested launches (through the store); back-off; cool-downs; optional idle reclamation | Store, TerminalManager |
 | **WorkerManager** | Main + runtime | Spawn (after admission), stop, resume, handoff | CapacityManager, TerminalManager, store |
 | **ResultManager** | Store worker | Turn-end snapshots, envelopes, verification, staleness after Applies | Environments |
 | **IntegrationGate** | Store worker | Hard gates, guards, approvals for `ask`, Apply execution, audit, pause | Environments `preview/apply`, ApprovalRouter |
@@ -1179,8 +1236,8 @@ There is one append-only stream per run (`run_events`), ordered by `id`, with sm
 Kinds:
 - **Run:** `run.created`, `run.policy_changed`, `run.paused`, `run.resumed`, `run.finished`.
 - **Coordinator:** `coordinator.attached`, `coordinator.detached`.
-- **Task:** `task.created`, `task.updated`, `task.blocked`, `task.unblocked`, `task.ready`, `task.integrated`, `task.done`, `task.cancelled`, `task.needs_decision`.
-- **Worker:** `worker.queued` (with reasons), `worker.admitted`, `worker.started`, `worker.working`, `worker.idle`, `worker.waiting_for_user`, `worker.waiting_for_coordinator`, `worker.ready`, `worker.blocked`, `worker.launch_failed`, `worker.presence_changed` (live/paused/lost), `worker.resumed`, `worker.abandoned`, `worker.retired`, `worker.superseded`.
+- **Task:** `task.created`, `task.updated`, `task.blocked`, `task.unblocked` (no worker is created by it), `task.worker_refused` (`TASK_BLOCKED`), `task.ready`, `task.integrated`, `task.done`, `task.cancelled`, `task.needs_decision`.
+- **Worker:** `worker.queued` (with reasons), `worker.admitted`, `worker.started`, `worker.working`, `worker.idle`, `worker.waiting_for_user`, `worker.waiting_for_coordinator`, `worker.result_available` (captured result, no report this turn), `worker.report_received`, `worker.result_requested`, `worker.result_accepted` (coordinator accepted without a report), `worker.ready`, `worker.blocked`, `worker.launch_failed`, `worker.presence_changed` (live/paused/lost), `worker.resumed`, `worker.abandoned`, `worker.retired`, `worker.superseded`.
 - **Capacity:** `capacity.changed` (running, queued, the limiting gate), `capacity.backoff`, `capacity.reclaimed` (only with idle reclamation enabled).
 - **Result:** `result.snapshotted`, `result.superseded`, `result.previewed`, `result.stale`, `result.applied` (requester), `result.refused` (gate or guard and reason).
 - **Conflict:** `conflict.detected`, `conflict.sent_back`, `conflict.resolved`.
@@ -1205,7 +1262,9 @@ Each operation is a store method, and is also exposed through the runtime socket
 | `createTask(runId, {...})` / `updateTask` / `cancelTask` | Tasks | Coordinator |
 | `completeTask(taskId, { reason })` | Close a task after verified preconditions | Coordinator |
 | `listTasks(runId, filter)` | runnable, blocked, queued, ready, integrated, needs_decision, done | Coordinator |
-| `createWorker(taskId, options)` / `createWorkers([...])` | Admission + spawn or queue; returns admission | Coordinator |
+| `createWorker(taskId, options)` / `createWorkers([...])` | Dependency check (`TASK_BLOCKED` for a blocked task), then admission: spawn or queue; returns admission per item | Coordinator |
+| `requestResult(workerId)` | Send the standard completion-report instruction to a worker in `result_available` (or any idle worker) | Coordinator |
+| `acceptResult(workerId, { reason })` | Make a `result_available` worker `ready` without a worker report; recorded as the coordinator's decision | Coordinator |
 | `getWorker(workerId)` / `listWorkers(runId, filter)` | Work state, presence, admission, result (verified + claim), attention | Coordinator |
 | `resumeWorker(workerId)` | Exact-ID resume of a paused worker (through admission) | Coordinator, user |
 | `sendMessage(to, kind, text, { inReplyTo })` | Queue a message | Coordinator, user, workers (to the coordinator) |
@@ -1224,7 +1283,7 @@ Each operation is a store method, and is also exposed through the runtime socket
 | `pauseRun` / `resumeRun` / `finishRun(runId, summary)` | | User, coordinator (pause or finish only) |
 | Worker-only: `reportProgress`, `ask`, `reportBlocked`, `reportResult` | §12, §13 | Workers |
 
-All operations return IDs, states, verified fields and claims; none return paths, ref names or Git syntax. Error codes: `INVALID_STATE`, `POLICY`, `CAPACITY_QUEUED` (not an error for `createWorker`: it returns `queued`), `CAPACITY_REFUSED`, `NOT_IDLE`, `RESULT_CHANGED`, `CONFLICT`, `DIRTY_OVERLAP`, `BRANCH_BUSY`, `BRANCH_MOVED`, `EXCLUDED_CONTENT`, `RUN_PAUSED`, `APPROVAL_REQUIRED`.
+All operations return IDs, states, verified fields and claims; none return paths, ref names or Git syntax. Error codes: `INVALID_STATE`, `TASK_BLOCKED`, `POLICY`, `CAPACITY_QUEUED` (not an error for `createWorker`: it returns `queued`), `CAPACITY_REFUSED`, `NOT_IDLE`, `RESULT_CHANGED`, `CONFLICT`, `DIRTY_OVERLAP`, `BRANCH_BUSY`, `BRANCH_MOVED`, `EXCLUDED_CONTENT`, `RUN_PAUSED`, `APPROVAL_REQUIRED`.
 
 There are no tools for pushing, pull requests, CI or merging. Agents use their shell (§21).
 
@@ -1245,13 +1304,18 @@ There are no tools for pushing, pull requests, CI or merging. Agents use their s
 ### 34.3 Example
 
 ```
-→ create_workers([{ task: "Backend API" }, { task: "Frontend" }, { task: "Tests", dependsOn: ["Backend API"] }, { task: "Docs" }, { task: "Telemetry" }])
+→ create_task(Backend API) · create_task(Frontend) · create_task(Docs) · create_task(Telemetry) · create_task(Migration)
+→ create_task(Tests, dependsOn: [Backend API])            ← { taskId: "t-6", state: "blocked" }
+→ create_workers([Backend API, Frontend, Docs, Telemetry, Migration])
 ← [{ w-1 started }, { w-2 started }, { w-3 started }, { w-4 queued: memory, position 1 }, { w-5 queued: memory, position 2 }]
+→ create_worker(Tests)                                    ← { refused: "TASK_BLOCKED", waitingFor: ["Backend API"] }
 … (turn ends)
-[Journal · digest · 2 events] w-1 ready (4 files, tests passed, observed). Capacity: 2 queued (memory).
+[Journal · digest] w-1 ready (4 files, tests passed, observed). w-3 result available, not reported. Capacity: 2 queued (memory).
+→ request_result(w-3)       ← { message: "m-12" }
 → preview_result(w-1)       ← { clean: true, hardGates: "pass", guards: [], files: 4, testsVerified: "passed" }
 → apply_result(w-1, expect: "r-…")   ← { applied: true, commit: "abc1234" }
-[Journal · digest] w-2 conflict after w-1 was applied (src/ui/login.tsx, content). w-4 started (capacity available).
+[Journal · digest] Tests unblocked (Backend API integrated); no worker started. w-2 conflict after w-1 was applied (src/ui/login.tsx, content). w-4 started (capacity available).
+→ create_worker(Tests)      ← { w-6 queued: memory, position 2 }     (the coordinator chose to start it now)
 → resolve_conflict(w-2)     ← { takenIn: true, message: "m-31" }
 ```
 
@@ -1274,12 +1338,12 @@ Each milestone keeps current behaviour, ships with tests, and can stop there.
 | --- | --- | --- |
 | **M1 — Ready without exit** (single isolated sessions) | Turn-end snapshot; environment `completed` while live; Apply while idle with `expect`; base advance; UI shows Apply when idle; notice for unobserved providers | A fixture agent stays alive, becomes ready, Apply lands, and a follow-up's new result previews only the new work; the existing isolated tests pass |
 | **M2 — Durable orchestration model** | Tables, state machines (work state + presence), run events, `getRun`, tasks, dependencies, attempts (no agents yet) | Every transition tested; cycles refused; reconstruction; migration on an existing database |
-| **M3 — Capacity manager** | Sampling, footprint estimates, multi-gate admission, durable queue, back-off, automatic starts, `getCapacity`, capacity events; configurable caps replace `MAX_SESSIONS` | Injected probes: plan 5 → 3 admitted, 2 queued with reasons; queued start when capacity returns; no kills; concurrency of slot reservation |
+| **M3 — Capacity manager** | Sampling, footprint estimates (provider tree + ToolServer + per-session overhead), multi-gate admission, durable queue of requested launches, back-off, automatic start of queued requested launches, `getCapacity`, capacity events; configurable caps replace `MAX_SESSIONS` | Injected probes: 5 requested → 3 admitted, 2 queued with reasons; queued requested launches start when capacity returns; blocked tasks never enter the queue; no kills; concurrency of slot reservation; footprint includes the ToolServer and per-session overhead |
 | **M4 — Message engine** | Messages, rendering, digests and subscriptions, idle delivery, Stop-hook continuation (Claude, Codex), ack/dedupe, held for paused, `uncertain`; "Send to this session" UI | Delivery only at boundaries; never during a pending approval; never into Cursor; restart keeps queues |
-| **M5 — Tools and spawning** | ToolServer (MCP + CLI), token auth, roles, `createRun`, `createWorker(s)` through admission, prompt template, memory packets, run memory | A scripted fixture coordinator creates 5 fixture workers under a capacity of 3; tools refuse cross-run and wrong-role calls |
+| **M5 — Tools and spawning** | ToolServer (MCP + CLI), token auth, roles, `createRun`, `createWorker(s)` through admission, prompt template, memory packets, run memory | A scripted fixture coordinator requests 5 fixture workers under a capacity of 3; `create_worker` on a blocked task is refused; `report_result` binds to the turn; a turn without a report gives `result_available`; `request_result` and `accept_result` work; tools refuse cross-run and wrong-role calls |
 | **M6 — GUI hierarchy** | Nested sidebar, Team tab (plan, workers, capacity, approvals, policy), worker header, message box, Run Story | Desktop specs: nesting, queue and presence display, keyboard, attention only for user decisions |
 | **M7 — Coordinator-managed integration** | Hard gates, guards, "ask me before applying", approvals, pause, audit | The coordinator applies without a user click; each hard gate refuses; a guard set to ask opens an approval |
-| **M8 — Conflicts, dependencies, retries** | Coordinator-driven conflict loop, dependency messages, retries, handoffs, variants | Apply A → B conflict → B resolves while alive → coordinator applies |
+| **M8 — Conflicts, dependencies, retries** | Coordinator-driven conflict loop, `task.unblocked` events (no automatic worker), retries, handoffs, variants | Apply A → B conflict → B resolves while alive → coordinator applies; A integrated → dependent task unblocked, no worker created until the coordinator asks |
 | **M9 — Review** | Review tasks and attempts, verdict envelopes, recheck through messages | Reviewer finds an issue, owner fixes, reviewer passes, coordinator applies |
 | **M10 — Recovery and real validation** | Run reconcile, presence after crashes, queue after restart, delivery and Apply interruptions; manual validation with real Claude Code and Codex | §38 with real providers on the user's machine |
 
@@ -1296,7 +1360,7 @@ Automated tests use fixture agents only (`fixtureEnv`: no provider logins, reque
 
 | # | Scenario | Level |
 | --- | --- | --- |
-| 1 | Coordinator plans 5 workers, capacity admits 3: 3 start, 2 queued with reasons, capacity event to the coordinator | Unit + desktop |
+| 1 | Coordinator requests 5 workers, capacity admits 3: 3 start, 2 queued with reasons, capacity event to the coordinator | Unit + desktop |
 | 2 | Capacity returns (a worker's presence pauses, or pressure drops): queued workers start automatically, in fair order | Unit |
 | 3 | No active worker is ever stopped for capacity; idle reclamation off by default; when on, every one of its eight conditions refuses on its own | Unit |
 | 4 | Resource launch failure → back-off → queued; no thundering herd after back-off | Unit |
@@ -1307,7 +1371,13 @@ Automated tests use fixture agents only (`fixtureEnv`: no provider logins, reque
 | 9 | The coordinator applies without any user click in a default run; each hard gate refuses with its code | Unit |
 | 10 | A guard set to `ask` opens an approval; "Ask me before applying" asks for every Apply; Manual Apply works outside runs | Unit + desktop |
 | 11 | Apply A, B conflicts, coordinator sends it back, B resolves while alive, coordinator applies | Unit + desktop |
-| 12 | Dependency blocking and the unblocking message | Unit |
+| 12 | Dependency blocking: `create_worker` on a blocked task is refused; when the dependency integrates, `task.unblocked` is emitted and **no** worker, environment or session is created; the coordinator's later `create_worker` goes through admission | Unit |
+| 12a | A blocked task never enters the capacity queue, and a queue re-evaluation never starts it | Unit |
+| 12b | Turn ends with captured changes and no `report_result` (tool failure, no MCP, forgotten): `result_available`, digest entry, never `ready`, never "working"; `request_result` → report → `ready`; `accept_result` recorded as the coordinator's decision | Unit + desktop |
+| 12c | A report made in an earlier turn does not make a later result ready | Unit |
+| 12d | Terminal or assistant text saying "done" never changes state | Unit |
+| 12e | The worker brief forbids push, merge, pull requests and branch switching unless `hostingAllowed`; an observed push without it is flagged | Unit |
+| 12f | Capacity estimate includes the ToolServer and per-session overhead; measured values replace defaults | Unit |
 | 13 | Retry with another provider; handoff into the same environment; provenance | Unit |
 | 14 | Review loop driven by the scripted coordinator: reviewer finds an issue, owner fixes, reviewer passes | Unit + desktop |
 | 15 | Coordinator crash: workers continue; digests held; new coordinator reconstructs with `get_run` | Unit + desktop |
@@ -1333,15 +1403,17 @@ User: "Implement feature X. Split it however you think is best. Manage it yourse
 | # | Step | Mechanism | User involved? |
 | --- | --- | --- | --- |
 | 1 | The coordinator inspects project state and memory | Its shell, memory packet, `get_run` | No |
-| 2 | It plans 5 tasks with dependencies | `create_task` | No |
+| 2 | It plans 6 tasks: 5 independent, and Tests depending on Backend API (Tests is `blocked`, no worker) | `create_task` | No |
 | 3 | It checks capacity | `get_capacity` | No |
-| 4 | It creates 5 workers; Journal admits 3 and queues 2 with reasons | `create_workers`, §11 | No |
-| 5 | All appear nested under the coordinator, queued ones marked | §24.1 | — |
+| 4 | It requests workers for the 5 independent tasks; Journal admits 3 and queues 2 with reasons | `create_workers`, §11 | No |
+| 5 | All appear nested under the coordinator: queued workers marked, Tests shown as "Waiting for Backend API" | §24.1 | — |
 | 6 | The coordinator receives live state | Digests from run events | No |
 | 7 | A worker asks a question; the coordinator answers | `ask` → digest → `send_message` → turn-end delivery | No |
 | 8 | A worker hits a provider permission prompt | Mirrored; the user answers in that terminal | **Yes** (provider requires it) |
 | 9 | Backend becomes ready without closing | §8 | No |
+| 9a | Docs ends a turn with changes but no report; it shows "Result not reported"; the coordinator calls `request_result`; Docs reports and becomes ready | §7B, `request_result` | No |
 | 10 | The coordinator reads the verified result and decides to integrate | `preview_result`, `apply_result` | No |
+| 10a | Tests is unblocked; Journal starts nothing; the coordinator decides to request its worker, which goes through admission | `task.unblocked`, `create_worker` | No |
 | 11 | A queued worker starts when a worker's presence pauses and memory frees | §11.3 | No |
 | 12 | Frontend's result conflicts; the coordinator sends it back; Frontend resolves while alive | §17 | No |
 | 13 | The coordinator asks a reviewer to review Frontend; findings go back to Frontend; it fixes; the reviewer passes | §19 | No |
@@ -1371,11 +1443,11 @@ Guarantees:
 8. Should one run own one logical branch, or allow tasks on different branches?
 9. Token or cost visibility per worker where providers report usage?
 10. Apply authorship in coordinator-managed runs: the user as author with coordinator and worker trailers (proposed), or a per-run identity?
-11. Does the optional automatic integration mode (§16.1) earn its place, or should it be dropped?
 
 ## 40. Changes to the original vision
 
 - **Workflow decisions belong to the coordinator.** Journal never moves the workflow forward on its own. It only starts launches the coordinator already requested, once capacity allows.
+- **No automatic integration mode.** The earlier optional mode in which Journal applied a result on its own was removed: every Apply is requested by the coordinator or the user.
 - **Integration is coordinator-managed by default.** The user approves individual results only if they chose "Ask me before applying" or a guard asks. Manual Apply remains everywhere.
 - **Completion is decoupled from process lifetime** everywhere, through separate work state and presence.
 - **Resources are a first-class constraint** with a Journal-owned capacity manager. A configurable cap is only one of its gates.
