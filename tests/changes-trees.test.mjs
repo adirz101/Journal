@@ -11,7 +11,7 @@ import { removeLater } from './support/cleanup.mjs';
 // Files → Changed also lists other Git working trees inside the checkout that the session worked
 // in: a worktree in an ignored folder (.worktrees/name), which the checkout's Git never sees.
 function fixture(t) {
-  const root = realpathSync(mkdtempSync(resolve(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'changes-trees-')));
+  const root = realpathSync.native(mkdtempSync(resolve(process.env.JOURNAL_TEST_TMP ?? tmpdir(), 'changes-trees-')));
   const repo = join(root, 'repo'); mkdirSync(repo);
   const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=a', '-c', 'user.email=a@a', ...args], { stdio: 'pipe', encoding: 'utf8' }).trim();
   git(repo, 'init', '-q', '-b', 'main');
