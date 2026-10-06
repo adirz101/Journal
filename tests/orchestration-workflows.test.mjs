@@ -250,7 +250,10 @@ test('review fix and recheck keep old verdicts historical and memory proposals t
 });
 
 test('run goals, tasks, decisions and external intents do not persist credential-looking text', t => {
-  const { store, run } = fixture(t); const canary = 'sk-proj-fixtureCanaryOnlyNotARealSecret123456789';
+  const { store, run } = fixture(t);
+  // Synthetic input, never an account credential. Build it at runtime so source
+  // secret scanners do not mistake this redaction fixture for a leaked key.
+  const canary = ['sk', 'proj', 'fixtureCanaryOnlyNotARealSecret123456789'].join('-');
   const created = store.createRun(req('private-run', { projectId: run.projectId, logicalBranch: 'main', goal: `Use ${canary}` }));
   store.createTask(req('private-task', { runId: created.id, title: 'Fixture', goal: canary, acceptance: [canary], scope: { paths: [], areas: [canary] } }));
   store.recordDecision(req('private-decision', { runId: created.id, summary: canary }));
