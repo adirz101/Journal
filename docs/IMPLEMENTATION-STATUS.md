@@ -288,6 +288,15 @@ Branch `claude/changes-other-worktrees`. Files → Changed compared only the ses
 - **Display:** the view names each tree with its branch and the commits made there since the session started.
 - **Tests:** `tests/changes-trees.test.mjs`.
 
+### Switching to a new version's runtime
+
+Branch `claude/runtime-switch`. **The bug:** after an update with sessions kept running, the new app stayed connected to the previous version's runtime (sessions are kept on purpose). It said "Stop them to switch", but stopping them switched nothing until the app was quit and reopened.
+
+- **Automatic switch:** once that runtime holds no starting, running, waiting, stopping or orphaned session, the app tells it to shut down (stopping nothing) and starts its own runtime. This is checked after every session status change and every 30 s. It uses only `list` and `shutdown`, which every earlier runtime has, so it works from 0.1.0-alpha on. During the switch the window shows "connecting", not "disconnected".
+- **Banner:** "Running sessions use another version of Journal. They keep working, and Journal switches to this version when they end. Until then, new sessions start there too, without worktrees, read-only or plan mode, Cursor or file references." It is now an amber notice instead of an error.
+- **Switch now…:** after a confirmation, it stops those sessions and switches at once; Continue resumes each conversation in the new version.
+- **Tests:** `tests/runtime-client.test.mjs`, and `tests/desktop-runtime-switch.spec.ts`, which uses a copy of the app whose runtime differs by one comment as the other build.
+
 ## Verification
 
 | Check | Result |

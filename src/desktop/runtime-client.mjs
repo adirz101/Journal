@@ -5,6 +5,10 @@ import { join } from 'node:path';
 import { buildId, frame, lineReader, nonce, proof, proofMatches, PROTOCOL } from '../runtime/protocol.mjs';
 import { isAlive } from '../core/process.mjs';
 
+// Sessions a runtime still holds: while any is in one of these states, it is not replaced.
+const KEPT = new Set(['starting', 'running', 'waiting', 'stopping', 'orphaned']);
+export const OTHER_BUILD = 'Running sessions use another version of Journal. They keep working, and Journal switches to this version when they end. Until then, new sessions start there too, without worktrees, read-only or plan mode, Cursor or file references.';
+
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // The pause between reconnect attempts: unref'd, and cleared when its signal aborts
 // (retryNow or close), so a woken pause leaves no timer behind.
@@ -97,8 +101,8 @@ export class RuntimeClient extends EventEmitter {
     try { return await this.connecting; } finally { this.connecting = null; this.retry = false; }
   }
   adopt({ socket, hello }) {
-    this.socket = socket; this.info = hello;
-    this.warning = hello.build !== buildId() ? 'Sessions are running in a runtime from another Journal build. Stop them to switch to this build.' : null;
+    this.socket = socket; this.info = hello; this.switching = false;
+    this.warning = hello.build !== buildId() ? OTHER_BUILD : null;
     if (this.warning) this.emit('warning', this.warning);
     socket.on('close', () => {
       if (this.socket !== socket) return;
@@ -148,6 +152,24 @@ export class RuntimeClient extends EventEmitter {
     const pending = this.pending.get(message.id); if (!pending) return;
     this.pending.delete(message.id);
     message.error ? pending.reject(Object.assign(new Error(message.error), message.code ? { code: message.code } : {})) : pending.resolve(message.value);
+  }
+  // Connected to a runtime of another Journal build (sessions kept running across an update).
+  get otherBuild() { return !!this.socket && !!this.info && this.info.build !== buildId(); }
+  // Once the other build's runtime has no session left that it must keep, it is told to shut
+  // down (stopping nothing) and the reconnect starts this build's runtime. Uses only list and
+  // shutdown, which every earlier runtime has. true when the switch has begun.
+  async switchIfIdle() {
+    if (!this.otherBuild || this.switching) return false;
+    let sessions; try { sessions = await this.call('list'); } catch { return false; }
+    if (!this.otherBuild || this.switching || !Array.isArray(sessions) || sessions.some(session => KEPT.has(session?.status))) return false;
+    return this.beginSwitch(false);
+  }
+  // The user's choice: stop the other build's sessions now and switch (each can be continued).
+  async switchNow() { return this.otherBuild && !this.switching ? this.beginSwitch(true) : false; }
+  async beginSwitch(stopSessions) {
+    this.switching = true; this.emit('switching');
+    try { await this.call('shutdown', { stopSessions }); } catch { /* its close starts the reconnect either way */ }
+    return true;
   }
   async call(method, params = {}) {
     if (!this.socket) { if (this.closing) throw new Error('Journal runtime is closed'); await this.connect(); }

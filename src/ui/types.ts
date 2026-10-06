@@ -97,7 +97,7 @@ export interface StaleCatch { available: boolean; notes: StaleNote[]; truncated:
 export interface PendingApproval { tool: string | null; command: string | null; path: string | null; at: string; inferred?: boolean; }
 export interface TimelineEvent { id?: number; sessionId?: string; at: string; kind: string; body: Record<string, unknown>; }
 export type TerminalEvent = { type: 'output'; sessionId: string; sequence: number; data: string } | { type: 'gap'; sessionId: string } | { type: 'status'; session: Session } | { type: 'error'; message: string; sessionId?: string; code?: typeof IDENTITY_CHANGED }
-  | { type: 'timeline'; event: TimelineEvent } | { type: 'proposals'; projectId: string; count: number; sessionId?: string; failed?: boolean } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; recovered?: boolean; recovery?: Recovery | null }
+  | { type: 'timeline'; event: TimelineEvent } | { type: 'proposals'; projectId: string; count: number; sessionId?: string; failed?: boolean } | { type: 'runtime'; state: 'connected' | 'disconnected' | 'connecting'; warning?: string; otherBuild?: boolean; recovered?: boolean; recovery?: Recovery | null }
   | { type: 'files'; key: string; folders: string[]; overflow: boolean; stopped?: boolean }
   | { type: 'update'; state: UpdateState } | { type: 'providers'; agents: AgentInfo[]; after?: { provider: Provider; kind: ProcessKind } } | { type: 'command'; id: CommandId }
   // Codex and Cursor output times, at most one per session every 5 s; main asks to show a session (notification click).
@@ -141,7 +141,7 @@ export interface DraftFacts { readme: string | null; folders: number; commits: n
 // back with head, and a switch to another branch refuses. 'failed': Git could not be read for that card.
 export interface FirstRunDrafts { projectId: string; head: string; branchName: string | null; overview: StatusDraft | null; branch: StatusDraft | null;
   branchSkipped: 'detached' | 'failed' | null; overviewSkipped: 'failed' | null }
-export interface Bootstrap { projects: Project[]; agents: AgentInfo[]; platform: string; shortcuts: Partial<Record<CommandId, { label: string; aria: string }>>; runtime: { state: 'connected' | 'disconnected' | 'connecting'; warning: string | null }; live: Session[]; active: Session[];
+export interface Bootstrap { projects: Project[]; agents: AgentInfo[]; platform: string; shortcuts: Partial<Record<CommandId, { label: string; aria: string }>>; runtime: { state: 'connected' | 'disconnected' | 'connecting'; warning: string | null; otherBuild?: boolean }; live: Session[]; active: Session[];
   // Phase 7: any remembered note in any project (the first-note moment never plays for an upgrading install).
   hasNotes: boolean;
   // Phase 8: sessions the runtime recovered from a crashed predecessor, until acknowledged (null when none).

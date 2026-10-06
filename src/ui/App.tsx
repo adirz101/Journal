@@ -95,7 +95,7 @@ export default function App() {
   const [memoryFilters, setMemoryFilters] = useState<MemoryFilters | null>(null);
   const filtersProject = state?.project.id ?? null; const [filtersFor, setFiltersFor] = useState<string | null>(filtersProject);
   if (filtersFor !== filtersProject) { setFiltersFor(filtersProject); setMemoryFilters(null); }
-  const [runtime, setRuntime] = useState<{ state: string; warning?: string | null }>({ state: 'connecting' });
+  const [runtime, setRuntime] = useState<{ state: string; warning?: string | null; otherBuild?: boolean }>({ state: 'connecting' });
   const [liveEvents, setLiveEvents] = useState<TimelineEvent[]>([]);
   // File and command-end events per session, counted as they arrive: liveEvents is capped, so its length stops changing.
   const [fileEventCounts, setFileEventCounts] = useState<Record<string, number>>({});
@@ -274,7 +274,7 @@ export default function App() {
     return window.journal?.onEvent(event => {
       if (event.type === 'error') { setError(event.message); return; }
       if (event.type === 'runtime') {
-        setRuntime({ state: event.state, warning: event.warning });
+        setRuntime({ state: event.state, warning: event.warning, otherBuild: event.otherBuild });
         // Phase 8: a connected event carries the recovery main holds (null when none or acknowledged).
         if (event.state === 'connected' && 'recovery' in event) setRecovery(event.recovery ?? null);
         if (event.state === 'connected') void reloadSessions().then(() => refresh()).catch(failed);
@@ -795,7 +795,10 @@ export default function App() {
       {/* === Phase 8: runtime disconnected and crash recovery (board 9) === */}
       {/* The banner sits in a status region that stays mounted, so it is announced when it appears (Phase 9). */}
       <div className="runtime-live" role="status" ref={runtimeSlot}>{runtime.state === 'disconnected' && <RuntimeBanner runtime={runtime} onReconnect={() => api('reconnectRuntime')} />}</div>
-      {runtime.warning && runtime.state !== 'disconnected' && <div className="error-banner" role="status"><span>{runtime.warning}</span></div>}
+      {/* Sessions kept running across an update stay in the other version's runtime until they end (or Switch now). */}
+      {runtime.warning && runtime.state !== 'disconnected' && (runtime.otherBuild
+        ? <div className="runtime-notice" role="status"><span>{runtime.warning}</span><button type="button" onClick={() => void api('switchRuntime').catch(failed)}>{statesCopy.switchNow}</button></div>
+        : <div className="error-banner" role="status"><span>{runtime.warning}</span></div>)}
       {/* The recovery panel is a region, not a live one: this always-present region says once that it appeared. */}
       <div className="visually-hidden recovery-live" role="status">{recovery && recoveryShown ? `${statesCopy.crashTitle}. ${statesCopy.crashBody(recovery)}` : ''}</div>
       <div ref={recoverySlot}>{recovery && recoveryShown && <RecoveryPanel recovery={recovery} view={recoveryShown} busy={busy} onContinue={target => void start(target.provider, target)}
