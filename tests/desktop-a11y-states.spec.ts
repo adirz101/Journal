@@ -294,7 +294,7 @@ test('an agent that can’t start: the card is named, its buttons are reachable 
   } finally { await closeApp(app); f.cleanup(); }
 });
 
-test('all slots in use: the reason is tied to Start and stays in a mounted status region; the composer works by keyboard', async () => {
+test('four idle sessions do not disable the keyboard launch path', async () => {
   const f = setup('a11y-full'); const { app, page } = await open(f.env, f.project);
   try {
     for (let i = 0; i < 4; i++) {
@@ -305,16 +305,10 @@ test('all slots in use: the reason is tied to Start and stays in a mounted statu
     await pressKey(app, 'N', mac ? ['meta'] : ['control', 'shift']);
     await expect(taskBox(page)).toBeFocused(); await expectVisibleFocus(page);
     await page.keyboard.type('WAITING');
-    const reason = page.locator('#start-reason');
-    await expect(reason).toHaveText('4 of 4 running. Stop or finish one to start another. You can still write the task now.');
-    await expect(reason).toHaveAttribute('role', 'status');
-    await expect(startButton(page)).toBeDisabled();
-    await expect(startButton(page)).toHaveAccessibleDescription('4 of 4 running. Stop or finish one to start another. You can still write the task now.');
-    await expectAccessible(page, 'Slots full');
-    // ⌘↵ / Ctrl+Enter does nothing while Start waits; the task stays.
+    await expect(startButton(page)).toBeEnabled();
+    await expectAccessible(page, 'On-demand session start');
     await page.keyboard.press(mac ? 'Meta+Enter' : 'Control+Enter');
-    await page.waitForTimeout(300);
-    expect(f.launches()).toHaveLength(4);
-    await expect(taskBox(page)).toHaveValue('WAITING');
+    await expect(page.locator('.terminal-surface')).toContainText('TASK WAITING');
+    await expect.poll(() => f.launches().length).toBe(5);
   } finally { await closeApp(app); f.cleanup(); }
 });

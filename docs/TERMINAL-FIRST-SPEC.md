@@ -1,6 +1,6 @@
 # Journal — terminal-first workspace
 
-Approved conversation scope, 1 October 2026: a working initial implementation from the larger docs, not the full roadmap. See ADR 002 for the reuse decision. Extended on 2 October 2026 (user-approved milestone) with a durable local runtime and up to four concurrent sessions; see [ARCHITECTURE.md](ARCHITECTURE.md).
+Approved conversation scope, 1 October 2026: a working initial implementation from the larger docs, not the full roadmap. See ADR 002 for the reuse decision. Extended on 2 October 2026 (user-approved milestone) with a durable local runtime; the initial four-session ceiling was removed at the user's request on 7 October 2026; see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Outcome
 
@@ -8,7 +8,7 @@ Open an existing Git checkout, launch Claude Code or Codex in a real interactive
 
 ## Contracts and bounds
 
-- Desktop, local-only; no chat, SDK, agent loop, cloud, telemetry or model-based extraction (a deterministic, review-gated proposal inbox exists). Node >=24 for development. Up to four concurrent sessions owned by a separate local runtime process; native permissions/login remain authoritative. Sessions in the same checkout share its working tree; a session can instead run in a Journal-managed or imported Git worktree (intent before side effects, no force/stash/transfer, conservative removal). Research mode starts each CLI in its native read-only mode (an intent; changeable in-session).
+- Desktop, local-only; no chat, SDK, agent loop, cloud, telemetry or model-based extraction (a deterministic, review-gated proposal inbox exists). Node >=24 for development. Sessions start on demand in a separate local runtime process, with no fixed session ceiling and no automatic stopping of idle agents; native permissions/login remain authoritative. Sessions in the same checkout share its working tree; a session can instead run in a Journal-managed or imported Git worktree (intent before side effects, no force/stash/transfer, conservative removal). Research mode starts each CLI in its native read-only mode (an intent; changeable in-session).
 - Project identity is canonical checkout root; record Git common-directory identity, branch and HEAD. Opening a project runs only bounded read-only Git queries; never executes repository scripts.
 - Knowledge: candidate/active/rejected/archived; edits create immutable revisions and return to candidate. Categories: decision, constraint, convention, lesson, issue. Scope: checkout or exact branch; area: whole checkout or relative path. Repo-wide/cross-worktree promotion comes later.
 - User-approved follow-up: category `brief` orients every Journal-launched session independently of task words. Checkout briefs describe repo purpose/structure; exact-branch briefs describe current progress and next steps. Current approved entries alternate checkout/branch, newest first, with at most four brief claims inside the shared 12-claim/6000-byte budget. Briefs require whole-checkout area, preserve admission/freshness/revisions, and disclose limits. See `PROJECT-ORIENTATION.md`. No automatic progress extraction or context in externally launched conversations.

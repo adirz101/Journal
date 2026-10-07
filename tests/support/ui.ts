@@ -70,8 +70,8 @@ export async function openSettings(page: Page, _section?: 'appearance' | 'notifi
   await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
 }
 
-// The Active group's count of used slots, showing `n` of the four.
-export const slotsUsed = (page: Page, n: number): Locator => page.locator('.slots-used', { hasText: new RegExp(`^${n} of 4$`) });
+// The Active group's count of running sessions.
+export const slotsUsed = (page: Page, n: number): Locator => page.locator('.slots-used', { hasText: new RegExp(`^${n} running$`) });
 
 // ----- Group B: session header, status bar and inspector -----
 

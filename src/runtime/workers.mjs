@@ -24,14 +24,17 @@ export class WorkerManager {
     if (operation.existing) refuse('OPERATION_PENDING', 'The previous coordinator launch is being reconciled');
     const pending = this.queueCoordinator(run, session.provider, session.id, operation.id).then(outcome => this.store.finishRunOperation(operation.id, outcome)).finally(() => this.starts.delete(run.id)); this.starts.set(run.id, pending); return pending;
   }
-  queueCoordinator(run, provider, resumeId = null, operationId = null) {
-    const operation = this.coordinatorLane.then(() => this.launchCoordinator(run, provider, resumeId, operationId));
+  queueCoordinator(run, provider, resumeId = null, operationId = null, shouldContinue = () => true) {
+    // A background drain may wait behind a manual launch. Recheck shutdown when
+    // the lane actually reaches this request, not only when it was queued.
+    const operation = this.coordinatorLane.then(() => shouldContinue() ? this.launchCoordinator(run, provider, resumeId, operationId) : this.store.getRun(run.id));
     this.coordinatorLane = operation.catch(() => {}); return operation;
   }
-  async launchQueuedCoordinators() {
+  async launchQueuedCoordinators(shouldContinue = () => true) {
     for (const run of await this.store.activeRuns()) {
+      if (!shouldContinue()) return;
       if (run.state !== 'creating' || run.paused || this.starts.has(run.id)) continue;
-      const operation = this.queueCoordinator(run, run.provider).finally(() => this.starts.delete(run.id));
+      const operation = this.queueCoordinator(run, run.provider, null, null, shouldContinue).finally(() => this.starts.delete(run.id));
       this.starts.set(run.id, operation);
       try { await operation; } catch (error) { this.log(`coordinator launch: ${error.message}`); }
     }

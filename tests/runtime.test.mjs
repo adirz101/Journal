@@ -146,16 +146,16 @@ test('a second runtime for the same data directory is refused', async t => {
   await assert.rejects(f.boot(), /already running/);
 });
 
-test('four concurrent sessions keep input and output separate; a fifth is refused', async t => {
+test('sessions beyond four keep input and output separate', async t => {
   const f = fixture(t); const { fake } = await f.boot(); const c = client(f, t); await c.connect();
   const events = []; c.on('event', e => events.push(e));
   const sessions = [];
   for (let i = 0; i < 4; i++) sessions.push((await c.call('start', { projectId: f.project.id, provider: i % 2 ? 'codex' : 'claude', task: `Task ${i}` })).session);
-  await assert.rejects(c.call('start', { projectId: f.project.id, provider: 'claude', task: 'fifth' }), /up to 4 sessions/);
-  assert.deepEqual(sessions.map(s => s.slot), [1, 2, 3, 4]);
-  assert.equal(new Set(sessions.map(s => s.id)).size, 4);
+  sessions.push((await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'fifth' })).session);
+  assert.deepEqual(sessions.map(s => s.slot), [1, 2, 3, 4, 5]);
+  assert.equal(new Set(sessions.map(s => s.id)).size, 5);
   await c.call('write', { id: sessions[1].id, data: 'only-b' });
-  assert.deepEqual(fake.procs.map(p => p.inputs), [[], ['only-b'], [], []]);
+  assert.deepEqual(fake.procs.map(p => p.inputs), [[], ['only-b'], [], [], []]);
   await c.call('attach', { id: sessions[2].id });
   fake.procs[0].data('from-a'); fake.procs[2].data('from-c');
   await until(() => events.some(e => e.type === 'output' && e.data === 'from-c'));
@@ -441,18 +441,16 @@ test('the runtime lock records a real identity and recognizes a live owner', { s
   await assert.rejects(acquireLock(f.dataDir, join(f.dataDir, 'none.sock')), /already running/);
 });
 
-test('the SLOTS_FULL code reaches the client with the unchanged message; hello reports the current protocol', async t => {
+test('the runtime admits more than four sessions and hello reports the current protocol', async t => {
   const f = fixture(t); await f.boot(); const c = client(f, t);
   const hello = await c.connect();
   assert.equal(hello.protocol, PROTOCOL);
   for (let i = 0; i < 4; i++) await c.call('start', { projectId: f.project.id, provider: 'claude', task: `Task ${i}` });
-  const error = await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'fifth' }).catch(e => e);
-  assert.equal(error.code, 'SLOTS_FULL');
-  assert.equal(error.message, 'Journal runs up to 4 sessions at once. Stop one before starting another.');
+  assert.equal((await c.call('start', { projectId: f.project.id, provider: 'claude', task: 'fifth' })).session.slot, 5);
   const plain = await c.call('nope').catch(e => e);
   assert.equal(plain.message, 'Unknown runtime operation'); assert.equal(plain.code, undefined);
   const listed = await c.call('list');
-  assert.deepEqual(listed.map(s => s.slot).sort(), [1, 2, 3, 4]);
+  assert.deepEqual(listed.map(s => s.slot).sort(), [1, 2, 3, 4, 5]);
 });
 
 test('the proposals event names the session and reports zero', async t => {
@@ -883,6 +881,43 @@ test('Claude observed turns flow through MCP reports into stopped result accepta
   f.store.acceptResult({ callerId: 'desktop', requestId: 'accept', attemptId: attempt.id, resultId: result.id, reason: 'Reviewed stopped result' });
   assert.equal(f.store.previewResult({ attemptId: attempt.id, resultId: result.id }).hardGates.pass, true);
   assert.equal(readFileSync(join(f.repo, 'README.md'), 'utf8'), 'Fixture\n', 'acceptance alone never applies');
+  await runtime.capacity.close();
+});
+
+test('saved ceilings and warning or unavailable telemetry cannot hold new coordinators', async t => {
+  const f = fixture(t);
+  const saved = JSON.stringify({ maxLiveSessions: 1, maxActiveRuns: 1 });
+  writeFileSync(join(f.dataDir, 'capacity.json'), saved);
+  let sample = { pressure: 'warning' };
+  const { runtime, fake } = await f.boot(fakeSpawner(), { capacitySample: async () => sample });
+  for (let i = 0; i < 5; i++) {
+    sample = i % 2 ? {} : { pressure: 'warning' };
+    const run = await runtime.workers.startRun({ callerId: 'desktop', requestId: `no-cap-${i}`, projectId: f.project.id, logicalBranch: 'main', goal: `Coordinator ${i}`, provider: 'claude' });
+    assert.equal(run.state, 'active');
+  }
+  assert.equal(fake.procs.length, 5);
+  assert.ok(fake.procs.every(proc => !proc.killed.length));
+  assert.equal(readFileSync(join(f.dataDir, 'capacity.json'), 'utf8'), saved, 'historical settings remain intact');
+  assert.throws(() => runtime.capacity.setLimits({ maxLiveSessions: 1 }), { code: 'CAPACITY_LIMITS_REMOVED' });
+  await runtime.capacity.close();
+});
+
+test('existing limited runs launch five workers without ending idle agents and retain distinct port blocks', { skip: process.platform === 'win32' }, async t => {
+  const f = fixture(t); const { runtime, fake } = await f.boot(fakeSpawner(), { capacitySample: async () => ({ pressure: 'warning' }) });
+  const run = await runtime.workers.startRun({ callerId: 'desktop', requestId: 'run-workers', projectId: f.project.id, logicalBranch: 'main', goal: 'Fixture workers', provider: 'claude' });
+  f.store.setRunState(run.id, 'active', { policy: { ...run.policy, caps: { maxConcurrentWorkers: 1 }, idleReclamation: true } });
+  for (let i = 0; i < 5; i++) {
+    const task = f.store.createTask({ callerId: 'desktop', requestId: `task-many-${i}`, runId: run.id, title: `Worker ${i}` });
+    f.store.requestWorker({ callerId: 'desktop', requestId: `worker-many-${i}`, taskId: task.id, provider: 'claude' });
+  }
+  await runtime.capacity.reevaluate();
+  const attempts = f.store.getRun(run.id).attempts;
+  assert.equal(attempts.filter(attempt => attempt.presence === 'live').length, 5);
+  assert.equal(fake.procs.length, 6);
+  assert.ok(fake.procs.every(proc => !proc.killed.length), 'idle agents remain alive');
+  const blocks = attempts.map(attempt => f.store.getEnvironment(attempt.environmentId).ports);
+  assert.equal(new Set(blocks.flat()).size, 50, 'each isolated worker owns ten distinct ports');
+  assert.equal(runtime.manager.slots.leases.size, 0);
   await runtime.capacity.close();
 });
 

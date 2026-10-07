@@ -1,5 +1,12 @@
 # Current implementation note (7 October 2026)
 
+The user also removed artificial session, active-run and worker ceilings on
+7 October 2026, including previously saved limits. Resource measurements are
+advisory, and idle agents are not reclaimed automatically. The capacity gates,
+mandatory pacing and reclamation milestones below are historical and superseded
+by this request. Stable reservations, fair queues, pause, port availability and
+actual launch-failure backoff remain. See [Coordinated runs](COORDINATED-RUNS.md).
+
 The independent isolated verifier described in this design has been retired.
 Agents choose project checks and report their outcomes through native tools;
 Journal retains those claims and earlier receipts without running its own suite.

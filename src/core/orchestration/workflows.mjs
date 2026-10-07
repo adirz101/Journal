@@ -40,12 +40,11 @@ export class Workflows {
   policy(input) {
     return this.model.operation('set_policy', input, input.runId, () => {
       const run = this.model.row('runs', input.runId); const patch = input.policy ?? {}; const old = run.policy;
-      const next = { ...old, ...patch, caps: { ...old.caps, ...patch.caps }, guards: { ...old.guards, ...patch.guards }, version: old.version + 1 };
+      const next = { ...old, ...patch, caps: { maxConcurrentWorkers: null }, idleReclamation: false, guards: { ...old.guards, ...patch.guards }, version: old.version + 1 };
       choice(next.integration, ['ask', 'coordinator-managed'], 'integration mode');
-      if (!Number.isInteger(next.caps.maxConcurrentWorkers) || next.caps.maxConcurrentWorkers < 1 || next.caps.maxConcurrentWorkers > 16 || typeof next.idleReclamation !== 'boolean') refuse('INVALID_INPUT', 'Invalid capacity policy');
       const rank = { allow: 0, ask: 1, refuse: 2 };
       for (const [key, value] of Object.entries(next.guards)) { if (!Object.hasOwn(old.guards, key)) refuse('INVALID_INPUT', 'Unknown policy guard'); choice(value, Object.keys(rank), 'guard'); }
-      const loosening = (old.integration === 'ask' && next.integration !== 'ask') || next.caps.maxConcurrentWorkers > old.caps.maxConcurrentWorkers || (!old.idleReclamation && next.idleReclamation) || Object.keys(old.guards).some(key => rank[next.guards[key]] < rank[old.guards[key]]);
+      const loosening = (old.integration === 'ask' && next.integration !== 'ask') || Object.keys(old.guards).some(key => rank[next.guards[key]] < rank[old.guards[key]]);
       if (loosening && input.callerId !== 'desktop') refuse('USER_REQUIRED', 'Only the user may loosen run policy');
       for (const row of this.db.prepare("SELECT body FROM approvals WHERE run_id=? AND state IN ('pending','approved')").all(run.id)) this.model.gates.saveApproval(JSON.parse(row.body), 'expired', { reason: 'Policy changed' });
       this.model.event(run.id, 'policy.changed', { previousVersion: old.version, version: next.version, callerId: input.callerId });

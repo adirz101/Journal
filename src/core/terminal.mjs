@@ -13,7 +13,6 @@ import { agentTerminalEnv, APPEARANCES, QueryResponder, themeReport } from './te
 import { ADAPTERS } from '../runtime/adapters/index.mjs';
 import { SlotPool } from '../runtime/capacity.mjs';
 
-export const MAX_SESSIONS = 4;
 export const IDLE_SETTLE_MS = 750;
 export const ECHO_MS = 300;          // output this soon after input or resize is not "activity"
 export const QUIET_MS = 10_000;      // output after this much quiet is a resume edge
@@ -47,8 +46,8 @@ const stronger = (a, b) => (PRECEDENCE[b] ?? -1) > (PRECEDENCE[a] ?? -1) ? b : a
 // What an approval request asks, to recognise the same request while it is still open.
 const requestKey = event => [event.tool ?? '', event.command ?? '', event.filePath ?? ''].join('\u0000');
 const bounded = (collection, limit) => { while (collection.size > limit) collection.delete(collection.keys().next().value); };
-// Exited sessions whose output stays in memory for review (BUG-8): with four live
-// sessions, at most 12 × 256 KiB ≈ 3 MiB. Output is never written to disk.
+// Exited sessions whose output stays in memory for review (BUG-8). Each live
+// session also has its own bounded buffer. Output is never written to disk.
 export const RETAINED_EXITED = 8;
 const MAX_SNAPSHOT_PATHS = 200;
 // The end snapshot (D11): totals and the paths this session changed, taken once.
@@ -65,7 +64,7 @@ const isLive = status => LIVE_STATES.includes(status);
 // Machine-readable reasons for refused or failed operations. Messages stay
 // human-readable; the renderer branches on `code`.
 export const ERROR_CODES = Object.freeze({
-  SLOTS_FULL: 'SLOTS_FULL',                 // start: 4 live (or pending) sessions
+  SLOTS_FULL: 'SLOTS_FULL',                 // legacy client compatibility
   SHUTTING_DOWN: 'SHUTTING_DOWN',
   PROVIDER_MISSING: 'PROVIDER_MISSING',     // CLI not found before the start; spawn ENOENT
   PROVIDER_UNSUPPORTED: 'PROVIDER_UNSUPPORTED', // Cursor lacks resume/createChat/mode
@@ -124,7 +123,7 @@ export class OutputBuffer {
 // The production resolver: a Claude or Codex CLI on PATH (PATHEXT on Windows), or null.
 export const providerResolver = (env = process.env, platform = process.platform) => name => resolveExecutable(name, env, platform);
 
-// Owns up to four native terminals. Every operation names a session ID, and
+// Owns native terminals requested by the user. Every operation names a session ID, and
 // only entries this manager spawned (and that have not exited) accept input or
 // signals. Output stays in bounded memory; nothing raw is persisted.
 export class TerminalManager extends EventEmitter {
@@ -140,8 +139,8 @@ export class TerminalManager extends EventEmitter {
     this.identify = identify; this.table = table; this.verifiedSignal = verifiedSignal; this.alive = alive; this.stopGraceMs = stopGraceMs;
     // Journal's light or dark appearance: main sends it with each start and on every switch.
     this.appearance = 'dark'; this.appVersion = appVersion;
-    // Slots 1-4 are reserved synchronously at start so concurrent starts never share one.
-    this.entries = new Map(); this.slots = new SlotPool(MAX_SESSIONS, () => this.liveEntries().map(entry => entry.session.slot)); this.flushPending = false; this.disposed = false; this.settling = new Set();
+    // Slots are reserved synchronously at start so concurrent starts never share one.
+    this.entries = new Map(); this.slots = new SlotPool(() => this.liveEntries().map(entry => entry.session.slot)); this.flushPending = false; this.disposed = false; this.settling = new Set();
     this.tracker = trackMs ? setInterval(() => { void this.trackDescendants().catch(() => {}); void this.recheckOrphans().catch(() => {}); }, trackMs) : null; this.tracker?.unref?.();
     this.observationTimer = observationMs ? setInterval(() => this.checkObservation(), observationMs) : null; this.observationTimer?.unref?.();
   }
@@ -150,7 +149,7 @@ export class TerminalManager extends EventEmitter {
   liveEntries() { return [...this.entries.values()].filter(entry => !entry.exited); }
   list() { return [...this.entries.values()].map(entry => ({ ...entry.session })); }
   // The lowest slot not held by a live session of this runtime or a start in progress.
-  // Orphans hold no slot: they do not count toward MAX_SESSIONS.
+  // Orphans hold no slot; their identity checks still prevent unsafe resumes.
   freeSlot() {
     return this.slots.free();
   }
@@ -159,7 +158,6 @@ export class TerminalManager extends EventEmitter {
     // Live sessions and starts in progress (reserved) each hold one slot; a start
     // whose process already runs is in both sets but counts once.
     const lease = this.slots.reserve('manual');
-    if (!lease) throw fail(ERROR_CODES.SLOTS_FULL, `Journal runs up to ${MAX_SESSIONS} sessions at once. Stop one before starting another.`);
     return this.startReserved(request, lease);
   }
   async startReserved(request, lease) {

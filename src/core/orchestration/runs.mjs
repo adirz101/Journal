@@ -84,7 +84,7 @@ export class Orchestration {
       this.store.project(input.projectId);
       const run = { id, projectId: input.projectId, state: 'creating', provider: choice(input.provider ?? 'claude', ['claude', 'codex'], 'coordinator provider'), goal: safeText(input.goal, 'goal', 20000), logicalBranch: text(input.logicalBranch, 'branch', 200),
         journalToolsAllowed: input.journalToolsAllowed === true, coordinatorSessionId: null, coordinatorHistory: [], paused: false, createdAt: now(), endedAt: null,
-        policy: { version: 1, integration: 'coordinator-managed', caps: { maxConcurrentWorkers: 3 }, idleReclamation: false, guards: { deletions: 'ask', outside_scope: 'allow', infrastructure: 'allow', executable: 'ask', apply_rate: 'ask' } } };
+        policy: { version: 1, integration: 'coordinator-managed', caps: { maxConcurrentWorkers: null }, idleReclamation: false, guards: { deletions: 'ask', outside_scope: 'allow', infrastructure: 'allow', executable: 'ask', apply_rate: 'ask' } } };
       this.db.prepare('INSERT INTO runs VALUES(?,?,?,?)').run(id, run.projectId, run.state, JSON.stringify(run));
       this.event(id, 'run.created', { goal: run.goal }); return run;
     });

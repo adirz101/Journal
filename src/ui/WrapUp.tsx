@@ -55,7 +55,7 @@ export function WrapUp({ session, project, workspaces, receipt, events, agents, 
   const identity = identityLine({ nativeId: session.nativeId, confirmed: session.nativeIdConfirmed, source: session.nativeIdSource ?? null, mismatch: !!session.identityMismatch }, session.provider);
   const keys = keyLabels(mac);
   const continueBlock = !identity.canContinue || !resumable(session) ? (identity.needsConfirm ? wrapUp.confirmFirst : identity.text)
-    : !connected ? composer.runtimeDown : !canStart ? copy.slotsFull(4) : '';
+    : !connected ? composer.runtimeDown : '';
   const canContinue = !continueBlock && !busy;
   const error = isErrorExit(session);
   const reasonId = `wrapup-continue-reason-${session.id}`;

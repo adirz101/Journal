@@ -47,8 +47,8 @@ test('SLOTS_FULL is not a StartError', async t => {
   const { startProblem, composer } = await load(t);
   for (const code of ['SLOTS_FULL', 'SHUTTING_DOWN', 'CONVERSATION_OPEN', 'ORPHAN_RUNNING', 'ID_UNCONFIRMED', 'NOT_LIVE'])
     assert.equal(startProblem({ provider: 'claude', agent: agent('claude', { auth: 'signed-out' }), error: failure(code) }), null, code);
-  // All four slots: Start waits with the board 9 sentence; New session stays open.
-  assert.equal(composer.startBlock({ connected: true, liveCount: 4, busy: false, agent: agent('claude'), provider: 'claude', mode: 'build' }), '4 of 4 running. Stop or finish one to start another. You can still write the task now.');
+  // Legacy error classification stays compatible, but live count no longer disables Start.
+  assert.equal(composer.startBlock({ connected: true, liveCount: 4, busy: false, agent: agent('claude'), provider: 'claude', mode: 'build' }), null);
   // Signed out: Start stays enabled (the CLI shows its own login; the probe may lag).
   assert.equal(composer.startBlock({ connected: true, liveCount: 0, busy: false, agent: agent('codex', { auth: 'signed-out' }), provider: 'codex', mode: 'build' }), null);
 });
@@ -100,13 +100,13 @@ test('a refused start says "Nothing was sent" only when nothing can have been se
   assert.equal(m.terminalActionLabel({ kind: 'signed-out', provider: 'codex', command: 'codex login' }), 'Open terminal');
 });
 
-test('Continue in the recovery panel has its own reason when every slot is taken (review M5)', async t => {
+test('Continue in the recovery panel explains a disconnected runtime', async t => {
   const m = await load(t);
-  const { states } = await import('../src/ui/copy.ts');
+  const { composer: copy } = await import('../src/ui/copy.ts');
   const recovery = { at: 't', runtimeId: 'r', sessions: [{ id: 's1', status: 'interrupted', identityVerified: true }] };
   const session = { id: 's1', projectId: 'p', provider: 'claude', nativeId: '11111111-2222-4333-8444-555555555555', nativeIdConfirmed: true, title: 'x', status: 'interrupted', receiptId: 'r', createdAt: 't' };
-  const blocked = '4 of 4 running. Stop or finish one to continue this session.';
+  const blocked = copy.runtimeDown;
   const view = m.recoveryView(recovery, { s1: session }, blocked);
   assert.equal(view.rows[0].reason, blocked);
-  assert.equal(states.continueSlotsFull, blocked); assert.doesNotMatch(states.continueSlotsFull, /write the task/);
+  assert.equal(m.recoveryView(recovery, { s1: session }, null).rows[0].reason, null);
 });

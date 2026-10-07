@@ -33,9 +33,9 @@ test('coordinator policy may tighten but cannot loosen; user policy changes expi
   const tight = store.setRunPolicy(req('tight', { runId: run.id, policy: { integration: 'ask', caps: { maxConcurrentWorkers: 1 } } }));
   assert.equal(tight.policy.version, 2);
   assert.throws(() => store.setRunPolicy(req('loosen', { runId: run.id, policy: { integration: 'coordinator-managed' } })), { code: 'USER_REQUIRED' });
-  assert.throws(() => store.setRunPolicy(req('reclaim', { runId: run.id, policy: { idleReclamation: true } })), { code: 'USER_REQUIRED' });
+  assert.equal(store.setRunPolicy(req('reclaim', { runId: run.id, policy: { idleReclamation: true } })).policy.idleReclamation, false);
   const user = store.setRunPolicy({ ...req('user', { runId: run.id, policy: { integration: 'coordinator-managed' } }), callerId: 'desktop' });
-  assert.equal(user.policy.version, 3);
+  assert.equal(user.policy.version, 4);
 });
 test('whole-run review pins the requested branch commit and rejects a verdict for another subject', t => {
   const { store, run, git } = fixture(t);
@@ -266,6 +266,17 @@ test('run goals, tasks, decisions and external intents do not persist credential
   const input = req('private-check', { runId: created.id, resultId: 'fixture', command: ['node', '-e', canary] }); store.prepareRunOperation('verify_result', input, created.id);
   for (const table of ['runs', 'tasks', 'run_events', 'orchestration_operations']) assert.equal(store.db.prepare(`SELECT body FROM ${table}`).all().some(row => row.body.includes(canary)), false, table);
   assert.throws(() => store.prepareRunOperation('verify_result', { ...input, command: ['node', '-e', canary + 'different'] }, created.id), { code: 'REQUEST_MISMATCH' });
+});
+
+test('new runs have no worker ceiling and legacy limits do not make unrelated policy updates require permission', t => {
+  const { store, run } = fixture(t);
+  assert.equal(run.policy.caps.maxConcurrentWorkers, null);
+  const legacy = { ...run, policy: { ...run.policy, caps: { maxConcurrentWorkers: 1 }, idleReclamation: true } };
+  store.db.prepare('UPDATE runs SET body=? WHERE id=?').run(JSON.stringify(legacy), run.id);
+  const tightened = store.setRunPolicy(req('tighten-with-legacy', { runId: run.id, policy: { integration: 'ask' } }));
+  assert.equal(tightened.policy.integration, 'ask');
+  assert.equal(tightened.policy.idleReclamation, false);
+  assert.equal(tightened.policy.caps.maxConcurrentWorkers, null);
 });
 
 test('older test policy metadata does not permit loosening another integration guard', t => {

@@ -521,11 +521,11 @@ test('slots: lowest free slot, kept across stops of others', async t => {
   assert.deepEqual(f.manager.list().filter(s => s.slot).map(s => s.slot).sort(), [1, 2, 3]);
 });
 
-test('concurrent starts never share a slot; a fifth is refused with SLOTS_FULL', async t => {
+test('concurrent starts beyond four never share a slot', async t => {
   const f = multi(t);
-  const sessions = await Promise.all([1, 2, 3, 4].map(() => f.start()));
-  assert.deepEqual(sessions.map(s => s.slot).sort(), [1, 2, 3, 4]);
-  await assert.rejects(f.start(), error => error.code === 'SLOTS_FULL' && /up to 4 sessions/.test(error.message));
+  const sessions = await Promise.all([1, 2, 3, 4, 5, 6].map(() => f.start()));
+  assert.deepEqual(sessions.map(s => s.slot).sort(), [1, 2, 3, 4, 5, 6]);
+  assert.equal((await f.start()).slot, 7);
 });
 
 test('a failed launch frees its reserved slot', async t => {
@@ -593,7 +593,7 @@ test('a start whose process is already running counts once toward capacity', asy
   const fourth = await f.start();
   release();
   assert.deepEqual([(await third).slot, fourth.slot].sort(), [3, 4]);
-  await assert.rejects(f.start(), error => error.code === 'SLOTS_FULL');
+  assert.equal((await f.start()).slot, 5);
 });
 
 test('ENOENT after the process started is START_FAILED, not PROVIDER_MISSING', async t => {
@@ -638,7 +638,7 @@ test('error codes: SLOTS_FULL, ID_UNCONFIRMED, CONVERSATION_OPEN, NOT_LIVE and S
   await assert.rejects(f.start('claude', { resumeId: claude.id }), error => error.code === 'CONVERSATION_OPEN');
   assert.equal(resumed.slot, 1);
   for (let i = 0; i < 3; i++) await f.start();
-  await assert.rejects(f.start(), error => error.code === 'SLOTS_FULL');
+  assert.equal((await f.start()).slot, 5);
   await f.manager.dispose({ stopSessions: false });
   await assert.rejects(f.start(), error => error.code === 'SHUTTING_DOWN');
 });

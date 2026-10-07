@@ -36,3 +36,26 @@ test('coordinator resume returns the durable outcome before checking the now-act
   const manager = new WorkerManager({ store: { runOperationOutcome: async (kind, input) => { assert.equal(kind, 'resume_coordinator'); assert.equal(input.requestId, 'same-request'); return { found: true, outcome }; }, getRun: async () => outcome } });
   assert.deepEqual(await manager.resumeCoordinator({ runId: 'run', callerId: 'desktop', requestId: 'same-request' }), outcome);
 });
+
+test('queued coordinators stop draining when shutdown begins', async () => {
+  const runs = ['a', 'b'].map(id => ({ id, state: 'creating', provider: 'claude' }));
+  const manager = new WorkerManager({ store: { activeRuns: async () => runs } });
+  let continuing = true; const launched = [];
+  manager.queueCoordinator = async run => { launched.push(run.id); continuing = false; };
+  await manager.launchQueuedCoordinators(() => continuing);
+  assert.deepEqual(launched, ['a']);
+});
+
+test('a coordinator waiting behind another launch does not start after shutdown', async () => {
+  const run = { id: 'waiting', state: 'creating', provider: 'claude' };
+  const manager = new WorkerManager({ store: { activeRuns: async () => [run], getRun: async () => run } });
+  let release; manager.coordinatorLane = new Promise(resolve => { release = resolve; });
+  let continuing = true; let launched = false;
+  manager.launchCoordinator = async () => { launched = true; };
+  const drain = manager.launchQueuedCoordinators(() => continuing);
+  await Promise.resolve();
+  assert.equal(manager.starts.has(run.id), true, 'request is waiting in the occupied coordinator lane');
+  continuing = false; release(); await drain; await manager.close();
+  assert.equal(launched, false);
+  assert.equal(manager.starts.size, 0);
+});
