@@ -19,6 +19,22 @@ function fixture(t) {
 }
 const request = (requestId, args = {}) => ({ callerId: 'fixture-coordinator', requestId, ...args });
 
+test('coordinator updates are launch-bound, durable and idempotent without becoming system evidence', t => {
+  const f = fixture(t); const run = f.store.createRun(request('run', { projectId: f.project.id, goal: 'fixture', logicalBranch: 'main' }));
+  f.store.setRunState(run.id, 'starting', { coordinatorSessionId: 'session', coordinatorLaunchId: 'launch' });
+  const input = { runId: run.id, callerId: `coordinator:${run.id}`, requestId: 'update', sessionId: 'session', launchId: 'launch', summary: 'I am checking two documents.' };
+  assert.equal(typeof f.store.publishUpdate, 'function');
+  const saved = f.store.publishUpdate(input);
+  assert.deepEqual(f.open().publishUpdate(input), saved);
+  assert.equal(f.store.runEvents(run.id).filter(event => event.kind === 'coordinator.update').length, 1);
+  assert.throws(() => f.store.publishUpdate({ ...input, requestId: 'forged', callerId: 'worker:other' }), { code: 'FORBIDDEN' });
+  assert.throws(() => f.store.publishUpdate({ ...input, requestId: 'late', launchId: 'old' }), { code: 'STALE_LAUNCH' });
+  assert.throws(() => f.store.publishUpdate({ ...input, requestId: 'huge', summary: 'x'.repeat(2001) }));
+  const redacted = f.store.publishUpdate({ ...input, requestId: 'sensitive', summary: 'api_key=fixture-sensitive-value' });
+  assert.equal(redacted.summary, 'api_key=[redacted]');
+  assert.doesNotMatch(JSON.stringify(f.open().runEvents(run.id)), /fixture-sensitive-value/);
+});
+
 test('durable messages use addressed pull receipts and never replay uncertain staged input', t => {
   const f = fixture(t); const run = f.store.createRun(request('run', { projectId: f.project.id, goal: 'fixture', logicalBranch: 'main' }));
   f.store.setRunState(run.id, 'starting', { coordinatorSessionId: 'session', coordinatorLaunchId: 'launch' });

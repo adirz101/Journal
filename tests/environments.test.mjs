@@ -62,6 +62,22 @@ async function teamResult(f, suffix = '') {
   return { run, task, attempt, env, request, subject: { attemptId: attempt.id, resultId: env.result.resultId } };
 }
 
+it('result diff reads only the selected immutable capture and recorded paths', async t => {
+  const f = fixture(t); const team = await teamResult(f);
+  const input = { resultId: team.subject.resultId, path: 'README.md' };
+  const before = f.store.resultDiff(input);
+  assert.match(before.patch, /\+fixture result/);
+  writeFileSync(join(team.env.details.path, 'README.md'), 'later unreviewed edits\n');
+  assert.deepEqual(f.reopen().resultDiff(input), before);
+  assert.throws(() => f.store.resultDiff({ ...input, path: '../secret' }));
+  assert.throws(() => f.store.resultDiff({ ...input, path: 'src/api.js' }));
+  assert.throws(() => f.store.resultDiff({ ...input, resultId: 'missing' }));
+  const literal = ':(glob)*.md';
+  const env = await f.worker('literal path', path => { writeFileSync(join(path, literal), 'selected literal file\n'); writeFileSync(join(path, 'other.md'), 'not selected\n'); });
+  const result = f.store.recordResult({ environmentId: env.id, resultId: env.result.resultId });
+  const diff = f.store.resultDiff({ resultId: result.id, path: literal });
+  assert.match(diff.patch, /selected literal file/); assert.doesNotMatch(diff.patch, /not selected/);
+});
 it('coordinator Apply is durably idempotent and unblocks a dependency without creating its worker', async t => {
   const f = fixture(t); const team = await teamResult(f);
   const child = f.store.createTask(team.request('child', { runId: team.run.id, title: 'Dependent', dependencies: [team.task.id] }));

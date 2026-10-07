@@ -5,6 +5,7 @@ import { DEFINITIONS } from '../agent-tools/definitions.mjs';
 export const WORKER_TOOLS = ['get_context', 'report_progress', 'ask', 'report_blocked', 'report_result', 'inbox', 'ack', 'get_message'];
 export const COORDINATOR_TOOLS = ['get_run', 'get_capacity', 'create_task', 'update_task', 'cancel_task', 'complete_task', 'list_tasks', 'create_worker', 'get_worker', 'list_workers', 'send_message', 'inbox', 'ack', 'get_message', 'wait_for_events', 'accept_result', 'pause_run', 'finish_run', 'record_decision'];
 COORDINATOR_TOOLS.push('preview_result', 'apply_result');
+COORDINATOR_TOOLS.push('publish_update');
 COORDINATOR_TOOLS.push('resume_worker', 'stop_worker', 'snapshot_worker', 'request_result', 'request_retry', 'add_dependency', 'remove_dependency');
 COORDINATOR_TOOLS.push('create_workers', 'choose_result', 'retire_worker', 'set_policy');
 COORDINATOR_TOOLS.push('take_in', 'resolve_conflict', 'take_in_result');
@@ -43,7 +44,7 @@ export class ToolRouter {
     if (!parsed?.success) refuse('INVALID_INPUT', 'Arguments do not match this tool schema');
     args = parsed.data;
     const recipient = grant.role === 'coordinator' ? 'coordinator' : grant.attemptId;
-    const receiptBound = ['inbox', 'ack', 'get_message', 'report_progress', 'report_result', 'ask', 'report_blocked'].includes(tool);
+    const receiptBound = ['inbox', 'ack', 'get_message', 'report_progress', 'report_result', 'ask', 'report_blocked', 'publish_update'].includes(tool);
     const input = { ...args, runId: grant.runId, callerId: `${grant.role}:${grant.attemptId ?? grant.runId}`, ...(receiptBound ? { launchId: grant.launchId, sessionId: grant.sessionId } : {}) };
     const reportingTurn = entry.identityAmbiguous ? null : entry.currentTurn;
     const report = kind => {
@@ -82,6 +83,7 @@ export class ToolRouter {
       case 'pause_run': return this.store.pauseRun(input);
       case 'finish_run': return this.store.finishRun(input);
       case 'record_decision': return this.store.recordDecision(input);
+      case 'publish_update': return this.store.publishUpdate(input);
       case 'report_progress': return this.store.reportProgress({ ...input, attemptId: grant.attemptId });
       case 'report_result': return report('result');
       case 'ask': return report('ask');

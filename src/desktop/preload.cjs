@@ -16,7 +16,7 @@ allowed.add('switchRuntime');
 for (const action of ['environment', 'environments', 'previewEnvironmentApply', 'applyEnvironment', 'resolveInEnvironment', 'abandonEnvironment', 'restoreEnvironment', 'cleanupEnvironment']) allowed.add(action);
 for (const action of ['branches', 'switchBranch']) allowed.add(action);
 for (const action of ['createRun', 'getRun', 'listRuns', 'runEvents', 'pauseRun', 'sendMessage', 'cancelMessage', 'resendMessage', 'resumeAutomatic']) allowed.add(action);
-for (const action of ['previewResult', 'applyResult', 'decideApproval']) allowed.add(action);
+for (const action of ['previewResult', 'resultDiff', 'applyResult', 'decideApproval']) allowed.add(action);
 for (const action of ['teamAction', 'getCapacity', 'setCapacityLimits', 'runsTree']) allowed.add(action);
 // contextBridge copies only the message of an Error thrown across it, so the
 // renderer's api() uses settle(), which returns the error code as plain data.

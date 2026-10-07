@@ -2,7 +2,7 @@
 // and its client so they cannot drift apart.
 export const STORE_METHODS = [
   'createRun', 'getRun', 'listRuns', 'setRunState', 'runEvents', 'createTask', 'listTasks', 'listAttempts',
-  'updateTask', 'cancelTask', 'completeTask', 'finishRun', 'recordDecision', 'reportProgress',
+  'updateTask', 'cancelTask', 'completeTask', 'finishRun', 'recordDecision', 'reportProgress', 'publishUpdate',
   'previewResult', 'applyResult', 'decideApproval',
   'requestResume', 'retryWorker', 'runOperationOutcome',
   'requestWorkers', 'setRunPolicy', 'chooseResult', 'retireWorker',
@@ -15,7 +15,7 @@ export const STORE_METHODS = [
   'sendMessage', 'getInbox', 'ackMessage', 'reserveMessage', 'deliveryAllowed', 'recordMessageDelivery',
   'cancelMessage', 'resolveMessageInput', 'resendMessage', 'rebindMessage', 'recoverMessages', 'expireMessages',
   'addDependency', 'removeDependency', 'requestWorker', 'setAttemptState', 'setPresence',
-  'reportWorker', 'settleAttempt', 'recordResult', 'getResult', 'acceptResult',
+  'reportWorker', 'settleAttempt', 'recordResult', 'getResult', 'resultDiff', 'acceptResult',
   'openProject',
   'storedProject',
   'renameProject',

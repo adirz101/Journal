@@ -84,6 +84,7 @@ export default function App() {
   const [receipt, setReceipt] = useState<Receipt | null>(null); const [task, setTask] = useState('');
   const [panel, setPanel] = useState<InspectorTab>('memory');
   const [teamRunId, setTeamRunId] = useState<string | null>(null);
+  const [teamTerminalFocus, setTeamTerminalFocus] = useState<string | null>(null);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState<{ memory?: Memory; supersedes?: Memory; initialCategory?: string; initialStatement?: string; draft?: StatusDraft; firstRun?: 'checkout' | 'branch'; after?: () => void } | null>(null);
   const [knowledgeVersion, setKnowledgeVersion] = useState(0);
   // Phase 5: note trust lines refetch on note changes and when a session starts running (a new delivery).
@@ -168,6 +169,11 @@ export default function App() {
   const referenceInputs = references.map(ref => ({ projectId: ref.projectId, rootKey: ref.rootKey, path: ref.path, startLine: ref.startLine, endLine: ref.endLine }));
   const [resumeDraft, setResumeDraft] = useState<{ sessionId: string; value: string } | null>(null);
   const session = selectedId ? sessions[selectedId] ?? null : null;
+  useEffect(() => {
+    if (!teamTerminalFocus || teamRunId) return;
+    if (session?.id === teamTerminalFocus) window.dispatchEvent(new CustomEvent('journal:focus-terminal', { detail: teamTerminalFocus }));
+    setTeamTerminalFocus(null);
+  }, [teamTerminalFocus, teamRunId, session?.id]);
   // A confirmation draft belongs to one launch, never to another conversation.
   const resumeValue = resumeDraft?.sessionId === session?.id ? resumeDraft?.value ?? '' : session?.nativeId ?? '';
   // === Phase 6: session end ===
@@ -435,9 +441,10 @@ export default function App() {
     }
     if (id === 'toggle-sidebar') { layout.toggleSidebar(); return; }
     if (!projectRef.current) return;
+    if (teamRunId && ['tab-session', 'tab-files', 'tab-memory', 'focus-terminal', 'toggle-inspector'].includes(id)) setTeamRunId(null);
     if (id === 'add-note') setForm({});
-    else if (id === 'toggle-inspector') layout.toggleInspector();
-    else if (id === 'focus-terminal') { if (session) window.dispatchEvent(new CustomEvent('journal:focus-terminal', { detail: session.id })); }
+    else if (id === 'toggle-inspector') { if (teamRunId) layout.showInspector(); else layout.toggleInspector(); }
+    else if (id === 'focus-terminal') { if (session) { if (teamRunId) setTeamTerminalFocus(session.id); else window.dispatchEvent(new CustomEvent('journal:focus-terminal', { detail: session.id })); } }
     else if (id === 'tab-session') { setPanel('session'); layout.showInspector(); }
     else if (id === 'tab-files') { setPanel('files'); layout.showInspector(); setExplorerFocus(n => n + 1); }
     else if (id === 'tab-memory') { setPanel('memory'); layout.showInspector(); }
@@ -793,7 +800,7 @@ export default function App() {
   </Inspector>;
   // === End region B: inspector ===
   // === Region C: the ResizableWorkspace wrapper (layout modes) ===
-  return <ResizableWorkspace layout={layout} wide={previewing && panel === 'files'} inspector={state && !showFirstRun ? inspector : null}
+  return <ResizableWorkspace layout={layout} wide={previewing && panel === 'files'} inspector={state && !showFirstRun && !(teamRunId && (!session || session.runId === teamRunId)) ? inspector : null}
     sidebar={(pane, overlay) => <Sidebar pane={pane} inOverlay={overlay} projects={projects} project={state?.project ?? null} sessions={ordered} proposals={proposals} selectedId={selectedId} connected={connected}
       runtimeState={runtime.state === 'connected' || runtime.state === 'disconnected' ? runtime.state : 'connecting'} now={now} canCompose={!!state}
       shortcuts={bootstrap?.shortcuts} appearance={appearance} update={state && session ? null : update}

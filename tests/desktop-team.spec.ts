@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { fixtureEnv } from './support/env';
 import { skipFirstRun, taskBox } from './support/ui';
+import { pressKey } from './support/keys';
 
 test.skip(process.platform === 'win32', 'POSIX fixture CLI; Windows orchestration isolation acceptance is separate');
 test('Coordinate opens a durable team, an isolated worker, and keyboard-accessible messages and pause controls', async () => {
@@ -24,7 +25,7 @@ test('Coordinate opens a durable team, an isolated worker, and keyboard-accessib
 if(process.argv.includes('--version')){console.log('2.1.286 (Claude Code)');process.exit(0)}
 if(process.argv.includes('auth')){console.log(JSON.stringify({loggedIn:true,authMethod:'fixture'}));process.exit(0)}
 console.log('Fixture team terminal');process.stdin.setRawMode(true);process.stdin.on('data',d=>{if(String(d).includes('q'))process.exit(0)});
-if(process.argv.some(arg=>arg.includes('You coordinate Journal run'))){(async()=>{const {clientFromEnv}=await import(${JSON.stringify(moduleUrl)});const client=clientFromEnv();const task=await client.call('create_task',{requestId:'fixture-task',title:'Implement fixture task'});await client.call('create_worker',{requestId:'fixture-worker',taskId:task.id,provider:'claude'});client.close();console.log('Fixture worker requested')})().catch(e=>console.error(e.message))}
+if(process.argv.some(arg=>arg.includes('You coordinate Journal run'))){(async()=>{const {clientFromEnv}=await import(${JSON.stringify(moduleUrl)});const client=clientFromEnv();await client.call('publish_update',{requestId:'fixture-update',summary:'I am checking the fixture documentation.'});const task=await client.call('create_task',{requestId:'fixture-task',title:'Implement fixture task'});await client.call('create_worker',{requestId:'fixture-worker',taskId:task.id,provider:'claude'});await client.call('request_approval',{requestId:'fixture-decision',summary:'Include the setup instructions in this documentation change?'});client.close();console.log('Fixture worker requested')})().catch(e=>console.error(e.message))}
 else if(process.env.JOURNAL_TASK_ID){(async()=>{
 const fs=require('node:fs'),{execFileSync}=require('node:child_process');
 const nativeId=process.argv[process.argv.indexOf('--session-id')+1];
@@ -48,16 +49,63 @@ hook('Stop');client.close();fs.writeFileSync(${JSON.stringify(join(root,'reporte
     await page.getByRole('button', { name: /^Start Claude Code/ }).click();
     const team = page.getByRole('region', { name: 'Team', exact: true });
     await expect(team).toContainText('Implement fixture task', { timeout: 20000 });
-    await team.getByRole('tab', { name: 'Workers', exact: true }).click(); await expect(team).toContainText('Live', { timeout: 15000 });
-    await team.getByRole('tab', { name: 'Workers', exact: true }).focus(); await page.keyboard.press('ArrowRight'); await expect(team.getByRole('tab', { name: 'Results', exact: true })).toBeFocused();
-    await team.getByRole('tab', { name: 'Messages', exact: true }).click(); await team.getByLabel('Message', { exact: true }).fill('Check the fixture result'); await team.getByRole('button', { name: 'Queue message', exact: true }).click();
+    await expect(team.getByRole('tab', { name: 'Conversation', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(team).toContainText('I am checking the fixture documentation.');
+    await expect(page.locator('.inspector-root')).toHaveCount(0);
+    await expect(team).toContainText('Include the setup instructions in this documentation change?');
+    await page.screenshot({ path: resolve('.cache/team-conversation-attention.png') });
+    await team.getByRole('button', { name: 'Allow', exact: true }).click();
+    await expect(team.getByRole('button', { name: 'Allow', exact: true })).toHaveCount(0);
+    await expect(team.getByRole('tab', { name: 'Workers', exact: true })).toHaveCount(0);
+    await expect(team.getByRole('complementary', { name: 'Task progress' })).toContainText('Live', { timeout: 15000 });
+    await team.getByRole('tab', { name: 'Conversation', exact: true }).focus(); await page.keyboard.press('ArrowRight'); await expect(team.getByRole('tab', { name: 'Results', exact: true })).toBeFocused();
+    await team.getByRole('tab', { name: 'Conversation', exact: true }).click();
+    await team.getByLabel('Message to coordinator', { exact: true }).fill('Check the fixture result'); await team.getByRole('button', { name: 'Send message', exact: true }).click();
     const sent = team.getByRole('listitem').filter({ hasText: 'Check the fixture result' });
     await expect(sent).toContainText('Queued'); await sent.getByRole('button', { name: 'Cancel message', exact: true }).click(); await expect(sent).toContainText('Cancelled');
+    await app.evaluate(() => { (globalThis as any).__journalRequestHook = async (action: string, run: () => Promise<unknown>) => { if (action === 'sendMessage') await new Promise(resolve => setTimeout(resolve, 600)); return run(); }; });
+    await team.getByLabel('Message to coordinator', { exact: true }).fill('First instruction');
+    await team.getByRole('button', { name: 'Send message', exact: true }).click();
+    await team.getByLabel('Message to coordinator', { exact: true }).fill('Keep this later draft');
+    await expect(team.getByRole('listitem').filter({ hasText: 'First instruction' })).toContainText('Queued');
+    await expect(team.getByLabel('Message to coordinator', { exact: true })).toHaveValue('Keep this later draft');
+    await app.evaluate(() => { delete (globalThis as any).__journalRequestHook; });
+    await team.getByRole('button', { name: 'Open full native conversation', exact: true }).click();
+    await page.getByRole('button', { name: 'Team', exact: true }).click();
+    await expect(team.getByLabel('Message to coordinator', { exact: true })).toHaveValue('Keep this later draft');
+    // A completion from an unmounted panel must not clear a newer panel's draft.
+    await app.evaluate(() => { (globalThis as any).__journalRequestHook = async (action: string, run: () => Promise<unknown>) => { if (action === 'sendMessage') await new Promise<void>(resolve => { (globalThis as any).__releaseTeamMessage = resolve; }); return run(); }; });
+    await team.getByLabel('Message to coordinator', { exact: true }).fill('Instruction before navigation');
+    await team.getByRole('button', { name: 'Send message', exact: true }).click();
+    await expect.poll(() => app.evaluate(() => typeof (globalThis as any).__releaseTeamMessage)).toBe('function');
+    await team.getByRole('button', { name: 'Open full native conversation', exact: true }).click();
+    await expect(page.locator('.inspector-root')).toBeVisible();
+    await page.getByRole('button', { name: 'Team', exact: true }).click();
+    await expect(page.locator('.inspector-root')).toHaveCount(0);
+    await team.getByLabel('Message to coordinator', { exact: true }).fill('Keep this remounted draft');
+    await app.evaluate(() => { (globalThis as any).__releaseTeamMessage(); delete (globalThis as any).__journalRequestHook; delete (globalThis as any).__releaseTeamMessage; });
+    await expect(team.getByRole('listitem').filter({ hasText: 'Instruction before navigation' })).toContainText('Queued', { timeout: 12000 });
+    await team.getByRole('button', { name: 'Open full native conversation', exact: true }).click();
+    await page.getByRole('button', { name: 'Team', exact: true }).click();
+    await expect(team.getByLabel('Message to coordinator', { exact: true })).toHaveValue('Keep this remounted draft');
+    await team.getByRole('button', { name: 'Write a message', exact: true }).click();
+    await expect(team.getByLabel('Message to coordinator', { exact: true })).toBeFocused();
+    await pressKey(app, 'E', ['meta']);
+    await expect(page.locator('.terminal-panel:not([hidden]) .xterm-helper-textarea').first()).toBeFocused();
+    await expect(page.locator('.inspector-root')).toBeVisible();
+    await page.getByRole('button', { name: 'Team', exact: true }).click();
+    await pressKey(app, 'I', ['meta']);
+    await expect(page.locator('.inspector-root')).toBeVisible();
+    await page.getByRole('button', { name: 'Team', exact: true }).click();
+    await page.screenshot({ path: resolve('.cache/team-conversation-dark.png') });
     await expect.poll(() => existsSync(join(root, 'reported')), { timeout: 15000 }).toBe(true);
     expect(existsSync(join(root, 'fixture-error'))).toBe(false);
-    await team.getByRole('tab', { name: 'Workers', exact: true }).click(); await team.getByRole('button', { name: 'Stop worker', exact: true }).click();
+    await team.getByRole('button', { name: 'Stop worker and prepare review', exact: true }).click();
     await expect(team).toContainText('Paused', { timeout: 15000 }); await team.getByRole('tab', { name: 'Results', exact: true }).click();
     await expect(team).toContainText('Fixture worker completion report');
+    await team.getByText('Changed files (1)', { exact: true }).click();
+    await team.getByRole('button', { name: 'M README.md', exact: true }).click();
+    await expect(team.locator('pre')).toContainText('+Fixture worker completed');
     await team.getByRole('button', { name: 'Preview Apply', exact: true }).click();
     await expect(team).toContainText('Review this result and choose Accept captured result before Apply.');
     await team.getByRole('button', { name: 'Accept captured result', exact: true }).click();
@@ -68,5 +116,21 @@ hook('Stop');client.close();fs.writeFileSync(${JSON.stringify(join(root,'reporte
     await expect(team).not.toContainText('Tests Passed');
     await team.getByRole('button', { name: 'Pause run', exact: true }).click(); await expect(team.getByRole('button', { name: 'Continue run', exact: true })).toBeVisible();
     await page.screenshot({ path: resolve('.cache/team-fixture.png') });
+    await team.getByRole('tab', { name: 'Conversation', exact: true }).click();
+    await team.getByText('Changed files (1)', { exact: true }).click();
+    await team.getByRole('button', { name: 'M README.md', exact: true }).click();
+    await expect(team.locator('pre')).toContainText('+Fixture worker completed');
+    await page.screenshot({ path: resolve('.cache/team-conversation-result-dark.png') });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await page.screenshot({ path: resolve('.cache/team-conversation-result-light.png') });
+    await page.setViewportSize({ width: 760, height: 900 });
+    await page.screenshot({ path: resolve('.cache/team-conversation-narrow.png') });
+    await expect(team).toBeVisible();
+    expect(await team.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+    await team.getByRole('button', { name: 'Continue run', exact: true }).click();
+    await team.getByRole('button', { name: 'Preview Apply', exact: true }).click();
+    await team.getByRole('button', { name: 'Apply result', exact: true }).click();
+    await expect(team).toContainText('Applied');
+    expect(git('show', 'main:README.md').toString()).toBe('Fixture worker completed\n');
   } finally { await app.close(); await expect.poll(() => existsSync(join(data, 'runtime.json')), { timeout: 20000 }).toBe(false); rmSync(root, { recursive: true, force: true }); }
 });

@@ -1,8 +1,42 @@
 # Journal implementation status
 
-7 October 2026. Preparing the user-authorized v0.1.3 publication and subsequent native testing.
+7 October 2026. Maintenance after the published v0.1.3: user-authorized
+orchestration fixes and the approved conversation-first UI are proceeding through
+review and merge. This work does not create a new release. Authenticated native
+provider acceptance remains separate from fixture validation.
 
-## Agent orchestration implementation (6 October 2026)
+## Conversation-first coordinated work (7 October 2026)
+
+The user approved the conversation-first design for implementation through merge.
+The Team screen now defaults to real addressed instructions and durable,
+launch-bound coordinator updates, with a persistent task rail, contextual
+decisions, inline captured results and exact-capture file diffs. Manual mission,
+worker, resource and policy controls remain under Advanced views. The native
+terminal remains the full provider conversation; Journal does not manufacture a
+provider transcript or claim that a queued instruction was received. The current
+integration policy, native permissions, exact-ID continuation and immutable Apply
+bindings are preserved. Explicit worker review preparation does not accept or
+apply work and never reclaims an idle worker automatically.
+
+The `publish_update` tool admits only the current live coordinator grant. Reports
+are bounded/redacted, idempotent, persisted and ordered with the event cursor.
+Conversation history catches up incrementally without cancelling pagination on
+each event. Diff reads use immutable capture identities, literal recorded paths,
+disabled Git replacement/external conversion, and bounded redacted output. No
+new provider transport or test executor is introduced.
+
+Validation on local macOS: Node 26.10.0 npm test passed 908 tests with 2 skipped;
+type checking and build passed (existing bundle-size warning). The full
+Electron-native node-pty fixture suite passed 162 tests with 1 skipped. After the
+final review fixes, the focused Team flow passed again, including a real decision
+card, hidden/restored inspector, native keyboard escape, delayed-send drafts
+across panel remounts, immutable file inspection, explicit acceptance and Apply
+verified against the fixture branch. Dark/light/narrow screenshots were reviewed.
+Independent review covered launch grants, claims, redaction, pinned diffs and
+permission/Apply boundaries. These results do not claim authenticated provider
+acceptance.
+
+## Historical agent orchestration milestone (6 October 2026)
 
 Active development is on `codex/agent-orchestration` in a managed worktree. The full [implementation plan](AGENT-ORCHESTRATION-IMPLEMENTATION-PLAN.md) remains the target. The macOS implementation now includes the full Team workflow and additional recovery paths. **M10b acceptance is not complete**: authenticated provider trials and usefulness evidence remain separate. Windows team work is deferred at the user's explicit request on 6 October 2026. See [Coordinated runs](COORDINATED-RUNS.md) for the implemented paths and capability boundaries. Settings exposes an off-by-default **Coordinated runs** experiment. On 7 October 2026 the user authorized merging the implementation and preparing v0.1.3 for download and manual testing. The user then explicitly authorized full publication. The tag workflow produces a draft, which will be published after artifact verification; native acceptance limitations remain explicit. See the [v0.1.3 notes](releases/v0.1.3.md).
 

@@ -37,6 +37,7 @@ export const DEFINITIONS = {
   pause_run: tool('Pause or resume new admissions and automatic operations.', { requestId, paused: z.boolean() }),
   finish_run: tool('Finish only after tasks, workers and messages have been reconciled.', { requestId, reason: summary }),
   record_decision: tool('Record a coordinator decision in the durable run story.', { requestId, summary }),
+  publish_update: tool('Publish a short user-facing coordinator update in the run conversation. This is your report, not verified evidence, a permission grant or a worker quote.', { requestId, summary }),
 };
 DEFINITIONS.create_task.inputSchema = DEFINITIONS.create_task.inputSchema.extend({ variants: z.number().int().min(2).max(8).optional(), subjectResultId: id.optional(), subjectBranch: id.optional() });
 DEFINITIONS.report_result.inputSchema = DEFINITIONS.report_result.inputSchema.extend({
