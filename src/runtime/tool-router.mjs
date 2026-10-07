@@ -8,10 +8,10 @@ COORDINATOR_TOOLS.push('preview_result', 'apply_result');
 COORDINATOR_TOOLS.push('resume_worker', 'stop_worker', 'snapshot_worker', 'request_result', 'request_retry', 'add_dependency', 'remove_dependency');
 COORDINATOR_TOOLS.push('create_workers', 'choose_result', 'retire_worker', 'set_policy');
 COORDINATOR_TOOLS.push('take_in', 'resolve_conflict', 'take_in_result');
-COORDINATOR_TOOLS.push('request_approval', 'subscribe', 'verify_result');
+COORDINATOR_TOOLS.push('request_approval', 'subscribe');
 
 export class ToolRouter {
-  constructor({ store, terminals, workers, verification = null, capacity = () => ({}) }) { Object.assign(this, { store, terminals, workers, verification, capacity }); this.grants = new Map(); }
+  constructor({ store, terminals, workers, capacity = () => ({}) }) { Object.assign(this, { store, terminals, workers, capacity }); this.grants = new Map(); }
   issue(binding) {
     const grant = { ...binding, id: randomUUID(), token: randomBytes(32).toString('hex'), calls: [], launches: [] };
     this.grants.set(grant.id, grant); return grant;
@@ -55,7 +55,6 @@ export class ToolRouter {
       case 'get_run': return run;
       case 'subscribe': return { cursor: run.eventCursor, run };
       case 'request_approval': return this.store.requestRunApproval(input);
-      case 'verify_result': return this.verification?.run(input) ?? refuse('CHECK_ISOLATION_UNVERIFIED', 'Isolated verification is unavailable');
       case 'get_capacity': return this.capacity(grant.runId);
       case 'list_tasks': return this.store.listTasks(grant.runId, args.filter);
       case 'list_workers': return run.attempts;

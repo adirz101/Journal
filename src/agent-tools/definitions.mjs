@@ -2,11 +2,11 @@ import * as z from 'zod/v4';
 const id = z.string().min(1).max(200); const requestId = id.describe('Stable unique request ID. Reuse unchanged on retry after timeout or reconnect.');
 const summary = z.string().min(1).max(2000); const taskId = id; const attemptId = id;
 const tool = (description, shape) => ({ description, inputSchema: z.object(shape) });
-const policy = z.object({ integration: z.enum(['ask', 'coordinator-managed']).optional(), guards: z.record(z.enum(['deletions', 'outside_scope', 'infrastructure', 'tests', 'executable', 'apply_rate']), z.enum(['allow', 'ask', 'refuse'])).optional() });
+const policy = z.object({ integration: z.enum(['ask', 'coordinator-managed']).optional(), guards: z.record(z.enum(['deletions', 'outside_scope', 'infrastructure', 'executable', 'apply_rate']), z.enum(['allow', 'ask', 'refuse'])).optional() });
 export const DEFINITIONS = {
   get_context: tool('Read your assigned task, worker state and current observed turn ID. A null turn ID is unobserved, not a reportable turn.', {}),
   get_run: tool('Read durable run state. Worker claims and captured evidence are distinct.', {}),
-  get_capacity: tool('Read launch limits, occupancy and queued admission reasons.', {}),
+  get_capacity: tool('Read session occupancy, advisory resource readings and queued admission reasons.', {}),
   list_tasks: tool('List tasks, including blocked and runnable tasks. Unblocking never launches a worker.', { filter: z.string().optional() }),
   list_workers: tool('Read worker work states and independent live/paused/lost presence.', {}),
   get_worker: tool('Read one worker in this run.', { attemptId }),
@@ -48,7 +48,6 @@ DEFINITIONS.report_result.inputSchema = DEFINITIONS.report_result.inputSchema.ex
 Object.assign(DEFINITIONS, {
   request_approval: tool('Ask the user for a real workflow decision. This cannot approve a provider permission or change policy.', { requestId, summary }),
   subscribe: tool('Read the durable event cursor and current run; reconnect using the same cursor with wait_for_events.', {}),
-  verify_result: tool('Check an immutable result through a validated isolated executor. Refuses if filesystem and network isolation are unvalidated.', { requestId, resultId: id, command: z.array(z.string().min(1).max(500)).min(1).max(30) }),
   take_in: tool('Take the pinned current branch into a stopped, writer-free worker folder. Conflicts stay in that folder.', { requestId, attemptId }),
   resolve_conflict: tool('Take in the branch and queue conflict instructions. Stop and settle the worker first when live mutation is unvalidated.', { requestId, attemptId }),
   take_in_result: tool('Refresh a stopped reviewer with an exact selected result. A new verdict is required.', { requestId, attemptId, subjectResultId: id }),

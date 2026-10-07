@@ -17,11 +17,19 @@ test('guards report scope and checks separately from claims, and unknown risk re
   const found = guards({ ...preview, changes, executable: ['bin/tool'], knownTestCommand: true }, task, policy, { testsVerified: 'not-run', claim: { testsClaimed: [{ outcome: 'passed' }] } });
   assert.equal(found.find(item => item.guard === 'deletions').outcome, 'ask');
   assert.equal(found.find(item => item.guard === 'outside_scope').outcome, 'allow');
-  assert.equal(found.find(item => item.guard === 'tests').detail, 'No passing check is bound to this result tree');
+  assert.equal(found.some(item => item.guard === 'tests'), false);
   assert.equal(guards({ ...preview, executable: null }, task, policy, {}).find(item => item.guard === 'executable').outcome, 'ask');
 });
 test('unselected variants cannot pass integration gates', () => {
   const variant = { ...attempt, id: 'candidate', currentResultId: 'result' };
   assert.ok(hardGates(preview, variant, {}, { variants: 2 }).failures.includes('VARIANT_NOT_SELECTED'));
   assert.equal(hardGates(preview, variant, {}, { variants: 2, chosenAttemptId: 'candidate', chosenResultId: 'result' }).pass, true);
+});
+
+test('retired test certification cannot impose an impossible requirement on an older run', () => {
+  const saved = { ...policy, guards: { ...policy.guards, tests: 'refuse', outside_scope: 'refuse' } };
+  const found = guards({ ...preview, knownTestCommand: true, changes: [{ path: 'other', status: 'M' }] }, { scope: { paths: ['src'] } }, saved, { testsVerified: 'not-run' });
+  assert.equal(found.some(item => item.guard === 'tests'), false);
+  assert.equal(found.find(item => item.guard === 'outside_scope').outcome, 'refuse');
+  assert.equal(saved.guards.tests, 'refuse', 'historical policy is not rewritten');
 });

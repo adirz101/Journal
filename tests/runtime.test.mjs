@@ -920,3 +920,11 @@ test('existing limited runs launch five workers without ending idle agents and r
   assert.equal(runtime.manager.slots.leases.size, 0);
   await runtime.capacity.close();
 });
+
+test('desktop cannot invoke the retired isolated verifier', async t => {
+  const f = fixture(t); const { runtime, fake } = await f.boot();
+  const desktop = client(f, t); await desktop.connect();
+  await assert.rejects(desktop.call('teamAction', { action: 'verifyResult', input: { runId: 'run', resultId: 'result', command: ['npm', 'test'], requestId: 'retired' } }), { code: 'FORBIDDEN' });
+  assert.equal(fake.procs.length, 0);
+  await runtime.capacity.close();
+});

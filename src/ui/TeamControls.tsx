@@ -54,7 +54,7 @@ export function PolicyForm({ run, act, busy }: { run: TeamRun; act: TeamAction; 
   useEffect(() => setPolicy(run.policy), [run.policy.version]);
   return <form className="team-form" onSubmit={event => { event.preventDefault(); void act('setRunPolicy', { policy: { integration: policy.integration, guards: policy.guards } }); }}><h3>Run policy</h3>
     <label>Apply results<select value={policy.integration} onChange={event => setPolicy({ ...policy, integration: event.target.value })}><option value="coordinator-managed">Coordinator decides</option><option value="ask">Ask before every Apply</option></select></label>
-    {Object.entries(policy.guards).map(([key, value]) => <label key={key}>{key.replaceAll('_', ' ')}<select value={value} onChange={event => setPolicy({ ...policy, guards: { ...policy.guards, [key]: event.target.value } })}><option value="allow">Allow</option><option value="ask">Ask before applying</option><option value="refuse">Refuse</option></select></label>)}
+    {Object.entries(policy.guards).filter(([key]) => key !== 'tests').map(([key, value]) => <label key={key}>{key.replaceAll('_', ' ')}<select value={value} onChange={event => setPolicy({ ...policy, guards: { ...policy.guards, [key]: event.target.value } })}><option value="allow">Allow</option><option value="ask">Ask before applying</option><option value="refuse">Refuse</option></select></label>)}
     <p className="field-help">Native permissions remain unchanged. Saving policy invalidates pending Apply approvals.</p><button disabled={busy}>Save policy</button>
   </form>;
 }

@@ -8,14 +8,12 @@ import { appendFileSync, closeSync, lstatSync, mkdirSync, openSync, readFileSync
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { providerResolver, TerminalManager } from '../core/terminal.mjs';
-import { isAlive, processIdentity, sameIdentity, resolveExecutable } from '../core/process.mjs';
+import { isAlive, processIdentity, sameIdentity } from '../core/process.mjs';
 import { redact } from '../core/validation.mjs';
 import { Observers } from './observers.mjs';
 import { EnvironmentSync } from './environment-sync.mjs';
 import { CapacityManager } from './capacity.mjs';
 import { ResourceProbe } from './resources.mjs';
-import { MacVerificationExecutor } from './macos-verification.mjs';
-import { VerificationManager } from './verification.mjs';
 import { ContinuationManager } from './continuation.mjs';
 import { detectProvider } from '../core/agents.mjs';
 import { WorkerManager } from './workers.mjs';
@@ -118,8 +116,7 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
   await workers.recover();
   const delivery = new DeliveryManager({ store, terminals: manager, log });
   continuation = new ContinuationManager({ store, terminals: manager });
-  const verification = new VerificationManager({ store, dataDir, executor: platform === 'darwin' ? new MacVerificationExecutor({ npm: resolveExecutable('npm', manager.env, platform) }) : null });
-  toolRouter = new ToolRouter({ store, terminals: manager, workers, verification, capacity: runId => capacity.view(runId) });
+  toolRouter = new ToolRouter({ store, terminals: manager, workers, capacity: runId => capacity.view(runId) });
   const toolConnections = new Set();
   const teamTimer = setInterval(() => {
     if (manager.disposed) return;
@@ -164,7 +161,6 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
       const modelActions = new Set(['createTask', 'updateTask', 'cancelTask', 'completeTask', 'requestWorker', 'requestWorkers', 'retireWorker', 'chooseResult', 'acceptResult', 'setRunPolicy', 'addDependency', 'removeDependency', 'finishRun']);
       if (modelActions.has(action)) { const result = await store[action](value); void capacity.reevaluate(); return result; }
       if (['resume', 'resumeCoordinator', 'retry', 'stop', 'snapshot', 'takeIn'].includes(action)) return workers[action](value);
-      if (action === 'verifyResult') return verification.run(value);
       if (action === 'resolveMessageInput') { const message = (await store.getRun(value.runId)).messages.find(row => row.id === value.messageId); if (!message?.delivery) throw new Error('No uncertain delivery exists'); return store.resolveMessageInput(message.id, { launchId: message.delivery.launchId, resolvedBy: 'user' }); }
       throw Object.assign(new Error('Unknown team action'), { code: 'FORBIDDEN' });
     },
@@ -279,7 +275,7 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
     closing = (async () => {
       log(`shutdown (stop sessions: ${stopSessions})`);
       clearInterval(idleTimer); clearInterval(observerTimer); clearInterval(environmentTimer); clearInterval(teamTimer);
-      await verification.close(); await capacity.close(); await workers.close(); await delivery.close();
+      await capacity.close(); await workers.close(); await delivery.close();
       await manager.dispose({ stopSessions });
       // Quit with "stop": the sessions this shutdown stopped started their drains when they exited;
       // their final events (a native ID first reported at the end, the agent's own clean end) are
