@@ -37,9 +37,9 @@ Worker model/references/soft time limits, itemwise batch requests, Claude's run-
 
 The user explicitly requested removal of all artificial ceilings because idle agents occupied slots needed for new work. New and existing runs now launch on demand. Stored numeric limits remain historical, unused data; no installed settings file is rewritten. The deprecated global-limit RPC returns CAPACITY_LIMITS_REMOVED. New policies carry a compatible null cap; saving any existing policy removes its obsolete cap/idle-reclamation fields from effective use without requiring unrelated permission changes. Native settings, exact conversation identities and immutable evidence remain unchanged.
 
-Resource warnings are informational in the composer and Team Capacity view. The sidebar counts running sessions instead of showing four slots. Regression coverage includes saved limits, unavailable/warning telemetry, five coordinators and five isolated workers, distinct port blocks, reservation integrity, pause between launches and no automatic stopping of idle agents. Historical four-session descriptions below document earlier milestones and are superseded by this section.
+Resource warnings are informational in the composer and Team Capacity view. The sidebar counts running sessions instead of showing four slots. Regression coverage includes saved limits, unavailable/warning telemetry, five coordinators and five isolated workers, distinct port blocks, reservation integrity, pause between launches, status-burst coalescing, shutdown during a drain and no automatic stopping of idle agents. Historical four-session descriptions below document earlier milestones and are superseded by this section.
 
-Validation results are recorded with this change after the full local fixture suites complete.
+Local combined validation: npm test **900 passed, 2 skipped** (902 total); type checking and build passed. The full Electron fixture run passed 161 cases with one platform skip and one stale sidebar assertion still expecting the removed four-slot meter. That assertion was updated and its focused Electron regression passed. Final complete CI results are recorded in [PR #35](https://github.com/adirz101/Journal/pull/35). Tests never use provider accounts or requests; authenticated native behavior was not revalidated by this change.
 
 ## Summary
 

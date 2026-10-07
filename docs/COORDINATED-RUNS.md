@@ -16,7 +16,7 @@ Windows team implementation and acceptance are deferred at the user's request on
 
 Claude's **Allow Journal team tools without prompts for this run** checkbox only adds the Journal MCP tool namespace to that launch's settings. Shell, file, network and other native provider permissions remain authoritative. Codex and Cursor keep their native tool permission behavior. No provider settings file in the user's home is rewritten.
 
-Worker requests take turns across runs. Setup starts one worker at a time to keep reservations and worktree creation ordered, with no fixed delay between successful starts. Pause, occupied port blocks and actual launch failures can still hold a request; safe-to-retry resource failures retain bounded backoff. Historical limits in storage are retained for audit, and older clients cannot save new limits.
+Worker requests take turns across runs. Setup starts one worker at a time to keep reservations and worktree creation ordered, with no fixed delay between successful starts. Pause, occupied port blocks and actual launch failures can still hold a request; safe-to-retry resource failures retain bounded backoff. Status bursts share a follow-up queue pass, while process-footprint measurements are sampled at most once every five seconds independently of launches. Historical limits in storage are retained for audit, and older clients cannot save new limits.
 
 ## Integration and recovery
 
@@ -40,6 +40,6 @@ The obsolete internal test-certification guard no longer applies, including save
 
 Automated tests use fixture CLIs, real temporary Git repositories, SQLite and Electron-native node-pty. They do not use provider logins, provider requests or secrets. Passing these checks is not authenticated provider acceptance.
 
-Still required before enabling the gated production transports or declaring M10b complete: local authenticated provider/version trials for MCP permissions, exact resume, continuation and live boundaries; mixed-provider conflict/review workflows; higher-cap calibration; and the real usefulness trial. The user separately authorized merge and a v0.1.3 testing package on 7 October 2026; that authorization does not establish native acceptance or enable the gated transports.
+Still required before enabling the gated production transports or declaring M10b complete: local authenticated provider/version trials for MCP permissions, exact resume, continuation and live boundaries; mixed-provider conflict/review workflows; resource scaling observations; and the real usefulness trial. The user separately authorized merge and a v0.1.3 testing package on 7 October 2026; that authorization does not establish native acceptance or enable the gated transports.
 
 See the [validation record and native worksheet](ORCHESTRATION-VALIDATION.md) for executable evidence and the remaining manual trials.
