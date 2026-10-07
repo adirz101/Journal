@@ -2,6 +2,26 @@
 
 7 October 2026. Preparing the user-authorized v0.1.3 publication and subsequent native testing.
 
+## Conversation-first coordinated work (7 October 2026)
+
+The user approved the conversation-first design for implementation through merge.
+The Team screen now defaults to real addressed instructions and durable,
+launch-bound coordinator updates, with a persistent task rail, contextual
+decisions, inline captured results and exact-capture file diffs. Manual mission,
+worker, resource and policy controls remain under Advanced views. The native
+terminal remains the full provider conversation; Journal does not manufacture a
+provider transcript or claim that a queued instruction was received. The current
+integration policy, native permissions, exact-ID continuation and immutable Apply
+bindings are preserved. Explicit worker review preparation does not accept or
+apply work and never reclaims an idle worker automatically.
+
+The `publish_update` tool admits only the current live coordinator grant. Reports
+are bounded/redacted, idempotent, persisted and ordered with the event cursor.
+Conversation history catches up incrementally without cancelling pagination on
+each event. Diff reads use immutable capture identities, literal recorded paths,
+disabled Git replacement/external conversion, and bounded redacted output. No
+new provider transport or test executor is introduced.
+
 ## Agent orchestration implementation (6 October 2026)
 
 Active development is on `codex/agent-orchestration` in a managed worktree. The full [implementation plan](AGENT-ORCHESTRATION-IMPLEMENTATION-PLAN.md) remains the target. The macOS implementation now includes the full Team workflow and additional recovery paths. **M10b acceptance is not complete**: authenticated provider trials and usefulness evidence remain separate. Windows team work is deferred at the user's explicit request on 6 October 2026. See [Coordinated runs](COORDINATED-RUNS.md) for the implemented paths and capability boundaries. Settings exposes an off-by-default **Coordinated runs** experiment. On 7 October 2026 the user authorized merging the implementation and preparing v0.1.3 for download and manual testing. The user then explicitly authorized full publication. The tag workflow produces a draft, which will be published after artifact verification; native acceptance limitations remain explicit. See the [v0.1.3 notes](releases/v0.1.3.md).

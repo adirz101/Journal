@@ -1359,7 +1359,8 @@ export class JournalStore {
   previewResult(input) { return this.orchestration.gates.preview(input); }
   resultDiff({ resultId, path }) {
     const result = this.getResult(text(resultId, 'result ID', 100));
-    const file = relativePath(path);
+    text(path, 'captured file path', 4096);
+    const file = path; // Preserve exact recorded spelling, including surrounding spaces.
     if (!result.changedFiles?.some(entry => entry.path === file) || isSensitivePath(file)) throw new Error('This file is not available in the selected captured result');
     const env = this.environments.record(result.environmentId);
     const root = this.project(env.projectId).root;

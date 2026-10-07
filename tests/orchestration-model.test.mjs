@@ -30,6 +30,9 @@ test('coordinator updates are launch-bound, durable and idempotent without becom
   assert.throws(() => f.store.publishUpdate({ ...input, requestId: 'forged', callerId: 'worker:other' }), { code: 'FORBIDDEN' });
   assert.throws(() => f.store.publishUpdate({ ...input, requestId: 'late', launchId: 'old' }), { code: 'STALE_LAUNCH' });
   assert.throws(() => f.store.publishUpdate({ ...input, requestId: 'huge', summary: 'x'.repeat(2001) }));
+  const redacted = f.store.publishUpdate({ ...input, requestId: 'sensitive', summary: 'api_key=fixture-sensitive-value' });
+  assert.equal(redacted.summary, 'api_key=[redacted]');
+  assert.doesNotMatch(JSON.stringify(f.open().runEvents(run.id)), /fixture-sensitive-value/);
 });
 
 test('durable messages use addressed pull receipts and never replay uncertain staged input', t => {
