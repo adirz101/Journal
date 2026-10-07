@@ -84,7 +84,7 @@ export class Orchestration {
       this.store.project(input.projectId);
       const run = { id, projectId: input.projectId, state: 'creating', provider: choice(input.provider ?? 'claude', ['claude', 'codex'], 'coordinator provider'), goal: safeText(input.goal, 'goal', 20000), logicalBranch: text(input.logicalBranch, 'branch', 200),
         journalToolsAllowed: input.journalToolsAllowed === true, coordinatorSessionId: null, coordinatorHistory: [], paused: false, createdAt: now(), endedAt: null,
-        policy: { version: 1, integration: 'coordinator-managed', caps: { maxConcurrentWorkers: 3 }, idleReclamation: false, guards: { deletions: 'ask', outside_scope: 'allow', infrastructure: 'allow', tests: 'allow', executable: 'ask', apply_rate: 'ask' } } };
+        policy: { version: 1, integration: 'coordinator-managed', caps: { maxConcurrentWorkers: 3 }, idleReclamation: false, guards: { deletions: 'ask', outside_scope: 'allow', infrastructure: 'allow', executable: 'ask', apply_rate: 'ask' } } };
       this.db.prepare('INSERT INTO runs VALUES(?,?,?,?)').run(id, run.projectId, run.state, JSON.stringify(run));
       this.event(id, 'run.created', { goal: run.goal }); return run;
     });
@@ -359,8 +359,12 @@ export class Orchestration {
       for (const row of this.db.prepare("SELECT id,body FROM orchestration_operations WHERE phase='prepared'").all()) {
         const operation = JSON.parse(row.body); if (operation.kind !== 'verify_result') continue;
         const result = this.row('results', operation.input.resultId);
-        for (const check of result.checks ?? []) if (check.operationId === row.id && check.state === 'running') this.store.recordResultCheck(result.id, { ...check, state: 'interrupted', exit: null, endedAt: now() });
-        this.failExternal(row.id, { code: 'CHECK_INTERRUPTED', message: 'The runtime stopped before verification completed. Request a new check explicitly.' });
+        // Retain receipts from the retired verifier. A pending legacy check may
+        // be interrupted after restart, but never resumed or declared successful.
+        const checks = (result.checks ?? []).map(check => check.operationId === row.id && check.state === 'running'
+          ? { ...check, state: 'interrupted', exit: null, endedAt: now() } : check);
+        if (checks.some((check, index) => check !== result.checks[index])) this.db.prepare('UPDATE results SET body=? WHERE id=?').run(JSON.stringify({ ...result, checks, testsVerified: 'unknown' }), result.id);
+        this.failExternal(row.id, { code: 'CHECK_INTERRUPTED', message: 'The earlier Journal verifier stopped before this check completed and has been retired. This check will not rerun; use project-appropriate checks through the native agent.' });
       }
       return attempts.length;
     });

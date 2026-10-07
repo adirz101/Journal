@@ -885,3 +885,11 @@ test('Claude observed turns flow through MCP reports into stopped result accepta
   assert.equal(readFileSync(join(f.repo, 'README.md'), 'utf8'), 'Fixture\n', 'acceptance alone never applies');
   await runtime.capacity.close();
 });
+
+test('desktop cannot invoke the retired isolated verifier', async t => {
+  const f = fixture(t); const { runtime, fake } = await f.boot();
+  const desktop = client(f, t); await desktop.connect();
+  await assert.rejects(desktop.call('teamAction', { action: 'verifyResult', input: { runId: 'run', resultId: 'result', command: ['npm', 'test'], requestId: 'retired' } }), { code: 'FORBIDDEN' });
+  assert.equal(fake.procs.length, 0);
+  await runtime.capacity.close();
+});

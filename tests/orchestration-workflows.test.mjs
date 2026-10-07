@@ -209,14 +209,20 @@ for (const seam of ['afterTakeInMerge', 'afterTakeInBase', 'afterTakeInComplete'
 });
 
 test('a check interrupted by runtime restart remains unknown and cannot be replayed as successful evidence', { skip: process.platform === 'win32' }, async t => {
-  const { store, run } = fixture(t); const task = store.createTask(req('task', { runId: run.id, title: 'Checks' })); const attempt = store.requestWorker(req('worker', { taskId: task.id, provider: 'claude' }));
+  const { store, run, root } = fixture(t); const task = store.createTask(req('task', { runId: run.id, title: 'Checks' })); const attempt = store.requestWorker(req('worker', { taskId: task.id, provider: 'claude' }));
   const env = await store.createEnvironment({ projectId: run.projectId, logicalBranch: 'main', attemptId: attempt.id });
   store.admitAttempt(attempt.id, { launchId: 'launch' }); store.setAttemptState(attempt.id, 'working', { launchId: 'launch', turnId: 'turn', environmentId: env.id });
   const captured = store.snapshotEnvironment(env.id, { attemptId: attempt.id, launchId: 'launch', turnId: 'turn' });
   const result = store.recordResult({ environmentId: env.id, resultId: captured.result.resultId, attemptId: attempt.id, launchId: 'launch', turnId: 'turn' });
   const input = req('verify', { runId: run.id, resultId: result.id, command: ['npm', 'test'] }); const operation = store.prepareRunOperation('verify_result', input, run.id);
-  store.recordResultCheck(result.id, { id: 'check', operationId: operation.id, resultId: result.id, treeOid: result.treeOid, command: input.command, state: 'running', exit: null, provenance: 'isolated-verification' });
+  const historical = { id: 'finished-check', resultId: result.id, treeOid: result.treeOid, command: ['node', 'check.cjs'], state: 'finished', exit: 0, provenance: 'isolated-verification', isolation: 'fixture-proof' };
+  const pending = { id: 'check', operationId: operation.id, resultId: result.id, treeOid: result.treeOid, command: input.command, state: 'running', exit: null, provenance: 'isolated-verification' };
+  store.db.prepare('UPDATE results SET body=? WHERE id=?').run(JSON.stringify({ ...result, checks: [pending, historical] }), result.id);
   store.recoverOrchestration(); const saved = store.getRun(run.id).results[0]; assert.equal(saved.checks[0].state, 'interrupted'); assert.notEqual(saved.testsVerified, 'passed');
+  assert.equal(JSON.stringify(saved.checks[1]), JSON.stringify(historical), 'finished historical receipts remain unchanged');
+  const reopened = new JournalStore(join(root, 'data', 'journal.sqlite'));
+  try { assert.equal(JSON.stringify(reopened.getRun(run.id).results[0].checks[1]), JSON.stringify(historical)); }
+  finally { reopened.close(); }
   assert.throws(() => store.prepareRunOperation('verify_result', input, run.id), { code: 'CHECK_INTERRUPTED' });
 });
 
@@ -260,4 +266,15 @@ test('run goals, tasks, decisions and external intents do not persist credential
   const input = req('private-check', { runId: created.id, resultId: 'fixture', command: ['node', '-e', canary] }); store.prepareRunOperation('verify_result', input, created.id);
   for (const table of ['runs', 'tasks', 'run_events', 'orchestration_operations']) assert.equal(store.db.prepare(`SELECT body FROM ${table}`).all().some(row => row.body.includes(canary)), false, table);
   assert.throws(() => store.prepareRunOperation('verify_result', { ...input, command: ['node', '-e', canary + 'different'] }, created.id), { code: 'REQUEST_MISMATCH' });
+});
+
+test('older test policy metadata does not permit loosening another integration guard', t => {
+  const { store, run } = fixture(t);
+  const legacy = { ...run, policy: { ...run.policy, guards: { ...run.policy.guards, tests: 'refuse' } } };
+  store.db.prepare('UPDATE runs SET body=? WHERE id=?').run(JSON.stringify(legacy), run.id);
+  const tightened = store.setRunPolicy(req('tighten-legacy', { runId: run.id, policy: { guards: { outside_scope: 'refuse' } } }));
+  assert.equal(tightened.policy.guards.tests, 'refuse');
+  assert.equal(tightened.policy.guards.outside_scope, 'refuse');
+  assert.throws(() => store.setRunPolicy(req('loosen-legacy', { runId: run.id, policy: { guards: { outside_scope: 'allow' } } })), { code: 'USER_REQUIRED' });
+  assert.equal(store.getRun(run.id).policy.guards.outside_scope, 'refuse');
 });

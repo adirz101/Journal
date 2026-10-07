@@ -44,3 +44,10 @@ test('worker reports cannot use a stale or identity-ambiguous live turn', async 
     await assert.rejects(call(tool, { requestId: tool, turnId: 'new-turn', status: 'done', summary: 'Ambiguous report' }), { code: 'STALE_TURN' });
   }
 });
+
+test('coordinators cannot list or invoke the retired isolated verifier', async () => {
+  const router = new ToolRouter({ store: {}, terminals: { entry: () => ({ launchId: 'launch', exited: false }) }, workers: {} });
+  const grant = router.issue({ sessionId: 'session', launchId: 'launch', role: 'coordinator', runId: 'run' });
+  assert.equal(router.tools(grant.id).includes('verify_result'), false);
+  await assert.rejects(router.call(grant.id, { tool: 'verify_result', args: { requestId: 'check', resultId: 'result', command: ['npm', 'test'] } }), { code: 'FORBIDDEN' });
+});

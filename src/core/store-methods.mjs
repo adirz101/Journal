@@ -11,7 +11,6 @@ export const STORE_METHODS = [
   'makeRunDigest', 'holdMessage', 'activeRuns',
   'capacitySamples', 'recordCapacitySample',
   'recoverIntegrations', 'prepareRunOperation', 'finishRunOperation', 'failRunOperation',
-  'recordResultCheck',
   'remindWorkers', 'pauseRun', 'queuedAttempts', 'queueAttempt', 'admitAttempt', 'failAttemptLaunch', 'recoverOrchestration',
   'sendMessage', 'getInbox', 'ackMessage', 'reserveMessage', 'deliveryAllowed', 'recordMessageDelivery',
   'cancelMessage', 'resolveMessageInput', 'resendMessage', 'rebindMessage', 'recoverMessages', 'expireMessages',

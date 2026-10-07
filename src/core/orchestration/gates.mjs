@@ -1,5 +1,4 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { git } from '../project.mjs';
 import { refuse } from './model.mjs';
 
 export function hardGates(preview, attempt, run, task = {}) {
@@ -22,7 +21,8 @@ export function guards(preview, task, policy, result, recentApplies = 0) {
   const paths = task.scope?.paths ?? [];
   if (paths.length && changes.some(file => !paths.some(path => file.path === path || file.path.startsWith(path.endsWith('/') ? path : `${path}/`)))) add('outside_scope', 'Files outside the declared task scope changed');
   if (changes.some(file => /(^\.github\/|(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|Cargo\.lock)$|(^|\/)release)/i.test(file.path))) add('infrastructure', 'CI, release or dependency-lock files changed');
-  if (preview.knownTestCommand && result.testsVerified !== 'passed') add('tests', 'No passing check is bound to this result tree');
+  // Older policies may retain a tests guard. Its retired internal-certification
+  // requirement no longer applies; native test reports remain claims.
   if (preview.executable == null) add('executable', 'Executable-bit changes could not be verified', true);
   else if (preview.executable.length) add('executable', 'An executable bit was added');
   if (recentApplies >= 5) add('apply_rate', 'At least five results were applied in the last ten minutes');
@@ -41,7 +41,6 @@ export class IntegrationGate {
     const env = this.store.environments.record(result.environmentId);
     if (env.result?.resultId !== result.id || env.result.tree !== result.treeOid) refuse('RESULT_CHANGED', 'The environment has a newer result');
     const preview = this.store.environments.preview(env.id, { retain });
-    try { preview.knownTestCommand = typeof JSON.parse(git(this.store.project(run.projectId).root, ['show', `${result.resultCommit}:package.json`])).scripts?.test === 'string'; } catch { preview.knownTestCommand = false; }
     const task = this.model.row('tasks', attempt.taskId);
     const recent = this.db.prepare("SELECT count(*) AS count FROM run_events WHERE run_id=? AND kind='result.applied' AND at>?").get(run.id, new Date(Date.now() - 600000).toISOString()).count;
     const binding = { attemptId: attempt.id, resultId: result.id, treeOid: result.treeOid, base: env.base, target: run.logicalBranch, targetHead: preview.logicalHead,
