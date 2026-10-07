@@ -852,6 +852,14 @@ test('Claude observed turns flow through MCP reports into stopped result accepta
   const first = await worker.call('get_context');
   assert.equal(typeof first.turnId, 'string');
   assert.equal(first.attempt.turnId, first.turnId);
+  runtime.manager.ingest(session.id, { event: 'UserPromptSubmit' });
+  const unobserved = await worker.call('get_context');
+  assert.equal(unobserved.turnId, null);
+  assert.equal(unobserved.attempt.turnId, null);
+  await assert.rejects(worker.call('report_result', { requestId: 'invalid-identity', turnId: first.turnId, status: 'done', summary: 'Unbound report' }), { code: 'STALE_TURN' });
+  prompt();
+  const rebound = await worker.call('get_context');
+  first.turnId = rebound.turnId;
   await worker.call('report_result', { requestId: 'first-report', turnId: first.turnId, status: 'partial', summary: 'First draft' });
   prompt();
   const second = await worker.call('get_context');

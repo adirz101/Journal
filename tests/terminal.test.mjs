@@ -1109,3 +1109,13 @@ test('missing or mismatched Claude identity cannot establish a reportable turn',
   f.manager.ingest(session.id, { event: 'UserPromptSubmit', nativeId: session.nativeId });
   assert.equal(entry.currentTurn, null, 'an ambiguous native identity stays unreportable');
 });
+
+for (const identity of [undefined, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']) test(`Claude invalid prompt identity revokes an established turn (${identity ? 'mismatch' : 'missing'})`, async t => {
+  const f = runtime(t);
+  const { session } = await f.manager.start({ projectId: f.project.id, provider: 'claude' });
+  f.manager.ingest(session.id, { event: 'UserPromptSubmit', nativeId: session.nativeId });
+  assert.ok(f.manager.entries.get(session.id).currentTurn);
+  f.manager.ingest(session.id, { event: 'UserPromptSubmit', nativeId: identity });
+  assert.equal(f.manager.entries.get(session.id).currentTurn, null);
+  assert.equal(f.store.getSession(session.id).turnId, null);
+});
