@@ -21,7 +21,6 @@ import { MAX_REFERENCES, pathFromCwd, referencesBlock } from './references.mjs';
 import { deliveryCounts, memoryChecks, memoryOrigins, noteIds, sessionProposals, sessionSummary, staleNoteDiff, staleNotesForSession } from './insights.mjs';
 import { Environments, REF as ENV_REF } from './environments.mjs';
 import { migrateOrchestration } from './orchestration/schema.mjs';
-import { testEvidenceState } from './orchestration/results.mjs';
 import { Orchestration } from './orchestration/runs.mjs';
 
 const LIVE = "('starting','running','waiting','stopping')";
@@ -1354,17 +1353,6 @@ export class JournalStore {
   prepareRunOperation(kind, input, runId) { return this.orchestration.prepareExternal(kind, input, runId); }
   finishRunOperation(id, outcome) { return this.orchestration.finishExternal(id, outcome); }
   failRunOperation(id, error) { return this.orchestration.failExternal(id, error); }
-  recordResultCheck(id, check) {
-    return this.orchestration.atomic(() => {
-      const result = this.orchestration.row('results', id);
-      if (check.resultId !== id || check.treeOid !== result.treeOid || check.provenance !== 'isolated-verification') throw Object.assign(new Error('Check evidence does not match this tree'), { code: 'RESULT_CHANGED' });
-      const checks = [...(result.checks ?? []).filter(item => item.id !== check.id), check];
-      let hasConfiguredTest = false;
-      try { const env = this.environments.record(result.environmentId); hasConfiguredTest = typeof JSON.parse(git(this.project(env.projectId).root, ['show', `${result.resultCommit}:package.json`])).scripts?.test === 'string'; } catch { /* Unknown configuration cannot certify tests. */ }
-      const testsVerified = testEvidenceState(checks, hasConfiguredTest);
-      this.db.prepare('UPDATE results SET body=? WHERE id=?').run(JSON.stringify({ ...result, checks, testsVerified }), id); return check;
-    });
-  }
   runOperationOutcome(kind, input) { return this.orchestration.operationOutcome(kind, input); }
   requestResume(input) { return this.orchestration.requestResume(input); }
   retryWorker(input) { return this.orchestration.retryWorker(input); }

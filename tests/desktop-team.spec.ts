@@ -36,7 +36,7 @@ const {clientFromEnv}=await import(${JSON.stringify(moduleUrl)});const client=cl
 let context;for(let i=0;i<100;i++){context=await client.call('get_context');if(context.turnId)break;await new Promise(r=>setTimeout(r,50))}
 if(!context.turnId)throw new Error('Observed Claude prompt did not receive a turn ID');
 fs.writeFileSync('README.md','Fixture worker completed\\n');
-await client.call('report_result',{requestId:'fixture-result',turnId:context.turnId,status:'done',summary:'Fixture worker completion report'});
+await client.call('report_result',{requestId:'fixture-result',turnId:context.turnId,status:'done',summary:'Fixture worker completion report',testsClaimed:[{command:'project-specific check',outcome:'not-run'}]});
 hook('Stop');client.close();fs.writeFileSync(${JSON.stringify(join(root,'reported'))},'reported');
 })().catch(e=>{require('node:fs').writeFileSync(${JSON.stringify(join(root,'fixture-error'))},e.stack);console.error(e.message)})}
 `); chmodSync(join(bin, 'claude'), 0o755);
@@ -63,7 +63,9 @@ hook('Stop');client.close();fs.writeFileSync(${JSON.stringify(join(root,'reporte
     await team.getByRole('button', { name: 'Accept captured result', exact: true }).click();
     await team.getByRole('button', { name: 'Preview Apply', exact: true }).click();
     await expect(team.getByRole('button', { name: 'Apply result', exact: true })).toBeEnabled();
-    await team.getByRole('button', { name: 'Run tests in isolation', exact: true }).first().click(); await expect(team).toContainText('Tests Passed', { timeout: 15000 });
+    await expect(team.getByRole('button', { name: 'Run tests in isolation', exact: true })).toHaveCount(0);
+    await expect(team).toContainText('Worker test report: project-specific check — not-run');
+    await expect(team).not.toContainText('Tests Passed');
     await team.getByRole('button', { name: 'Pause run', exact: true }).click(); await expect(team.getByRole('button', { name: 'Continue run', exact: true })).toBeVisible();
     await page.screenshot({ path: resolve('.cache/team-fixture.png') });
   } finally { await app.close(); await expect.poll(() => existsSync(join(data, 'runtime.json')), { timeout: 20000 }).toBe(false); rmSync(root, { recursive: true, force: true }); }
