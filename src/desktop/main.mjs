@@ -729,6 +729,7 @@ const actions = {
   resendMessage: input => runtime.call('resendMessage', input),
   resumeAutomatic: input => runtime.call('resumeAutomatic', input),
   previewResult: input => runtime.call('previewResult', input),
+  resultDiff: input => store.resultDiff(input),
   applyResult: input => runtime.call('applyResult', input),
   decideApproval: input => runtime.call('decideApproval', input),
   // ----- Isolated sessions: the window's view of the headless service (environments.mjs) -----

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { conversationEntries, messageDeliveryLabel, shortRunTitle } from '../src/core/story/team-conversation.mjs';
+import { conversationEntries, messageDeliveryLabel, shortRunTitle, currentCompletionReport } from '../src/core/story/team-conversation.mjs';
 
 test('conversation follows event order and includes only human messages and explicitly published updates', () => {
   const messages = [{ id: 'human', sender: 'desktop', text: 'Change scope', state: 'submitted', recipient: 'coordinator' }, { id: 'digest', sender: 'runtime:digest', text: 'internal', recipient: 'coordinator' }];
@@ -11,4 +11,11 @@ test('conversation follows event order and includes only human messages and expl
   assert.match(messageDeliveryLabel('uncertain'), /uncertain/i);
   assert.equal(shortRunTitle('A short goal'), 'A short goal');
   assert.ok(shortRunTitle('long '.repeat(80)).length <= 81);
+});
+test('completion cards never promote a previous launch or turn report', () => {
+  const attempt = { launchId: 'launch', turnId: 'turn', reports: { result: { launchId: 'launch', turnId: 'turn', summary: 'Done' } } };
+  assert.equal(currentCompletionReport(attempt).summary, 'Done');
+  assert.equal(currentCompletionReport({ ...attempt, launchId: 'new' }), null);
+  assert.equal(currentCompletionReport({ ...attempt, turnId: 'new' }), null);
+  assert.equal(currentCompletionReport({ ...attempt, turnId: null }), null);
 });

@@ -6,7 +6,7 @@ export function conversationEntries(events, messages) {
       return [{ id: event.id, at: event.at, source: 'coordinator', text: event.body.summary }];
     if (event.kind !== 'message.queued') return [];
     const message = byId.get(event.body?.messageId);
-    if (!message || message.sender !== 'desktop') return [];
+    if (!message || message.sender !== 'desktop' || message.recipient !== 'coordinator') return [];
     return [{ id: event.id, at: event.at, source: 'user', text: message.text, message }];
   });
 }
@@ -17,4 +17,7 @@ export function shortRunTitle(goal) {
   const line = goal.trim().split(/\r?\n/)[0] || 'Coordinated work';
   return line.length > 80 ? line.slice(0, 79).trimEnd() + '…' : line;
 }
-
+export function currentCompletionReport(attempt) {
+  const report = attempt.reports?.result;
+  return report && attempt.launchId && attempt.turnId && report.launchId === attempt.launchId && report.turnId === attempt.turnId ? report : null;
+}

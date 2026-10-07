@@ -15,7 +15,7 @@ export const STORE_METHODS = [
   'sendMessage', 'getInbox', 'ackMessage', 'reserveMessage', 'deliveryAllowed', 'recordMessageDelivery',
   'cancelMessage', 'resolveMessageInput', 'resendMessage', 'rebindMessage', 'recoverMessages', 'expireMessages',
   'addDependency', 'removeDependency', 'requestWorker', 'setAttemptState', 'setPresence',
-  'reportWorker', 'settleAttempt', 'recordResult', 'getResult', 'acceptResult',
+  'reportWorker', 'settleAttempt', 'recordResult', 'getResult', 'resultDiff', 'acceptResult',
   'openProject',
   'storedProject',
   'renameProject',

@@ -6,13 +6,36 @@ Windows team implementation and acceptance are deferred at the user's request on
 
 ## Working with a team
 
-- **Plan** shows tasks, dependencies and recorded decisions. Creating a task does not start a worker. Request workers explicitly; blocked tasks occupy no session slot. Requests can include a model, references, a soft time limit or alternative attempts.
+The default **Conversation** view combines your addressed instructions, explicitly
+published coordinator updates, decision cards and captured results. A persistent
+task rail shows work state and opens each worker's native terminal. **Expand
+mission** and **Advanced views** expose manual task, worker, message, resource and
+policy controls. **History** shows the durable event record. No initial numeric
+worker configuration is required.
+
+This is not a complete provider transcript. Coordinators publish bounded updates
+through the launch-bound `publish_update` tool; the original terminal remains one
+click away. Updates are coordinator reports, not independently verified system
+evidence. Messages retain queued, submitted, acknowledged and uncertain states.
+An acknowledgment proves receipt only. Drafts survive returning from a terminal;
+ambiguous delivery requires inspecting the actual recipient input before resending.
+
+Result cards show reported checks separately from immutable captured files. The
+file viewer reads the selected result's saved base and commit, validates its tree
+identity, and never follows later worktree edits. Large diffs may be truncated or
+unavailable. Review does not stop a worker automatically: an explicit **Stop worker
+and prepare review** action affects only that worker, and does not accept or apply
+its work. Preview, acceptance, policy guards and Apply retain their exact-result
+bindings. The existing coordinator-managed policy remains the default; users can
+choose **Ask before every Apply** in the advanced policy view.
+
+- **Mission** shows tasks, dependencies and recorded decisions. Creating a task does not start a worker. Request workers explicitly; blocked tasks occupy no session slot. Requests can include a model, references, a soft time limit or alternative attempts.
 - **Workers** shows work state separately from process presence. Open a terminal, stop a worker, continue its exact conversation, retry from a captured result, or transfer its settled folder to another provider. Unknown surviving processes prevent folder reuse.
 - **Results** separates the worker's report from captured files, agent test reports and review claims. Review tasks pin an exact result or branch head. A later result does not inherit an earlier verdict. Taking in a new review subject invalidates readiness until a new turn reports again.
 - **Messages** records receipt, delivery uncertainty and held reasons. Reading and acknowledging a message proves receipt, not completion. Never automatically resend an uncertain delivery; inspect and clear the recipient's input first.
-- **Capacity** shows measured resource signals and explicit fallback limitations. Memory warnings and unavailable measurements do not block launch. Existing saved session/run/worker limits are no longer enforced. Idle agents remain open until you stop them. Soft time limits issue reminders; they do not kill a worker or declare success.
+- **Resources** shows measured resource signals and explicit fallback limitations. Memory warnings and unavailable measurements do not block launch. Existing saved session/run/worker limits are no longer enforced. Idle agents remain open until you stop them. Soft time limits issue reminders; they do not kill a worker or declare success.
 - **Policy** controls integration guards. Only the user can loosen policy. Changing policy expires pending Apply approvals.
-- **Story** reconstructs decisions and outcomes from durable events. Worker memory proposals appear with their exact result and require a visible user review before they are remembered. An unapplied result does not acquire provenance from another result's Apply.
+- **History** reconstructs decisions and outcomes from durable events. Worker memory proposals appear with their exact result and require a visible user review before they are remembered. An unapplied result does not acquire provenance from another result's Apply.
 
 Claude's **Allow Journal team tools without prompts for this run** checkbox only adds the Journal MCP tool namespace to that launch's settings. Shell, file, network and other native provider permissions remain authoritative. Codex and Cursor keep their native tool permission behavior. No provider settings file in the user's home is rewritten.
 

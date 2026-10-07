@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { existsSync, realpathSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { git, inspectProject } from './project.mjs';
-import { captureEvidence, validateEvidence } from './evidence.mjs';
+import { captureEvidence, validateEvidence, isSensitivePath } from './evidence.mjs';
 import { choice, relativePath, refuseCredentials, text } from './validation.mjs';
 import { branchDraft, commitsSince, overviewDraft, PLACEHOLDER } from './status.mjs';
 import { aliasesFor, areaMatches, isDuplicate, possibleConflict, queryTerms } from './retrieval.mjs';
@@ -1357,6 +1357,20 @@ export class JournalStore {
   requestResume(input) { return this.orchestration.requestResume(input); }
   retryWorker(input) { return this.orchestration.retryWorker(input); }
   previewResult(input) { return this.orchestration.gates.preview(input); }
+  resultDiff({ resultId, path }) {
+    const result = this.getResult(text(resultId, 'result ID', 100));
+    const file = relativePath(path);
+    if (!result.changedFiles?.some(entry => entry.path === file) || isSensitivePath(file)) throw new Error('This file is not available in the selected captured result');
+    const env = this.environments.record(result.environmentId);
+    const root = this.project(env.projectId).root;
+    // Both revisions come from the immutable capture, never the current worktree.
+    // Disable external diff/text conversion and keep output below the IPC limit.
+    if (git(root, ['--no-replace-objects', 'rev-parse', `${result.resultCommit}^{tree}`]) !== result.treeOid) throw new Error('The captured result tree does not match its saved identity');
+    let patch;
+    try { patch = git(root, ['--no-replace-objects', '--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', result.base, result.resultCommit, '--', file]); }
+    catch { throw new Error('This captured diff is too large or unavailable to preview. Inspect the saved capture in the worker terminal before applying.'); }
+    return { resultId: result.id, treeOid: result.treeOid, base: result.base, path: file, patch: redact(patch, 160000), truncated: patch.length > 160000 };
+  }
   applyResult(input) { return this.orchestration.gates.request(input); }
   decideApproval(input) { return this.orchestration.gates.decide(input); }
   updateTask(input) { return this.orchestration.updateTask(input); }
