@@ -54,6 +54,7 @@ test('retryNow after failed launches again', async t => {
   c.on('failed', message => failures.push(message));
   for (let i = 0; i < 4; i++) await assert.rejects(c.connect());
   assert.equal(launches, 3); assert.ok(failures.length >= 1, 'the three-launch stop was reported');
+  assert.match(failures.at(-1), /runtime-stderr\.log/, 'startup import failures are in the stderr log');
   assert.equal(c.retryNow(), true);
   await until(() => launches === 4);
   await until(() => c.wake); // the loop is waiting again, without launching more

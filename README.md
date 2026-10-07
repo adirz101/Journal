@@ -83,6 +83,8 @@ npm ci
 npm run dev
 ```
 
+After pulling updates or switching branches, run `npm ci` again when dependencies change. Local start commands check installed package versions before opening the app and print the repair command if they are missing or outdated.
+
 To run the production renderer:
 
 ```sh

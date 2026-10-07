@@ -340,7 +340,7 @@ export const branches = {
 // Phase 8: failure states (board 9): one honest sentence and one next step each.
 export const states = {
   switchNow: 'Switch now…',
-  lostTitle: 'Lost connection to the session runtime', lostBody: 'Your agents may still be running. Journal is trying again every few seconds.',
+  lostTitle: 'Lost connection to the session runtime', lostBody: 'Your agents may still be running. Journal will reconnect when the runtime is available.',
   reconnectNow: 'Reconnect now', reconnecting: 'Reconnecting…',
   crashTitle: 'The session runtime stopped unexpectedly',
   // Counts recovery.total: the sessions list stops at 100 rows.

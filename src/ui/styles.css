@@ -630,3 +630,8 @@ button.link,.link-button{border:0;background:transparent;padding:0;border-radius
 .environment-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px}.environment-actions button{font-size:var(--text-meta)}
 .environment-details{margin-top:12px;font-size:var(--text-meta)}.environment-details summary{cursor:pointer;color:var(--tx3)}.environment-details dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 10px;margin:8px 0}.environment-details dt{color:var(--tx3)}.environment-details dd{margin:0;overflow-wrap:anywhere}
 .note-unapplied{color:var(--amb)}
+
+/* Connection notices reserve their own space instead of shrinking over the composer. */
+.runtime-live{flex-shrink:0}
+.runtime-banner-actions{display:flex;gap:8px;flex-wrap:wrap}
+.runtime-banner[data-expanded=false]{flex-direction:row;align-items:center;justify-content:space-between;flex-wrap:wrap}
