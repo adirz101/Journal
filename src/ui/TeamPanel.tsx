@@ -39,7 +39,13 @@ export function TeamPanel({ runId, sessions, onSelect }: { runId: string; sessio
   const [run, setRun] = useState<TeamRun | null>(null); const [tab, setTab] = useState<Tab>('Conversation');
   const [advanced, setAdvanced] = useState(false);
   const [draft, setDraft] = useState(() => drafts.get(runId) ?? '');
-  const updateDraft = (value: string) => { setDraft(value); drafts.set(runId, value); if (drafts.size > 20) drafts.delete(drafts.keys().next().value!); };
+  const updateDraft = (value: string, expected?: string) => {
+    // A send may complete after this panel unmounts and another panel edits the
+    // same run. Compare against the shared latest draft, not a stale component ref.
+    if (expected !== undefined && drafts.get(runId) !== expected) return;
+    setDraft(current => expected === undefined || current === expected ? value : current);
+    drafts.set(runId, value); if (drafts.size > 20) drafts.delete(drafts.keys().next().value!);
+  };
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [message, setMessage] = useState(''); const [recipient, setRecipient] = useState('coordinator');
   const [events, setEvents] = useState<RunEvent[]>([]);
   const generation = useRef(0);
