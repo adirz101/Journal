@@ -146,6 +146,11 @@ export class WorkerManager {
       if (!live) await this.store.setPresence(attempt.id, session.status === 'orphaned' || !Array.isArray(session.survivors) || session.survivors.length ? 'lost' : 'paused', { launchId: attempt.launchId });
       return;
     }
+    // An explicitly unknown turn revokes the previous report fence, including
+    // while idle or waiting for permission. Missing legacy metadata is not a new turn.
+    if (Object.hasOwn(session, 'turnId') && session.turnId !== attempt.turnId) {
+      attempt = await this.store.setAttemptState(attempt.id, attempt.state, { launchId: attempt.launchId, turnId: session.turnId });
+    }
     if (!live) {
       await this.store.setPresence(attempt.id, session.status === 'orphaned' || !Array.isArray(session.survivors) || session.survivors.length ? 'lost' : 'paused', { launchId: attempt.launchId });
       if (session.status === 'orphaned' || !Array.isArray(session.survivors) || session.survivors.length) return;

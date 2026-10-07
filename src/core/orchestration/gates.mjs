@@ -10,7 +10,9 @@ export function hardGates(preview, attempt, run, task = {}) {
   if (preview.blockedBy?.length) failures.push('DIRTY_OVERLAP');
   if (preview.busy) failures.push('BRANCH_BUSY');
   if (preview.excluded?.length || preview.nested?.length) failures.push('EXCLUDED_CONTENT');
-  if (!['ready', 'integrated'].includes(attempt.state) || attempt.presence === 'live' || attempt.presence === 'lost') failures.push('NOT_IDLE');
+  if (attempt.presence === 'live' || attempt.presence === 'lost') failures.push('NOT_IDLE');
+  else if (attempt.state === 'result_available') failures.push('RESULT_NOT_ACCEPTED');
+  else if (!['ready', 'integrated'].includes(attempt.state)) failures.push('WORK_NOT_READY');
   return { pass: failures.length === 0, failures };
 }
 export function guards(preview, task, policy, result, recentApplies = 0) {

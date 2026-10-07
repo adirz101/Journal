@@ -45,9 +45,13 @@ export class ToolRouter {
     const recipient = grant.role === 'coordinator' ? 'coordinator' : grant.attemptId;
     const receiptBound = ['inbox', 'ack', 'get_message', 'report_progress', 'report_result', 'ask', 'report_blocked'].includes(tool);
     const input = { ...args, runId: grant.runId, callerId: `${grant.role}:${grant.attemptId ?? grant.runId}`, ...(receiptBound ? { launchId: grant.launchId, sessionId: grant.sessionId } : {}) };
-    const report = kind => this.store.reportWorker({ ...input, attemptId: grant.attemptId, kind });
+    const reportingTurn = entry.identityAmbiguous ? null : entry.currentTurn;
+    const report = kind => {
+      if (!reportingTurn || input.turnId !== reportingTurn) refuse('STALE_TURN', 'Read get_context for the current observed turn before reporting');
+      return this.store.reportWorker({ ...input, attemptId: grant.attemptId, kind });
+    };
     switch (tool) {
-      case 'get_context': { const attempt = run.attempts.find(item => item.id === grant.attemptId); return { runId: grant.runId, decisions: run.decisions ?? [], attempt, task: run.tasks.find(item => item.id === attempt?.taskId), turnId: entry.currentTurn, launchId: grant.launchId }; }
+      case 'get_context': { const attempt = run.attempts.find(item => item.id === grant.attemptId); return { runId: grant.runId, decisions: run.decisions ?? [], attempt, task: run.tasks.find(item => item.id === attempt?.taskId), turnId: reportingTurn, launchId: grant.launchId }; }
       case 'get_run': return run;
       case 'subscribe': return { cursor: run.eventCursor, run };
       case 'request_approval': return this.store.requestRunApproval(input);

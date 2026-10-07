@@ -430,3 +430,25 @@ Earlier authenticated evidence ([native validation](NATIVE-VALIDATION.md), [life
 | Public pilot | BLOCKED | Needs real users | — |
 
 Historical full roadmap and phase status: [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).
+
+## Worker completion reporting correction (7 October 2026)
+
+A native two-worker documentation trial exposed a reporting mismatch: Claude's
+hooks have no native turn key, while Journal requires a non-null current turn
+to accept a worker result. Journal now assigns a local reporting ID only when
+it observes a prompt submission for the matching, unambiguous Claude session.
+Tool/Stop events retain that ID; the next prompt replaces it, and reports for
+an earlier turn remain rejected.
+
+This ID does not qualify automatic delivery, live capture or Stop continuation.
+Stopped captures retain the worker's completion claim but still require
+explicit acceptance when interruption prevents automatic readiness. Apply
+previews now distinguish a result requiring acceptance from a worker that has
+not stopped, with an actionable message in Team.
+
+Regression coverage includes terminal turn binding and identity rejection,
+the runtime/MCP/report/stopped-capture path, and the Electron fixture executing
+the actual hook script with Claude-shaped payloads. The observed native failure
+is documented separately from fixture validation: a new authenticated provider
+trial is still needed after installing a future build. No version bump or
+release is part of this correction.
