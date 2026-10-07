@@ -25,7 +25,7 @@ test('Coordinate opens a durable team, an isolated worker, and keyboard-accessib
 if(process.argv.includes('--version')){console.log('2.1.286 (Claude Code)');process.exit(0)}
 if(process.argv.includes('auth')){console.log(JSON.stringify({loggedIn:true,authMethod:'fixture'}));process.exit(0)}
 console.log('Fixture team terminal');process.stdin.setRawMode(true);process.stdin.on('data',d=>{if(String(d).includes('q'))process.exit(0)});
-if(process.argv.some(arg=>arg.includes('You coordinate Journal run'))){(async()=>{const {clientFromEnv}=await import(${JSON.stringify(moduleUrl)});const client=clientFromEnv();await client.call('publish_update',{requestId:'fixture-update',summary:'I am checking the fixture documentation.'});const task=await client.call('create_task',{requestId:'fixture-task',title:'Implement fixture task'});await client.call('create_worker',{requestId:'fixture-worker',taskId:task.id,provider:'claude'});await client.call('request_approval',{requestId:'fixture-decision',summary:'Include the setup instructions in this documentation change?'});client.close();console.log('Fixture worker requested')})().catch(e=>console.error(e.message))}
+if(process.argv.some(arg=>arg.includes('You coordinate Journal run'))){(async()=>{const {clientFromEnv}=await import(${JSON.stringify(moduleUrl)});const client=clientFromEnv();await client.call('publish_update',{requestId:'fixture-update',summary:'I am checking the fixture documentation. I will compare docs/journal-lab/csv-map.md with docs/journal-lab/extraction-map.md, then collect both worker results for review. Native permissions remain in force; you can continue the conversation while the tasks run.'});const task=await client.call('create_task',{requestId:'fixture-task',title:'Implement fixture task'});await client.call('create_worker',{requestId:'fixture-worker',taskId:task.id,provider:'claude'});await client.call('request_approval',{requestId:'fixture-decision',summary:'Include the setup instructions in this documentation change?'});client.close();console.log('Fixture worker requested')})().catch(e=>console.error(e.message))}
 else if(process.env.JOURNAL_TASK_ID){(async()=>{
 const fs=require('node:fs'),{execFileSync}=require('node:child_process');
 const nativeId=process.argv[process.argv.indexOf('--session-id')+1];
@@ -56,6 +56,19 @@ hook('Stop');client.close();fs.writeFileSync(${JSON.stringify(join(root,'reporte
     await page.screenshot({ path: resolve('.cache/team-conversation-attention.png') });
     await team.getByRole('button', { name: 'Allow', exact: true }).click();
     await expect(team.getByRole('button', { name: 'Allow', exact: true })).toHaveCount(0);
+    // Readability is measured at normal Electron zoom, not compensated by global scaling.
+    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getZoomFactor())).toBe(1);
+    for (const [selector, minimum] of [['.team-conversation-log p', 16], ['.team-task-rail', 14], ['.team-tabs button', 14], ['.team-heading h2', 17], ['.team-row time', 13], ['.team-conversation-composer textarea', 16]] as const) {
+      const sizes = await team.locator(selector).evaluateAll(nodes => nodes.map(node => parseFloat(getComputedStyle(node).fontSize)));
+      expect(sizes.length).toBeGreaterThan(0);
+      expect(Math.min(...sizes)).toBeGreaterThanOrEqual(minimum);
+    }
+    await page.setViewportSize({ width: 2308, height: 1078 });
+    await page.screenshot({ path: resolve('.cache/team-conversation-wide-dark.png') });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await page.screenshot({ path: resolve('.cache/team-conversation-wide-light.png') });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+    await page.setViewportSize({ width: 1440, height: 920 });
     await expect(team.getByRole('tab', { name: 'Workers', exact: true })).toHaveCount(0);
     await expect(team.getByRole('complementary', { name: 'Task progress' })).toContainText('Live', { timeout: 15000 });
     await team.getByRole('tab', { name: 'Conversation', exact: true }).focus(); await page.keyboard.press('ArrowRight'); await expect(team.getByRole('tab', { name: 'Results', exact: true })).toBeFocused();
@@ -97,6 +110,7 @@ hook('Stop');client.close();fs.writeFileSync(${JSON.stringify(join(root,'reporte
     await pressKey(app, 'I', ['meta']);
     await expect(page.locator('.inspector-root')).toBeVisible();
     await page.getByRole('button', { name: 'Team', exact: true }).click();
+    await expect(team).toContainText('I am checking the fixture documentation.');
     await page.screenshot({ path: resolve('.cache/team-conversation-dark.png') });
     await expect.poll(() => existsSync(join(root, 'reported')), { timeout: 15000 }).toBe(true);
     expect(existsSync(join(root, 'fixture-error'))).toBe(false);
@@ -127,6 +141,12 @@ hook('Stop');client.close();fs.writeFileSync(${JSON.stringify(join(root,'reporte
     await page.screenshot({ path: resolve('.cache/team-conversation-narrow.png') });
     await expect(team).toBeVisible();
     expect(await team.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+    expect(await team.locator('.team-workspace, .team-content, .team-conversation, .team-inline-results, .team-task-rail').evaluateAll(nodes => nodes.every(node => node.scrollWidth <= node.clientWidth + 1))).toBe(true);
+    expect(await team.locator('.team-task-rail').evaluate(node => node.getBoundingClientRect().top >= document.querySelector('.team-content')!.getBoundingClientRect().bottom - 1)).toBe(true);
+    await team.getByRole('complementary', { name: 'Task progress' }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: resolve('.cache/team-tasks-narrow-light.png') });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+    await page.screenshot({ path: resolve('.cache/team-tasks-narrow-dark.png') });
     await team.getByRole('button', { name: 'Continue run', exact: true }).click();
     await team.getByRole('button', { name: 'Preview Apply', exact: true }).click();
     await team.getByRole('button', { name: 'Apply result', exact: true }).click();

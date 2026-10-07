@@ -22,7 +22,7 @@ export function TeamConversation({ run, events, draft, onDraft, act, teamAct, bu
     {message.state === 'uncertain' && <><p>Delivery is uncertain. Nothing was resent. Check and clear the recipient input in its native terminal before continuing.</p><button onClick={onTerminal}>Open coordinator terminal</button>{!message.inputResolved ? <button disabled={busy} onClick={() => void teamAct('resolveMessageInput', { messageId: message.id })}>Input checked and cleared</button> : <button disabled={busy} onClick={() => void act('resendMessage', { messageId: message.id })}>Resend this message</button>}</>}
   </div>;
   return <div className="team-conversation">
-    <p className="team-conversation-note">Your instructions and published coordinator updates. <button onClick={onTerminal}>Open full native conversation</button><button onClick={() => input.current?.focus()}>Write a message</button></p>
+    <div className="team-conversation-note"><p>Your instructions and published coordinator updates.</p><button onClick={onTerminal}>Open full native conversation</button><button onClick={() => input.current?.focus()}>Write a message</button></div>
     <details className="team-original"><summary>Original request</summary><p>{run.goal}</p></details>
     {!entries.some(entry => entry.source === 'coordinator') && <p className="team-empty">The coordinator has not published an update yet. Its full conversation remains in the native terminal.</p>}
     <ol className="team-conversation-log" aria-label="Run conversation">
