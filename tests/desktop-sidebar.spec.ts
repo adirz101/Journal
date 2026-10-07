@@ -64,12 +64,11 @@ async function start(page: Page, task: string, provider: 'Claude' | 'Codex' = 'C
 }
 const mac = process.platform === 'darwin';
 
-test('Active shows slots in order with the meter', async () => {
+test('Active shows the running count and stable session order', async () => {
   const f = setup('sidebar-slots'); const { app, page } = await open(f.env, f.project);
   try {
     await start(page, 'SLOT_ONE'); await start(page, 'SLOT_TWO', 'Codex');
     await expect(slotsUsed(page, 2)).toBeVisible();
-    await expect(page.locator('.slot-meter > span.on')).toHaveCount(2);
     const active = page.getByRole('group', { name: 'Active sessions' });
     await expect(active.getByRole('button')).toHaveText([/SLOT_ONE/, /SLOT_TWO/]);
     for (const [index, task] of ['SLOT_ONE', 'SLOT_TWO'].entries())

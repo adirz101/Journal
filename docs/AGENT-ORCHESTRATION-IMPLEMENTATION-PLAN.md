@@ -1,5 +1,7 @@
 # Agent orchestration: implementation plan
 
+> Current scope, 7 October 2026: the user removed artificial session, active-run and worker ceilings, including saved limits. Resource measurements are advisory and idle agents are never reclaimed automatically. The capacity gates, mandatory pacing and reclamation milestones below are superseded; stable reservations, fair queues, pause, ports and actual launch-failure backoff remain. See [Coordinated runs](COORDINATED-RUNS.md).
+
 > Delivery scope update, 6 October 2026: the user deferred Windows and requested completion of the macOS implementation with a pull request. Windows requirements below remain future work. Native capability gates and the separate M10b acceptance requirements still apply.
 > **For agentic workers:** Use the executing-plans skill when implementation is authorized; work task by task with the unchecked acceptance gates below. This document update itself is not implementation authorization.
 

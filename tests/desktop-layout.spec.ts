@@ -27,7 +27,7 @@ test('both sidebars resize by pointer and keyboard, persist, and leave room for 
       .filter(element => !element.closest('.xterm') && element.getClientRects().length && parseFloat(getComputedStyle(element).fontSize) < 11)
       .map(element => `${element.tagName.toLowerCase()}.${element.className}`))).toEqual([]);
     const width = (selector: string) => page.locator(selector).evaluate(element => element.getBoundingClientRect().width);
-    // The Active heading ("Active", "n of 4" and the meter) keeps its parts apart and fits the sidebar.
+    // The Active heading ("Active" and the running count) keeps its parts apart and fits the sidebar.
     const captionGaps = () => page.locator('.side-heading').first().evaluate(heading => {
       const [label, count] = [...heading.children].map(child => child.getBoundingClientRect()); const box = heading.getBoundingClientRect();
       return count.left - label.right >= 6 && count.right <= box.right + 0.5;
