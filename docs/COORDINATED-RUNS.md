@@ -8,7 +8,7 @@ Windows team implementation and acceptance are deferred at the user's request on
 
 - **Plan** shows tasks, dependencies and recorded decisions. Creating a task does not start a worker. Request workers explicitly; blocked tasks occupy no session slot. Requests can include a model, references, a soft time limit or alternative attempts.
 - **Workers** shows work state separately from process presence. Open a terminal, stop a worker, continue its exact conversation, retry from a captured result, or transfer its settled folder to another provider. Unknown surviving processes prevent folder reuse.
-- **Results** separates the worker's report from captured files, isolated check evidence and review claims. Review tasks pin an exact result or branch head. A later result does not inherit an earlier verdict. Taking in a new review subject invalidates readiness until a new turn reports again.
+- **Results** separates the worker's report from captured files, agent test reports and review claims. Review tasks pin an exact result or branch head. A later result does not inherit an earlier verdict. Taking in a new review subject invalidates readiness until a new turn reports again.
 - **Messages** records receipt, delivery uncertainty and held reasons. Reading and acknowledging a message proves receipt, not completion. Never automatically resend an uncertain delivery; inspect and clear the recipient's input first.
 - **Capacity** shows measured resource signals and explicit fallback limitations. Global limits remain at most four pending calibration. Soft time limits issue reminders; they do not kill a worker or declare success.
 - **Policy** controls integration guards and the per-run worker cap. Only the user can loosen policy. Changing policy expires pending Apply approvals.
@@ -24,13 +24,15 @@ When live capture or folder mutation cannot be qualified, stop and settle the wo
 
 Recovery adopts saved sessions by exact launch identity, preserves immutable captures and reconciles landed Apply operations. A take-in that reached a durable merge checkpoint resumes its metadata and notification once; a crash inside an uncheckpointed Git mutation remains held. It never repeats an ambiguous merge or admits another writer into that folder. Inspect the retained folder and use a separate retry from the base or an immutable result when the original mutation cannot be established. Historical work and results remain retained.
 
-## Isolated result checks
+## Project checks and test reports
 
-**Run tests in isolation** materializes the pinned Git tree into a disposable folder and runs `npm test`. The coordinator's `verify_result` tool also accepts an explicit argv array. Commands are not interpolated through a shell by Journal; package scripts retain npm's normal shell semantics inside the sandbox.
+The agent chooses project-appropriate checks when useful for the task and runs them through its native tools and permissions. Journal does not choose a test command, require tests for every task, install dependencies or run a separate test suite against the user's repository.
 
-On macOS, a deny-by-default Seatbelt profile permits writes only in that disposable folder and reads only there and in the required system/Node/npm runtime files. The environment has private homes and temporary directories, no inherited credentials and no provider PATH. Before every execution, synthetic canaries verify that outside file reads/writes and network connections are denied. A failed probe refuses execution. Checks have a deadline and their process group is stopped on timeout or runtime shutdown.
+Worker reports retain the command and reported outcome, including checks that were not run or were unavailable. **Worker test report** is an agent claim. Observed terminal commands and their exits are session activity, not proof that an immutable captured result passed a test suite. Accepting or applying a result never upgrades those claims.
 
-This is not a dependency installer: ignored `node_modules`, a mutable worker folder, the user's npm cache and network access are not copied or granted. A test requiring unavailable dependencies fails instead of borrowing them from the checkout. npm must be available in the runtime's PATH; unsupported layouts fail closed. Linked/nested/sensitive trees and trees beyond the materialization limits are refused. `npm test`/`npm run test` evidence is tied to the immutable package test configuration; another successful command cannot certify that suite. A timeout or interrupted check remains unknown, never passed.
+The earlier standalone verifier and its desktop/MCP execution routes have been removed. Completed check receipts remain visible under **Earlier check results** for their original captured tree. An unfinished legacy check is recorded as interrupted after restart and is never rerun.
+
+The obsolete internal test-certification guard no longer applies, including saved runs whose historical policy still contains it. Conflict, writer, scope, infrastructure, executable, deletion, rate and user-approval guards are unchanged. Existing receipts and policy history are retained.
 
 ## Acceptance boundary
 

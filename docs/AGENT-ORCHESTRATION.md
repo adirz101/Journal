@@ -1,3 +1,12 @@
+# Current implementation note (7 October 2026)
+
+The independent isolated verifier described in this design has been retired.
+Agents choose project checks and report their outcomes through native tools;
+Journal retains those claims and earlier receipts without running its own suite.
+The old internal test-certification guard is no longer active. See
+[Coordinated runs](COORDINATED-RUNS.md#project-checks-and-test-reports) for current
+behavior. Other integration and permission requirements remain unchanged.
+
 # Hierarchical agent orchestration: technical specification
 
 > Delivery scope update, 6 October 2026: the user deferred Windows and requested completion of the macOS implementation with a pull request. Windows requirements below remain future work. Native capability gates and the separate M10b acceptance requirements still apply.
