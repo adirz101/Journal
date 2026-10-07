@@ -118,8 +118,21 @@ test('disconnected banner: Reconnect now waits for the next runtime event, and t
     await emit({ type: 'runtime', state: 'disconnected', warning: 'The Journal runtime could not be started. See runtime.log in the data directory.' });
     const banner = page.getByRole('status').filter({ hasText: 'Lost connection to the session runtime' });
     await expect(banner).toBeVisible();
-    await expect(banner).toContainText('Your agents may still be running. Journal is trying again every few seconds.');
+    await expect(banner).toContainText('Your agents may still be running. Journal will reconnect when the runtime is available.');
     await expect(banner).toContainText('could not be started');
+    await expect(page.getByRole('button', { name: 'Start Claude Code', exact: true })).toBeDisabled();
+    const bannerBox = await banner.boundingBox(); const composerBox = await page.locator('.new-session-view').boundingBox();
+    expect(composerBox!.y).toBeGreaterThanOrEqual(bannerBox!.y + bannerBox!.height);
+    if (process.env.JOURNAL_SCREENSHOT) await page.screenshot({ path: '.cache/runtime-banner-expanded.png' });
+    await banner.getByRole('button', { name: 'Hide connection details' }).click();
+    await expect(banner.getByRole('button', { name: 'Show connection details' })).toBeFocused();
+    if (process.env.JOURNAL_SCREENSHOT) await page.screenshot({ path: '.cache/runtime-banner-compact.png' });
+    await expect(banner).not.toContainText('could not be started');
+    await emit({ type: 'runtime', state: 'disconnected', warning: 'Still unable to connect' });
+    await expect(banner.getByRole('button', { name: 'Show connection details' })).toBeVisible();
+    await banner.getByRole('button', { name: 'Show connection details' }).click();
+    await expect(banner).toContainText('Still unable to connect');
+
     await banner.getByRole('button', { name: 'Reconnect now', exact: true }).click();
     await expect(banner.getByRole('button', { name: 'Reconnecting…', exact: true })).toBeDisabled();
     // The next runtime event re-enables it; a connected one removes the banner.
@@ -128,6 +141,7 @@ test('disconnected banner: Reconnect now waits for the next runtime event, and t
     await expect(banner).not.toContainText('could not be started');
     await emit({ type: 'runtime', state: 'connected', recovered: true, recovery: null });
     await expect(banner).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Start Claude Code', exact: true })).toBeEnabled();
     // A real crash: the runtime is relaunched and the banner goes once it is back. Reconnect now,
     // asked the moment the disconnect arrives (before the relaunch connects), retries: retrying is true.
     await page.evaluate(() => { const w = window as any; w.__retry = null; const off = w.journal.onEvent((event: any) => { if (event.type === 'runtime' && event.state === 'disconnected' && !w.__retry) { w.__retry = w.journal.request('reconnectRuntime', {}); off?.(); } }); });

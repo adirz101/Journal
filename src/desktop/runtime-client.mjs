@@ -66,7 +66,7 @@ export class RuntimeClient extends EventEmitter {
   // three times in a row without a successful connection.
   maybeLaunch() {
     if (this.launched && (typeof this.launched.alive === 'function' ? this.launched.alive() : isAlive(this.launched))) return false;
-    if (this.launches >= 3) { this.emit('failed', 'The Journal runtime could not be started. See runtime.log in the data directory.'); return false; }
+    if (this.launches >= 3) { this.emit('failed', 'The Journal runtime could not be started. Check runtime-stderr.log in the data directory for the startup error, then reconnect.'); return false; }
     this.launches++; this.launched = this.launch() ?? null; return true;
   }
   async connect() {

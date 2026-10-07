@@ -32,7 +32,9 @@
     "release:check": "node scripts/release-check.mjs",
     "release:checksums": "node scripts/checksums.mjs",
     "release:audit": "node scripts/package-audit.mjs",
-    "smoke:packaged": "node scripts/smoke-packaged.mjs"
+    "smoke:packaged": "node scripts/smoke-packaged.mjs",
+    "predev": "node scripts/check-local-dependencies.mjs",
+    "prestart": "node scripts/check-local-dependencies.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.3.1",
