@@ -1375,6 +1375,7 @@ export class JournalStore {
   cancelTask(input) { return this.orchestration.cancelTask(input); }
   completeTask(input) { return this.orchestration.completeTask(input); }
   finishRun(input) { return this.orchestration.finishRun(input); }
+  publishUpdate(input) { return this.orchestration.publishUpdate(input); }
   recordDecision(input) { return this.orchestration.recordDecision(input); }
   reportProgress(input) { return this.orchestration.reportProgress(input); }
   sendMessage(input) { return this.orchestration.messages.send(input); }

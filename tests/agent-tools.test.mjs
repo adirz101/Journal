@@ -2,6 +2,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 const { ToolRouter } = await import('../src/runtime/tool-router.mjs').catch(() => ({}));
 
+test('published updates use only a live coordinator credential and cannot forge their source', async () => {
+  const entry = { launchId: 'launch', exited: false };
+  const router = new ToolRouter({ store: { getRun: async () => ({ tasks: [], attempts: [], messages: [] }), publishUpdate: async value => value }, terminals: { entry: () => entry }, workers: {} });
+  const coordinator = router.issue({ sessionId: 'session', launchId: 'launch', role: 'coordinator', runId: 'run' });
+  const worker = router.issue({ sessionId: 'session', launchId: 'launch', role: 'worker', runId: 'run', attemptId: 'worker' });
+  const args = { requestId: 'update', summary: 'Two tasks underway', callerId: 'desktop', launchId: 'forged' };
+  await assert.rejects(router.call(worker.id, { tool: 'publish_update', args }), { code: 'FORBIDDEN' });
+  const update = await router.call(coordinator.id, { tool: 'publish_update', args });
+  assert.equal(update.callerId, 'coordinator:run'); assert.equal(update.launchId, 'launch'); assert.equal(update.sessionId, 'session');
+  entry.exited = true;
+  await assert.rejects(router.call(coordinator.id, { tool: 'publish_update', args }), { code: 'STALE_LAUNCH' });
+});
+
 test('tool credentials are per launch, role scoped and revoked when the session ends', async () => {
   const bindings = new Map([['session', { launchId: 'launch', exited: false, currentTurn: 'turn' }]]);
   const store = { getRun: async id => ({ id, tasks: [{ id: 'task' }], attempts: [{ id: 'own', runId: id }, { id: 'other', runId: id }] }), reportWorker: async input => input };

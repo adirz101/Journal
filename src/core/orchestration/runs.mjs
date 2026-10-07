@@ -176,6 +176,17 @@ export class Orchestration {
       return this.setRunState(run.id, 'finished', { endedReason: safeText(input.reason, 'reason', 2000) });
     });
   }
+  publishUpdate(input) {
+    return this.operation('publish_update', input, input.runId, () => {
+      const run = this.row('runs', input.runId);
+      if (input.callerId !== `coordinator:${run.id}`) refuse('FORBIDDEN', 'Only the coordinator may publish an update');
+      if (!run.coordinatorSessionId || input.sessionId !== run.coordinatorSessionId || input.launchId !== run.coordinatorLaunchId) refuse('STALE_LAUNCH', 'This update belongs to an obsolete coordinator');
+      if (run.state === 'finished') refuse('INVALID_STATE', 'This run has finished');
+      const update = { summary: safeText(input.summary, 'update', 2000), sessionId: input.sessionId, launchId: input.launchId };
+      this.event(run.id, 'coordinator.update', update);
+      return update;
+    });
+  }
   recordDecision(input) {
     return this.operation('record_decision', input, input.runId, () => {
       this.row('runs', input.runId); const decision = { id: randomUUID(), summary: safeText(input.summary, 'decision', 4000), at: now(), callerId: input.callerId };
