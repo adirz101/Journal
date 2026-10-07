@@ -45,3 +45,17 @@ test('queued coordinators stop draining when shutdown begins', async () => {
   await manager.launchQueuedCoordinators(() => continuing);
   assert.deepEqual(launched, ['a']);
 });
+
+test('a coordinator waiting behind another launch does not start after shutdown', async () => {
+  const run = { id: 'waiting', state: 'creating', provider: 'claude' };
+  const manager = new WorkerManager({ store: { activeRuns: async () => [run], getRun: async () => run } });
+  let release; manager.coordinatorLane = new Promise(resolve => { release = resolve; });
+  let continuing = true; let launched = false;
+  manager.launchCoordinator = async () => { launched = true; };
+  const drain = manager.launchQueuedCoordinators(() => continuing);
+  await Promise.resolve();
+  assert.equal(manager.starts.has(run.id), true, 'request is waiting in the occupied coordinator lane');
+  continuing = false; release(); await drain; await manager.close();
+  assert.equal(launched, false);
+  assert.equal(manager.starts.size, 0);
+});
