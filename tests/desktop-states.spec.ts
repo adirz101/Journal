@@ -200,7 +200,7 @@ test('a signed-out fixture provider → StartError with its login command, Copy 
   } finally { await closeApp(app); f.cleanup(); }
 });
 
-test('four sessions → New session still opens the composer; Start is disabled with "4 of 4 running…"; the typed task stays', async () => {
+test('four idle sessions stay open while a fifth session starts from the composer', async () => {
   const f = setup('states-full'); const { app, page } = await open(f.env, f.project);
   try {
     for (let i = 0; i < 4; i++) {
@@ -212,12 +212,12 @@ test('four sessions → New session still opens the composer; Start is disabled 
     await expect(button).toBeEnabled();
     await newSession(page);
     await taskBox(page).fill('WAITING_TASK');
-    await expect(startButton(page)).toBeDisabled();
-    const reason = page.locator('#start-reason');
-    await expect(reason).toHaveText('4 of 4 running. Stop or finish one to start another. You can still write the task now.');
-    await expect(startButton(page)).toHaveAttribute('aria-describedby', 'start-reason');
+    await expect(startButton(page)).toBeEnabled();
     await expect(taskBox(page)).toHaveValue('WAITING_TASK');
     await expect(startError(page)).toHaveCount(0);
-    expect(f.launches()).toHaveLength(4);
+    await startButton(page).click();
+    await expect(page.locator('.terminal-surface')).toContainText('TASK WAITING_TASK');
+    await expect.poll(() => f.launches().length).toBe(5);
+    await expect(slotsUsed(page, 5)).toBeVisible();
   } finally { await closeApp(app); f.cleanup(); }
 });

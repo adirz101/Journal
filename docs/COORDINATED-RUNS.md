@@ -1,6 +1,6 @@
 # Coordinated runs on macOS
 
-Coordinated runs are an off-by-default experiment. Enable **Coordinated runs** in Settings, open a named Git branch, choose **Coordinate**, enter a goal, and start Claude Code or Codex. The coordinator uses the project's checkout; each requested worker receives an isolated folder. Ordinary sessions, the coordinator and workers share the same capacity limit.
+Coordinated runs are an off-by-default experiment. Enable **Coordinated runs** in Settings, open a named Git branch, choose **Coordinate**, enter a goal, and start Claude Code or Codex. The coordinator uses the project's checkout; each requested worker receives an isolated folder. Ordinary sessions, coordinators and requested workers start on demand without a session or worker ceiling.
 
 Windows team implementation and acceptance are deferred at the user's request on 6 October 2026. Existing ordinary Windows terminal behavior is unchanged.
 
@@ -10,11 +10,13 @@ Windows team implementation and acceptance are deferred at the user's request on
 - **Workers** shows work state separately from process presence. Open a terminal, stop a worker, continue its exact conversation, retry from a captured result, or transfer its settled folder to another provider. Unknown surviving processes prevent folder reuse.
 - **Results** separates the worker's report from captured files, agent test reports and review claims. Review tasks pin an exact result or branch head. A later result does not inherit an earlier verdict. Taking in a new review subject invalidates readiness until a new turn reports again.
 - **Messages** records receipt, delivery uncertainty and held reasons. Reading and acknowledging a message proves receipt, not completion. Never automatically resend an uncertain delivery; inspect and clear the recipient's input first.
-- **Capacity** shows measured resource signals and explicit fallback limitations. Global limits remain at most four pending calibration. Soft time limits issue reminders; they do not kill a worker or declare success.
-- **Policy** controls integration guards and the per-run worker cap. Only the user can loosen policy. Changing policy expires pending Apply approvals.
+- **Capacity** shows measured resource signals and explicit fallback limitations. Memory warnings and unavailable measurements do not block launch. Existing saved session/run/worker limits are no longer enforced. Idle agents remain open until you stop them. Soft time limits issue reminders; they do not kill a worker or declare success.
+- **Policy** controls integration guards. Only the user can loosen policy. Changing policy expires pending Apply approvals.
 - **Story** reconstructs decisions and outcomes from durable events. Worker memory proposals appear with their exact result and require a visible user review before they are remembered. An unapplied result does not acquire provenance from another result's Apply.
 
 Claude's **Allow Journal team tools without prompts for this run** checkbox only adds the Journal MCP tool namespace to that launch's settings. Shell, file, network and other native provider permissions remain authoritative. Codex and Cursor keep their native tool permission behavior. No provider settings file in the user's home is rewritten.
+
+Worker requests take turns across runs. Setup starts one worker at a time to keep reservations and worktree creation ordered, with no fixed delay between successful starts. Pause, occupied port blocks and actual launch failures can still hold a request; safe-to-retry resource failures retain bounded backoff. Historical limits in storage are retained for audit, and older clients cannot save new limits.
 
 ## Integration and recovery
 

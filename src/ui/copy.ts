@@ -12,7 +12,6 @@ export const copy = {
   continue: 'Continue', stop: 'Stop', readOnly: 'Read-only', plan: 'Plan', separateCopy: 'Separate copy (worktree)',
   everySession: 'Every session knows', relevant: 'Relevant to your task', notIncluded: 'Not included', leaveOut: 'Leave out for this task', leftOut: 'left out by you', checkNeeded: 'Check needed', rule: 'Rule',
   sourceNote: 'Why (your words)', allBranches: 'All branches', onlyOn: (branch: string | null | undefined) => `Only on ${branch ?? 'this branch'}`,
-  slotsFull: (max: number) => `${max} sessions are running. Stop one to start another.`,
   // Session states (design board B8; src/ui/sessionState.ts picks one).
   state: {
     disconnected: 'Disconnected', unknown: 'state unknown', needsApproval: 'Needs approval', yourTurn: 'Your turn', working: 'Working',
@@ -108,7 +107,7 @@ export const shell = {
   otherTree: (path: string, branch: string | null, files: number, commits: number, base: string) =>
     `${count(files, 'file')} in the worktree ${path}${branch ? ` (${branch})` : ''}, compared with ${base}${commits ? `, the commit before the ${count(commits, 'commit')} made there since the session started` : ''}.`,
   // A: sidebar and settings
-  newSession: 'New session', search: 'Search', searchHint: 'Search sessions, commands and notes', active: 'Active', slotsUsed: (n: number) => `${n} of 4`,
+  newSession: 'New session', search: 'Search', searchHint: 'Search sessions, commands and notes', active: 'Active', slotsUsed: (n: number) => `${n} running`,
   recent: 'Recent', today: 'Today', yesterday: 'Yesterday', earlier: 'Earlier', archived: 'Archived',
   suggestionCount: (n: number) => count(n, 'suggestion'), canContinue: 'Can continue', settings: 'Settings',
   runtimeConnected: 'Runtime connected · local only', runtimeStarting: 'Starting runtime…', runtimeDisconnected: 'Runtime disconnected',
@@ -364,9 +363,6 @@ export const states = {
   // "Nothing was sent" only where nothing can have been (missing, unsupported, signed out); a
   // failed start may have reached the agent (its receipt can be uncertain).
   kept: 'Your task text is kept.', nothingSent: 'Nothing was sent.',
-  slotsFull: '4 of 4 running. Stop or finish one to start another. You can still write the task now.',
-  // The recovery panel's Continue while every slot is taken.
-  continueSlotsFull: '4 of 4 running. Stop or finish one to continue this session.',
   // --- Phase 8 Group B ---
   copied: 'Copied', recoveryLabel: 'Interrupted sessions', unsupportedBody: 'Update it, then check again.', missingBody: 'Install it, then check again.',
 } as const;

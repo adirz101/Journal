@@ -50,9 +50,9 @@ export interface Survivor { pid: number; started: string; command: string; }
 export interface Session { id: string; projectId: string; provider: Provider; nativeId: string | null; nativeIdConfirmed: boolean; title: string; status: SessionStatus; receiptId: string; createdAt: string;
   role?: 'coordinator' | 'worker'; runId?: string; attemptId?: string | null; launchId?: string; turnId?: string | null; inputOwner?: 'automation' | 'human' | 'uncertain';
   lastActivityAt?: string; endedAt?: string | null; exitCode?: number | null; branch?: string | null; head?: string | null; activity?: 'idle' | 'working' | 'permission' | null; archived?: boolean; survivors?: Survivor[] | null; resumedFrom?: string | null; displayName?: string | null; pinned?: boolean; pinSeq?: number | null; removed?: boolean; version?: number; workspaceId?: string | null; environmentId?: string | null; research?: boolean; plan?: boolean; cwd?: string; identityVerified?: boolean;
-  // Runtime protocol 4 (src/core/terminal.mjs). slot: 1-4 while live in this runtime, kept until it ends.
+  // Runtime protocol 4 (src/core/terminal.mjs). slot: a positive stable number while live in this runtime, kept until it ends.
   // lastOutputAt: last PTY output, excluding echo and resize repaints. pending: what an open Claude prompt asks.
-  slot?: 1 | 2 | 3 | 4 | null; lastOutputAt?: string | null; pending?: PendingApproval | null;
+  slot?: number | null; lastOutputAt?: string | null; pending?: PendingApproval | null;
   // The CLI version main detected when this session launched (Phase 3 B); missing for older sessions.
   cliVersion?: string | null;
   nativeIdSource?: 'preassigned' | 'preassigned-observed' | 'create-chat' | 'exit-banner' | 'hook' | 'user' | null; identityMismatch?: boolean;

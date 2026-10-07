@@ -36,3 +36,12 @@ test('coordinator resume returns the durable outcome before checking the now-act
   const manager = new WorkerManager({ store: { runOperationOutcome: async (kind, input) => { assert.equal(kind, 'resume_coordinator'); assert.equal(input.requestId, 'same-request'); return { found: true, outcome }; }, getRun: async () => outcome } });
   assert.deepEqual(await manager.resumeCoordinator({ runId: 'run', callerId: 'desktop', requestId: 'same-request' }), outcome);
 });
+
+test('queued coordinators stop draining when shutdown begins', async () => {
+  const runs = ['a', 'b'].map(id => ({ id, state: 'creating', provider: 'claude' }));
+  const manager = new WorkerManager({ store: { activeRuns: async () => runs } });
+  let continuing = true; const launched = [];
+  manager.queueCoordinator = async run => { launched.push(run.id); continuing = false; };
+  await manager.launchQueuedCoordinators(() => continuing);
+  assert.deepEqual(launched, ['a']);
+});

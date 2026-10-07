@@ -28,8 +28,9 @@ export class WorkerManager {
     const operation = this.coordinatorLane.then(() => this.launchCoordinator(run, provider, resumeId, operationId));
     this.coordinatorLane = operation.catch(() => {}); return operation;
   }
-  async launchQueuedCoordinators() {
+  async launchQueuedCoordinators(shouldContinue = () => true) {
     for (const run of await this.store.activeRuns()) {
+      if (!shouldContinue()) return;
       if (run.state !== 'creating' || run.paused || this.starts.has(run.id)) continue;
       const operation = this.queueCoordinator(run, run.provider).finally(() => this.starts.delete(run.id));
       this.starts.set(run.id, operation);

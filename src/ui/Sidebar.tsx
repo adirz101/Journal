@@ -113,7 +113,7 @@ export function Sidebar({ pane, inOverlay = false, projects, project, sessions, 
       <span className="switcher-chevron" aria-hidden="true"><Icon d={ICONS.updown} size={16} /></span>
     </button>
     <nav aria-label="Sessions" className="session-nav">
-      <div className="side-heading"><span>{shell.active}</span><span className="slots-used">{shell.slotsUsed(used)}<span className="slot-meter" aria-hidden="true">{[1, 2, 3, 4].map(n => <span key={n} className={n <= used ? 'on' : ''} />)}</span></span></div>
+      <div className="side-heading"><span>{shell.active}</span><span className="slots-used">{shell.slotsUsed(used)}</span></div>
       {project && <RunNavigation projectId={project.id} sessions={sessions} onSelect={onSelect} onOpenRun={onOpenRun} onRuns={setKnownRuns} />}
       {active.length > 0 && <div className="session-group" role="group" aria-label="Active sessions">{active.filter(session => !session.runId || !knownRuns.has(session.runId)).map(row)}</div>}
       {groups.length > 0 && <div id="sidebar-recent" className="side-heading"><span>{shell.recent}</span></div>}

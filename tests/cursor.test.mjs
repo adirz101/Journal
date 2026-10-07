@@ -204,7 +204,7 @@ test('Cursor, Claude and Codex sessions run side by side without mixing input or
   m.write(b.session.id, 'only b');
   assert.deepEqual(spawned.map(p => p.writes), [[], ['only b'], [], []]);
   assert.equal(spawned[2].executable, 'claude'); assert.equal(spawned[3].executable, 'codex'); assert.equal(spawned[0].executable, '/fake/agent');
-  await assert.rejects(m.start({ projectId: f.project.id, provider: 'cursor', task: 'five' }), /up to 4 sessions/);
+  assert.equal((await m.start({ projectId: f.project.id, provider: 'cursor', task: 'five' })).session.slot, 5);
   // A runtime restart recovers Cursor sessions like any other: interrupted, never resent.
   const recovered = new JournalStore(join(f.root, 'j.sqlite')); t.after(() => recovered.close());
   recovered.recoverSessions();
