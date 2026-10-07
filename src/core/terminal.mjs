@@ -717,7 +717,15 @@ export class TerminalManager extends EventEmitter {
     if (this.adapter(session.provider)?.strictIdentity) this.bindIdentity(entry, event.nativeId);
     switch (event.kind) {
       case 'session-start': entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry); this.observe(id, event.nativeId, 'running', 'idle'); break;
-      case 'turn-start': entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry); this.observe(id, event.nativeId, 'running', 'working'); this.record(id, 'prompt', {}); break;
+      case 'turn-start':
+        // Claude has no native turn key. Bind reports to an observed parent prompt,
+        // never to startup, terminal input, a tool call, or an invented capture boundary.
+        if (!event.turn && this.adapter(session.provider)?.localTurnIds === true &&
+          UUID.test(event.nativeId ?? '') && event.nativeId === session.nativeId && !entry.identityAmbiguous) {
+          entry.currentTurn = randomUUID();
+        }
+        entry.pending = []; entry.answered = false; entry.tools.clear(); this.syncPending(entry);
+        this.observe(id, event.nativeId, 'running', 'working'); this.record(id, 'prompt', {}); break;
       // In-turn evidence (Cursor's response event): the turn goes on.
       case 'turn-progress': if (session.status === 'running' && session.activity !== 'working') this.observe(id, event.nativeId, 'running', 'working'); break;
       case 'permission-wait': {

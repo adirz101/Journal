@@ -4,7 +4,8 @@ import { carried, commandText, describe, object, only, planItems, relativeTo, st
 
 // Claude Code: per-launch hooks in a settings file passed with --settings; existing
 // user and project hooks stay native. Claude has no turn key, so every event is the
-// parent's and applies in arrival order, as before.
+// parent's and applies in arrival order. Journal assigns local reporting IDs at
+// observed prompt submissions; these are not native turn IDs or capture evidence.
 const EVENTS = Object.freeze(['SessionStart', 'UserPromptSubmit', 'PermissionRequest', 'Stop', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure']);
 const KINDS = { SessionStart: 'session-start', UserPromptSubmit: 'turn-start', PermissionRequest: 'permission-wait', Stop: 'turn-end',
   PreToolUse: 'tool-start', PostToolUse: 'tool-end', PostToolUseFailure: 'tool-end' };
@@ -19,7 +20,7 @@ export default Object.freeze({
   // The ID is preassigned (--session-id), never bound from a hook.
   bindsIdentity: false,
   // It reports a tool's start (PreToolUse) and a prompt's submission (UserPromptSubmit).
-  toolStarts: true, turnStarts: true,
+  toolStarts: true, turnStarts: true, localTurnIds: true,
   // Per-hook timeout. Claude Code cancels a command hook at its timeout, discards its output and
   // does not block on it (code.claude.com/docs/en/hooks: "timeout", exit codes other than 2).
   hookTimeoutSeconds: TIMEOUT_S,

@@ -11,6 +11,8 @@ import cursor from './cursor.mjs';
 //   (each adapter cites the provider's documentation or source);
 // - register({ dir, session, command }): writes the launch's registration and returns
 //   { settingsFile?, files }, or null when this provider is not observed (yet);
+// - localTurnIds: bind reporting to observed parent prompts when the provider has no native turn key;
+//   this does not qualify live capture, delivery, or continuation;
 // - extract(payload): the hook payload reduced to an observation line (hook process);
 // - normalize(line): the line in Journal's vocabulary (common.mjs KINDS), or null when it
 //   cannot be classified (dropped).

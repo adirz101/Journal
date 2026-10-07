@@ -1077,3 +1077,35 @@ test('leftover cleanup never converts unknown or still-running writers into an e
   await f.manager.terminateSurvivors(session.id);
   assert.deepEqual(f.store.getSession(session.id).survivors, [], 'only a verified empty scan releases the writer guard');
 });
+
+test('Claude prompt hooks bind distinct Journal turns without qualifying live capture', async t => {
+  const f = runtime(t);
+  const { session } = await f.manager.start({ projectId: f.project.id, provider: 'claude', task: 'work' });
+  const entry = f.manager.entries.get(session.id);
+  const hook = event => f.manager.ingest(session.id, { event, nativeId: session.nativeId });
+  hook('SessionStart');
+  assert.equal(entry.currentTurn, null, 'launch identity alone is not a turn');
+  hook('UserPromptSubmit');
+  const first = entry.currentTurn;
+  assert.equal(typeof first, 'string', 'observed Claude prompt must yield a reportable turn');
+  assert.equal(f.store.getSession(session.id).turnId, first);
+  hook('PreToolUse'); hook('PostToolUse'); hook('Stop');
+  assert.equal(entry.currentTurn, first, 'tool and Stop hooks retain the reporting turn');
+  assert.equal(f.manager.qualifyBoundary(session.id, 'capture').reason, 'BOUNDARY_UNVERIFIED');
+  hook('UserPromptSubmit');
+  assert.ok(entry.currentTurn);
+  assert.notEqual(entry.currentTurn, first, 'a new prompt invalidates the old report identity');
+  assert.equal(f.store.getSession(session.id).turnId, entry.currentTurn);
+});
+
+test('missing or mismatched Claude identity cannot establish a reportable turn', async t => {
+  const f = runtime(t);
+  const { session } = await f.manager.start({ projectId: f.project.id, provider: 'claude' });
+  const entry = f.manager.entries.get(session.id);
+  f.manager.ingest(session.id, { event: 'UserPromptSubmit' });
+  assert.equal(entry.currentTurn, null);
+  f.manager.ingest(session.id, { event: 'UserPromptSubmit', nativeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' });
+  assert.equal(entry.currentTurn, null);
+  f.manager.ingest(session.id, { event: 'UserPromptSubmit', nativeId: session.nativeId });
+  assert.equal(entry.currentTurn, null, 'an ambiguous native identity stays unreportable');
+});
