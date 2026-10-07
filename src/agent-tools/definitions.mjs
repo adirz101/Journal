@@ -2,7 +2,7 @@ import * as z from 'zod/v4';
 const id = z.string().min(1).max(200); const requestId = id.describe('Stable unique request ID. Reuse unchanged on retry after timeout or reconnect.');
 const summary = z.string().min(1).max(2000); const taskId = id; const attemptId = id;
 const tool = (description, shape) => ({ description, inputSchema: z.object(shape) });
-const policy = z.object({ integration: z.enum(['ask', 'coordinator-managed']).optional(), idleReclamation: z.boolean().optional(), caps: z.object({ maxConcurrentWorkers: z.number().int().min(1).max(16) }).optional(), guards: z.record(z.enum(['deletions', 'outside_scope', 'infrastructure', 'tests', 'executable', 'apply_rate']), z.enum(['allow', 'ask', 'refuse'])).optional() });
+const policy = z.object({ integration: z.enum(['ask', 'coordinator-managed']).optional(), guards: z.record(z.enum(['deletions', 'outside_scope', 'infrastructure', 'tests', 'executable', 'apply_rate']), z.enum(['allow', 'ask', 'refuse'])).optional() });
 export const DEFINITIONS = {
   get_context: tool('Read your assigned task, worker state and current observed turn ID. A null turn ID is unobserved, not a reportable turn.', {}),
   get_run: tool('Read durable run state. Worker claims and captured evidence are distinct.', {}),

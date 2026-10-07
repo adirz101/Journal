@@ -113,7 +113,7 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
   await store.recoverIntegrations?.();
   const workers = new WorkerManager({ store, terminals: manager, environments, inspectProvider: provider => resolveProvider && provider !== 'cursor' ? detectProvider(provider, manager.env, { platform }) : Promise.resolve({}), log });
   const resources = new ResourceProbe({ dataDir, platform });
-  const capacity = new CapacityManager({ store, terminals: manager, dataDir, launch: (attempt, lease) => workers.launchAdmitted(attempt, lease), adaptive: true, sample: capacitySample ?? (() => resources.sample(true)), footprints: entries => resources.footprints(entries), log });
+  const capacity = new CapacityManager({ store, terminals: manager, dataDir, launch: (attempt, lease) => workers.launchAdmitted(attempt, lease), adaptive: true, beforeDrain: shouldContinue => workers.launchQueuedCoordinators(shouldContinue), sample: capacitySample ?? (() => resources.sample()), footprints: entries => resources.footprints(entries), log });
   workers.capacity = capacity;
   await workers.recover();
   const delivery = new DeliveryManager({ store, terminals: manager, log });
@@ -123,7 +123,7 @@ export async function startRuntime({ dataDir, store, spawn, platform = process.p
   const toolConnections = new Set();
   const teamTimer = setInterval(() => {
     if (manager.disposed) return;
-    void workers.launchQueuedCoordinators().then(() => capacity.reevaluate()).catch(error => log(error.message));
+    void capacity.reevaluate();
     Promise.resolve().then(() => store.remindWorkers?.()).catch(error => log(`worker reminder: ${error.message}`));
     Promise.resolve().then(() => store.expireMessages?.()).catch(error => log(`message expiry: ${error.message}`));
     void delivery.dispatch().catch(error => log(`delivery dispatch: ${error.message}`));

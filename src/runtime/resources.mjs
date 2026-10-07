@@ -14,7 +14,6 @@ export function estimateFootprint(samples, provider, mode) {
   const median = values.length ? values[Math.floor(values.length / 2)] : null;
   return { bytes: Math.max(256e6, median ?? (provider === 'codex' ? 800e6 : 1.2e9)) + 128e6, source: median == null ? 'estimate' : 'measured', samples: values.length, overheadBytes: 128e6 };
 }
-export const reclaimEligible = conditions => ['enabled', 'capacityOnly', 'settled', 'captured', 'inboxEmpty', 'noApproval', 'descendantsEnded', 'idleLongEnough', 'exactResume', 'safePressure'].every(key => conditions[key] === true);
 
 export class ResourceProbe {
   constructor({ dataDir, platform = process.platform, clock = Date.now }) { Object.assign(this, { dataDir, platform, clock }); this.last = null; this.pending = null; }

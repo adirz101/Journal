@@ -59,7 +59,6 @@ const mainFocusTarget = () => document.querySelector<HTMLElement>('main.workspac
   ?? document.querySelector<HTMLElement>('#wrapup-title') ?? document.getElementById('task')
   ?? document.querySelector<HTMLElement>('main.workspace button:not(:disabled)');
 
-const MAX_SESSIONS = 4;
 const NO_KEYS = {}; // Phase 8: the palette's keys before bootstrap
 const latest = (a: string | null | undefined, b: string | null | undefined) => !a ? b : !b ? a : a > b ? a : b;
 // Phase 7: what an install or sign-in changed, from the providers event main sends after it ends.
@@ -361,7 +360,7 @@ export default function App() {
   useEffect(() => { if (dragging === 'sidebar') document.documentElement.dataset.drop = 'sidebar'; else delete document.documentElement.dataset.drop; }, [dragging]);
   const ordered = useMemo(() => Object.values(sessions).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [sessions]);
   const liveCount = ordered.filter(isLive).length;
-  const canStart = connected && liveCount < MAX_SESSIONS;
+  const canStart = connected;
   async function selectSession(next: Session) {
     userChose.current = true;
     await run(async () => {
@@ -486,9 +485,9 @@ export default function App() {
         merge([result.session]); setSelectedId(result.session.id); setReceipt(result.receipt); setFirstNote(null); setDisabled([]); if (!resumeFrom) setReferences([]); setPanel('session'); await refresh(projectId);
       } catch (error) {
         if (submitted) setTask(current => current || submitted);
-        // Another window or a stale count: all four slots are taken. Catch up and say so plainly.
+        // An older runtime may still enforce its previous limits; preserve its actual error.
         const code = errorCode(error);
-        if (code === 'SLOTS_FULL') { void reloadSessions().catch(() => {}); if (!resumeFrom) { setStartError({ code, message: statesCopy.slotsFull }); return; } throw new Error(copy.slotsFull(MAX_SESSIONS)); }
+        if (code === 'SLOTS_FULL') { void reloadSessions().catch(() => {}); if (!resumeFrom) { setStartError({ code, message: error instanceof Error ? error.message : String(error) }); return; } throw error; }
         // The agent went missing since detection: say so beside Start and check that provider
         // again now (fresh), so its card follows what is installed instead of staying Not installed.
         if (code === 'PROVIDER_MISSING' && !resumeFrom) {
@@ -749,9 +748,9 @@ export default function App() {
       .then(results => { if (current && results.every(Boolean)) setRecoveryLoadedAt(recovery.at); });
     return () => { current = false; };
   }, [recovery, merge]);
-  const startBlocked = !connected ? composer.runtimeDown : liveCount >= MAX_SESSIONS ? statesCopy.slotsFull : null;
-  // Continue in the recovery panel has its own slots-full sentence (no task to write there).
-  const continueBlocked = !connected ? composer.runtimeDown : liveCount >= MAX_SESSIONS ? statesCopy.continueSlotsFull : null;
+  const startBlocked = !connected ? composer.runtimeDown : null;
+  // Recovery still waits for a connected runtime.
+  const continueBlocked = !connected ? composer.runtimeDown : null;
   const recoveryShown = useMemo(() => recoveryView(recovery, sessions, continueBlocked), [recovery, sessions, continueBlocked]);
   const acknowledgeRecovery = useCallback((at: string) => {
     setRecovery(current => current?.at === at ? null : current);

@@ -80,10 +80,9 @@ test('four concurrent sessions stay isolated, switch instantly and survive a ren
       await startSession(page, i % 2 ? 'codex' : 'claude', { task: `TASK_${i}` });
       await expect(page.locator('.terminal-surface')).toContainText(`TASK TASK_${i}`);
     }
-    // With every slot in use, the New session view still opens; Start waits and says why.
+    // Four live sessions do not prevent another launch.
     await newSession(page); await chooseAgent(page, 'claude');
-    await expect(startButton(page)).toBeDisabled();
-    await expect(page.getByText('4 of 4 running. Stop or finish one to start another.')).toBeVisible();
+    await expect(startButton(page)).toBeEnabled();
     await expect(slotsUsed(page, 4)).toBeVisible();
     await sessionButton(page, 'TASK_1').click();
     await expect(page.locator('.terminal-surface')).toContainText('TASK TASK_1');
@@ -418,7 +417,7 @@ test('Codex shows Running with output time and limited status', async () => {
   } finally { await closeApp(app); f.cleanup(); }
 });
 
-test('a fifth start is refused with the SLOTS_FULL code through the preload bridge', async () => {
+test('fifth and sixth starts succeed through both preload bridge calls', async () => {
   const f = setup('slots-full'); const { app, page } = await open(f.env, f.project);
   try {
     await page.getByRole('button', { name: 'Open a project…', exact: true }).first().click();
@@ -431,9 +430,8 @@ test('a fifth start is refused with the SLOTS_FULL code through the preload brid
       return { settled: await journal.settle('start', input), thrown };
     });
     const { settled, thrown } = await fifth();
-    // The code crosses the bridge as data; a thrown Error keeps only its message.
-    expect(settled).toEqual({ ok: false, code: 'SLOTS_FULL', error: expect.stringContaining('Stop one before starting another') });
-    expect(thrown?.message).toContain('Stop one before starting another');
-    expect(f.launches()).toHaveLength(4);
+    expect(settled.ok).toBe(true);
+    expect(thrown).toBeNull();
+    await expect.poll(() => f.launches().length).toBe(6);
   } finally { await closeApp(app); f.cleanup(); }
 });

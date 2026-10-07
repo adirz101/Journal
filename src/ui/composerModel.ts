@@ -1,6 +1,6 @@
 // The New session composer's rules (boards B5 and B13). Pure: Composer.tsx
 // renders them and tests/composer.test.mjs checks them.
-import { composer, states } from './copy';
+import { composer } from './copy';
 import { agentRow, type AgentAction } from './firstRunModel';
 import { PROVIDER_NAMES, type AgentInfo, type Memory, type Mode, type Provider, type Receipt, type SelectionInfo, type SelectionPreview } from './types';
 
@@ -8,8 +8,6 @@ export const MODES: readonly Mode[] = ['build', 'plan', 'read-only', 'coordinate
 export const AGENT_ORDER: readonly Provider[] = ['claude', 'codex', 'cursor'];
 // Packet budget (src/core/store.mjs assemblePacket): 12 notes or 6000 bytes.
 export const NOTE_LIMIT = 12; export const BYTE_LIMIT = 6000;
-// Live sessions at once (the runtime's four slots).
-export const MAX_LIVE = 4;
 
 // The launch inputs stay exactly as before the composer: plan and research.
 export function modeFlags(mode: Mode): { plan: boolean; research: boolean } {
@@ -75,8 +73,6 @@ const NEEDS: Record<string, string> = { checking: composer.checking, 'login-requ
 export function startBlock({ connected, liveCount, busy, agent, provider, mode }: { connected: boolean; liveCount: number; busy: boolean; agent: AgentInfo | null | undefined; provider: Provider; mode: Mode }): string | null {
   if (busy) return '';
   if (!connected) return composer.runtimeDown;
-  // Phase 8: New session stays open while all slots are in use; Start says why it waits.
-  if (liveCount >= MAX_LIVE) return states.slotsFull;
   if (!agentReady(agent)) {
     const card = agentCard(agent, provider);
     if (!agent || agent.state === 'missing' || (!agent.available && !agent.state)) return composer.agentMissing(PROVIDER_NAMES[provider], card.action);

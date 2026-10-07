@@ -23,22 +23,38 @@ export function WorkerControls({ attempt, run, act, busy }: { attempt: RunAttemp
     {settled && <details><summary>Retry or retire</summary><label>Reason<textarea value={reason} onChange={event => setReason(event.target.value)} maxLength={2000} /></label><label>Provider<select value={provider} onChange={event => setProvider(event.target.value)}><option value="claude">Claude Code</option><option value="codex">Codex</option><option value="cursor">Cursor</option></select></label><label>Start from<select value={from} onChange={event => setFrom(event.target.value)}><option value="base">Current branch</option><option value="result" disabled={!attempt.currentResultId}>Captured result</option><option value="environment" disabled={attempt.presence !== 'paused'}>Existing worker folder</option></select></label><button disabled={busy || !reason.trim()} onClick={() => void act('retry', { attemptId: attempt.id, provider, from, reason })}>Request retry</button><button disabled={busy || !reason.trim() || attempt.presence !== 'paused'} onClick={() => void act('retireWorker', { attemptId: attempt.id, reason })}>Retire worker</button></details>}
   </div>;
 }
-interface Capacity { limits: { maxLiveSessions: number; maxActiveRuns: number }; cap: number; live: number; reserved: number; mode: string; sample: { availableBytes?: number; totalBytes?: number; pressure?: string; freeDiskBytes?: number; limitations?: string[] }; queued: RunAttempt[]; }
+interface Capacity { live: number; reserved: number; sample: { availableBytes?: number; totalBytes?: number; pressure?: string; freeDiskBytes?: number; limitations?: string[] }; warnings: string[]; queued: RunAttempt[]; }
 const gb = (bytes?: number) => bytes == null ? 'Unknown' : `${(bytes / 1e9).toFixed(1)} GB`;
+export function ResourceNotice({ connected = true }: { connected?: boolean }) {
+  const [warnings, setWarnings] = useState<string[]>([]);
+  useEffect(() => {
+    if (!connected) { setWarnings([]); return; }
+    let active = true;
+    const load = () => void api<Capacity>('getCapacity', {}).then(value => { if (active) setWarnings(value.warnings ?? []); }).catch(() => { if (active) setWarnings(['RESOURCE_UNKNOWN']); });
+    load(); const timer = setInterval(load, 5000);
+    return () => { active = false; clearInterval(timer); };
+  }, [connected]);
+  const notice = warnings.includes('MEMORY_PRESSURE') ? 'Memory pressure is high. You can still start sessions; running and idle agents stay open.'
+    : warnings.includes('RESOURCE_UNKNOWN') ? 'Some resource measurements are unavailable. You can still start sessions.' : null;
+  return notice ? <p className="field-help" role="status">{notice}</p> : null;
+}
 export function CapacityView({ run }: { run: TeamRun }) {
   const [capacity, setCapacity] = useState<Capacity | null>(null); const [error, setError] = useState('');
-  useEffect(() => { let active = true; const load = () => void api<Capacity>('getCapacity', { runId: run.id }).then(value => { if (active) setCapacity(value); }).catch(error => { if (active) setError(error.message); }); load(); const timer = setInterval(load, 5000); return () => { active = false; clearInterval(timer); }; }, [run.id]);
-  if (!capacity) return <p role="status">{error || 'Reading capacity…'}</p>;
-  return <><h3>Session capacity</h3><p>{capacity.live} live + {capacity.reserved} reserved / {capacity.cap} shared slots · Up to {run.policy.caps.maxConcurrentWorkers} workers in this run</p><dl className="team-policy"><div><dt>Admission</dt><dd>{capacity.mode}</dd></div><div><dt>Available memory</dt><dd>{gb(capacity.sample.availableBytes)}</dd></div><div><dt>Memory pressure</dt><dd>{capacity.sample.pressure ?? 'Unknown'}</dd></div><div><dt>Free disk</dt><dd>{gb(capacity.sample.freeDiskBytes)}</dd></div></dl>{capacity.sample.limitations?.map(line => <p key={line} className="field-help">{line}</p>)}<form className="team-form" onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); void api('setCapacityLimits', { maxLiveSessions: Number(data.get('sessions')), maxActiveRuns: Number(data.get('runs')) }).then(() => api<Capacity>('getCapacity', { runId: run.id })).then(setCapacity).catch(error => setError(error.message)); }}><label>Global live sessions<select name="sessions" defaultValue={capacity.limits.maxLiveSessions}>{[1, 2, 3, 4].map(value => <option key={value} value={value}>{value}</option>)}</select></label><label>Active runs<select name="runs" defaultValue={capacity.limits.maxActiveRuns}>{[1, 2, 3, 4].map(value => <option key={value} value={value}>{value}</option>)}</select></label><button>Save global limits</button>{error && <p role="status">{error}</p>}</form><h3>Requested workers</h3><ol>{capacity.queued.map(attempt => <li key={attempt.id}>{run.tasks.find(task => task.id === attempt.taskId)?.title}: {attempt.admission?.reasons?.join(', ') || 'Waiting for launch pacing'}</li>)}</ol><p className="field-help">Higher global limits remain gated on machine and platform calibration.</p></>;
+  useEffect(() => { let active = true; const load = () => void api<Capacity>('getCapacity', { runId: run.id }).then(value => { if (active) { setCapacity(value); setError(''); } }).catch(error => { if (active) setError(error.message); }); load(); const timer = setInterval(load, 5000); return () => { active = false; clearInterval(timer); }; }, [run.id]);
+  if (!capacity) return <p role="status">{error || 'Reading resources…'}</p>;
+  return <><h3>Sessions and resources</h3><p>{capacity.live} live · {capacity.reserved} starting</p>
+    <p className="field-help">Sessions start on demand. Idle agents stay open until you stop them. Resource readings are advisory.</p>
+    <dl className="team-policy"><div><dt>Available memory</dt><dd>{gb(capacity.sample.availableBytes)}</dd></div><div><dt>Memory pressure</dt><dd>{capacity.sample.pressure ?? 'Unknown'}</dd></div><div><dt>Free disk</dt><dd>{gb(capacity.sample.freeDiskBytes)}</dd></div></dl>
+    {capacity.sample.limitations?.map(line => <p key={line} className="field-help">{line}</p>)}
+    {error && <p role="status">{error}</p>}
+    <h3>Requested workers</h3><ol>{capacity.queued.map(attempt => <li key={attempt.id}>{run.tasks.find(task => task.id === attempt.taskId)?.title}: {attempt.admission?.reasons?.filter(reason => !['GLOBAL_CAP', 'RUN_CAP', 'MEMORY', 'MEMORY_PRESSURE', 'RESOURCE_UNKNOWN', 'CPU', 'DISK'].includes(reason)).join(', ') || 'Waiting to start'}</li>)}</ol></>;
 }
 export function PolicyForm({ run, act, busy }: { run: TeamRun; act: TeamAction; busy: boolean }) {
   const [policy, setPolicy] = useState(run.policy);
   useEffect(() => setPolicy(run.policy), [run.policy.version]);
-  return <form className="team-form" onSubmit={event => { event.preventDefault(); void act('setRunPolicy', { policy: { integration: policy.integration, caps: policy.caps, guards: policy.guards, idleReclamation: policy.idleReclamation ?? false } }); }}><h3>Run policy</h3>
+  return <form className="team-form" onSubmit={event => { event.preventDefault(); void act('setRunPolicy', { policy: { integration: policy.integration, guards: policy.guards } }); }}><h3>Run policy</h3>
     <label>Apply results<select value={policy.integration} onChange={event => setPolicy({ ...policy, integration: event.target.value })}><option value="coordinator-managed">Coordinator decides</option><option value="ask">Ask before every Apply</option></select></label>
-    <label>Workers in this run<input type="number" min={1} max={16} value={policy.caps.maxConcurrentWorkers} onChange={event => setPolicy({ ...policy, caps: { maxConcurrentWorkers: Number(event.target.value) } })} /></label>
     {Object.entries(policy.guards).map(([key, value]) => <label key={key}>{key.replaceAll('_', ' ')}<select value={value} onChange={event => setPolicy({ ...policy, guards: { ...policy.guards, [key]: event.target.value } })}><option value="allow">Allow</option><option value="ask">Ask before applying</option><option value="refuse">Refuse</option></select></label>)}
-    <label className="inline-check"><input type="checkbox" checked={policy.idleReclamation ?? false} onChange={event => setPolicy({ ...policy, idleReclamation: event.target.checked })} />Pause settled workers after 20 idle minutes when another worker needs capacity</label>
     <p className="field-help">Native permissions remain unchanged. Saving policy invalidates pending Apply approvals.</p><button disabled={busy}>Save policy</button>
   </form>;
 }

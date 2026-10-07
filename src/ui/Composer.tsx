@@ -8,8 +8,9 @@ import { actionLabel, actionName } from './firstRunModel';
 import { useKeepFocus } from './useKeepFocus';
 import { ProviderMark } from './ProviderMark';
 import { useContextPreview } from './useContextPreview';
-import { AGENT_ORDER, MAX_LIVE, agentCard, agentReady, agentTitle, modeBlock, MODES, modeSupport, previewView, startBlock, type PreviewItem } from './composerModel';
+import { AGENT_ORDER, agentCard, agentReady, agentTitle, modeBlock, MODES, modeSupport, previewView, startBlock, type PreviewItem } from './composerModel';
 import { composer, copy, palette } from './copy';
+import { ResourceNotice } from './TeamControls';
 import { StartError } from './StartError'; // Phase 8
 import { startProblem } from './statesModel'; // Phase 8
 import { PROVIDER_NAMES, type Bootstrap, type FileReference, type Mode, type Project, type Provider, type Receipt, type WorkspaceList } from './types';
@@ -123,8 +124,7 @@ export function Composer(props: ComposerProps) {
     <li className="muted">{composer.referencesHint}</li></ul>, [references, onRemoveReference]);
   const worktree = !!workspaceId && !workspaceId.startsWith('root:');
   const startKeys = mac ? '⌘↵' : 'Ctrl+Enter';
-  // A refused start is explained while its cause holds: "4 sessions are running" goes once a slot frees.
-  const startError = props.startError && !(props.startError.code === 'SLOTS_FULL' && props.liveCount < MAX_LIVE) ? props.startError : null;
+  const startError = props.startError;
   // === Phase 8: an agent that can't start (StartError) ===
   // A refused start's card stays until the choice changes, the next start, or (missing or
   // unsupported) until Check again finds the agent ready; an agent's own status check shows its
@@ -187,7 +187,7 @@ export function Composer(props: ComposerProps) {
         {mac && mode === 'build' && !workspaceId.startsWith('root:') && branch && <p id="isolated-help" className="field-help">{props.isolated ? composer.isolatedOn(branch) : composer.isolatedOff}</p>}
       </div>
 
-      <div className="start-error-slot" ref={errorSlot}>{problemCard && <StartError problem={problemCard} alert={!!startError}
+      <ResourceNotice connected={props.connected} /><div className="start-error-slot" ref={errorSlot}>{problemCard && <StartError problem={problemCard} alert={!!startError}
         onOpenTerminal={problemCard.kind === 'signed-out' && agent?.supports?.login ? () => props.providers.onLogin(provider) : problemCard.kind === 'missing' && problemCard.command ? () => props.providers.onInstall(provider) : null} />}</div>
       {mode === 'coordinate' && provider === 'claude' && <label className="inline-check"><input type="checkbox" checked={props.journalToolsAllowed ?? false} onChange={event => props.onJournalToolsAllowed?.(event.target.checked)} />Allow Journal team tools without prompts for this run</label>}
       {mode === 'coordinate' && <p className="field-help">Provider file, shell and network permissions stay native. Tool permission shortcuts for other providers are not validated.</p>}
